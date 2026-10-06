@@ -1,0 +1,15 @@
+pack version "1";
+export class TextProps { value: string = ""; }
+export class ButtonProps { text: string = ""; onClick?: Action; accessibilityLabel?: string; }
+export class ToggleProps { value: string = ""; text: string = ""; checked: boolean = false; onChange?: Action; accessibilityLabel?: string; }
+export component Toggle(props: ToggleProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.toggle"; }
+export class EmptyProps {}
+export class MinuteProps { value: int = 0; }
+export component Time(props: MinuteProps): View { capability "renderer.compose.time"; }
+export component IntText(props: MinuteProps): View { capability "renderer.compose.integer"; }
+export component Text(props: TextProps): View { capability "renderer.compose.text"; }
+export component Hero(props: TextProps): View { capability "renderer.compose.hero"; }
+export component Button(props: ButtonProps): View { event onClick; accessibility accessibilityLabel; capability "renderer.compose.button"; }
+export component Column(props: EmptyProps): View { children optional; capability "renderer.compose.column"; }
+export component Card(props: EmptyProps): View { children optional; capability "renderer.compose.card"; }
+export component Spinner(props: EmptyProps): View { capability "renderer.compose.spinner"; }

@@ -1,0 +1,1 @@
+{"kind":"record","fields":{"accepted":{"kind":"boolean"},"candidateId":{"kind":"string"},"diagnostics":{"kind":"string"}}}

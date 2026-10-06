@@ -1,0 +1,1 @@
+export async function complete(input: string, previous: string, diagnostics: string): string;

@@ -1,0 +1,31 @@
+# DEAL embedding
+
+Embedding discovers provider capabilities, generates source from host intent, repairs rejected candidates and safely activates checked experiences. The trusted workflow lives in `core/generation.deal`; Android supplies discovery, inference, checking and execution mechanisms. Generated experiences receive application capabilities only, never the model, checker or activation APIs.
+
+# Source boundary
+
+`android/src/capabilities/` owns language-neutral bounded contracts, Android discovery, generic Binder invocation, authenticated replies and session grants. `android/src/inference/` provides only the host-selectable model interface and transport-neutral cancellation. The demo owns its loopback gateway client. `android/src/storage/`, `execution/` and `rendering/` own persistence, JavaScriptSandbox lifetime and Compose widgets. `ExperienceRuntime` is the public native facade.
+
+`core/host/*.d.deal` defines the host APIs required by `core/generation.deal`: catalog discovery, model completion and candidate checking. `core/generation-guidance.md` supplies generation guidance. The core is compiled into packaged JavaScript by the library build; there is no native duplicate of its retry policy. The build derives sandbox signatures from these declarations. `core/host/check-result.json` defines the checker's wire record because its DEAL result type is `table`. Native activation remains outside the generated workflow.
+
+`android/src/compiler/` implements DEAL and Deal UI checking and compilation. `android/src/bindings/` and `android/assets/embedding/bindings/` connect the trusted core and compiled experiences to native services and the sandbox. They include contract-to-DEAL lowering, shared sandbox evaluation/bundling mechanics and Deal UI ABI bindings. Generation and experiences retain separate authority and session lifecycles. Native close disposes the compiler-owned store before closing a live isolate. Renderer registration supplies the supported capabilities and compilation rejects pack/renderer disagreement. There is no separate backend abstraction.
+
+# Generation contract
+
+`ExperienceRuntime.generate(intent, disclosedContext, ModelClient, GenerationCancellation, progress)` returns a library-created `CheckedCandidate`. The trusted DEAL program snapshots the catalog, constructs the input and performs one inference plus at most two diagnostic-driven repairs. The model returns a JSON envelope containing exactly `deal` and `dealui` strings, not a competing UI language. Native checking supplies structured UI/core diagnostics and an opaque candidate identity; rejected staging directories are removed.
+
+The checked candidate binds source and compiled output to a catalog revision. The native host decides whether to activate it and must revalidate disclosed context. The model has no provider execution authority during generation. `activate(candidate)` mounts a fresh experience state; a newly requested workflow is not assumed state-compatible with the previous one. Existing `activate(ExperienceSource)` replacements still restore compatible state and reject incompatible state. Both reject replacement while effects are outstanding. Failure or cancellation before activation retains the current experience.
+
+# Native capabilities
+
+Providers declare a versioned `CapabilityContract` and matching `NativeCapabilities` handlers once. Supported values are bounded integers, strings, booleans, null, arrays and closed records. DEAL-specific lowering converts records into tables and derives declarations. The full record schema accompanies declarations in generation input; table field accesses remain runtime-checked rather than statically named record fields.
+
+Services advertise `dev.deal.embedding.CAPABILITIES_V1`. Providers own caller authorization, consent and its storage; they call `consentChanged()` on changes so revocation cancels pending work. Discovery does not grant invocation. Hosts apply signer trust policy and grants. Ambiguous module ownership is rejected. Requests have bounded identities, deadlines and stale-completion rejection; replies authenticate against discovered provider UID. This is a participating-provider protocol, not an Android standard.
+
+# Library build
+
+`build.sh` accepts explicit `DEAL_ROOT`, `DEAL_UI_ROOT`, `ANDROID_JAR`, `AIDL`, `RUNTIME_CP` and absolute `OUTPUT_DIR`, with optional `KOTLIN_HOME`. It builds the AAR and compiles the trusted DEAL workflow without consulting any app source or scenario. Compose, JavaScriptSandbox and NIO desugaring are consumer dependencies. The sample build extracts only generic capability classes for provider APKs; only Calendar packages compiler/runtime and generated experience assets. A prebuilt AAR can be selected with `EMBEDDING_AAR`.
+
+# Limits
+
+The development gateway uses remote inference; on-device inference and cross-host implementations are outside this iteration. The compiler still runs in the trusted host process without independent resource isolation. Checking proves language/UI consistency, not intent correctness. Unsupported effect policies and failure mappers are rejected. Model inference has bounded output and transport deadlines; cancel prevents activation and disconnects the device request, but does not guarantee that the remote provider stops computing.
