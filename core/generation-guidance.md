@@ -1,30 +1,19 @@
 # Deal UI generation surface
 
-Emit departure + matching .dealui; imports: import * as app from "./departure"; import * as ui from "./platform.dealui-pack";. Export main():null returning null, defaulted State, initialState():State returning {}, empty/defaulted nominal actions, and all referenced classes/actions.
+Two files: an application module and a view importing it and the pack. Names come from the intent, not from a fixed scenario.
 
-Immediately precede updates with // @ui-update lines; signature (state:State,action:Action):State. Return fresh complete state; never mutate borrowed state/collections; build arrays using explicit loops. Await supplied async capabilities only. Records→table; explicitly type catalog-schema field reads. No JavaScript methods (map/filter/push), any/unknown.
+Imports first: the app module and this renderer's pack. Export `main(): null`, one defaulted state class, `initialState(): State` returning `{}`, and one empty class per action. Module and view filenames must match the imports.
 
-Effects: standalone // @ui-effect immediately before export async function run(state:State,action:RequestAction):CompletionAction. Request update sets loading=true; completion clears loading/stores results. Catch errors→error completion/recovery. Effect/update may share request action. No effect policies/failure mappers; no effects from main/initialState.
+Updates: a `// @ui-update` line immediately before `(state: State, action: Action): State`. Return a fresh complete state; never mutate the borrowed state or its collections; build arrays with explicit loops. Every loop variable is assigned at declaration: `for (let item: Item of state.items)`, never a bare or uninitialized declarator.
 
-View: imports, standalone // @ui-root, export view Name(state:app.State):View{ui.Column(){...}}. Properties use colon, not equals; components have no trailing semicolons.
+Effects: a `// @ui-effect` line immediately before `export async function run(state: State, action: RequestAction): CompletionAction`. The request update sets loading; the completion clears it and stores results. Catch failures and return an error completion so the UI recovers. Effects and updates may share the request action. No effect policies or failure mappers, and no effects from `main` or `initialState`.
 
-ui.Button(text:"Title",accessibilityLabel:"Title",onClick:action app.Action{}) dispatches.
-When(state.loading){ui.Spinner()}Else{ui.Button(...)}
-ForEach(state.items,item:app.Item,key:item.id){...}: stable keys.
-ui.Toggle(value:item.id,text:item.title,checked:item.selected,accessibilityLabel:item.title,onChange:action app.Select{id:payload}): string payload.
+Views: imports, then a `// @ui-root` line, then `export view Name(state: app.State): View { ui.Column() { ... } }`. Properties use a colon; components end without a semicolon. `ForEach(state.items, item: app.Item, key: item.id)` needs a stable key.
 
-Exact supplied pack, and nothing else:
-- Text/Hero value:string; IntText/Time value:int; Card/Column children; Spinner none.
-- Section title:string, summary:string, children.
-- Option value/title/detail/price/meta:string, selected/enabled:boolean, event onSelect(payload:string), children.
-- IntField value/minimum/maximum:int, label:string, event onChange(payload:int).
-- TextField value/label:string, multiline:boolean, event onChange(payload:string).
-- Choice value/label/first/second/third:string, events onFirst/onSecond/onThird(payload:string).
-- Filters selected/first/second/third:string, events onFirst/onSecond/onThird(payload:string).
-- Notice text:string, tone:"info"|"warning"|"error"; Progress label:string; Failure text:string, event onRetry.
-- Item value/title/detail/meta/trailing:string, children; KeyedList key:string, children.
-Never concatenate int to string; use IntText/Time separately. No Row, image, arbitrary styles or invented components. A host event action must consume its payload.
+Capabilities: use only imports present in the catalog, await them, and read record fields explicitly. Never use JavaScript collection methods (`map`, `filter`, `push`), `any` or `unknown`. Never concatenate an int into a string; show it with `IntText` or `Time`.
 
-Permissions/confirmation remain native, outside generated UI; never mimic approval or report staged proposals as successful writes.
+The supplied pack is the complete vocabulary. Use no other component, no `Row`, no image, no arbitrary style. A component that declares an event with a payload must have an action consuming that payload.
 
-Minimal sync: counter State, Increment, initialState, immutable {count:state.count+1} update, null main, Column/IntText/Button. Async adds request/completion actions/updates above. Follow intent, not fixed departure scenario; labels reflect actions. Unavailable capability→clear explanatory UI, never invented imports.
+Reads and preparation only. Never write, never confirm, and never report that something is booked or approved. Native permission and confirmation surfaces stay outside generated UI.
+
+If a requested capability is unavailable, explain that in the UI instead of inventing an import.

@@ -48,7 +48,9 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         "embedding/checker" -> {
                             progress("Checking generated source")
                             try {
-                                val envelope = JSONObject(args.getString(0)); require(envelope.length() == 2)
+                                val raw = args.getString(0)
+                                val envelope = runCatching { JSONObject(raw) }.getOrElse { throw IllegalArgumentException("Envelope is not a JSON object") }
+                                require(envelope.length() == 2) { "Envelope must contain exactly deal and dealui; found " + envelope.keys().asSequence().sorted().joinToString(", ") }
                                 val source = ExperienceSource(envelope.getString("deal"), envelope.getString("dealui"))
                                 val output = ExperienceCompiler(context, config).compile(source.deal, source.ui)
                                 val id = UUID.randomUUID().toString(); checked[id] = source to output
