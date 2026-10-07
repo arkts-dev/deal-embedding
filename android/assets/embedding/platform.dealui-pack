@@ -13,3 +13,36 @@ export component Button(props: ButtonProps): View { event onClick; accessibility
 export component Column(props: EmptyProps): View { children optional; capability "renderer.compose.column"; }
 export component Card(props: EmptyProps): View { children optional; capability "renderer.compose.card"; }
 export component Spinner(props: EmptyProps): View { capability "renderer.compose.spinner"; }
+
+export class SectionProps { title: string = ""; summary: string = ""; }
+export component Section(props: SectionProps): View { children required; capability "renderer.compose.section"; }
+
+export class OptionProps { value: string = ""; title: string = ""; detail: string = ""; price: string = ""; meta: string = ""; selected: boolean = false; enabled: boolean = true; onSelect?: Action; accessibilityLabel?: string; }
+export component Option(props: OptionProps): View { children optional; event onSelect(payload: string); accessibility accessibilityLabel; capability "renderer.compose.option"; }
+
+export class IntFieldProps { value: int = 0; label: string = ""; minimum: int = 0; maximum: int = 999; onChange?: Action; accessibilityLabel?: string; }
+export component IntField(props: IntFieldProps): View { event onChange(payload: int); accessibility accessibilityLabel; capability "renderer.compose.intfield"; }
+
+export class TextFieldProps { value: string = ""; label: string = ""; multiline: boolean = false; onChange?: Action; accessibilityLabel?: string; }
+export component TextField(props: TextFieldProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.textfield"; }
+
+export class ChoiceProps { value: string = ""; label: string = ""; first: string = ""; second: string = ""; third: string = ""; onFirst?: Action; onSecond?: Action; onThird?: Action; accessibilityLabel?: string; }
+export component Choice(props: ChoiceProps): View { event onFirst(payload: string); event onSecond(payload: string); event onThird(payload: string); accessibility accessibilityLabel; capability "renderer.compose.choice"; }
+
+export class FiltersProps { selected: string = ""; first: string = ""; second: string = ""; third: string = ""; onFirst?: Action; onSecond?: Action; onThird?: Action; accessibilityLabel?: string; }
+export component Filters(props: FiltersProps): View { event onFirst(payload: string); event onSecond(payload: string); event onThird(payload: string); accessibility accessibilityLabel; capability "renderer.compose.filters"; }
+
+export class NoticeProps { text: string = ""; tone: string = "info"; }
+export component Notice(props: NoticeProps): View { capability "renderer.compose.notice"; }
+
+export class ProgressProps { label: string = ""; }
+export component Progress(props: ProgressProps): View { capability "renderer.compose.progress"; }
+
+export class FailureProps { text: string = ""; onRetry?: Action; accessibilityLabel?: string; }
+export component Failure(props: FailureProps): View { event onRetry; accessibility accessibilityLabel; capability "renderer.compose.failure"; }
+
+export class ItemProps { value: string = ""; title: string = ""; detail: string = ""; meta: string = ""; trailing: string = ""; }
+export component Item(props: ItemProps): View { children optional; capability "renderer.compose.item"; }
+
+export class KeyedListProps { key: string = ""; }
+export component KeyedList(props: KeyedListProps): View { children required; capability "renderer.compose.keyedlist"; }

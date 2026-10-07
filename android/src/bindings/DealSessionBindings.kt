@@ -15,4 +15,5 @@ internal object DealSessionBindings {
     const val requests = "dealCapabilities.take()"
     const val dispose = "if (globalThis.dealUi) dealUi.dispose(); ''"
     fun dispatch(slot: Int, payload: String?) = "dealUi.dispatch($slot, ${payload?.let { JSONObject.quote(it) } ?: "null"})"
+    fun staged(contract: dev.deal.embedding.capabilities.CapabilityContract) = CapabilityBindings.declaration(contract)
 }

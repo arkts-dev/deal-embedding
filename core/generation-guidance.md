@@ -13,7 +13,17 @@ When(state.loading){ui.Spinner()}Else{ui.Button(...)}
 ForEach(state.items,item:app.Item,key:item.id){...}: stable keys.
 ui.Toggle(value:item.id,text:item.title,checked:item.selected,accessibilityLabel:item.title,onChange:action app.Select{id:payload}): string payload.
 
-Exact supplied pack: Text/Hero:string; IntText:int; Time:minute-of-day int; Card/Column:children. Never concatenate int/string; use IntText/Time separately. No TextField/Row/image/arbitrary styles/invented components.
+Exact supplied pack, and nothing else:
+- Text/Hero value:string; IntText/Time value:int; Card/Column children; Spinner none.
+- Section title:string, summary:string, children.
+- Option value/title/detail/price/meta:string, selected/enabled:boolean, event onSelect(payload:string), children.
+- IntField value/minimum/maximum:int, label:string, event onChange(payload:int).
+- TextField value/label:string, multiline:boolean, event onChange(payload:string).
+- Choice value/label/first/second/third:string, events onFirst/onSecond/onThird(payload:string).
+- Filters selected/first/second/third:string, events onFirst/onSecond/onThird(payload:string).
+- Notice text:string, tone:"info"|"warning"|"error"; Progress label:string; Failure text:string, event onRetry.
+- Item value/title/detail/meta/trailing:string, children; KeyedList key:string, children.
+Never concatenate int to string; use IntText/Time separately. No Row, image, arbitrary styles or invented components. A host event action must consume its payload.
 
 Permissions/confirmation remain native, outside generated UI; never mimic approval or report staged proposals as successful writes.
 

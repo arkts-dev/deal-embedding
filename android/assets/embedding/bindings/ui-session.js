@@ -51,7 +51,18 @@ globalThis.mountDealUi = function(factories, entryId, restoredState = null) {
   globalThis.dealUi = Object.freeze({
     snapshot: () => JSON.stringify({tree: current.tree, version, fault}),
     state: () => { if (inFlight) throw Error('Wait for current work before replacing the experience'); return JSON.stringify(state); },
-    dispatch: (slot, payload = null) => { if (!Number.isInteger(slot) || slot < 0 || !visibleSlot(current.tree, slot)) throw Error('Invalid or stale action slot'); enqueue(payload === null ? call('action_' + slot) : call('action_' + slot, payload)); return ''; },
+    dispatch: (slot, payload = null) => {
+      if (!Number.isInteger(slot) || slot < 0 || !visibleSlot(current.tree, slot)) throw Error('Invalid or stale action slot');
+      // Payload type comes from the checked action signature, never from the caller.
+      const declared = call('payloadType_' + slot);
+      let value = payload;
+      if (declared === 'int') { if (!/^-?\d+$/.test(String(payload))) throw Error('Expected an integer payload'); value = parseInt(payload, 10); }
+      else if (declared === 'boolean') { if (payload !== 'true' && payload !== 'false') throw Error('Expected a boolean payload'); value = payload === 'true'; }
+      else if (declared === 'string') { if (typeof payload !== 'string') throw Error('Expected a string payload'); }
+      else if (payload !== null) throw Error('This action takes no payload');
+      enqueue(payload === null && declared === 'none' ? call('action_' + slot) : call('action_' + slot, value));
+      return '';
+    },
     dispose: () => { disposed = true; store = call('dispose', store); return ''; }
   });
   return dealUi.snapshot();

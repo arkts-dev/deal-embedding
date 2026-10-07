@@ -14,6 +14,7 @@ class CapabilityDiscovery(private val context: Context, private val trusted: (In
     private val main = Handler(Looper.getMainLooper())
     private var closed = false
     fun discover(): List<Endpoint> {
+        android.util.Log.e("Embedding", "discovery: on main? " + (Looper.myLooper() == Looper.getMainLooper()))
         check(Looper.myLooper() != Looper.getMainLooper())
         val services = context.packageManager.queryIntentServices(Intent(ACTION), PackageManager.GET_META_DATA)
         require(services.size <= 32)

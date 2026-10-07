@@ -5,26 +5,38 @@ import androidx.javascriptengine.JavaScriptSandbox
 import org.json.JSONObject
 import dev.deal.embedding.capabilities.*
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 data class EmbeddingConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String)
 data class ExperienceSource(val deal: String, val ui: String)
 
-/** Called serially by the host. Owns compilation, atomic mounting and sandbox lifetime. */
+/** A live workspace: its own isolate and state, sharing the connected sandbox engine. */
+class LiveWorkspace internal constructor(val id: String, val title: String, internal val session: UiSession, internal val output: File, internal val source: ExperienceSource)
+
+/**
+ * Called serially by the host. Owns compilation, atomic mounting, live workspaces and the shared engine.
+ * Several workspaces stay mounted at once; each keeps its own isolate and its own capability session.
+ */
 class ExperienceRuntime(private val context: Context, private val capabilities: CapabilityHost, private val config: EmbeddingConfig) : AutoCloseable {
     private var engine: JavaScriptSandbox? = null
     private var session: UiSession? = null
     private var output: File? = null
+    private val workspaces = linkedMapOf<String, LiveWorkspace>()
     private val storage = ExperienceStorage(context, config.storageName)
-    internal fun sandbox(): JavaScriptSandbox = engine ?: JavaScriptSandbox.createConnectedInstanceAsync(context).get(10, TimeUnit.SECONDS).also { engine = it }
+    internal fun sandbox(): JavaScriptSandbox = engine ?: run {
+        android.util.Log.e("Embedding", "sandbox: creating instance")
+        val created = JavaScriptSandbox.createConnectedInstanceAsync(context).get(10, TimeUnit.SECONDS)
+        android.util.Log.e("Embedding", "sandbox: connected")
+        engine = created
+        created
+    }
     private fun <T> guarded(live: Boolean = true, operation: () -> T): T = try { operation() } catch (error: Exception) {
         if (generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException || it is androidx.javascriptengine.MemoryLimitExceededException || (live && (it is java.util.concurrent.TimeoutException || it is androidx.javascriptengine.IsolateTerminatedException)) }) close()
         throw error
     }
 
-    fun remembered(): ExperienceSource? {
-        return storage.remembered()
-    }
+    fun remembered(): ExperienceSource? = storage.remembered()
 
     fun generate(intent: String, disclosedContext: String, model: ModelClient, cancellation: GenerationCancellation, progress: (String) -> Unit): CheckedCandidate =
         guarded(live = false) { ExperienceGenerator(context, config.copy(contracts = config.contracts.toList()), sandbox()).generate(intent, disclosedContext, model, cancellation, progress) }
@@ -56,12 +68,36 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
             throw error
         }
     }
+
+    /** Mount a generated workspace and keep it live beside the others. */
+    fun open(title: String, candidate: CheckedCandidate): LiveWorkspace = guarded(live = false) {
+        check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
+        val id = UUID.randomUUID().toString()
+        val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config), candidate.output, candidate.source)
+        try {
+            live.session.mount(candidate.output)
+            candidate.consumed = true
+            workspaces[id] = live
+            storage.saveWorkspace(id, title, candidate.source)
+            live
+        } catch (error: Throwable) { live.session.close(); candidate.output.parentFile?.deleteRecursively(); throw error }
+    }
+    fun workspaces(): List<LiveWorkspace> = workspaces.values.toList()
+    fun workspace(id: String): LiveWorkspace? = workspaces[id]
+    fun dispatch(id: String, slot: Int, payload: String?): JSONObject? { val live = workspaces[id] ?: return null; guarded { live.session.dispatch(slot, payload) }; return poll(id) }
+    fun poll(id: String): JSONObject? = guarded { workspaces[id]?.session?.poll() }
+    fun closeWorkspace(id: String) {
+        val live = workspaces.remove(id) ?: return
+        live.session.close(); live.output.parentFile?.deleteRecursively(); storage.forgetWorkspace(id)
+    }
+
     fun dispatch(slot: Int, payload: String?): JSONObject? {
         guarded { session?.dispatch(slot, payload) }
         return poll()
     }
     fun poll(): JSONObject? = guarded { session?.poll() }
     override fun close() {
+        workspaces.values.toList().forEach { closeWorkspace(it.id) }
         session?.close(); engine?.close(); capabilities.end()
         output?.parentFile?.deleteRecursively()
         session = null; engine = null; output = null

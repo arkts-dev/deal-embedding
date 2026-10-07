@@ -29,7 +29,9 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
     private var closed = false
     init { require(locals.size == local.size) }
     fun refresh(): List<CapabilityContract> {
+        android.util.Log.e("Embedding", "registry: discovering")
         val discovered = discovery.discover()
+        android.util.Log.e("Embedding", "registry: discovered " + discovered.size)
         val next = locals.mapValues { Provider(it.value.contract, it.value) }.toMutableMap()
         for (endpoint in discovered) {
             require(!next.containsKey(endpoint.contract.module)) { "Ambiguous capability module: ${endpoint.contract.module}" }
