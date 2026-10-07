@@ -24,13 +24,7 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     private var output: File? = null
     private val workspaces = linkedMapOf<String, LiveWorkspace>()
     private val storage = ExperienceStorage(context, config.storageName)
-    internal fun sandbox(): JavaScriptSandbox = engine ?: run {
-        android.util.Log.e("Embedding", "sandbox: creating instance")
-        val created = JavaScriptSandbox.createConnectedInstanceAsync(context).get(10, TimeUnit.SECONDS)
-        android.util.Log.e("Embedding", "sandbox: connected")
-        engine = created
-        created
-    }
+    internal fun sandbox(): JavaScriptSandbox = engine ?: JavaScriptSandbox.createConnectedInstanceAsync(context).get(10, TimeUnit.SECONDS).also { engine = it }
     private fun <T> guarded(live: Boolean = true, operation: () -> T): T = try { operation() } catch (error: Exception) {
         if (generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException || it is androidx.javascriptengine.MemoryLimitExceededException || (live && (it is java.util.concurrent.TimeoutException || it is androidx.javascriptengine.IsolateTerminatedException)) }) close()
         throw error

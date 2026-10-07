@@ -20,16 +20,12 @@ internal class ExperienceGenerator(private val context: Context, private val con
         val revision = catalogRevision(config)
         val catalog = JSONArray(config.contracts.map { it.json() }).toString()
         val checked = mutableMapOf<String, Pair<ExperienceSource, File>>()
-        android.util.Log.e("Embedding", "generator: creating isolate")
         val program = SandboxProgram(engine, 512 * 1024)
-        android.util.Log.e("Embedding", "generator: isolate ready")
         fun eval(s: String) = program.evaluate(s)
         try {
             val bundle = SandboxBundle.build(context, listOf("generation-contracts.js", "generation-session.js"), "",
                 "runGeneration(factories, ${JSONObject().put("intent", intent).put("context", disclosedContext)})", assetRoot = "generation")
-            android.util.Log.e("Embedding", "generator: bundle built, evaluating")
             eval(bundle)
-            android.util.Log.e("Embedding", "generator: bundle evaluated")
             var attempts = 0
             while (true) {
                 cancellation.check()
