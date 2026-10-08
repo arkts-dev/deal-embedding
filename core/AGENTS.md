@@ -1,6 +1,6 @@
 # Core
 
-Keep input construction and diagnostic repair in `generation.deal`. Backends implement the imported `host/*.d.deal` APIs.
+Keep input construction and diagnostic repair in `generation.deal`. Backends implement the imported `host/*.d.deal` APIs. Rejected template source is a deterministic defect, not a source-generation repair opportunity; return its checker diagnostics without further model calls.
 
 Treat those declarations as canonical signatures and `host/check-result.json` as the canonical checker-result wire schema. Keep native replies, core field reads and generated binding metadata aligned with them.
 

@@ -53,4 +53,4 @@ internal class ExperienceCompiler(private val context: Context, private val conf
 /** The compiled entry filename; the mount must load this exact module. */
 internal const val ENTRY_NAME = "experience_entry"
 
-internal class CandidateRejected(val diagnostics: String) : IllegalArgumentException("Generated candidate rejected")
+internal class CandidateRejected(val diagnostics: String) : IllegalArgumentException("Generated candidate rejected: " + diagnostics.take(1000))
