@@ -22,7 +22,7 @@ internal class UiSession(private val context: Context, private val broker: Capab
         val encoded = evaluate(DealSessionBindings.requests)
         check(encoded.toByteArray().size <= 16 * 1024) { "Capability request batch too large" }
         val requests = JSONArray(encoded)
-        check(requests.length() <= 8)
+        check(requests.length() <= 8) { "Capability request batch too large: " + requests.length() + " pending" }
         val now = android.os.SystemClock.elapsedRealtime()
         for (i in 0 until requests.length()) broker.receive(requests.getJSONObject(i), now)
         val replies = broker.drain(now)

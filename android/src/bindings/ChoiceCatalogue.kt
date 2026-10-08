@@ -133,7 +133,7 @@ internal object ChoiceCatalogue {
                     append("        return { headline: state.headline, status: \"Entries loaded.\", rows: rows, loading: false };\n")
                 }
                 append("    } catch (error) {\n")
-                append("        return { headline: state.headline, status: error.message, rows: state.rows, loading: false };\n")
+                append("        return { headline: state.headline, status: error.code + \": \" + error.message, rows: state.rows, loading: false };\n")
                 append("    }\n}\n")
                 append("// @ui-update\nexport function done(state: Workspace, action: Done): Workspace { return { headline: action.headline, status: action.status, action: state.action, loading: action.loading, note: state.note, selected: state.selected, notice: state.notice, rows: action.rows }; }\n")
             }
