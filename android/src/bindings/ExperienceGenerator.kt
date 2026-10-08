@@ -78,12 +78,17 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             JSONObject.NULL
                         }
                         "embedding/discovery" -> receipts.stage("discovery") { catalog }
-                        "embedding/policy-data" -> if (request.getString("function") == "lowercase") args.getString(0).lowercase() else {
-                            try { JSONObject(args.getString(0)) }
-                            catch (error: JSONException) {
-                                eval("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id", request.getInt("id")).put("ok", false).put("error", JSONObject().put("code", "INVALID_JSON").put("message", "Expected JSON object")))})")
-                                continue
+                        "embedding/policy-data" -> when (request.getString("function")) {
+                            "lowercase" -> args.getString(0).lowercase()
+                            "utf16Length" -> args.getString(0).length
+                            "parse" -> {
+                                try { JSONObject(args.getString(0)) }
+                                catch (error: JSONException) {
+                                    eval("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id", request.getInt("id")).put("ok", false).put("error", JSONObject().put("code", "INVALID_JSON").put("message", "Expected JSON object")))})")
+                                    continue
+                                }
                             }
+                            else -> error("Unknown trusted data mechanism")
                         }
                         "embedding/chooser" -> when (request.getString("function")) {
                             "choose" -> {

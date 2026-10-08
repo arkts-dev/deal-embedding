@@ -3,7 +3,7 @@ import * as data from "embedding/policy-data";
 import * as tables from "std/table";
 import * as strings from "std/string";
 
-// Portable policy for the demonstrated catalogue workflow. Native code only lowers selected data.
+// Portable policy for the demonstrated catalogue workflow; hosts provide data mechanisms.
 function decimal(value: int): string {
     if (value === 0) { return "0"; }
     let out: string = "";
@@ -63,14 +63,6 @@ function supportedContext(context: table, entries: table[]): boolean {
         return true;
     } catch (error) { return false; }
 }
-// Wire string bounds are UTF-16 units on Android, not DEAL scalar positions.
-function wireLength(value: string): int {
-    let length: int = 0;
-    for (let scalar: string of value) {
-        if (scalar > "￿") { length = length + 2; } else { length = length + 1; }
-    }
-    return length;
-}
 export async function inventory(catalogJson: string, disclosed: string, entriesJson: string): table {
     let context: table = {};
     try { context = await data.parse(disclosed); } catch (error) { let empty: table = {}; context = empty; }
@@ -93,7 +85,8 @@ export async function inventory(catalogJson: string, disclosed: string, entriesJ
                             if (key === name) { value = entry.value; found = true; }
                         }
                         if (!found) { valid = false; }
-                        if (kind !== "string" || wireLength(value) > maximum) { valid = false; }
+                        let length: int = await data.utf16Length(value);
+                        if (kind !== "string" || length > maximum) { valid = false; }
                         args[args.length] = value;
                     } catch (error) { valid = false; }
                 }

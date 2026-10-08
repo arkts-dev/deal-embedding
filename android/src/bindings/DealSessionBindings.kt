@@ -8,7 +8,7 @@ import dev.deal.embedding.capabilities.CapabilityBindings
 /** DEAL JS loading and Deal UI ABI; independent of sandbox service lifetime. */
 internal object DealSessionBindings {
     fun bundle(context: Context, config: EmbeddingConfig, output: File, restored: String?): String = SandboxBundle.build(
-        context, listOf("ui-session.js"), CapabilityBindings.script(config.contracts),
+        context, listOf("dealui-session.js", "ui-session.js"), CapabilityBindings.script(config.contracts),
         "mountDealUi(factories,\"$ENTRY_NAME.js\",${restored ?: "null"})", output = output)
     const val state = "dealUi.state()"
     const val snapshot = "dealUi.snapshot()"

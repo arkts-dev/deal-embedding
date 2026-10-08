@@ -38,6 +38,7 @@ javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/binding-tools" "$RO
 java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/binding-tools" GenerationBindings "$ROOT/core/host" "$OUTPUT_DIR/aar/assets/embedding/bindings/generation-contracts.js"
 jar --create --file "$OUTPUT_DIR/aar/classes.jar" -C "$OUTPUT_DIR/classes" .
 cp -r "$ROOT/android/assets/embedding" "$OUTPUT_DIR/aar/assets/"
+cp "$DEAL_UI_ROOT/runtime-js/session.js" "$OUTPUT_DIR/aar/assets/embedding/bindings/dealui-session.js"
 cp -r "$DEAL_UI_ROOT/ui" "$OUTPUT_DIR/aar/assets/distribution/"
 cp "$DEAL_ROOT/deal/runtime.js" "$OUTPUT_DIR/aar/assets/distribution/deal/"
 cp "$DEAL_ROOT/std/"*.d.deal "$DEAL_ROOT/std/"*.js "$OUTPUT_DIR/aar/assets/distribution/std/"
