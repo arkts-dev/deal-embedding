@@ -1,0 +1,29 @@
+import * as strings from "std/string";
+
+// Source literals use DEAL escaping, not JSON escaping (notably no escaped slash).
+export function quote(value: string): string {
+    let out: string = "\"";
+    for (let ch: string of value) {
+        let escaped: string = ch;
+        if (ch === "\\") { escaped = "\\\\"; }
+        if (ch === "\"") { escaped = "\\\""; }
+        if (ch === "\n") { escaped = "\\n"; }
+        if (ch === "\t") { escaped = "\\t"; }
+        out = out + escaped;
+    }
+    return out + "\"";
+}
+export function decimal(value: int): string {
+    if (value === 0) { return "0"; }
+    let out: string = "";
+    // Negative accumulation also represents INT_MIN without overflowing its negation.
+    let remaining: int = value; if (remaining > 0) { remaining = -remaining; }
+    while (remaining < 0) {
+        let digit: int = -(remaining % 10);
+        out = strings.substring("0123456789", digit, digit + 1) + out;
+        remaining = remaining / 10;
+    }
+    if (value < 0) { out = "-" + out; }
+    return out;
+}
+export function main(): null { return null; }

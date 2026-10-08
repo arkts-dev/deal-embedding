@@ -29,10 +29,9 @@ javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/guidance-tools" "$R
 java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/guidance-tools" GenerationGuidance \
     "$ROOT/android/assets/embedding/platform.dealui-pack" "$ROOT/core/generation-guidance.md" \
     "$DEAL_ROOT/skills/write-deal/references" "$ROOT/core/generation-guidance.generated.deal"
-cp "$ROOT/core/generation.deal" "$OUTPUT_DIR/generation/src/"
-cp "$ROOT/core/generation-guidance.generated.deal" "$OUTPUT_DIR/generation/src/"
+cp "$ROOT/core/"*.deal "$OUTPUT_DIR/generation/src/"
 cp "$ROOT/core/host/"*.d.deal "$OUTPUT_DIR/generation/"
-printf '%s' '{"languageVersion":"1.2","backend":"js","moduleRoots":["src"],"externals":{"embedding/discovery":{"declaration":"discovery.d.deal"},"embedding/model":{"declaration":"model.d.deal"},"embedding/checker":{"declaration":"checker.d.deal"},"embedding/chooser":{"declaration":"chooser.d.deal"}}}' > "$OUTPUT_DIR/generation/deal.json"
+printf '%s' '{"languageVersion":"1.2","backend":"js","moduleRoots":["src"],"externals":{"embedding/discovery":{"declaration":"discovery.d.deal"},"embedding/model":{"declaration":"model.d.deal"},"embedding/checker":{"declaration":"checker.d.deal"},"embedding/chooser":{"declaration":"chooser.d.deal"},"embedding/policy-data":{"declaration":"policy-data.d.deal"},"embedding/observer":{"declaration":"observer.d.deal"}}}' > "$OUTPUT_DIR/generation/deal.json"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/generation/src/generation.deal" --backend js --output "$OUTPUT_DIR/aar/assets/generation"
 mkdir -p "$OUTPUT_DIR/binding-tools" "$OUTPUT_DIR/aar/assets/embedding/bindings"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/binding-tools" "$ROOT/tools/GenerationBindings.java"

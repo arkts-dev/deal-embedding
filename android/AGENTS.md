@@ -8,7 +8,7 @@ Preserve healthy sessions on candidate-local timeout. Clear unusable runtime res
 
 Open a dedicated capability session when mounting each UI isolate. Close sessions by attempting store disposal, then releasing isolates and their capability requests; never reset another workspace's session.
 
-Keep accepted source in app-private storage; clean failed and superseded staging.
+Keep accepted source in app-private storage; clean failed and superseded staging. Record shape-only run/candidate/workspace stage receipts. Distinguish produced snapshots from native publication acknowledgements and do not log every idle poll.
 
 Keep cancellation registration atomic and callbacks once-only. Host implementations own transport cancellation.
 

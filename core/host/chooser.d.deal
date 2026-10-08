@@ -1,3 +1,4 @@
-// The compiler issues the options and this host lowers the chosen one to source. A diagnostic
-// result means no issued option expresses the requirement, and the core falls back to source.
+// Raw choice inference transport. Eligibility, validation and synthesis belong to core.
+// The serialized selection contains selected adapters, arguments, answers and disclosed context.
+// Raw inference response; native code does not issue or validate choices.
 export async function choose(input: string): string;

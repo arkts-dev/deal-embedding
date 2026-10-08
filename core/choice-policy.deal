@@ -1,0 +1,152 @@
+import * as json from "std/json";
+import * as data from "embedding/policy-data";
+import * as tables from "std/table";
+import * as strings from "std/string";
+
+// Portable policy for the demonstrated catalogue workflow. Native code only lowers selected data.
+function decimal(value: int): string {
+    if (value === 0) { return "0"; }
+    let out: string = "";
+    while (value > 0) { let digit: int = value % 10; out = strings.substring("0123456789", digit, digit + 1) + out; value = value / 10; }
+    return out;
+}
+function hasKind(fields: table, name: string, kind: string): boolean {
+    try {
+        let field: table = {};
+        if (name === "id") { let v: table = fields.id; field = v; }
+        if (name === "name") { let v: table = fields.name; field = v; }
+        if (name === "specification") { let v: table = fields.specification; field = v; }
+        if (name === "cents") { let v: table = fields.cents; field = v; }
+        if (name === "available") { let v: table = fields.available; field = v; }
+        if (name === "staged") { let v: table = fields.staged; field = v; }
+        let actual: string = field.kind; return actual === kind;
+    }
+    catch (error) { return false; }
+}
+function isPreparation(fn: table): boolean {
+    try {
+        let params: table[] = fn.parameters;
+        let names: string[] = ["kind", "provider", "title", "detail", "price", "deadline"];
+        if (params.length !== names.length) { return false; }
+        for (let i: int = 0; i < params.length; i = i + 1) {
+            let p: table = params[i]; let name: string = p.name; let type: table = p.type; let kind: string = type.kind;
+            if (name !== names[i] || kind !== "string") { return false; }
+        }
+        let result: table = fn.result; let kind: string = result.kind; let fields: table = result.fields;
+        return kind === "record" && hasKind(fields, "staged", "boolean");
+    } catch (error) { return false; }
+}
+function isCatalogue(fn: table): boolean {
+    try {
+        let result: table = fn.result; let kind: string = result.kind;
+        if (kind !== "array") { return false; }
+        let element: table = result.element; let elementKind: string = element.kind;
+        if (elementKind !== "record") { return false; }
+        let fields: table = element.fields;
+        return hasKind(fields, "id", "string") && hasKind(fields, "name", "string") && hasKind(fields, "specification", "string") && hasKind(fields, "cents", "int") && hasKind(fields, "available", "int");
+    } catch (error) { return false; }
+}
+function contextString(entries: table[], name: string): string {
+    for (let entry: table of entries) { let key: string = entry.key; if (key === name) { let value: string = entry.value; return value; } }
+    throw { code: "CONTEXT_MISSING", message: "Missing context string" };
+}
+function supportedContext(context: table, entries: table[]): boolean {
+    try {
+        let quantity: int = context.quantity;
+        if (quantity < 1 || quantity > 128) { return false; }
+        let requirement: string = context.requirement; let specification: string = context.specification;
+        let start: string = contextString(entries, "from"); let until: string = context.until;
+        if (strings.trim(requirement) === "" || strings.trim(specification) === "" || strings.trim(start) === "" || strings.trim(until) === "") { return false; }
+        let terms: string[] = context.searchTerms;
+        if (terms.length < 1 || terms.length > 8) { return false; }
+        for (let term: string of terms) { if (strings.trim(term) === "") { return false; } }
+        return true;
+    } catch (error) { return false; }
+}
+// Wire string bounds are UTF-16 units on Android, not DEAL scalar positions.
+function wireLength(value: string): int {
+    let length: int = 0;
+    for (let scalar: string of value) {
+        if (scalar > "￿") { length = length + 2; } else { length = length + 1; }
+    }
+    return length;
+}
+export async function inventory(catalogJson: string, disclosed: string, entriesJson: string): table {
+    let context: table = {};
+    try { context = await data.parse(disclosed); } catch (error) { let empty: table = {}; context = empty; }
+    let entriesEnvelope: table = await data.parse(entriesJson); let entries: table[] = entriesEnvelope.entries;
+    let envelope: table = await data.parse("{\"contracts\":" + catalogJson + "}");
+    let contracts: table[] = envelope.contracts;
+    let reads: table[] = []; let preparations: table[] = [];
+    for (let contract: table of contracts) {
+        let module: string = contract.module; let functions: table[] = contract.functions;
+        for (let fn: table of functions) {
+            if (isPreparation(fn)) { let args: string[] = []; preparations[preparations.length] = { alias: "prepare", module: module, contractFunction: fn, arguments: args }; }
+            if (isCatalogue(fn)) {
+                let params: table[] = fn.parameters; let args: string[] = []; let valid: boolean = true;
+                for (let p: table of params) {
+                    try {
+                        let name: string = p.name; let type: table = p.type; let kind: string = type.kind; let maximum: int = type.maximum;
+                        let value: string = ""; let found: boolean = false;
+                        for (let entry: table of entries) {
+                            let key: string = entry.key;
+                            if (key === name) { value = entry.value; found = true; }
+                        }
+                        if (!found) { valid = false; }
+                        if (kind !== "string" || wireLength(value) > maximum) { valid = false; }
+                        args[args.length] = value;
+                    } catch (error) { valid = false; }
+                }
+                if (valid) { reads[reads.length] = { alias: "read" + decimal(reads.length), module: module, contractFunction: fn, arguments: args }; }
+            }
+        }
+    }
+    let preparation: table = {};
+    if (preparations.length === 1) { preparation = preparations[0]; }
+    if (preparations.length !== 1 || !supportedContext(context, entries)) { reads = []; }
+    return { reads: reads, preparation: preparation, context: context, contextEntries: entries };
+}
+export function issued(catalog: string, inventory: table): string {
+    let reads: table[] = inventory.reads;
+    let aliases: string[] = [];
+    for (let read: table of reads) { let alias: string = read.alias; aliases[aliases.length] = alias; }
+    aliases[aliases.length] = "unavailable";
+    let result: table = {
+        protocol: "embedding/dealui-choice-v2",
+        constraint: "Choose the catalogue relevant to the disclosed requirement, not an operations history. Unsupported intents must choose unavailable. Source is always checked after lowering.",
+        responseFormat: "Return ONLY {\"answers\":{\"purpose\":\"<alias>\",\"headline\":\"<alias>\",\"notice\":\"<alias>\",\"read\":\"<alias>\"}}. Each answer must be an issued alias.",
+        catalog: catalog, reads: reads,
+        questions: { purpose: ["compare", "choose", "unavailable"], headline: ["hero", "text"], notice: ["warning", "none"], read: aliases }
+    };
+    return json.stringify(result);
+}
+export async function validate(raw: string, inventory: table): table {
+    let parsed: table = {};
+    try { parsed = await data.parse(raw); } catch (error) { return { accepted: false, diagnostics: "CHOICE_JSON: expected JSON object" }; }
+    if (tables.keys(parsed).length !== 1) { return { accepted: false, diagnostics: "CHOICE_SHAPE: expected only answers" }; }
+    let answers: table = {};
+    try { let readAnswers: table = parsed.answers; answers = readAnswers; } catch (error) { return { accepted: false, diagnostics: "CHOICE_SHAPE: missing answers" }; }
+    if (tables.keys(answers).length !== 4) { return { accepted: false, diagnostics: "CHOICE_SHAPE: answer every issued question" }; }
+    let issuedEnvelope: table = await data.parse(issued("", inventory)); let questions: table = issuedEnvelope.questions;
+    let keys: string[] = ["purpose", "headline", "notice", "read"];
+    for (let key: string of keys) {
+        let valid: boolean = false; let value: string = "";
+        try {
+            let options: string[] = [];
+            if (key === "purpose") { let v: string = answers.purpose; value = v; options = questions.purpose; }
+            if (key === "headline") { let v: string = answers.headline; value = v; options = questions.headline; }
+            if (key === "notice") { let v: string = answers.notice; value = v; options = questions.notice; }
+            if (key === "read") { let v: string = answers.read; value = v; options = questions.read; }
+            for (let option: string of options) { if (value === option) { valid = true; } }
+        } catch (error) { valid = false; }
+        if (!valid) { return { accepted: false, diagnostics: "CHOICE_ALIAS: invalid " + key }; }
+        if (value === "unavailable") { return { accepted: false, diagnostics: "CHOICE_UNSUPPORTED: " + key }; }
+    }
+    let selected: string = answers.read; let reads: table[] = inventory.reads;
+    for (let read: table of reads) {
+        let alias: string = read.alias;
+        if (alias === selected) { return { accepted: true, diagnostics: "", selection: { answers: answers, read: read, preparation: inventory.preparation, context: inventory.context, contextEntries: inventory.contextEntries } }; }
+    }
+    return { accepted: false, diagnostics: "CHOICE_ALIAS: invalid read" };
+}
+export function main(): null { return null; }

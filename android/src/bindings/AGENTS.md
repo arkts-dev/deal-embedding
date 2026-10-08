@@ -4,7 +4,9 @@ Derive application declarations and sandbox configuration from provider contract
 
 `ExperienceGenerator` services core discovery, choice, model and checker calls and owns checked staging cleanup. Keep application capability execution in experience sessions.
 
-Issue only supported typed catalogue reads whose arguments are available in disclosed context. Let choice select an explicit issued adapter; do not select the first function or assume a record is an array. Keep selection and preparation in DEAL, and surface unsupported context/schema as diagnostics. Template output still requires the ordinary checker.
+Keep eligibility, issued aliases and answer validation in `core/choice-policy.deal`. Native choice code only transports raw inference; `core/catalogue-source.deal` synthesizes the trusted template. `core/candidate-check.deal` validates source envelopes; the native checker accepts two source strings and classifies only typed candidate rejection. Do not catch generic argument/JSON exceptions as repairable compiler failures. Provide Unicode lowercase and normalize JSON shapes/string-entry context without deciding policy; current DEAL dynamic table reads and JSON-array representation require these boundary mechanisms. Template output still requires the ordinary checker.
+
+Use bounded shape-only stage receipts for routine diagnostics. Do not include prompts, source, provider payloads or exception messages. Keep raw replay capture explicitly opt-in and app-private; correlate runs, candidates, workspaces, actions and request IDs.
 
 `DealSessionBindings` forwards compiler-issued UI operations. Preserve generated store, action, effect and reconciliation semantics.
 

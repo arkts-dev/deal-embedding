@@ -31,7 +31,8 @@ public final class GenerationBindings {
                     if (!(statement instanceof ExportDeclaration exported) || !(exported.declaration() instanceof FunctionDeclaration fn) || !fn.isExternal() || !fn.isAsync())
                         throw new IllegalArgumentException("Expected exported async host function: " + file);
                     var parameters = fn.params().stream().map(p -> "{\"name\":" + quote(p.name()) + ",\"type\":" + type(p.type(), null) + "}").toList();
-                    String schema = module.equals("embedding/checker") && fn.name().equals("check") ? Files.readString(declarations.resolve("check-result.json")).trim() : null;
+                    String schema = module.equals("embedding/checker") && fn.name().equals("check") ? Files.readString(declarations.resolve("check-result.json")).trim() :
+                        module.equals("embedding/policy-data") && fn.name().equals("parse") ? Files.readString(declarations.resolve("parse-result.json")).trim() : null;
                     functions.add("{\"name\":" + quote(fn.name()) + ",\"parameters\":[" + String.join(",", parameters) + "],\"result\":" + type(fn.returnType(), schema) + "}");
                 }
                 modules.add("{\"module\":" + quote(module) + ",\"functions\":[" + String.join(",", functions) + "]}");

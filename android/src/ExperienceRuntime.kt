@@ -36,25 +36,28 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
         guarded(live = false) { ExperienceGenerator(context, config.copy(contracts = config.contracts.toList()), sandbox()).generate(intent, disclosedContext, model, cancellation, progress) }
     fun activate(candidate: CheckedCandidate): JSONObject {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
-        val snapshot = activateChecked(candidate.source, candidate.output, preserveState = false)
+        val snapshot = activateChecked(candidate.source, candidate.output, preserveState = false, receipts = candidate.receipts, identity = candidate.identity)
         candidate.consumed = true
         return snapshot
     }
     /** Check saved or host-supplied source without inference; activation remains a separate decision. */
     fun check(source: ExperienceSource): CheckedCandidate = guarded(live = false) {
-        CheckedCandidate(source, ExperienceCompiler(context, config).compile(source.deal, source.ui), catalogRevision(config), 0)
+        val receipts = StageReceipts(context)
+        val identity = UUID.randomUUID().toString()
+        receipts.event("route", "saved", candidate = identity)
+        CheckedCandidate(source, receipts.stage("check", candidate = identity) { ExperienceCompiler(context, config).compile(source.deal, source.ui) }, catalogRevision(config), 0, receipts, identity)
     }
     fun activate(source: ExperienceSource): JSONObject {
         val candidateOutput = ExperienceCompiler(context, config).compile(source.deal, source.ui)
         return activateChecked(source, candidateOutput)
     }
-    internal fun activateChecked(source: ExperienceSource, candidateOutput: File, preserveState: Boolean = true): JSONObject = guarded(live = false) {
+    internal fun activateChecked(source: ExperienceSource, candidateOutput: File, preserveState: Boolean = true, receipts: StageReceipts = StageReceipts(context), identity: String = UUID.randomUUID().toString()): JSONObject = guarded(live = false) {
         var candidate: UiSession? = null
         try {
             val sandbox = sandbox()
-            candidate = UiSession(context, capabilities, sandbox, config)
+            candidate = UiSession(context, capabilities, sandbox, config, receipts, identity)
             val retainedState = guarded { session?.state() } // Still reject outstanding effects.
-            val snapshot = candidate.mount(candidateOutput, if (preserveState) retainedState else null)
+            val snapshot = receipts.stage("mount", candidate = identity) { candidate.mount(candidateOutput, if (preserveState) retainedState else null) }
             storage.commit(source)
             session?.close()
             output?.parentFile?.deleteRecursively()
@@ -70,14 +73,19 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     fun open(title: String, candidate: CheckedCandidate): Pair<LiveWorkspace, JSONObject> = guarded(live = false) {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
         val id = UUID.randomUUID().toString()
-        val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config), candidate.output, candidate.source)
+        val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config, candidate.receipts, candidate.identity, id), candidate.output, candidate.source)
         try {
-            val snapshot = live.session.mount(candidate.output)
+            val snapshot = candidate.receipts.stage("mount", candidate.identity, id) { live.session.mount(candidate.output) }
             candidate.consumed = true
             workspaces[id] = live
             storage.saveWorkspace(id, title, candidate.source)
             live to snapshot
         } catch (error: Throwable) { live.session.close(); candidate.output.parentFile?.deleteRecursively(); throw error }
+    }
+    /** Native host acknowledges publication separately from runtime snapshot production. */
+    fun published(id: String, version: Int) {
+        val live = workspaces[id] ?: return
+        live.session.published(version)
     }
     fun workspaces(): List<LiveWorkspace> = workspaces.values.toList()
     fun workspace(id: String): LiveWorkspace? = workspaces[id]

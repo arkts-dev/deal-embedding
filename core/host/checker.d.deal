@@ -1,1 +1,1 @@
-export async function check(sourceEnvelope: string): table;
+export async function check(deal: string, dealui: string): table;

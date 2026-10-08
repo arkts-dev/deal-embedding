@@ -1,0 +1,61 @@
+import * as assets from "./generation-guidance.generated";
+
+// Composition discipline not enforced by the checker. Pack facts remain build-derived.
+export function composition(): string {
+    return "- Use each component only for what its call line shows; never invent a property.\n" +
+        "- Keep one dominant heading per view and one primary action per surface.\n" +
+        "- Use a Card for a bounded group, not for spacing or every row.\n" +
+        "- Never nest a Card inside a Card.\n" +
+        "- Show loading, empty and failure states with Progress, an explanatory Text, and Failure when a retry action exists.\n" +
+        "- Every event action must consume its payload; never pass a constant where a payload is declared.\n" +
+        "- Keep validation results in DEAL state and render them; the renderer holds no validated value.";
+}
+export function componentFacts(pack: table): string {
+    let out: string = ""; let components: table[] = pack.components;
+    for (let component: table of components) {
+        let name: string = component.name; let fields: table[] = component.fields; let contracts: table[] = component.contracts;
+        let arguments: string = "";
+        for (let field: table of fields) {
+            let fieldName: string = field.name; let type: string = field.type;
+            let defaultKind: string = field.defaultKind; let defaultText: string = field.defaultText;
+            let action: boolean = type === "Action";
+            for (let contract: table of contracts) {
+                let kind: string = contract.kind;
+                if (kind === "event") { let prop: string = contract.prop; if (prop === fieldName) { action = true; } }
+            }
+            let value: string = "\"" + fieldName + "\"";
+            if (fieldName === "value") { value = "state.value"; }
+            if (type === "boolean") { value = "false"; }
+            if (type === "int") { value = "0"; }
+            if (defaultKind === "string" && defaultText !== "") { value = "\"" + defaultText + "\""; }
+            if (defaultKind === "int") { value = defaultText; }
+            if (action) { value = "action app.Action {}"; }
+            if (arguments !== "") { arguments = arguments + ", "; }
+            arguments = arguments + fieldName + ": " + value;
+        }
+        let behaviour: string = ""; let children: boolean = false;
+        for (let contract: table of contracts) {
+            let kind: string = contract.kind; let text: string = "";
+            if (kind === "event") {
+                let prop: string = contract.prop; let payload: string = contract.payload;
+                text = "raises " + prop;
+                if (payload !== "") { text = text + " carrying a " + payload + " payload"; }
+            }
+            if (kind === "children") {
+                children = true; let required: boolean = contract.required;
+                text = "accepts children"; if (required) { text = "requires children"; }
+            }
+            if (text !== "") { if (behaviour !== "") { behaviour = behaviour + "; "; } behaviour = behaviour + text; }
+        }
+        if (out !== "") { out = out + "\n"; }
+        out = out + "- " + name + ": ui." + name + "(" + arguments + ")";
+        if (children) { out = out + " { ... }"; }
+        if (behaviour !== "") { out = out + "  [" + behaviour + "]"; }
+    }
+    return out;
+}
+export function guidance(): string {
+    return "DEAL RULES\n" + assets.language() + "\n\nHOW TO COMPOSE A VIEW\n" + composition() +
+        "\n\nTHIS RENDERER\n" + assets.renderer() + "\n\nCOMPONENTS (this is the complete set)\n" + componentFacts(assets.pack());
+}
+export function main(): null { return null; }

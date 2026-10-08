@@ -1,0 +1,5 @@
+// JSON shape normalization only: decode objects as tables and arrays as typed ABI arrays.
+// This avoids std/json's marked-table array representation on the current JS backend.
+export async function parse(input: string): table;
+// Unicode string primitive; no catalogue or source policy in the host.
+export async function lowercase(input: string): string;

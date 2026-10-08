@@ -1,0 +1,31 @@
+import * as data from "embedding/policy-data";
+import * as tables from "std/table";
+import * as json from "std/json";
+import * as checker from "embedding/checker";
+import * as observer from "embedding/observer";
+
+function invalid(message: string): table {
+    return { accepted: false, candidateId: "", diagnostics: json.stringify({ diagnostics: [{ stage: "envelope", code: "INVALID_CANDIDATE", message: message }] }) };
+}
+// Envelope/repair policy belongs here. Host compiler failures other than candidate
+// rejection propagate: resource, transport and implementation defects are not repairable source.
+export async function check(raw: string): table {
+    let envelope: table = {};
+    try { envelope = await data.parse(raw); }
+    catch (error) {
+        if (error.code !== "INVALID_JSON") { throw error; }
+        await observer.record("check", "rejected", "INVALID_ENVELOPE");
+        return invalid("Envelope is not a JSON object");
+    }
+    let deal: string = ""; let ui: string = "";
+    try {
+        let keys: string[] = tables.keys(envelope);
+        if (keys.length !== 2) { throw { code: "INVALID_ENVELOPE", message: "Envelope must contain exactly deal and dealui" }; }
+        deal = envelope.deal; ui = envelope.dealui;
+    } catch (error) {
+        await observer.record("check", "rejected", "INVALID_ENVELOPE");
+        return invalid("Envelope must contain exactly deal and dealui strings");
+    }
+    return await checker.check(deal, ui);
+}
+export function main(): null { return null; }

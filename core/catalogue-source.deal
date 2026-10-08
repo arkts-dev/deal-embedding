@@ -1,0 +1,186 @@
+import * as data from "embedding/policy-data";
+import * as json from "std/json";
+import * as literals from "./source-literals";
+import * as observer from "embedding/observer";
+
+// The existing bounded catalogue template, not a generalized workflow engine.
+function quote(value: string): string { return literals.quote(value); }
+function decimal(value: int): string { return literals.decimal(value); }
+export async function lower(sourceName: string, selection: table): string {
+    await observer.record("lower", "started", "");
+    try {
+        let result: string = await synthesize(sourceName, selection);
+        await observer.record("lower", "completed", "");
+        return result;
+    } catch (error) {
+        await observer.record("lower", "failed", error.code);
+        throw error;
+    }
+}
+async function synthesize(sourceName: string, selection: table): string {
+    let chosen: table = selection.answers;
+    let read: table = selection.read;
+    let preparation: table = selection.preparation;
+    let context: table = selection.context;
+    let readModule: string = read.module;
+    let readContract: table = read.contractFunction;
+    let readFunction: string = readContract.name;
+    let arguments: string[] = read.arguments;
+    let prepareModule: string = preparation.module;
+    let prepareContract: table = preparation.contractFunction;
+    let prepareFunction: string = prepareContract.name;
+    let title: string = context.requirement;
+    let quantity: int = context.quantity;
+    let terms: string[] = context.searchTerms;
+    if (quantity < 1 || quantity > 128 || terms.length < 1 || terms.length > 8) { throw { code: "CHOICE_CONTEXT", message: "Invalid catalogue context" }; }
+    let deadline: string = context.until;
+    let spec: string = context.specification;
+    // Reserved wire field names are read through normalized string entries.
+    let entries: table[] = selection.contextEntries;
+    let start: string = "";
+    for (let entry: table of entries) { let key: string = entry.key; if (key === "from") { start = entry.value; } }
+    let condition: string = "";
+    for (let term: string of terms) {
+        if (condition !== "") { condition = condition + " && "; }
+        let normalized: string = await data.lowercase(term);
+        condition = condition + "strings.contains(search, " + quote(normalized) + ")";
+    }
+    let argumentSource: string = "";
+    for (let argument: string of arguments) {
+        if (argumentSource !== "") { argumentSource = argumentSource + ", "; }
+        argumentSource = argumentSource + quote(argument);
+    }
+    let purposeAnswer: string = chosen.purpose; let headline: string = chosen.headline; let notice: string = chosen.notice;
+    let purpose: string = "Compare"; if (purposeAnswer === "choose") { purpose = "Choose"; }
+    let header: string = "Text"; if (headline === "hero") { header = "Hero"; }
+    let warning: string = "";
+    if (notice === "warning") { warning = "ui.Notice(text: " + quote("Requested: " + spec + ". Availability is not a reservation.") + ", tone: \"warning\")"; }
+    let source: string = "import * as catalogue from " +
+        quote(readModule) +
+        ";\nimport * as review from " +
+        quote(prepareModule) +
+        ";\n" +
+        "import * as strings from \"std/string\";\n" +
+        "export class Row { id: string = \"\"; title: string = \"\"; detail: string = \"\"; price: string = \"\"; meta: string = \"\"; available: boolean = false; selected: boolean = false; }\n" +
+        "export class Load {}\n" +
+        "export class Pick { value: string = \"\"; }\n" +
+        "export class Prepare {}\n" +
+        "export class Loaded { rows: Row[] = []; status: string = \"\"; failed: boolean = false; }\n" +
+        "export class Prepared { status: string = \"\"; failed: boolean = false; }\n" +
+        "export class Workspace { rows: Row[] = []; status: string = \"Load available options for the requested period.\"; selected: string = \"\"; loading: boolean = false; failed: boolean = false; }\n" +
+        "function decimal(value: int): string {\n" +
+        "    if (value < 0) { throw { code: \"BAD_PRICE\", message: \"Negative catalogue amount\" }; }\n" +
+        "    if (value === 0) { return \"0\"; }\n" +
+        "    let out: string = \"\"; let remaining: int = value;\n" +
+        "    while (remaining > 0) { let digit: int = remaining % 10; out = strings.substring(\"0123456789\", digit, digit + 1) + out; remaining = remaining / 10; }\n" +
+        "    return out;\n" +
+        "}\n" +
+        "function money(cents: int): string { let rest: int = cents % 100; let pad: string = \"\"; if (rest < 10) { pad = \"0\"; } return \"€\" + decimal(cents / 100) + \".\" + pad + decimal(rest); }\n" +
+        "function lowercase(text: string): string {\n" +
+        "    let out: string = \"\";\n" +
+        "    for (let ch: string of text) {\n" +
+        "        let found: boolean = false;\n" +
+        "        for (let i: int = 0; i < 26; i = i + 1) { if (ch === strings.substring(\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\", i, i + 1)) { out = out + strings.substring(\"abcdefghijklmnopqrstuvwxyz\", i, i + 1); found = true; } }\n" +
+        "        if (!found) { out = out + ch; }\n" +
+        "    }\n" +
+        "    return out;\n" +
+        "}\n" +
+        "export function initialState(): Workspace { return {}; }\n" +
+        "// @ui-update\n" +
+        "export function load(state: Workspace, action: Load): Workspace { return { rows: state.rows, status: \"Loading catalogue…\", selected: \"\", loading: true }; }\n" +
+        "// @ui-effect\n" +
+        "export async function fetch(state: Workspace, action: Load): Loaded {\n" +
+        "    try {\n" +
+        "        let records: table[] = await catalogue." +
+        readFunction +
+        "(" +
+        argumentSource +
+        ");\n" +
+        "        let rows: Row[] = [];\n" +
+        "        for (let record: table of records) {\n" +
+        "            let id: string = record.id; let name: string = record.name; let specification: string = record.specification;\n" +
+        "            let cents: int = record.cents; let available: int = record.available;\n" +
+        "            let search: string = lowercase(name + \" \" + specification);\n" +
+        "            if (" +
+        condition +
+        ") {\n                if (cents < 0 || cents > " +
+        decimal(2147483647 / quantity) +
+        " || available < 0) { throw { code: \"BAD_CATALOGUE\", message: \"Invalid price or availability\" }; }\n                let cost: int = cents * " +
+        decimal(quantity) +
+        ";\n                rows[rows.length] = { id: id, title: name, detail: specification, price: money(cost), meta: decimal(available) + \" available · quantity " +
+        decimal(quantity) +
+        "\", available: available >= " +
+        decimal(quantity) +
+        " };\n" +
+        "            }\n" +
+        "        }\n" +
+        "        let status: string = \"Select an option; specification still needs your review.\";\n" +
+        "        if (rows.length === 0) { status = \"No matching options. The requirement remains unresolved.\"; }\n" +
+        "        return { rows: rows, status: status };\n" +
+        "    } catch (error) { return { rows: state.rows, status: error.code + \": \" + error.message, failed: true }; }\n" +
+        "}\n" +
+        "// @ui-update\n" +
+        "export function loaded(state: Workspace, action: Loaded): Workspace { return { rows: action.rows, status: action.status, failed: action.failed }; }\n" +
+        "// @ui-update\n" +
+        "export function pick(state: Workspace, action: Pick): Workspace {\n" +
+        "    let rows: Row[] = []; let selected: string = \"\";\n" +
+        "    for (let row: Row of state.rows) {\n" +
+        "        let match: boolean = row.id === action.value && row.available;\n" +
+        "        if (match) { selected = row.id; }\n" +
+        "        rows[rows.length] = { id: row.id, title: row.title, detail: row.detail, price: row.price, meta: row.meta, available: row.available, selected: match };\n" +
+        "    }\n" +
+        "    return { rows: rows, selected: selected, status: \"Review the selected specification, then prepare for native review.\" };\n" +
+        "}\n" +
+        "// @ui-update\n" +
+        "export function prepare(state: Workspace, action: Prepare): Workspace { return { rows: state.rows, selected: state.selected, status: \"Preparing review…\", loading: true }; }\n" +
+        "// @ui-effect\n" +
+        "export async function stage(state: Workspace, action: Prepare): Prepared {\n" +
+        "    try {\n" +
+        "        for (let row: Row of state.rows) {\n" +
+        "            if (row.id === state.selected && row.available) {\n" +
+        "                let detail: string = " +
+        quote("Required: " + spec + ". Period: " + start + " to " + deadline + ". ") +
+        " + \"Item \" + row.id + \":" +
+        decimal(quantity) +
+        " · \" + row.detail;\n                let staged: table = await review." +
+        prepareFunction +
+        "(\"catalogue-selection\", " +
+        quote(readModule) +
+        ", row.title, detail, row.price, " +
+        quote(deadline) +
+        ");\n" +
+        "                let accepted: boolean = staged.staged;\n" +
+        "                if (!accepted) { throw { code: \"NOT_STAGED\", message: \"Native review rejected the descriptor\" }; }\n" +
+        "                return { status: \"Prepared for native review. No reservation has been made.\" };\n" +
+        "            }\n" +
+        "        }\n" +
+        "        return { status: \"Choose an available option first.\", failed: true };\n" +
+        "    } catch (error) { return { status: error.code + \": \" + error.message, failed: true }; }\n" +
+        "}\n" +
+        "// @ui-update\n" +
+        "export function prepared(state: Workspace, action: Prepared): Workspace { return { rows: state.rows, selected: state.selected, status: action.status, failed: action.failed }; }\n" +
+        "export function main(): null { return null; }";
+    let ui: string = "import * as app from \"./" +
+        sourceName +
+        "\";\nimport * as ui from \"./platform.dealui-pack\";\n// @ui-root\nexport view WorkspaceView(state: app.Workspace): View {\n    ui.Column() {\n        ui." +
+        header +
+        "(value: " +
+        quote(purpose + " " + title) +
+        ")\n        ui.Text(value: " +
+        quote(decimal(quantity) + " required · " + start + " to " + deadline) +
+        ")\n        ui.Text(value: state.status)\n        " +
+        warning +
+        "\n" +
+        "        When(state.loading) { ui.Progress(label: \"Waiting for connected app\") } Else {\n" +
+        "            When(state.failed) { ui.Failure(text: state.status, accessibilityLabel: \"Retry catalogue\", onRetry: action app.Load {}) }\n" +
+        "            ForEach(state.rows, row: app.Row, key: row.id) {\n" +
+        "                ui.Option(value: row.id, title: row.title, detail: row.detail, price: row.price, meta: row.meta, enabled: row.available, selected: row.selected, accessibilityLabel: row.title, onSelect: action app.Pick { value: payload })\n" +
+        "            }\n" +
+        "            ui.Button(text: \"Load options\", accessibilityLabel: \"Load options\", onClick: action app.Load {})\n" +
+        "            When(state.selected !== \"\") { ui.Button(text: \"Prepare for review\", accessibilityLabel: \"Prepare for review\", onClick: action app.Prepare {}) }\n" +
+        "        }\n" +
+        "    }\n" +
+        "}";
+    return json.stringify({ deal: source, dealui: ui });
+}
+export function main(): null { return null; }

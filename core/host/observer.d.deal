@@ -1,0 +1,2 @@
+// Bounded stage identity and diagnostic code only; never source, prompts or payloads.
+export async function record(stage: string, outcome: string, code: string): null;

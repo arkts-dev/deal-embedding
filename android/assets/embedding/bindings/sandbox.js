@@ -82,7 +82,17 @@ globalThis.dealLoad = function(factories, entryId) {
       }
       return value;
     }
+    function convertJson(value) {
+      if (Array.isArray(value)) return value.map(convertJson);
+      if (value !== null && typeof value === 'object') {
+        const fields = Object.create(null);
+        for (const key of Object.keys(value)) fields[key] = convertJson(value[key]);
+        return load('deal/runtime.js').makeTable(fields);
+      }
+      return value;
+    }
     function convert(type, value) {
+      if (type.kind === 'json-object') return convertJson(value);
       if (type.kind === 'array') return value.map(item => convert(type.element, item));
       if (type.kind === 'record') {
         const fields = Object.create(null);
