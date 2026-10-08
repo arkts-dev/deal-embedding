@@ -1,3 +1,4 @@
+import * as strings from "std/string";
 import * as discovery from "embedding/discovery";
 import * as model from "embedding/model";
 import * as checker from "./candidate-check";
@@ -5,10 +6,11 @@ import * as catalogueSource from "./catalogue-source";
 import * as chooser from "embedding/chooser";
 import * as policy from "./choice-policy";
 import * as observer from "embedding/observer";
+import * as repair from "./source-repair";
 // Baked at build time: DEAL has no file or asset access, so guidance travels with the core.
 import * as guidanceSource from "./generation-guidance";
 
-export class GenerationRequest { intent: string = ""; context: string = ""; contextEntries: string = "{\"entries\":[]}"; sourceName: string = "experience"; }
+export class GenerationRequest { intent: string = ""; context: string = ""; contextEntries: string = "{\"entries\":[]}"; sourceName: string = "experience"; repairStrategy: string = "full"; }
 export class GenerationResult { candidateId: string = ""; attempts: int = 0; diagnostics: string = ""; usedFallback: boolean = false; }
 
 // Trusted workflow only. Native adapters implement mechanisms, never the retry policy.
@@ -36,15 +38,27 @@ export async function generate(request: GenerationRequest): GenerationResult {
         return { candidateId: "", attempts: 1, diagnostics: "TEMPLATE_CHECK_FAILED: " + checked.diagnostics, usedFallback: false };
     }
     // Escape hatch: let the model write source, with the choice diagnostics as feedback.
-    let previous: string = "";
+    let previous: string = ""; let lastResponse: string = "";
     for (let attempt: int = 0; attempt < 3; attempt = attempt + 1) {
-        let raw: string = await model.complete(choiceInput, previous, diagnostics);
+        let input: string = choiceInput;
+        let patching: boolean = request.repairStrategy === "delta" && previous !== "";
+        if (patching) { input = input + await repair.instruction(previous); }
+        let raw: string = await model.complete(input, previous, diagnostics);
+        if (raw === lastResponse) { return { candidateId: "", attempts: attempt + 1, diagnostics: "REPEATED_CANDIDATE: " + diagnostics, usedFallback: true }; }
+        lastResponse = raw;
+        if (patching) {
+            let edited: table = await repair.apply(previous, raw); let applied: boolean = edited.accepted;
+            if (!applied) { diagnostics = edited.diagnostics; continue; }
+            raw = edited.source;
+        }
         let checked: table = await checker.check(raw);
         let accepted: boolean = checked.accepted;
         let candidateId: string = checked.candidateId;
         diagnostics = checked.diagnostics;
         if (accepted) { return { candidateId: candidateId, attempts: attempt + 1, diagnostics: "", usedFallback: true }; }
-        previous = raw;
+        // An invalid envelope has no patchable source base; next call requests full source.
+        if (!patching || !strings.contains(diagnostics, "INVALID_CANDIDATE")) { previous = raw; }
+        if (request.repairStrategy === "delta" && strings.contains(diagnostics, "INVALID_CANDIDATE")) { previous = ""; }
     }
     return { candidateId: "", attempts: 3, diagnostics: diagnostics, usedFallback: true };
 }

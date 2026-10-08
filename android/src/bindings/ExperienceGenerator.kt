@@ -46,7 +46,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
         fun eval(s: String) = program.evaluate(s)
         try {
             val bundle = SandboxBundle.build(context, listOf("generation-contracts.js", "generation-session.js"), "",
-                "runGeneration(factories, ${JSONObject().put("intent", intent).put("context", disclosedContext).put("contextEntries", JSONObject().put("entries", entries).toString()).put("sourceName", config.sourceName)})", assetRoot = "generation")
+                "runGeneration(factories, ${JSONObject().put("intent", intent).put("context", disclosedContext).put("contextEntries", JSONObject().put("entries", entries).toString()).put("sourceName", config.sourceName).put("repairStrategy", config.repairStrategy)})", assetRoot = "generation")
             eval(bundle)
             var attempts = 0
             while (true) {
@@ -81,6 +81,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         "embedding/policy-data" -> when (request.getString("function")) {
                             "lowercase" -> args.getString(0).lowercase()
                             "utf16Length" -> args.getString(0).length
+                            "sha256" -> MessageDigest.getInstance("SHA-256").digest(args.getString(0).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
                             "parse" -> {
                                 try { JSONObject(args.getString(0)) }
                                 catch (error: JSONException) {

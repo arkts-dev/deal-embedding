@@ -113,7 +113,7 @@ export function issued(catalog: string, inventory: table): string {
     aliases[aliases.length] = "unavailable";
     let result: table = {
         protocol: "embedding/dealui-choice-v2",
-        constraint: "Choose the catalogue relevant to the disclosed requirement, not an operations history. Unsupported intents must choose unavailable. Source is always checked after lowering.",
+        constraint: "Choose the catalogue relevant to the disclosed requirement, not an operations history. This fixed template has no editable quantity, total-budget or search form and does not enforce a spending ceiling; intents requiring these features must choose unavailable. Unsupported intents must choose unavailable. Source is always checked after lowering.",
         responseFormat: "Return ONLY {\"answers\":{\"purpose\":\"<alias>\",\"headline\":\"<alias>\",\"notice\":\"<alias>\",\"read\":\"<alias>\"}}. Each answer must be an issued alias.",
         catalog: catalog, reads: reads,
         questions: { purpose: ["compare", "choose", "unavailable"], headline: ["hero", "text"], notice: ["warning", "none"], read: aliases }

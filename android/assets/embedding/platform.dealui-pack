@@ -1,6 +1,6 @@
 pack version "1";
 export class TextProps { value: string = ""; }
-export class ButtonProps { text: string = ""; onClick?: Action; accessibilityLabel?: string; }
+export class ButtonProps { text: string = ""; enabled: boolean = true; onClick?: Action; accessibilityLabel?: string; }
 export class ToggleProps { value: string = ""; text: string = ""; checked: boolean = false; onChange?: Action; accessibilityLabel?: string; }
 export component Toggle(props: ToggleProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.toggle"; }
 export class EmptyProps {}
@@ -20,11 +20,13 @@ export component Section(props: SectionProps): View { children required; capabil
 export class OptionProps { value: string = ""; title: string = ""; detail: string = ""; price: string = ""; meta: string = ""; selected: boolean = false; enabled: boolean = true; onSelect?: Action; accessibilityLabel?: string; }
 export component Option(props: OptionProps): View { children optional; event onSelect(payload: string); accessibility accessibilityLabel; capability "renderer.compose.option"; }
 
-export class IntFieldProps { value: int = 0; label: string = ""; minimum: int = 0; maximum: int = 999; onChange?: Action; accessibilityLabel?: string; }
+export class IntFieldProps { value: int = 0; label: string = ""; minimum: int = 0; maximum: int = 999; step: int = 1; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
 export component IntField(props: IntFieldProps): View { event onChange(payload: int); accessibility accessibilityLabel; capability "renderer.compose.intfield"; }
 
-export class TextFieldProps { value: string = ""; label: string = ""; multiline: boolean = false; onChange?: Action; accessibilityLabel?: string; }
+export class TextFieldProps { value: string = ""; label: string = ""; multiline: boolean = false; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
 export component TextField(props: TextFieldProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.textfield"; }
+
+export component SearchField(props: TextFieldProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.searchfield"; }
 
 export class ChoiceProps { value: string = ""; label: string = ""; first: string = ""; second: string = ""; third: string = ""; onFirst?: Action; onSecond?: Action; onThird?: Action; accessibilityLabel?: string; }
 export component Choice(props: ChoiceProps): View { event onFirst(payload: string); event onSecond(payload: string); event onThird(payload: string); accessibility accessibilityLabel; capability "renderer.compose.choice"; }

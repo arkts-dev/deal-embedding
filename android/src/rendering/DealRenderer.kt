@@ -32,6 +32,7 @@ internal enum class RenderComponent(val component: String, val capability: Strin
     Spinner("Spinner", "renderer.compose.spinner"),
     Section("Section", "renderer.compose.section"), Option("Option", "renderer.compose.option"),
     IntField("IntField", "renderer.compose.intfield"), TextField("TextField", "renderer.compose.textfield"),
+    SearchField("SearchField", "renderer.compose.searchfield"),
     Choice("Choice", "renderer.compose.choice"), Filters("Filters", "renderer.compose.filters"),
     Notice("Notice", "renderer.compose.notice"), Progress("Progress", "renderer.compose.progress"),
     Failure("Failure", "renderer.compose.failure"), Item("Item", "renderer.compose.item"),
@@ -72,7 +73,7 @@ internal enum class RenderComponent(val component: String, val capability: Strin
         }
         RenderComponent.Text -> Text(text("value"), style = MaterialTheme.typography.bodyLarge)
         RenderComponent.Hero -> Text(text("value"), style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.primary)
-        RenderComponent.Button -> Button(onClick = { prop("onClick")?.let { dispatch(it.getInt("actionSlot"), null) } }, modifier = Modifier.fillMaxWidth().semantics { contentDescription = text("accessibilityLabel") }, contentPadding = PaddingValues(18.dp)) { Text(text("text")) }
+        RenderComponent.Button -> Button(enabled = flag("enabled"), onClick = { prop("onClick")?.let { dispatch(it.getInt("actionSlot"), null) } }, modifier = Modifier.fillMaxWidth().semantics { contentDescription = text("accessibilityLabel") }, contentPadding = PaddingValues(18.dp)) { Text(text("text")) }
         RenderComponent.Toggle -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(text("text"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             Checkbox(flag("checked"), { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), text("value")) } }, modifier = Modifier.semantics { contentDescription = text("accessibilityLabel") })
@@ -120,20 +121,41 @@ internal enum class RenderComponent(val component: String, val capability: Strin
         }
         RenderComponent.IntField -> {
             val value = number("value")
-            val lower = number("minimum"); val upper = number("maximum")
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text(text("label"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value - 1).coerceAtLeast(lower).toString()) } }, enabled = value > lower) { Text("−") }
-                Text(value.toString(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.widthIn(min = 32.dp))
-                FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value + 1).coerceAtMost(upper).toString()) } }, enabled = value < upper) { Text("+") }
+            val lower = number("minimum"); val upper = number("maximum"); val step = number("step").coerceAtLeast(1)
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(text("label"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() - step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled") && lower <= upper && value > lower,
+                        modifier = Modifier.semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " decrease" }) { Text("−") }
+                    Text(value.toString(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.widthIn(min = 32.dp))
+                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() + step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled") && lower <= upper && value < upper,
+                        modifier = Modifier.semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " increase" }) { Text("+") }
+                }
+                val hint = text("error").ifEmpty { text("supporting") }
+                if (hint.isNotEmpty()) Text(hint, color = if (text("error").isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
         }
-        RenderComponent.TextField -> {
+        RenderComponent.TextField, RenderComponent.SearchField -> {
             val multiline = flag("multiline")
+            val authoritative = text("value")
+            var draft by remember { mutableStateOf(authoritative) }
+            val pending = remember { mutableListOf<String>() }
+            // Keep IME edits responsive while the serialized DEAL worker acknowledges them.
+            // This is transport buffering, not application state or validation policy.
+            LaunchedEffect(authoritative) {
+                val acknowledged = pending.indexOf(authoritative)
+                if (acknowledged >= 0) {
+                    repeat(acknowledged + 1) { pending.removeAt(0) }
+                    if (pending.isEmpty()) draft = authoritative
+                } else { pending.clear(); draft = authoritative }
+            }
             OutlinedTextField(
-                value = text("value"),
-                onValueChange = { prop("onChange")?.let { action -> dispatch(action.getInt("actionSlot"), it) } },
+                value = draft,
+                onValueChange = { next -> prop("onChange")?.let { action -> draft = next; pending.add(next); dispatch(action.getInt("actionSlot"), next) } },
                 label = { Text(text("label")) },
+                enabled = flag("enabled"),
+                isError = text("error").isNotEmpty(),
+                supportingText = { val hint = text("error").ifEmpty { text("supporting") }; if (hint.isNotEmpty()) Text(hint) },
                 singleLine = !multiline,
                 minLines = if (multiline) 2 else 1,
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = text("accessibilityLabel") },

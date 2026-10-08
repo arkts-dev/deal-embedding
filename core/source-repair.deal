@@ -1,0 +1,81 @@
+import * as data from "embedding/policy-data";
+import * as tables from "std/table";
+import * as strings from "std/string";
+import * as json from "std/json";
+import * as literals from "./source-literals";
+
+export function digestInput(deal: string, ui: string): string {
+    return literals.decimal(strings.length(deal)) + ":" + deal + literals.decimal(strings.length(ui)) + ":" + ui;
+}
+
+function rejected(code: string): table { return { accepted: false, source: "", diagnostics: code }; }
+// Exact, bounded, revision-bound textual edits. Not a semantic editor or source authority.
+export async function apply(base: string, raw: string): table {
+    let pair: table = await data.parse(base);
+    let deal: string = pair.deal; let ui: string = pair.dealui;
+    let patch: table = {};
+    try { patch = await data.parse(raw); }
+    catch (error) { if (error.code !== "INVALID_JSON") { throw error; } return rejected("PATCH_JSON"); }
+    let digest: string = await data.sha256(digestInput(deal, ui));
+    let edits: table[] = [];
+    try {
+        let keys: string[] = tables.keys(patch);
+        let supplied: string = patch.baseDigest;
+        edits = patch.edits;
+        if (keys.length !== 2 || supplied !== digest) { return rejected("PATCH_BASE"); }
+        if (edits.length < 1 || edits.length > 8) { return rejected("PATCH_LIMIT"); }
+    } catch (error) { return rejected("PATCH_SHAPE"); }
+    let dealSearch: string[] = []; let dealReplace: string[] = [];
+    let uiSearch: string[] = []; let uiReplace: string[] = [];
+    for (let edit: table of edits) {
+        let file: string = ""; let search: string = ""; let replacement: string = "";
+        try {
+            let keys: string[] = tables.keys(edit);
+            file = edit.file; search = edit.search; replacement = edit.replacement;
+            if (keys.length !== 3 || search === "" || (file !== "deal" && file !== "dealui")) { return rejected("PATCH_SHAPE"); }
+        } catch (error) { return rejected("PATCH_SHAPE"); }
+        let size: int = await data.utf16Length(search + replacement);
+        if (size > 32768) { return rejected("PATCH_LIMIT"); }
+        let source: string = deal; let searches: string[] = dealSearch; let replacements: string[] = dealReplace;
+        if (file === "dealui") { source = ui; searches = uiSearch; replacements = uiReplace; }
+        let pieces: string[] = strings.split(source, search);
+        if (pieces.length !== 2) { return rejected("PATCH_AMBIGUOUS"); }
+        // split counts non-overlapping matches; also reject a second overlapping occurrence.
+        let afterFirst: string = strings.substring(source, strings.length(pieces[0]) + 1, strings.length(source));
+        if (strings.contains(afterFirst, search)) { return rejected("PATCH_AMBIGUOUS"); }
+        for (let prior: string of searches) {
+            // Disjoint occurrences in the ORIGINAL source, never sequential matching.
+            let prefix: string[] = strings.split(source, prior);
+            let start: int = strings.length(pieces[0]); let end: int = start + strings.length(search);
+            let priorStart: int = strings.length(prefix[0]); let priorEnd: int = priorStart + strings.length(prior);
+            if (start < priorEnd && priorStart < end) { return rejected("PATCH_OVERLAP"); }
+        }
+        searches[searches.length] = search; replacements[replacements.length] = replacement;
+    }
+    // Scan original source; replacement content never becomes an edit target.
+    let files: string[] = [deal, ui]; let result: string[] = [];
+    for (let f: int = 0; f < 2; f = f + 1) {
+        let source: string = files[f]; let searches: string[] = dealSearch; let replacements: string[] = dealReplace;
+        if (f === 1) { searches = uiSearch; replacements = uiReplace; }
+        let cursor: int = 0; let out: string = "";
+        for (let n: int = 0; n < searches.length; n = n + 1) {
+            let next: int = strings.length(source); let selected: int = -1;
+            for (let i: int = 0; i < searches.length; i = i + 1) {
+                let prefix: string[] = strings.split(source, searches[i]); let start: int = strings.length(prefix[0]);
+                if (start >= cursor && start < next) { next = start; selected = i; }
+            }
+            if (selected < 0) { return rejected("PATCH_OVERLAP"); }
+            out = out + strings.substring(source, cursor, next) + replacements[selected];
+            cursor = next + strings.length(searches[selected]);
+        }
+        out = out + strings.substring(source, cursor, strings.length(source));
+        result[result.length] = out;
+    }
+    return { accepted: true, source: json.stringify({ deal: result[0], dealui: result[1] }), diagnostics: "" };
+}
+export async function instruction(base: string): string {
+    let pair: table = await data.parse(base); let deal: string = pair.deal; let ui: string = pair.dealui;
+    let digest: string = await data.sha256(digestInput(deal, ui));
+    return "\nREPAIR PROTOCOL exact-source-patch-v1\nReturn ONLY {\"baseDigest\":\"" + digest + "\",\"edits\":[{\"file\":\"deal or dealui\",\"search\":\"exact unique original text\",\"replacement\":\"corrected text\"}]}. Maximum 8 disjoint edits against the original source. Preserve unaffected source and behavior. Do not return complete source files.\nBASE SOURCE\n" + base;
+}
+export function main(): null { return null; }

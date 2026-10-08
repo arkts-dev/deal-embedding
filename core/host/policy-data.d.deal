@@ -5,3 +5,5 @@ export async function parse(input: string): table;
 export async function lowercase(input: string): string;
 // Wire bounds count UTF-16 code units (including each surrogate), not Unicode scalars.
 export async function utf16Length(input: string): int;
+// Digest mechanism; repair base identity and edit decisions stay in core.
+export async function sha256(input: string): string;
