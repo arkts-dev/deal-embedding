@@ -40,6 +40,10 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
         candidate.consumed = true
         return snapshot
     }
+    /** Check saved or host-supplied source without inference; activation remains a separate decision. */
+    fun check(source: ExperienceSource): CheckedCandidate = guarded(live = false) {
+        CheckedCandidate(source, ExperienceCompiler(context, config).compile(source.deal, source.ui), catalogRevision(config), 0)
+    }
     fun activate(source: ExperienceSource): JSONObject {
         val candidateOutput = ExperienceCompiler(context, config).compile(source.deal, source.ui)
         return activateChecked(source, candidateOutput)
@@ -54,7 +58,6 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
             storage.commit(source)
             session?.close()
             output?.parentFile?.deleteRecursively()
-            capabilities.end(); capabilities.begin()
             session = candidate; output = candidateOutput
             snapshot
         } catch (error: Throwable) {
@@ -63,8 +66,7 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
         }
     }
 
-    /** Mount a generated workspace and keep it live beside the others. */
-    /** Mounts the workspace and returns it with its initial snapshot. */
+    /** Mount a workspace with its own capability session and return its initial snapshot. */
     fun open(title: String, candidate: CheckedCandidate): Pair<LiveWorkspace, JSONObject> = guarded(live = false) {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
         val id = UUID.randomUUID().toString()
@@ -93,7 +95,7 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     fun poll(): JSONObject? = guarded { session?.poll() }
     override fun close() {
         workspaces.values.toList().forEach { closeWorkspace(it.id) }
-        session?.close(); engine?.close(); capabilities.end()
+        session?.close(); engine?.close()
         output?.parentFile?.deleteRecursively()
         session = null; engine = null; output = null
     }
