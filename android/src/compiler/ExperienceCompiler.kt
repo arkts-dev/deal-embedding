@@ -40,7 +40,7 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             val output = File(project, "output")
             val diagnostics = File(project, "diagnostics.json")
             val status = deal.Main.run(arrayOf("compile", entry.absolutePath, "--backend", "js", "--output", output.absolutePath, "--diagnostics-json", diagnostics.absolutePath))
-            if (status != 0) throw CandidateRejected(if (diagnostics.exists()) diagnostics.readText().replace(project.absolutePath + "/", "").take(16000) else "[]")
+            classifyCompilerOutcome(status, if (diagnostics.exists()) diagnostics.readText() else null, app.absolutePath, project.absolutePath)
             return output
         } catch (error: deal.ui.UiDiagnostic) {
             project.deleteRecursively()
@@ -49,6 +49,23 @@ internal class ExperienceCompiler(private val context: Context, private val conf
         } catch (error: Throwable) { project.deleteRecursively(); throw error }
     }
 }
+
+// A nonzero exit alone does not establish invalid generated source. Publication/I/O
+// failures can also return 1, and backend defects must never trigger model repair.
+internal fun classifyCompilerOutcome(status: Int, raw: String?, appPath: String, projectPath: String) {
+    if (status == 0) return
+    val report = raw?.let { runCatching { JSONObject(it) }.getOrNull() }
+    val diagnostics = report?.optJSONArray("diagnostics")
+    val errors = diagnostics?.let { list -> (0 until list.length()).mapNotNull { list.optJSONObject(it) }.filter { it.optString("severity") == "error" } } ?: emptyList()
+    val repairable = status == 1 && report?.optInt("version") == 1 && errors.isNotEmpty() && errors.all { diagnostic ->
+        val code = diagnostic.optString("code")
+        val file = diagnostic.optJSONObject("range")?.optString("file")
+        file == appPath && (code.matches(Regex("E[1-5][0-9]{3}")) || code == "E6006") && code != "E2010"
+    }
+    if (!repairable) throw CompilerOperationFailed(status, errors.map { it.optString("code") }.filter { it.matches(Regex("E[0-9]{4}")) })
+    throw CandidateRejected(raw!!.replace(projectPath + "/", "").take(16000))
+}
+internal class CompilerOperationFailed(val status: Int, val codes: List<String>) : IllegalStateException("Compiler operation failed (status=$status, codes=${codes.joinToString(",")})")
 
 /** The compiled entry filename; the mount must load this exact module. */
 internal const val ENTRY_NAME = "experience_entry"

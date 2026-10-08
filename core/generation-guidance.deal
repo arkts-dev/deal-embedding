@@ -29,7 +29,14 @@ export function componentFacts(pack: table): string {
             if (type === "int") { value = "0"; }
             if (defaultKind === "string" && defaultText !== "") { value = "\"" + defaultText + "\""; }
             if (defaultKind === "int") { value = defaultText; }
-            if (action) { value = "action app.Action {}"; }
+            if (action) { value = "action app.Action {}";
+                for (let contract: table of contracts) {
+                    let kind: string = contract.kind;
+                    if (kind === "event") {
+                        let prop: string = contract.prop; let payload: string = contract.payload;
+                        if (prop === fieldName && payload !== "") { value = "action app.Action { value: payload }"; }
+                    }
+                } }
             if (arguments !== "") { arguments = arguments + ", "; }
             arguments = arguments + fieldName + ": " + value;
         }

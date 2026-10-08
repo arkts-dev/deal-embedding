@@ -17,3 +17,25 @@ The supplied pack is the complete vocabulary. Use no other component, no `Row`, 
 Reads and preparation only. Never write, never confirm, and never report that something is booked or approved. Native permission and confirmation surfaces stay outside generated UI.
 
 If a requested capability is unavailable, explain that in the UI instead of inventing an import.
+
+## Exact view syntax example
+
+The pack import is literally `./platform.dealui-pack`, never `ui`, `platform/ui` or `std/ui`. Replace the app module filename with the supplied host filename. View conditionals use capitalized `When(...) { ... } Else { ... }`, never `if`, `If`, JavaScript templates or JSX. Event payload is the bare identifier `payload`, never `$value`, `value` or an empty action when a payload is declared.
+
+```dealui
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+// @ui-root
+export view Workspace(state: app.State): View {
+    ui.Column() {
+        When(state.loading) { ui.Progress(label: "Loading") } Else {
+            ui.Button(text: "Load options", accessibilityLabel: "Load options", onClick: action app.Load {})
+            ForEach(state.rows, row: app.Row, key: row.id) {
+                ui.Option(value: row.id, title: row.title, detail: row.detail, price: row.price, meta: row.meta, enabled: row.available, selected: row.selected, accessibilityLabel: row.title, onSelect: action app.Pick { value: payload })
+            }
+        }
+    }
+}
+```
+
+Wire names may be DEAL keywords. Keep contract argument order, but use ordinary application field names such as `periodStart` rather than declaring or accessing `from`. For table results, declare intermediate typed locals: `let records: table[] = await catalogue.equipment(state.periodStart, state.periodEnd);` then `for (let record: table of records) { let cents: int = record.cents; }`. Set derived booleans such as `empty` in DEAL when needed by a view. An update must build and return a fresh complete state; do not mutate a helper-returned shallow copy that still aliases borrowed collections.

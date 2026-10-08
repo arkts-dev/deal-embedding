@@ -65,7 +65,7 @@ function supportedContext(context: table, entries: table[]): boolean {
 }
 export async function inventory(catalogJson: string, disclosed: string, entriesJson: string): table {
     let context: table = {};
-    try { context = await data.parse(disclosed); } catch (error) { let empty: table = {}; context = empty; }
+    try { context = await data.parse(disclosed); } catch (error) { if (error.code !== "INVALID_JSON") { throw error; } let empty: table = {}; context = empty; }
     let entriesEnvelope: table = await data.parse(entriesJson); let entries: table[] = entriesEnvelope.entries;
     let envelope: table = await data.parse("{\"contracts\":" + catalogJson + "}");
     let contracts: table[] = envelope.contracts;
@@ -77,18 +77,25 @@ export async function inventory(catalogJson: string, disclosed: string, entriesJ
             if (isCatalogue(fn)) {
                 let params: table[] = fn.parameters; let args: string[] = []; let valid: boolean = true;
                 for (let p: table of params) {
+                    let value: string = "";
+                    let maximum: int = 0;
+                    let readable: boolean = true;
                     try {
-                        let name: string = p.name; let type: table = p.type; let kind: string = type.kind; let maximum: int = type.maximum;
-                        let value: string = ""; let found: boolean = false;
+                        let name: string = p.name; let type: table = p.type; let kind: string = type.kind; let bound: int = type.maximum; maximum = bound;
+                        let found: boolean = false;
                         for (let entry: table of entries) {
                             let key: string = entry.key;
                             if (key === name) { value = entry.value; found = true; }
                         }
                         if (!found) { valid = false; }
+                        if (kind !== "string") { valid = false; }
+                    } catch (error) { readable = false; valid = false; }
+                    // Host failure is not an unsupported catalogue. Await outside shape catches.
+                    if (readable) {
                         let length: int = await data.utf16Length(value);
-                        if (kind !== "string" || length > maximum) { valid = false; }
+                        if (length > maximum) { valid = false; }
                         args[args.length] = value;
-                    } catch (error) { valid = false; }
+                    }
                 }
                 if (valid) { reads[reads.length] = { alias: "read" + decimal(reads.length), module: module, contractFunction: fn, arguments: args }; }
             }
@@ -115,7 +122,7 @@ export function issued(catalog: string, inventory: table): string {
 }
 export async function validate(raw: string, inventory: table): table {
     let parsed: table = {};
-    try { parsed = await data.parse(raw); } catch (error) { return { accepted: false, diagnostics: "CHOICE_JSON: expected JSON object" }; }
+    try { parsed = await data.parse(raw); } catch (error) { if (error.code !== "INVALID_JSON") { throw error; } return { accepted: false, diagnostics: "CHOICE_JSON: expected JSON object" }; }
     if (tables.keys(parsed).length !== 1) { return { accepted: false, diagnostics: "CHOICE_SHAPE: expected only answers" }; }
     let answers: table = {};
     try { let readAnswers: table = parsed.answers; answers = readAnswers; } catch (error) { return { accepted: false, diagnostics: "CHOICE_SHAPE: missing answers" }; }
