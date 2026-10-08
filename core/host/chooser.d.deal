@@ -1,0 +1,3 @@
+// The compiler issues the options and this host lowers the chosen one to source. A diagnostic
+// result means no issued option expresses the requirement, and the core falls back to source.
+export async function choose(input: string): string;

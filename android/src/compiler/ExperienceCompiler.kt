@@ -26,7 +26,9 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             val supported = RenderComponent.entries.map { it.capability }.toSet()
             check(generated.checked().metadata().componentCapabilities().values.all { it in supported }) { "Unsupported renderer capability" }
             app.writeText(deal.ui.UiSourceGenerator.compilerSource(dealSource) + generated.augmentation())
-            val entry = File(sources, "experience.deal").apply { writeText(generated.source()) }
+            // The entry must not share a name with the application module: the entry imports the
+            // app module, so writing both to one path makes the view resolve the entry's exports.
+            val entry = File(sources, ENTRY_NAME + ".deal").apply { writeText(generated.source()) }
             val externals = JSONObject()
             config.contracts.forEachIndexed { index, module ->
                 val declaration = "host-$index.d.deal"
@@ -47,5 +49,8 @@ internal class ExperienceCompiler(private val context: Context, private val conf
         } catch (error: Throwable) { project.deleteRecursively(); throw error }
     }
 }
+
+/** The compiled entry filename; the mount must load this exact module. */
+internal const val ENTRY_NAME = "experience_entry"
 
 internal class CandidateRejected(val diagnostics: String) : IllegalArgumentException("Generated candidate rejected")

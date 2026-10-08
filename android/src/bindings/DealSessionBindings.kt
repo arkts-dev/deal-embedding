@@ -9,7 +9,7 @@ import dev.deal.embedding.capabilities.CapabilityBindings
 internal object DealSessionBindings {
     fun bundle(context: Context, config: EmbeddingConfig, output: File, restored: String?): String = SandboxBundle.build(
         context, listOf("ui-session.js"), CapabilityBindings.script(config.contracts),
-        "mountDealUi(factories,\"experience.js\",${restored ?: "null"})", output = output)
+        "mountDealUi(factories,\"$ENTRY_NAME.js\",${restored ?: "null"})", output = output)
     const val state = "dealUi.state()"
     const val snapshot = "dealUi.snapshot()"
     const val requests = "dealCapabilities.take()"
