@@ -146,12 +146,18 @@ internal object ChoiceCatalogue {
             append("        ui.Text(value: state.status)\n")
             if (warning) append("        ui.Notice(text: state.notice, tone: \"warning\")\n")
             if (rows && callable) {
-                append("        When(state.loading) { ui.Progress(label: \"Checking the connected apps\") } Else {\n")
-                append("            ForEach(state.rows, row: app.Row, key: row.id) {\n                ui.Option(value: row.id, title: row.title, detail: row.detail, price: row.trailing, selected: row.selected, onSelect: action app.Pick { value: payload })\n            }\n        }\n")
+                // The progress notice is additive; the list is always present so the surface is
+                // complete before the first effect runs.
+                append("        When(state.loading) { ui.Progress(label: \"Checking the connected apps\") }\n")
+                append("        ForEach(state.rows, row: app.Row, key: row.id) {\n")
+                append("            ui.Option(value: row.id, title: row.title, detail: row.detail, price: row.trailing, selected: row.selected, onSelect: action app.Pick { value: payload })\n")
+                append("        }\n")
             } else if (rows) {
-                append("        ForEach(state.rows, row: app.Row, key: row.id) {\n            ui.Option(value: row.id, title: row.title, detail: row.detail, price: row.trailing, selected: row.selected, onSelect: action app.Pick { value: payload })\n        }\n")
+                append("        ForEach(state.rows, row: app.Row, key: row.id) {\n")
+                append("            ui.Option(value: row.id, title: row.title, detail: row.detail, price: row.trailing, selected: row.selected, onSelect: action app.Pick { value: payload })\n")
+                append("        }\n")
             }
-            append("        ui.Button(text: state.action, accessibilityLabel: state.action, onClick: action app.Run {})\n")
+            if (callable) append("        ui.Button(text: state.action, accessibilityLabel: state.action, onClick: action app.Run {})\n")
             append("    }\n}\n")
         }
         return ExperienceSource(deal, ui)

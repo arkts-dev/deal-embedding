@@ -64,16 +64,17 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     }
 
     /** Mount a generated workspace and keep it live beside the others. */
-    fun open(title: String, candidate: CheckedCandidate): LiveWorkspace = guarded(live = false) {
+    /** Mounts the workspace and returns it with its initial snapshot. */
+    fun open(title: String, candidate: CheckedCandidate): Pair<LiveWorkspace, JSONObject> = guarded(live = false) {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
         val id = UUID.randomUUID().toString()
         val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config), candidate.output, candidate.source)
         try {
-            live.session.mount(candidate.output)
+            val snapshot = live.session.mount(candidate.output)
             candidate.consumed = true
             workspaces[id] = live
             storage.saveWorkspace(id, title, candidate.source)
-            live
+            live to snapshot
         } catch (error: Throwable) { live.session.close(); candidate.output.parentFile?.deleteRecursively(); throw error }
     }
     fun workspaces(): List<LiveWorkspace> = workspaces.values.toList()
