@@ -14,4 +14,4 @@ Keep cancellation registration atomic and callbacks once-only. Host implementati
 
 Keep native grants, context disclosure and write confirmation under host control.
 
-Keep source checking independent of inference and mounting. Saved-source replay must use the same checker and candidate ownership rules as generated source. Persist origin and attempt count as host-owned workspace metadata. Missing legacy provenance means unknown saved source, not inferred AI authorship.
+Keep source checking independent of inference and mounting. Saved-source replay must use the same checker and candidate ownership rules as generated source. Persist origin and attempt count as host-owned workspace metadata. Closing runtime resources or hiding a workspace must not delete accepted source; deletion is an explicit forget operation. Reopen checks saved source against current contracts without inference and keeps the same workspace identity. Missing legacy provenance means unknown saved source, not inferred AI authorship.

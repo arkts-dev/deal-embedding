@@ -12,6 +12,7 @@ data class EmbeddingConfig(val sourceName: String, var contracts: List<Capabilit
     init { require(repairStrategy in setOf("full", "delta")) { "Unknown source repair strategy" } }
 }
 data class ExperienceSource(val deal: String, val ui: String)
+data class SavedWorkspace(val id: String, val title: String, val origin: WorkspaceOrigin, val attempts: Int)
 
 /** A live workspace: its own isolate and state, sharing the connected sandbox engine. */
 class LiveWorkspace internal constructor(val id: String, val title: String, internal val session: UiSession, internal val output: File, internal val source: ExperienceSource, val origin: WorkspaceOrigin, val attempts: Int)
@@ -73,15 +74,25 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     }
 
     /** Mount a workspace with its own capability session and return its initial snapshot. */
-    fun open(title: String, candidate: CheckedCandidate): Pair<LiveWorkspace, JSONObject> = guarded(live = false) {
+    fun open(title: String, candidate: CheckedCandidate): Pair<LiveWorkspace, JSONObject> = mountWorkspace(UUID.randomUUID().toString(), title, candidate)
+
+    /** Explicit reopen rechecks saved source against current contracts; never invokes inference. */
+    fun savedWorkspaces(): List<SavedWorkspace> = storage.savedWorkspaces()
+    fun reopen(id: String): Pair<LiveWorkspace, JSONObject> {
+        workspaces[id]?.let { return it to it.session.poll() }
+        val saved = savedWorkspaces().firstOrNull { it.id == id } ?: error("Saved workspace not found")
+        val source = storage.source(id) ?: error("Saved workspace source missing")
+        return check(source, saved.origin, saved.attempts).use { mountWorkspace(id, saved.title, it) }
+    }
+    fun forgetWorkspace(id: String) { closeWorkspace(id); storage.forgetWorkspace(id) }
+    private fun mountWorkspace(id: String, title: String, candidate: CheckedCandidate): Pair<LiveWorkspace, JSONObject> = guarded(live = false) {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
-        val id = UUID.randomUUID().toString()
         val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config, candidate.receipts, candidate.identity, id), candidate.output, candidate.source, candidate.origin, candidate.attempts)
         try {
             val snapshot = candidate.receipts.stage("mount", candidate.identity, id) { live.session.mount(candidate.output) }
+            storage.saveWorkspace(id, title, candidate.source, candidate.origin, candidate.attempts)
             candidate.consumed = true
             workspaces[id] = live
-            storage.saveWorkspace(id, title, candidate.source, candidate.origin, candidate.attempts)
             live to snapshot
         } catch (error: Throwable) { live.session.close(); candidate.output.parentFile?.deleteRecursively(); throw error }
     }
@@ -96,7 +107,7 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     fun poll(id: String): JSONObject? = guarded { workspaces[id]?.session?.poll() }
     fun closeWorkspace(id: String) {
         val live = workspaces.remove(id) ?: return
-        live.session.close(); live.output.parentFile?.deleteRecursively(); storage.forgetWorkspace(id)
+        live.session.close(); live.output.parentFile?.deleteRecursively()
     }
 
     fun dispatch(slot: Int, payload: String?): JSONObject? {

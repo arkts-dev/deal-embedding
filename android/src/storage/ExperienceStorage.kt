@@ -15,11 +15,16 @@ internal class ExperienceStorage(private val context: Context, name: String) {
     fun forgetWorkspace(id: String) {
         prefs.edit().remove("workspace.$id.title").remove("workspace.$id.deal").remove("workspace.$id.dealui").remove("workspace.$id.origin").remove("workspace.$id.attempts").commit()
     }
-    fun workspaceSources(): List<Triple<String, String, ExperienceSource>> = prefs.all.keys.filter { it.startsWith("workspace.") && it.endsWith(".deal") }
-        .mapNotNull { key ->
+    fun savedWorkspaces(): List<SavedWorkspace> = prefs.all.keys.filter { it.startsWith("workspace.") && it.endsWith(".deal") }
+        .map { key ->
             val id = key.removePrefix("workspace.").removeSuffix(".deal")
-            prefs.getString(key, null)?.let { deal -> Triple(id, prefs.getString("workspace.$id.title", "Workspace")!!, ExperienceSource(deal, prefs.getString("workspace.$id.dealui", "")!!)) }
-        }
+            SavedWorkspace(id, prefs.getString("workspace.$id.title", "Workspace")!!,
+                runCatching { WorkspaceOrigin.valueOf(prefs.getString("workspace.$id.origin", "")!!) }.getOrDefault(WorkspaceOrigin.SAVED_SOURCE),
+                prefs.getInt("workspace.$id.attempts", 0).coerceIn(0, 3))
+        }.sortedBy { it.title }
+    fun source(id: String): ExperienceSource? = prefs.getString("workspace.$id.deal", null)?.let { deal ->
+        prefs.getString("workspace.$id.dealui", null)?.let { ui -> ExperienceSource(deal, ui) }
+    }
 
     fun candidateDirectory(): File = File(context.filesDir.canonicalFile, "candidate-${java.util.UUID.randomUUID()}").apply { mkdirs() }
     private fun copyAsset(path: String, target: File) {
