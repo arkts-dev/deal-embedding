@@ -73,7 +73,18 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
         fun revoke(module: String) {
             pending.values.filter { it.provider.contract.module == module }.toList().forEach { cancelRemote(it); fail(it.id, "REVOKED", "Capability access revoked") }
         }
-        override fun receive(request: JSONObject, now: Long): Unit = synchronized(this@CapabilityRegistry) {
+        override fun receive(request: JSONObject, now: Long) {
+            // Reconnect only on a new explicit request, never replay a failed operation.
+            // Discovery runs off the registry lock; refresh enforces unchanged active contracts.
+            val reconnect = synchronized(this@CapabilityRegistry) {
+                live()
+                providers[request.optString("module")]?.endpoint?.remote?.asBinder()?.isBinderAlive == false
+            }
+            if (reconnect) {
+                try { refresh() }
+                catch (error: Exception) { log.event("discovery", "failed", operation = "$identity:${request.opt("id")}", code = "RECONNECT_FAILED") }
+            }
+            synchronized(this@CapabilityRegistry) {
             live()
             val id = request.opt("id")
             require(id is Int && id == nextId && nextId <= 128) { "Invalid capability request id: expected $nextId (session limit 128)" }
@@ -120,6 +131,7 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
                     endpoint.remote.invoke(item.key, function.name, args.toString(), callback)
                     synchronized(this@CapabilityRegistry) { if (pending[id] !== item) endpoint.remote.cancel(item.key) }
                 } catch (_: Exception) { synchronized(this@CapabilityRegistry) { if (pending[id] === item) fail(id, "PROVIDER_DIED", "Provider unavailable") } }
+            }
             }
         }
         override fun drain(now: Long): List<JSONObject> = synchronized(this@CapabilityRegistry) {

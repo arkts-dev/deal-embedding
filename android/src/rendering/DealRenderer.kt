@@ -51,7 +51,7 @@ internal enum class RenderComponent(val component: String, val capability: Strin
     val properties = node.getJSONArray("props")
     fun prop(name: String): JSONObject? = (0 until properties.length()).map { properties.getJSONObject(it) }.firstOrNull { it.getString("name") == name }
     fun text(name: String) = prop(name)?.optString("stringValue") ?: ""
-    fun flag(name: String) = prop(name)?.optBoolean("booleanValue") ?: false
+    fun flag(name: String, default: Boolean = false) = prop(name)?.optBoolean("booleanValue", default) ?: default
     fun number(name: String) = prop(name)?.optInt("intValue") ?: 0
     fun choices(actions: List<String>): List<Pair<String, Int?>> =
         listOf("first", "second", "third").mapIndexed { index, name ->
@@ -73,7 +73,7 @@ internal enum class RenderComponent(val component: String, val capability: Strin
         }
         RenderComponent.Text -> Text(text("value"), style = MaterialTheme.typography.bodyLarge)
         RenderComponent.Hero -> Text(text("value"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-        RenderComponent.Button -> Button(enabled = flag("enabled"), onClick = { prop("onClick")?.let { dispatch(it.getInt("actionSlot"), null) } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = text("accessibilityLabel") }, contentPadding = PaddingValues(16.dp)) { Text(text("text")) }
+        RenderComponent.Button -> Button(enabled = flag("enabled", true), onClick = { prop("onClick")?.let { dispatch(it.getInt("actionSlot"), null) } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = text("accessibilityLabel") }, contentPadding = PaddingValues(16.dp)) { Text(text("text")) }
         RenderComponent.Toggle -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(text("text"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             Checkbox(flag("checked"), { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), text("value")) } }, modifier = Modifier.semantics { contentDescription = text("accessibilityLabel") })
@@ -96,7 +96,7 @@ internal enum class RenderComponent(val component: String, val capability: Strin
         }
         RenderComponent.Option -> {
             val selected = flag("selected")
-            val enabled = flag("enabled")
+            val enabled = flag("enabled", true)
             Surface(
                 onClick = { if (enabled) prop("onSelect")?.let { dispatch(it.getInt("actionSlot"), text("value")) } },
                 enabled = enabled,
@@ -125,10 +125,10 @@ internal enum class RenderComponent(val component: String, val capability: Strin
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(text("label"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() - step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled") && lower <= upper && value > lower,
+                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() - step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value > lower,
                         modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " decrease" }) { Text("−") }
                     Text(if (text("format") == "euro-cents") "€%.2f".format(java.util.Locale.getDefault(), value / 100.0) else value.toString(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.widthIn(min = 32.dp))
-                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() + step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled") && lower <= upper && value < upper,
+                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() + step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value < upper,
                         modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " increase" }) { Text("+") }
                 }
                 val hint = text("error").ifEmpty { text("supporting") }
@@ -153,7 +153,7 @@ internal enum class RenderComponent(val component: String, val capability: Strin
                 value = draft,
                 onValueChange = { next -> prop("onChange")?.let { action -> draft = next; pending.add(next); dispatch(action.getInt("actionSlot"), next) } },
                 label = { Text(text("label")) },
-                enabled = flag("enabled"),
+                enabled = flag("enabled", true),
                 isError = text("error").isNotEmpty(),
                 supportingText = { val hint = text("error").ifEmpty { text("supporting") }; if (hint.isNotEmpty()) Text(hint) },
                 singleLine = !multiline,

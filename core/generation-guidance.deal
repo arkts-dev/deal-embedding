@@ -26,6 +26,7 @@ export function componentFacts(pack: table): string {
             let value: string = "\"" + fieldName + "\"";
             if (fieldName === "value") { value = "state.value"; }
             if (type === "boolean") { value = "false"; }
+            if (defaultKind === "boolean") { value = defaultText; }
             if (type === "int") { value = "0"; }
             if (defaultKind === "string" && defaultText !== "") { value = "\"" + defaultText + "\""; }
             if (defaultKind === "int") { value = defaultText; }

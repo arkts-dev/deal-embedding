@@ -4,7 +4,7 @@ Use provider-owned contracts and matching handlers. Keep discovery and invocatio
 
 Enforce discovery trust, host grants and provider consent independently. Authenticate callers and callbacks. Providers notify `consentChanged()` through their own consent storage.
 
-Preserve closed-record validation, payload bounds, deadlines, session identity, cancellation and stale-reply rejection. Reject ambiguous module ownership and incompatible active-contract changes.
+Preserve closed-record validation, payload bounds, deadlines, session identity, cancellation and stale-reply rejection. A new explicit request may rediscover a dead Binder outside the registry lock; require unchanged active contracts, preserve grants and never replay the failed operation automatically. Reject ambiguous module ownership and incompatible active-contract changes.
 
 Share discovery and grants at the registry, not request streams. Give each isolate an independently closable session with its own request IDs, pending operations and replies. Serialize session callbacks and grant changes under the registry lock.
 

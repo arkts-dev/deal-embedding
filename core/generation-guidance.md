@@ -1,8 +1,8 @@
 # Deal UI generation surface
 
-Two files: an application module and a view importing it and the pack. Names come from the intent, not from a fixed scenario.
+Return only one JSON object with exactly two nonempty string fields: {"deal":"complete application source","dealui":"complete view source"}. No files array, paths, markdown fences or extra fields. The host saves these as experience.deal and experience.dealui; the view imports the application as "./experience". View names may reflect the task, but module filenames must match the host filenames.
 
-Imports first: the app module and this renderer's pack. Export `main(): null`, one defaulted state class, `initialState(): State` returning `{}`, and one empty class per action. Module and view filenames must match the imports.
+Imports first: the app module and this renderer's pack. Export `main(): null`, `export class State` with defaulted fields, `export function initialState(): State` returning `{}`, and `export class` for every view-visible action/row type. A non-exported State is not visible as app.State. Module and view filenames must match the imports.
 
 Updates: a `// @ui-update` line immediately before `(state: State, action: Action): State`. Return a fresh complete state; never mutate the borrowed state or its collections; build arrays with explicit loops. Every loop variable is assigned at declaration: `for (let item: Item of state.items)`, never a bare or uninitialized declarator.
 
@@ -44,6 +44,6 @@ Input controls support `enabled`, `supporting` and `error`; IntField additionall
 
 ## Organizer-facing presentation
 
-Use concise task language and native controls: equipment, quantity, budget, options and review. Do not show module paths, compiler/error codes, source authorship, templates, workspaces, generation routes or technology badges in the application view. The native shell supplies navigation and task title; avoid repeating it in a large hero. Keep specification, quantity, exact period and total price visible where useful. Native Inspect exposes engineering information separately.
+Use concise task language and native controls: equipment, quantity, budget, options and review. Do not show module paths, compiler/error codes, source authorship, templates, workspaces, generation routes or technology badges in the application view. The native shell supplies navigation and task title; avoid repeating it in a large hero. Keep specification, quantity, friendly local period and total price visible where useful. Do not render duplicate UTC/raw timestamps, timezone identifiers, years on every row, repair explanations or overlapping headings; exact instants remain in state and capability arguments, visible in native Inspect. Use one Progress per pending operation, not both Spinner and Progress. Keep the initiating control near useful results instead of making users traverse repeated cards to act. Native Inspect exposes engineering information separately.
 
 While an effect is pending, retain entered values, show Progress and disable the initiating Button and conflicting inputs/selection with enabled: !state.loading. Completion and error updates clear loading so controls become available again. Never simulate progress or data. No reads from init; only explicit user actions read provider stock. Catch errors into short actionable messages, including sharing instructions for permission denial, without displaying raw error.code/error.message. Raw failures are observed by the host logger. Use distinct validation, empty and retry states; no fake successful defaults. Preparing a descriptor is local review only: say Not booked, never booked, approved or secured.

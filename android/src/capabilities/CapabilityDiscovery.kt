@@ -24,7 +24,7 @@ class CapabilityDiscovery(private val context: Context, private val trusted: (In
             if (!info.exported || !trusted(info.applicationInfo.uid)) continue
             val component = ComponentName(info.packageName, info.name)
             synchronized(this) { if (closed) error("Discovery closed") }
-            if (synchronized(this) { endpoints.containsKey(component) }) continue
+            if (synchronized(this) { endpoints[component]?.remote?.asBinder()?.isBinderAlive == true }) continue
             release(component)
             val latch = CountDownLatch(1)
             var binder: IBinder? = null
