@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit
 
 /** Android discovery by protocol action, never by provider package/method name. Call off main. */
 class CapabilityDiscovery(private val context: Context, private val trusted: (Int) -> Boolean) : AutoCloseable {
+    private val log = dev.deal.embedding.EmbeddingLog(context)
     data class Endpoint(val component: ComponentName, val uid: Int, val contract: CapabilityContract, val remote: ICapabilityService)
     private val connections = mutableMapOf<ComponentName, ServiceConnection>()
     private val endpoints = mutableMapOf<ComponentName, Endpoint>()
@@ -15,6 +16,7 @@ class CapabilityDiscovery(private val context: Context, private val trusted: (In
     private var closed = false
     fun discover(): List<Endpoint> {
         check(Looper.myLooper() != Looper.getMainLooper())
+        log.event("discovery", "started")
         val services = context.packageManager.queryIntentServices(Intent(ACTION), PackageManager.GET_META_DATA)
         require(services.size <= 32)
         for (resolved in services) {
@@ -40,13 +42,17 @@ class CapabilityDiscovery(private val context: Context, private val trusted: (In
             if (!latch.await(5, TimeUnit.SECONDS) || binder == null) { release(component); continue }
             try {
                 val remote = ICapabilityService.Stub.asInterface(binder)
-                val contract = CapabilityContract.parse(remote.describe())
+                val contract = log.stage("contract", target = component.flattenToShortString()) {
+                    val raw = remote.describe()
+                    log.event("contract", "received", target = component.flattenToShortString(), detail = raw)
+                    CapabilityContract.parse(raw)
+                }
                 val endpoint = Endpoint(component, info.applicationInfo.uid, contract, remote)
                 binder.linkToDeath({ release(component) }, 0)
                 synchronized(this) { if (!closed) endpoints[component] = endpoint }
             } catch (_: Exception) { release(component) }
         }
-        return synchronized(this) { endpoints.values.toList() }
+        return synchronized(this) { endpoints.values.toList() }.also { log.event("discovery", "completed", target = "${it.size} providers") }
     }
     private fun release(component: ComponentName) {
         val connection = synchronized(this) { endpoints.remove(component); connections.remove(component) }

@@ -4,7 +4,10 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Host-selected inference mechanism; no transport or credential policy belongs here. */
-interface ModelClient { fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation): String }
+interface ModelClient {
+    fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation): String
+    fun completeLogged(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog): String = complete(input, previous, diagnostics, cancellation)
+}
 
 class GenerationCancellation {
     private val cancelled = AtomicBoolean(false)

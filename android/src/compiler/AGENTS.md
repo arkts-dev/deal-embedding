@@ -1,6 +1,6 @@
 # Compiler
 
-Use the DEAL and Deal UI compilers. Limit generated application externals to published application declarations.
+Use the DEAL and Deal UI compilers. Instrument each invocation separately through the unified DEAL logger, including outcome and bounded diagnostic artifacts when capture is enabled; no independent compiler log sink. Limit generated application externals to published application declarations.
 
 Check against the supplied renderer pack. Reject pack/renderer disagreement and unsupported effect features.
 

@@ -10,4 +10,4 @@ Share discovery and grants at the registry, not request streams. Give each isola
 
 Treat received contracts and values as untrusted boundary data. `CapabilityContract` defines wire types; bindings derive DEAL declarations.
 
-Keep AIDL publication, invocation, cancellation and callbacks contract-driven. Coordinate protocol changes across host and provider implementations.
+Use the unified logger for discovery, contract exchange, grants, invocation, callback outcome and cancellation. Share request/span identity between sandbox admission and native transport. Do not call the logger isolate while holding Binder locks; enqueue metadata only. Keep AIDL publication, invocation, cancellation and callbacks contract-driven. Coordinate protocol changes across host and provider implementations.

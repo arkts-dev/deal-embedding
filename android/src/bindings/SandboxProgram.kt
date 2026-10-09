@@ -6,6 +6,21 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
+/** Android permits one connected sandbox service per process; isolates retain separate lifetimes. */
+internal object SandboxEngine {
+    private var engine: JavaScriptSandbox? = null
+    private var leases = 0
+    @Synchronized fun acquire(context: Context): JavaScriptSandbox {
+        val active = engine ?: JavaScriptSandbox.createConnectedInstanceAsync(context.applicationContext).get(10, TimeUnit.SECONDS).also { engine = it }
+        leases++; return active
+    }
+    @Synchronized fun release(active: JavaScriptSandbox, dead: Boolean = false) {
+        if (active !== engine) return
+        leases--
+        if (dead || leases == 0) { active.close(); engine = null; leases = 0 }
+    }
+}
+
 /** Only execution mechanics are shared. Callers select their own bindings and authority. */
 internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : AutoCloseable {
     private val isolate: JavaScriptIsolate

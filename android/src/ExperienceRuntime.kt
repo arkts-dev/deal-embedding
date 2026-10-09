@@ -27,9 +27,12 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     private var output: File? = null
     private val workspaces = linkedMapOf<String, LiveWorkspace>()
     private val storage = ExperienceStorage(context, config.storageName)
-    internal fun sandbox(): JavaScriptSandbox = engine ?: JavaScriptSandbox.createConnectedInstanceAsync(context).get(10, TimeUnit.SECONDS).also { engine = it }
+    internal fun sandbox(): JavaScriptSandbox = engine ?: SandboxEngine.acquire(context).also { engine = it }
     private fun <T> guarded(live: Boolean = true, operation: () -> T): T = try { operation() } catch (error: Exception) {
-        if (generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException || it is androidx.javascriptengine.MemoryLimitExceededException || (live && (it is java.util.concurrent.TimeoutException || it is androidx.javascriptengine.IsolateTerminatedException)) }) close()
+        if (generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException || it is androidx.javascriptengine.MemoryLimitExceededException || (live && (it is java.util.concurrent.TimeoutException || it is androidx.javascriptengine.IsolateTerminatedException)) }) {
+            engine?.let { SandboxEngine.release(it, dead = true) }; engine = null
+            close()
+        }
         throw error
     }
 
@@ -39,29 +42,29 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
         guarded(live = false) { ExperienceGenerator(context, config.copy(contracts = config.contracts.toList()), sandbox()).generate(intent, disclosedContext, model, cancellation, progress) }
     fun activate(candidate: CheckedCandidate): JSONObject {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
-        val snapshot = activateChecked(candidate.source, candidate.output, preserveState = false, receipts = candidate.receipts, identity = candidate.identity)
+        val snapshot = activateChecked(candidate.source, candidate.output, preserveState = false, log = candidate.log, identity = candidate.identity)
         candidate.consumed = true
         return snapshot
     }
     /** Check saved or host-supplied source without inference; activation remains a separate decision. */
     /** Provenance is trusted host metadata, never an assertion from application source. */
     fun check(source: ExperienceSource, origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE, attempts: Int = 0): CheckedCandidate = guarded(live = false) {
-        val receipts = StageReceipts(context)
+        val log = EmbeddingLog(context)
         val identity = UUID.randomUUID().toString()
-        receipts.event("route", "saved", candidate = identity)
-        CheckedCandidate(source, receipts.stage("check", candidate = identity) { ExperienceCompiler(context, config).compile(source.deal, source.ui) }, catalogRevision(config), attempts, receipts, identity, origin)
+        log.event("route", "saved", candidate = identity)
+        CheckedCandidate(source, log.operation("check", candidate = identity) { child -> ExperienceCompiler(context, config, child).compile(source.deal, source.ui) }, catalogRevision(config), attempts, log, identity, origin)
     }
     fun activate(source: ExperienceSource): JSONObject {
         val candidateOutput = ExperienceCompiler(context, config).compile(source.deal, source.ui)
         return activateChecked(source, candidateOutput)
     }
-    internal fun activateChecked(source: ExperienceSource, candidateOutput: File, preserveState: Boolean = true, receipts: StageReceipts = StageReceipts(context), identity: String = UUID.randomUUID().toString()): JSONObject = guarded(live = false) {
+    internal fun activateChecked(source: ExperienceSource, candidateOutput: File, preserveState: Boolean = true, log: EmbeddingLog = EmbeddingLog(context), identity: String = UUID.randomUUID().toString()): JSONObject = guarded(live = false) {
         var candidate: UiSession? = null
         try {
             val sandbox = sandbox()
-            candidate = UiSession(context, capabilities, sandbox, config, receipts, identity)
+            candidate = UiSession(context, capabilities, sandbox, config, log, identity)
             val retainedState = guarded { session?.state() } // Still reject outstanding effects.
-            val snapshot = receipts.stage("mount", candidate = identity) { candidate.mount(candidateOutput, if (preserveState) retainedState else null) }
+            val snapshot = log.stage("mount", candidate = identity) { candidate.mount(candidateOutput, if (preserveState) retainedState else null) }
             storage.commit(source)
             session?.close()
             output?.parentFile?.deleteRecursively()
@@ -84,12 +87,12 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
         val source = storage.source(id) ?: error("Saved workspace source missing")
         return check(source, saved.origin, saved.attempts).use { mountWorkspace(id, saved.title, it) }
     }
-    fun forgetWorkspace(id: String) { closeWorkspace(id); storage.forgetWorkspace(id) }
+    fun forgetWorkspace(id: String) { closeWorkspace(id); storage.forgetWorkspace(id); EmbeddingLog(context).event("storage", "deleted", workspace = id) }
     private fun mountWorkspace(id: String, title: String, candidate: CheckedCandidate): Pair<LiveWorkspace, JSONObject> = guarded(live = false) {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
-        val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config, candidate.receipts, candidate.identity, id), candidate.output, candidate.source, candidate.origin, candidate.attempts)
+        val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config, candidate.log, candidate.identity, id), candidate.output, candidate.source, candidate.origin, candidate.attempts)
         try {
-            val snapshot = candidate.receipts.stage("mount", candidate.identity, id) { live.session.mount(candidate.output) }
+            val snapshot = candidate.log.stage("mount", candidate.identity, id) { live.session.mount(candidate.output) }
             storage.saveWorkspace(id, title, candidate.source, candidate.origin, candidate.attempts)
             candidate.consumed = true
             workspaces[id] = live
@@ -107,6 +110,7 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     fun poll(id: String): JSONObject? = guarded { workspaces[id]?.session?.poll() }
     fun closeWorkspace(id: String) {
         val live = workspaces.remove(id) ?: return
+        EmbeddingLog(context).event("session", "closed", workspace = id)
         live.session.close(); live.output.parentFile?.deleteRecursively()
     }
 
@@ -117,7 +121,7 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     fun poll(): JSONObject? = guarded { session?.poll() }
     override fun close() {
         workspaces.values.toList().forEach { closeWorkspace(it.id) }
-        session?.close(); engine?.close()
+        session?.close(); engine?.let { SandboxEngine.release(it) }
         output?.parentFile?.deleteRecursively()
         session = null; engine = null; output = null
     }

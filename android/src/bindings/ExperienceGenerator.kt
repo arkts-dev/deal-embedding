@@ -7,25 +7,12 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 
-/** Generation diagnostics persist to app storage so a failure stays readable after logcat rolls. */
-internal class GenerationTrace(private val context: android.content.Context) {
-    private val file = java.io.File(context.filesDir, "generation-trace.txt")
-    private val run = UUID.randomUUID().toString()
-    private val started = android.os.SystemClock.elapsedRealtime()
-    @Synchronized fun record(line: String) {
-        if (!context.getSharedPreferences("embedding-debug", 0).getBoolean("captureReplay", false)) return
-        if (file.length() > 512 * 1024) file.delete()
-        runCatching { file.appendText("run=$run elapsedMs=${android.os.SystemClock.elapsedRealtime() - started} " + line + "\n") }
-            .onFailure { android.util.Log.e("Generation", "Cannot append generation trace", it) }
-    }
-}
-
 /** Host-facing facts, never inferred from generated source or its title. */
 enum class WorkspaceOrigin { AI_SOURCE, CATALOGUE, SAVED_SOURCE }
 class GenerationRejected(val attempts: Int, val reason: Reason, val diagnostics: String) : IllegalStateException("Generation rejected ($reason, attempts=$attempts): ${diagnostics.take(4000)}") {
     enum class Reason { ATTEMPT_LIMIT, REPEATED_RESPONSE, TEMPLATE_CHECK }
 }
-class CheckedCandidate internal constructor(internal val source: ExperienceSource, internal val output: File, internal val revision: String, val attempts: Int, internal val receipts: StageReceipts, internal val identity: String = UUID.randomUUID().toString(), val origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE) : AutoCloseable {
+class CheckedCandidate internal constructor(internal val source: ExperienceSource, internal val output: File, internal val revision: String, val attempts: Int, internal val log: EmbeddingLog, internal val identity: String = UUID.randomUUID().toString(), val origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE) : AutoCloseable {
     internal var consumed = false
     override fun close() { if (!consumed) output.parentFile.deleteRecursively() }
 }
@@ -38,15 +25,13 @@ internal class ExperienceGenerator(private val context: Context, private val con
         val revision = catalogRevision(config)
         val catalog = JSONArray(config.contracts.map { it.json() }).toString()
         val checked = mutableMapOf<String, Pair<ExperienceSource, File>>()
-        val trace = GenerationTrace(context)
-        val receipts = StageReceipts(context)
-        receipts.event("request", "started")
+        val log = EmbeddingLog(context)
+        log.event("request", "started", detail = JSONObject().put("intent", intent).put("context", disclosedContext).put("catalog", catalog).toString())
         // Neutral boundary representation: DEAL currently cannot read a dynamic string table key.
         val disclosed = runCatching { JSONObject(disclosedContext) }.getOrElse { JSONObject() }
         val entries = JSONArray(disclosed.keys().asSequence().filter { disclosed.opt(it) is String }.map {
             JSONObject().put("key", it).put("value", disclosed.getString(it))
         }.toList())
-        trace.record("--- generation start ---")
         val program = SandboxProgram(engine, 512 * 1024)
         fun eval(s: String) = program.evaluate(s)
         try {
@@ -62,7 +47,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                     val result = snapshot.getJSONObject("result")
                     val id = result.getString("candidateId")
                     cancellation.check()
-                    receipts.event("route", if (result.getBoolean("usedFallback")) "source" else "template", candidate = id)
+                    log.event("route", if (result.getBoolean("usedFallback")) "source" else "template", candidate = id)
                     val candidate = checked.remove(id) ?: run {
                         val diagnostics = result.optString("diagnostics")
                         val reason = when {
@@ -72,10 +57,9 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         }
                         throw GenerationRejected(result.getInt("attempts"), reason, diagnostics)
                     }
-                    trace.record("accepted candidate=$id sourceCalls=$attempts usedFallback=${result.getBoolean("usedFallback")}")
-                    receipts.event("candidate", "accepted", candidate = id)
-                    receipts.event("request", "completed", candidate = id)
-                    return CheckedCandidate(candidate.first, candidate.second, revision, result.getInt("attempts"), receipts, id, if (result.getBoolean("usedFallback")) WorkspaceOrigin.AI_SOURCE else WorkspaceOrigin.CATALOGUE)
+                    log.event("candidate", "accepted", candidate = id)
+                    log.event("request", "completed", candidate = id)
+                    return CheckedCandidate(candidate.first, candidate.second, revision, result.getInt("attempts"), log, id, if (result.getBoolean("usedFallback")) WorkspaceOrigin.AI_SOURCE else WorkspaceOrigin.CATALOGUE)
                 }
                 val requests = JSONArray(eval("dealCapabilities.take()"))
                 for (i in 0 until requests.length()) {
@@ -83,14 +67,13 @@ internal class ExperienceGenerator(private val context: Context, private val con
                     val request = requests.getJSONObject(i); val args = request.getJSONArray("args")
                     val value: Any = when(request.getString("module")) {
                         "embedding/observer" -> {
-                            val code = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("CHOICE_[A-Z_]+|INVALID_ENVELOPE")) } ?: ""
-                            if (args.getString(0) == "check" && args.getString(1) == "rejected" && code == "INVALID_ENVELOPE") receipts.event("check", "rejected", code = code)
-                            else if (args.getString(0) == "lower" && args.getString(1) in setOf("started", "completed", "failed")) receipts.event("lower", args.getString(1), code = code)
-                            else receipts.event("policy", if (args.getString(1) == "issued") "issued" else "validated", code = code)
-                            trace.record("policy ${args.getString(1)}: ${args.getString(2)}")
+                            val code = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("[A-Z][A-Z0-9_]{0,79}")) } ?: ""
+                            if (args.getString(0) == "check" && args.getString(1) == "rejected" && code == "INVALID_ENVELOPE") log.event("check", "rejected", code = code)
+                            else if (args.getString(0) == "lower" && args.getString(1) in setOf("started", "completed", "failed")) log.event("lower", args.getString(1), code = code)
+                            else log.event("policy", if (args.getString(1) == "issued") "issued" else "validated", code = code)
                             JSONObject.NULL
                         }
-                        "embedding/discovery" -> receipts.stage("discovery") { catalog }
+                        "embedding/discovery" -> log.stage("discovery") { catalog }
                         "embedding/policy-data" -> when (request.getString("function")) {
                             "lowercase" -> args.getString(0).lowercase()
                             "utf16Length" -> args.getString(0).length
@@ -107,8 +90,8 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         "embedding/chooser" -> when (request.getString("function")) {
                             "choose" -> {
                                 progress("Finding a suitable catalogue template…")
-                                receipts.stage("choice", operation = request.getInt("id").toString()) {
-                                    model.complete(args.getString(0), "", "", cancellation).also { trace.record("choice answer: " + it) }
+                                log.operation("choice", operation = request.getInt("id").toString(), detail = args.toString()) { child ->
+                                    model.completeLogged(args.getString(0), "", "", cancellation, child).also { child.event("choice", "response", detail = it) }
                                 }
                             }
                             else -> error("Unknown trusted chooser mechanism")
@@ -116,12 +99,11 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         "embedding/model" -> {
                             attempts++
                             val reason = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("CHOICE_[A-Z_]+")) } ?: ""
-                            receipts.event("route", if (attempts == 1) "fallback" else "repair", code = reason)
+                            log.event("route", if (attempts == 1) "fallback" else "repair", code = reason)
                             progress("AI writing logic and screen · attempt $attempts of 3")
-                            val raw = receipts.stage("source", operation = request.getInt("id").toString()) {
-                                model.complete(args.getString(0), args.getString(1), args.getString(2), cancellation)
+                            val raw = log.operation("source", operation = request.getInt("id").toString(), detail = args.toString()) { child ->
+                                model.completeLogged(args.getString(0), args.getString(1), args.getString(2), cancellation, child).also { child.event("source", "response", detail = it) }
                             }
-                            trace.record("source attempt " + attempts + " response:\n" + raw)
                             raw
                         }
                         "embedding/checker" -> {
@@ -129,16 +111,13 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             val id = UUID.randomUUID().toString()
                             try {
                                 val source = ExperienceSource(args.getString(0), args.getString(1))
-                                trace.record("checking deal:\n" + source.deal)
-                                trace.record("checking dealui:\n" + source.ui)
-                                val output = receipts.stage("check", candidate = id) { ExperienceCompiler(context, config).compile(source.deal, source.ui) }
+                                val output = log.operation("check", candidate = id, detail = JSONObject().put("deal", source.deal).put("dealui", source.ui).toString()) { child -> ExperienceCompiler(context, config, child).compile(source.deal, source.ui) }
                                 checked[id] = source to output
                                 JSONObject().put("accepted", true).put("candidateId", id).put("diagnostics", "")
                             } catch (error: Exception) {
                                 if (error !is CandidateRejected) throw error
                                 val diagnostics = error.diagnostics
-                                trace.record("checker rejected:\n" + diagnostics)
-                                receipts.event("check", "rejected", candidate = id, code = "CANDIDATE_REJECTED")
+                                log.event("check", "rejected", candidate = id, code = "CANDIDATE_REJECTED")
                                 JSONObject().put("accepted", false).put("candidateId", "").put("diagnostics", diagnostics)
                             }
                         }
@@ -150,8 +129,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                 if (requests.length() == 0) Thread.sleep(10)
             }
         } catch (error: Throwable) {
-            receipts.event("request", "failed", code = error.javaClass.simpleName)
-            trace.record("generation stopped: " + android.util.Log.getStackTraceString(error))
+            log.event("request", "failed", code = error.javaClass.simpleName)
             throw error
         } finally { program.close(); checked.values.forEach { it.second.parentFile.deleteRecursively() } }
     }
