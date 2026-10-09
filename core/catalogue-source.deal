@@ -54,7 +54,7 @@ async function synthesize(sourceName: string, selection: table): string {
     let purpose: string = "Compare"; if (purposeAnswer === "choose") { purpose = "Choose"; }
     let header: string = "Text"; if (headline === "hero") { header = "Hero"; }
     let warning: string = "";
-    if (notice === "warning") { warning = "ui.Notice(text: " + quote("Requested: " + spec + ". Availability is not a reservation.") + ", tone: \"warning\")"; }
+    if (notice === "warning") { warning = "ui.Notice(text: " + quote("Check suitability: " + spec + ". Not booked.") + ", tone: \"warning\")"; }
     let source: string = "import * as catalogue from " +
         quote(readModule) +
         ";\nimport * as review from " +
@@ -67,7 +67,7 @@ async function synthesize(sourceName: string, selection: table): string {
         "export class Prepare {}\n" +
         "export class Loaded { rows: Row[] = []; status: string = \"\"; failed: boolean = false; }\n" +
         "export class Prepared { status: string = \"\"; failed: boolean = false; }\n" +
-        "export class Workspace { rows: Row[] = []; status: string = \"Load available options for the requested period.\"; selected: string = \"\"; loading: boolean = false; failed: boolean = false; }\n" +
+        "export class Workspace { rows: Row[] = []; status: string = \"Find available equipment for your requirement.\"; selected: string = \"\"; loading: boolean = false; failed: boolean = false; }\n" +
         "function decimal(value: int): string {\n" +
         "    if (value < 0) { throw { code: \"BAD_PRICE\", message: \"Negative catalogue amount\" }; }\n" +
         "    if (value === 0) { return \"0\"; }\n" +
@@ -87,7 +87,7 @@ async function synthesize(sourceName: string, selection: table): string {
         "}\n" +
         "export function initialState(): Workspace { return {}; }\n" +
         "// @ui-update\n" +
-        "export function load(state: Workspace, action: Load): Workspace { return { rows: state.rows, status: \"Loading catalogue…\", selected: \"\", loading: true }; }\n" +
+        "export function load(state: Workspace, action: Load): Workspace { return { rows: state.rows, status: \"Loading equipment…\", selected: \"\", loading: true }; }\n" +
         "// @ui-effect\n" +
         "export async function fetch(state: Workspace, action: Load): Loaded {\n" +
         "    try {\n" +
@@ -117,7 +117,7 @@ async function synthesize(sourceName: string, selection: table): string {
         "        let status: string = \"Select an option; specification still needs your review.\";\n" +
         "        if (rows.length === 0) { status = \"No matching options. The requirement remains unresolved.\"; }\n" +
         "        return { rows: rows, status: status };\n" +
-        "    } catch (error) { return { rows: state.rows, status: error.code + \": \" + error.message, failed: true }; }\n" +
+        "    } catch (error) { let message: string = \"Couldn’t load equipment. Please try again.\"; if (error.code === \"PROVIDER_DENIED\" || error.code === \"DENIED\") { message = \"Allow sharing in the Rental app, then try again.\"; } return { rows: state.rows, status: message, failed: true }; }\n" +
         "}\n" +
         "// @ui-update\n" +
         "export function loaded(state: Workspace, action: Loaded): Workspace { return { rows: action.rows, status: action.status, failed: action.failed }; }\n" +
@@ -129,7 +129,7 @@ async function synthesize(sourceName: string, selection: table): string {
         "        if (match) { selected = row.id; }\n" +
         "        rows[rows.length] = { id: row.id, title: row.title, detail: row.detail, price: row.price, meta: row.meta, available: row.available, selected: match };\n" +
         "    }\n" +
-        "    return { rows: rows, selected: selected, status: \"Review the selected specification, then prepare for native review.\" };\n" +
+        "    return { rows: rows, selected: selected, status: \"Check the selected specification, then prepare your selection.\" };\n" +
         "}\n" +
         "// @ui-update\n" +
         "export function prepare(state: Workspace, action: Prepare): Workspace { return { rows: state.rows, selected: state.selected, status: \"Preparing review…\", loading: true }; }\n" +
@@ -151,11 +151,11 @@ async function synthesize(sourceName: string, selection: table): string {
         ");\n" +
         "                let accepted: boolean = staged.staged;\n" +
         "                if (!accepted) { throw { code: \"NOT_STAGED\", message: \"Native review rejected the descriptor\" }; }\n" +
-        "                return { status: \"Prepared for native review. No reservation has been made.\" };\n" +
+        "                return { status: \"Selection ready for review. Not booked.\" };\n" +
         "            }\n" +
         "        }\n" +
         "        return { status: \"Choose an available option first.\", failed: true };\n" +
-        "    } catch (error) { return { status: error.code + \": \" + error.message, failed: true }; }\n" +
+        "    } catch (error) { return { status: \"Couldn’t prepare your selection. Please try again.\", failed: true }; }\n" +
         "}\n" +
         "// @ui-update\n" +
         "export function prepared(state: Workspace, action: Prepared): Workspace { return { rows: state.rows, selected: state.selected, status: action.status, failed: action.failed }; }\n" +
@@ -171,13 +171,14 @@ async function synthesize(sourceName: string, selection: table): string {
         ")\n        ui.Text(value: state.status)\n        " +
         warning +
         "\n" +
-        "        When(state.loading) { ui.Progress(label: \"Waiting for connected app\") } Else {\n" +
+        "        When(state.loading) { ui.Progress(label: \"Getting your options ready\") }\n" +
+        "        ui.Button(text: \"Load options\", enabled: !state.loading, accessibilityLabel: \"Load options\", onClick: action app.Load {})\n" +
+        "        When(!state.loading) {\n" +
         "            When(state.failed) { ui.Failure(text: state.status, accessibilityLabel: \"Retry catalogue\", onRetry: action app.Load {}) }\n" +
         "            ForEach(state.rows, row: app.Row, key: row.id) {\n" +
         "                ui.Option(value: row.id, title: row.title, detail: row.detail, price: row.price, meta: row.meta, enabled: row.available, selected: row.selected, accessibilityLabel: row.title, onSelect: action app.Pick { value: payload })\n" +
         "            }\n" +
-        "            ui.Button(text: \"Load options\", accessibilityLabel: \"Load options\", onClick: action app.Load {})\n" +
-        "            When(state.selected !== \"\") { ui.Button(text: \"Prepare for review\", accessibilityLabel: \"Prepare for review\", onClick: action app.Prepare {}) }\n" +
+        "            When(state.selected !== \"\") { ui.Button(text: \"Prepare selection\", accessibilityLabel: \"Prepare selection\", onClick: action app.Prepare {}) }\n" +
         "        }\n" +
         "    }\n" +
         "}";

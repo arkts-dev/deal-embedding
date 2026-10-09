@@ -14,4 +14,4 @@ Treat those declarations as canonical signatures and `host/check-result.json` as
 
 Restrict the core's host imports to trusted orchestration. Generation returns checked candidate identities; hosts validate disclosed context and catalog revision before activation.
 
-Keep `generation-guidance.md` aligned with accepted DEAL syntax, Deal UI semantics and the renderer pack. Include literal pack import, conditional syntax and payload-bearing event examples; examples must not contradict component contracts. Preserve intent-driven workflow generation and immutable state updates.
+Keep `generation-guidance.md` aligned with accepted DEAL syntax, Deal UI semantics and the renderer pack. Include literal pack import, conditional syntax and payload-bearing event examples; examples must not contradict component contracts. Preserve intent-driven workflow generation and immutable state updates. Keep catalogue and generation guidance task-facing: no raw error codes or engineering taxonomy on ordinary screens. Pending effects must show progress, prevent conflicting submission and restore controls on completion/failure; engineering diagnostics remain in the unified logger.

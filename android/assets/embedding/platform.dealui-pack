@@ -20,7 +20,7 @@ export component Section(props: SectionProps): View { children required; capabil
 export class OptionProps { value: string = ""; title: string = ""; detail: string = ""; price: string = ""; meta: string = ""; selected: boolean = false; enabled: boolean = true; onSelect?: Action; accessibilityLabel?: string; }
 export component Option(props: OptionProps): View { children optional; event onSelect(payload: string); accessibility accessibilityLabel; capability "renderer.compose.option"; }
 
-export class IntFieldProps { value: int = 0; label: string = ""; minimum: int = 0; maximum: int = 999; step: int = 1; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
+export class IntFieldProps { value: int = 0; label: string = ""; minimum: int = 0; maximum: int = 999; step: int = 1; format: string = "integer"; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
 export component IntField(props: IntFieldProps): View { event onChange(payload: int); accessibility accessibilityLabel; capability "renderer.compose.intfield"; }
 
 export class TextFieldProps { value: string = ""; label: string = ""; multiline: boolean = false; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }

@@ -72,8 +72,8 @@ internal enum class RenderComponent(val component: String, val capability: Strin
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { children() }
         }
         RenderComponent.Text -> Text(text("value"), style = MaterialTheme.typography.bodyLarge)
-        RenderComponent.Hero -> Text(text("value"), style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.primary)
-        RenderComponent.Button -> Button(enabled = flag("enabled"), onClick = { prop("onClick")?.let { dispatch(it.getInt("actionSlot"), null) } }, modifier = Modifier.fillMaxWidth().semantics { contentDescription = text("accessibilityLabel") }, contentPadding = PaddingValues(18.dp)) { Text(text("text")) }
+        RenderComponent.Hero -> Text(text("value"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        RenderComponent.Button -> Button(enabled = flag("enabled"), onClick = { prop("onClick")?.let { dispatch(it.getInt("actionSlot"), null) } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = text("accessibilityLabel") }, contentPadding = PaddingValues(16.dp)) { Text(text("text")) }
         RenderComponent.Toggle -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(text("text"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             Checkbox(flag("checked"), { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), text("value")) } }, modifier = Modifier.semantics { contentDescription = text("accessibilityLabel") })
@@ -126,10 +126,10 @@ internal enum class RenderComponent(val component: String, val capability: Strin
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(text("label"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                     FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() - step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled") && lower <= upper && value > lower,
-                        modifier = Modifier.semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " decrease" }) { Text("−") }
-                    Text(value.toString(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.widthIn(min = 32.dp))
+                        modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " decrease" }) { Text("−") }
+                    Text(if (text("format") == "euro-cents") "€%.2f".format(java.util.Locale.getDefault(), value / 100.0) else value.toString(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.widthIn(min = 32.dp))
                     FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() + step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled") && lower <= upper && value < upper,
-                        modifier = Modifier.semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " increase" }) { Text("+") }
+                        modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " increase" }) { Text("+") }
                 }
                 val hint = text("error").ifEmpty { text("supporting") }
                 if (hint.isNotEmpty()) Text(hint, color = if (text("error").isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
