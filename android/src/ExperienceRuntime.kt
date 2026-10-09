@@ -30,7 +30,8 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     internal fun sandbox(): JavaScriptSandbox = engine ?: SandboxEngine.acquire(context).also { engine = it }
     private fun <T> guarded(live: Boolean = true, operation: () -> T): T = try { operation() } catch (error: Exception) {
         if (generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException || it is androidx.javascriptengine.MemoryLimitExceededException || (live && (it is java.util.concurrent.TimeoutException || it is androidx.javascriptengine.IsolateTerminatedException)) }) {
-            engine?.let { SandboxEngine.release(it, dead = true) }; engine = null
+            val sandboxDead = generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException }
+            engine?.let { SandboxEngine.release(it, dead = sandboxDead) }; engine = null
             close()
         }
         throw error

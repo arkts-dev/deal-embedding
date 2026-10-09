@@ -91,7 +91,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             "choose" -> {
                                 progress("Finding a suitable catalogue template…")
                                 log.operation("choice", operation = request.getInt("id").toString(), detail = args.toString()) { child ->
-                                    model.completeLogged(args.getString(0), "", "", cancellation, child).also { child.event("choice", "response", detail = it) }
+                                    model.complete(args.getString(0), "", "", cancellation, child).also { child.event("choice", "response", detail = it) }
                                 }
                             }
                             else -> error("Unknown trusted chooser mechanism")
@@ -102,7 +102,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             log.event("route", if (attempts == 1) "fallback" else "repair", code = reason)
                             progress("AI writing logic and screen · attempt $attempts of 3")
                             val raw = log.operation("source", operation = request.getInt("id").toString(), detail = args.toString()) { child ->
-                                model.completeLogged(args.getString(0), args.getString(1), args.getString(2), cancellation, child).also { child.event("source", "response", detail = it) }
+                                model.complete(args.getString(0), args.getString(1), args.getString(2), cancellation, child).also { child.event("source", "response", detail = it) }
                             }
                             raw
                         }

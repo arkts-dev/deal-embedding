@@ -7,14 +7,13 @@ import java.util.UUID
 import java.util.concurrent.Executors
 
 interface CapabilitySession : AutoCloseable {
-    val identity: String get() = ""
+    val identity: String
     fun receive(request: JSONObject, now: Long)
     fun drain(now: Long): List<JSONObject>
 }
 
 interface CapabilityHost {
-    fun openSession(): CapabilitySession
-    fun openSession(log: dev.deal.embedding.EmbeddingLog): CapabilitySession = openSession()
+    fun openSession(log: dev.deal.embedding.EmbeddingLog): CapabilitySession
 }
 
 /** Discovery and grants are shared; each isolate owns an independent request/reply session. */
@@ -51,10 +50,6 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
     }
     @Synchronized fun grantAll() { providers.keys.forEach(::grant) }
     @Synchronized fun revokeAll() { grants.toList().forEach(::revoke) }
-    @Synchronized override fun openSession(): CapabilitySession {
-        check(!closed) { "Capability registry is closed" }
-        return Session(log).also { sessions.add(it) }
-    }
     @Synchronized override fun openSession(log: dev.deal.embedding.EmbeddingLog): CapabilitySession {
         check(!closed) { "Capability registry is closed" }
         return Session(log).also { sessions.add(it) }

@@ -5,8 +5,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** Host-selected inference mechanism; no transport or credential policy belongs here. */
 interface ModelClient {
-    fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation): String
-    fun completeLogged(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog): String = complete(input, previous, diagnostics, cancellation)
+    fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog): String
 }
 
 class GenerationCancellation {
