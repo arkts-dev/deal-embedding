@@ -14,7 +14,7 @@ data class EmbeddingConfig(val sourceName: String, var contracts: List<Capabilit
 data class ExperienceSource(val deal: String, val ui: String)
 
 /** A live workspace: its own isolate and state, sharing the connected sandbox engine. */
-class LiveWorkspace internal constructor(val id: String, val title: String, internal val session: UiSession, internal val output: File, internal val source: ExperienceSource)
+class LiveWorkspace internal constructor(val id: String, val title: String, internal val session: UiSession, internal val output: File, internal val source: ExperienceSource, val origin: WorkspaceOrigin, val attempts: Int)
 
 /**
  * Called serially by the host. Owns compilation, atomic mounting, live workspaces and the shared engine.
@@ -43,11 +43,12 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
         return snapshot
     }
     /** Check saved or host-supplied source without inference; activation remains a separate decision. */
-    fun check(source: ExperienceSource): CheckedCandidate = guarded(live = false) {
+    /** Provenance is trusted host metadata, never an assertion from application source. */
+    fun check(source: ExperienceSource, origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE, attempts: Int = 0): CheckedCandidate = guarded(live = false) {
         val receipts = StageReceipts(context)
         val identity = UUID.randomUUID().toString()
         receipts.event("route", "saved", candidate = identity)
-        CheckedCandidate(source, receipts.stage("check", candidate = identity) { ExperienceCompiler(context, config).compile(source.deal, source.ui) }, catalogRevision(config), 0, receipts, identity)
+        CheckedCandidate(source, receipts.stage("check", candidate = identity) { ExperienceCompiler(context, config).compile(source.deal, source.ui) }, catalogRevision(config), attempts, receipts, identity, origin)
     }
     fun activate(source: ExperienceSource): JSONObject {
         val candidateOutput = ExperienceCompiler(context, config).compile(source.deal, source.ui)
@@ -75,12 +76,12 @@ class ExperienceRuntime(private val context: Context, private val capabilities: 
     fun open(title: String, candidate: CheckedCandidate): Pair<LiveWorkspace, JSONObject> = guarded(live = false) {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
         val id = UUID.randomUUID().toString()
-        val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config, candidate.receipts, candidate.identity, id), candidate.output, candidate.source)
+        val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config, candidate.receipts, candidate.identity, id), candidate.output, candidate.source, candidate.origin, candidate.attempts)
         try {
             val snapshot = candidate.receipts.stage("mount", candidate.identity, id) { live.session.mount(candidate.output) }
             candidate.consumed = true
             workspaces[id] = live
-            storage.saveWorkspace(id, title, candidate.source)
+            storage.saveWorkspace(id, title, candidate.source, candidate.origin, candidate.attempts)
             live to snapshot
         } catch (error: Throwable) { live.session.close(); candidate.output.parentFile?.deleteRecursively(); throw error }
     }

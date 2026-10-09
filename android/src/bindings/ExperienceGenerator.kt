@@ -20,7 +20,12 @@ internal class GenerationTrace(private val context: android.content.Context) {
     }
 }
 
-class CheckedCandidate internal constructor(internal val source: ExperienceSource, internal val output: File, internal val revision: String, val attempts: Int, internal val receipts: StageReceipts, internal val identity: String = UUID.randomUUID().toString()) : AutoCloseable {
+/** Host-facing facts, never inferred from generated source or its title. */
+enum class WorkspaceOrigin { AI_SOURCE, CATALOGUE, SAVED_SOURCE }
+class GenerationRejected(val attempts: Int, val reason: Reason, val diagnostics: String) : IllegalStateException("Generation rejected ($reason, attempts=$attempts): ${diagnostics.take(4000)}") {
+    enum class Reason { ATTEMPT_LIMIT, REPEATED_RESPONSE, TEMPLATE_CHECK }
+}
+class CheckedCandidate internal constructor(internal val source: ExperienceSource, internal val output: File, internal val revision: String, val attempts: Int, internal val receipts: StageReceipts, internal val identity: String = UUID.randomUUID().toString(), val origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE) : AutoCloseable {
     internal var consumed = false
     override fun close() { if (!consumed) output.parentFile.deleteRecursively() }
 }
@@ -58,11 +63,19 @@ internal class ExperienceGenerator(private val context: Context, private val con
                     val id = result.getString("candidateId")
                     cancellation.check()
                     receipts.event("route", if (result.getBoolean("usedFallback")) "source" else "template", candidate = id)
-                    val candidate = checked.remove(id) ?: error("Generation rejected (fallback=${result.getBoolean("usedFallback")}, attempts=${result.getInt("attempts")}): ${result.optString("diagnostics").take(4000)}")
+                    val candidate = checked.remove(id) ?: run {
+                        val diagnostics = result.optString("diagnostics")
+                        val reason = when {
+                            !result.getBoolean("usedFallback") -> GenerationRejected.Reason.TEMPLATE_CHECK
+                            diagnostics.startsWith("REPEATED_CANDIDATE:") -> GenerationRejected.Reason.REPEATED_RESPONSE
+                            else -> GenerationRejected.Reason.ATTEMPT_LIMIT
+                        }
+                        throw GenerationRejected(result.getInt("attempts"), reason, diagnostics)
+                    }
                     trace.record("accepted candidate=$id sourceCalls=$attempts usedFallback=${result.getBoolean("usedFallback")}")
                     receipts.event("candidate", "accepted", candidate = id)
                     receipts.event("request", "completed", candidate = id)
-                    return CheckedCandidate(candidate.first, candidate.second, revision, result.getInt("attempts"), receipts, id)
+                    return CheckedCandidate(candidate.first, candidate.second, revision, result.getInt("attempts"), receipts, id, if (result.getBoolean("usedFallback")) WorkspaceOrigin.AI_SOURCE else WorkspaceOrigin.CATALOGUE)
                 }
                 val requests = JSONArray(eval("dealCapabilities.take()"))
                 for (i in 0 until requests.length()) {
@@ -93,7 +106,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         }
                         "embedding/chooser" -> when (request.getString("function")) {
                             "choose" -> {
-                                progress("Choosing a workspace shape")
+                                progress("Finding a suitable catalogue template…")
                                 receipts.stage("choice", operation = request.getInt("id").toString()) {
                                     model.complete(args.getString(0), "", "", cancellation).also { trace.record("choice answer: " + it) }
                                 }
@@ -104,7 +117,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             attempts++
                             val reason = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("CHOICE_[A-Z_]+")) } ?: ""
                             receipts.event("route", if (attempts == 1) "fallback" else "repair", code = reason)
-                            progress("Generating source · attempt $attempts of 3")
+                            progress("AI writing logic and screen · attempt $attempts of 3")
                             val raw = receipts.stage("source", operation = request.getInt("id").toString()) {
                                 model.complete(args.getString(0), args.getString(1), args.getString(2), cancellation)
                             }
@@ -112,7 +125,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             raw
                         }
                         "embedding/checker" -> {
-                            progress("Checking generated source")
+                            progress(if (attempts == 0) "Checking catalogue workspace…" else "Checking AI-written code · attempt $attempts of 3")
                             val id = UUID.randomUUID().toString()
                             try {
                                 val source = ExperienceSource(args.getString(0), args.getString(1))

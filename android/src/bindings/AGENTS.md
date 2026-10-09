@@ -2,7 +2,7 @@
 
 Derive application declarations and sandbox configuration from provider contracts. Convert wire records to DEAL tables and back according to their schemas. External parameter names are wire metadata; emit safe positional parameter identifiers in DEAL declarations. Escape generated DEAL strings using DEAL rules, not JSON escaping.
 
-`ExperienceGenerator` services core discovery, choice, model and checker calls and owns checked staging cleanup. Keep application capability execution in experience sessions.
+`ExperienceGenerator` services core discovery, choice, model and checker calls and owns checked staging cleanup. Keep application capability execution in experience sessions. Expose provenance and typed generation rejection from the trusted core result; never infer authorship or failure classification from source text or user-visible exception strings.
 
 Keep eligibility, issued aliases and answer validation in `core/choice-policy.deal`. Native choice code only transports raw inference; `core/catalogue-source.deal` synthesizes the trusted template. `core/candidate-check.deal` validates source envelopes; the native checker accepts two source strings and classifies only typed candidate rejection. Do not catch generic argument/JSON exceptions as repairable compiler failures. Provide Unicode lowercase, UTF-16 code-unit length and normalized JSON shapes/string-entry context without deciding policy; current DEAL dynamic table reads and JSON-array representation require these boundary mechanisms. Template output still requires the ordinary checker.
 
