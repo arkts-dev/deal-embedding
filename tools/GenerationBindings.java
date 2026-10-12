@@ -23,6 +23,7 @@ public final class GenerationBindings {
         try (var files = Files.list(declarations)) {
             for (Path file : files.filter(p -> p.toString().endsWith(".d.deal")).sorted().toList()) {
                 String module = "embedding/" + file.getFileName().toString().replace(".d.deal", "");
+                if (Set.of("embedding/embedding", "embedding/catalogue-policy", "embedding/protocol", "embedding/policy-data").contains(module)) continue;
                 var lexed = new Lexer(Files.readString(file), file.toString()).tokenize();
                 var parsed = new Parser(lexed.tokens(), file.toString()).parse();
                 if (!lexed.diagnostics().isEmpty() || !parsed.diagnostics().isEmpty()) throw new IllegalArgumentException("Invalid host declaration: " + file);

@@ -12,12 +12,15 @@ import java.util.concurrent.TimeUnit
 /** Trusted observation only. Admission and persistence failures never replace application outcomes. */
 class EmbeddingLog private constructor(private val context: Context, val run: String, private val defaultParent: String) {
     constructor(context: Context) : this(context.applicationContext, UUID.randomUUID().toString(), "")
-    private fun child(parent: String) = EmbeddingLog(context, run, parent)
+    private fun child(parent: String) = EmbeddingLog(context, run, parent).also{it.boundExperience=boundExperience;it.boundSession=boundSession}
+    internal fun bind(workspace: String,session:String) = EmbeddingLog(context,run,defaultParent).also { it.boundExperience=workspace;it.boundSession=session }
+    private var boundExperience=""
+    private var boundSession=""
     val capturesContent: Boolean get() = runCatching { context.getSharedPreferences("embedding-logging", 0).getBoolean("content", false) }.getOrDefault(false)
     fun event(stage: String, outcome: String, candidate: String = "", workspace: String = "", operation: String = "", code: String = "", durationMs: Long = 0, version: Int = -1, parentOperation: String = "", target: String = "", detail: String? = null, span: String = UUID.randomUUID().toString()) {
         try {
             sink(context).submit(JSONObject().put("trace", run).put("span", span).put("parent", parentOperation.ifEmpty { defaultParent })
-                .put("stage", stage).put("outcome", outcome).put("candidate", candidate).put("workspace", workspace).put("operation", operation)
+                .put("stage", stage).put("outcome", outcome).put("candidate", candidate).put("workspace", workspace.ifEmpty{boundExperience}).put("operation", operation).put("session",boundSession)
                 .put("code", code).put("durationMs", durationMs.coerceIn(0, Int.MAX_VALUE.toLong())).put("version", version).put("target", target), detail, capturesContent)
         } catch (error: Exception) { emergency(context, error) }
     }

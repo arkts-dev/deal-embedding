@@ -1,0 +1,48 @@
+import * as ui from "./ui/core";
+export class WireField { name: string = ""; type: WireType = {}; optional: boolean = false; }
+export class WireType { kind: string = ""; fields: WireField[] = []; element: WireType | null = null; maximum: int = 128; minimumInt: int = -2147483648; maximumInt: int = 2147483647; }
+export class Parameter { name: string = ""; type: WireType = {}; }
+export class CapabilityFunction { name: string = ""; description: string = ""; parameters: Parameter[] = []; result: WireType = {}; }
+export class CapabilityContract { module: string = ""; description: string = ""; version: int = 1; functions: CapabilityFunction[] = []; }
+export class Source { deal: string = ""; dealui: string = ""; }
+export class GenerationContext { id: string = ""; }
+export class GenerationRequest { id: string = ""; }
+export class Experience { id: string = ""; title: string = ""; origin: string = ""; attempts: int = 0; }
+export class Session { id: string = ""; }
+export class UiSnapshot { tree: ui.ViewNode = {}; version: int = 0; fault: string = ""; }
+export class Event {
+ trace: string = ""; span: string = ""; parent: string = ""; stage: string = ""; outcome: string = ""; code: string = "";
+ experience: string = ""; session: string = ""; operation: string = ""; target: string = "";
+ durationMs: int = 0; version: int = -1; sequence: int = 0;
+ time: string = ""; elapsed: string = ""; artifact: string = ""; content: string = ""; bytes: int = 0; sha256: string = "";
+}
+export class EventPage { events: Event[] = []; cursor: string = ""; incomplete: boolean = false; }
+export class Artifact { status: string = ""; text: string = ""; }
+export class ObservationHealth { incomplete: boolean = false; active: boolean = false; code: string = ""; lost: int = 0; }
+export function snapshot(schema: WireType, valueJson: string): GenerationContext;
+export function contextSchema(context: GenerationContext): WireType;
+export function contextJson(context: GenerationContext): string;
+export function request(title: string, intent: string, context: GenerationContext): GenerationRequest;
+export async function generate(request: GenerationRequest): Experience;
+export function cancel(request: GenerationRequest): null;
+export async function load(title: string, source: Source): Experience;
+export function source(experience: Experience): Source;
+export function release(experience: Experience): null;
+export async function run(experience: Experience): Session;
+export async function dispatch(session: Session, actionSlot: int, payload: string | null): UiSnapshot;
+export async function poll(session: Session): UiSnapshot;
+export function published(session: Session, version: int): null;
+export async function close(session: Session): null;
+export function saved(): Experience[];
+export async function forget(experience: Experience): null;
+export async function refresh(): CapabilityContract[];
+export function grant(module: string): null;
+export function revoke(module: string): null;
+export function requestTrace(request: GenerationRequest): string;
+export function sessionTrace(session: Session): string;
+export async function events(trace: string, cursor: string, limit: int): EventPage;
+export async function artifact(id: string): Artifact;
+export function health(): ObservationHealth;
+export function capture(enabled: boolean): null;
+export async function clearObservation(): null;
+export async function shutdown(): null;

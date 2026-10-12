@@ -47,6 +47,10 @@ internal object SandboxBundle {
         append("factories[").append(JSONObject.quote(key)).append("] = function(require,module,exports,process,console) {\n")
         append(source).append("\n};\n")
     }
+    fun factories(context: Context, root: String): String = buildString {
+        fun add(path: String, relative: String) { for(name in context.assets.list(path).orEmpty()) { val key=if(relative.isEmpty())name else "$relative/$name";if(name.endsWith(".js"))factory(key,context.assets.open("$path/$name").bufferedReader().use{it.readText()})else add("$path/$name",key) } }
+        add(root, "")
+    }
     fun build(context: Context, bindings: List<String>, configure: String, invocation: String, output: File? = null, assetRoot: String? = null): String = buildString {
         require((output == null) != (assetRoot == null))
         asset(context, "embedding/bindings/sandbox.js")

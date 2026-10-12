@@ -52,6 +52,7 @@ globalThis.dealLoad = function(factories, entryId) {
     error: log
   });
   function resolve(parent, name) {
+    if (typeof protocolDeclarations !== 'undefined' && Object.hasOwn(protocolDeclarations, name.replace(/\.js$/, ""))) return name.replace(/\.js$/, "");
     if (Object.hasOwn(dealHostContracts, name.replace(/\.js$/, ""))) return name.replace(/\.js$/, "");
     if (!name.startsWith("./") && !name.startsWith("../")) {
       throw new Error("Non-bundle module denied: " + name);
@@ -73,9 +74,9 @@ globalThis.dealLoad = function(factories, entryId) {
       if (type.kind === 'array') return value.map(item => encode(type.element, item));
       if (type.kind === 'record') {
         const fields = Object.create(null);
-        if (!(value instanceof Map) || value.size !== Object.keys(type.fields).length) throw Error('Invalid record argument');
+        if (!(value instanceof Map) || [...value.keys()].some(key=>!Object.hasOwn(type.fields,key))) throw Error('Invalid record argument');
         for (const name of Object.keys(type.fields)) {
-          if (!value.has(name)) throw Error('Missing record argument field');
+          if (!value.has(name)) {if((type.optionalFields||[]).includes(name))continue;throw Error('Missing record argument field');}
           fields[name] = encode(type.fields[name], value.get(name));
         }
         return fields;
@@ -96,12 +97,16 @@ globalThis.dealLoad = function(factories, entryId) {
       if (type.kind === 'array') return value.map(item => convert(type.element, item));
       if (type.kind === 'record') {
         const fields = Object.create(null);
-        for (const name of Object.keys(type.fields)) fields[name] = convert(type.fields[name], value[name]);
+        for (const name of Object.keys(type.fields)) if(Object.hasOwn(value,name))fields[name] = convert(type.fields[name], value[name]);
         return load('deal/runtime.js').makeTable(fields);
       }
       return value;
     }
     const hostId = id.replace(/\.js$/, "");
+    if (typeof protocolDeclarations !== 'undefined' && Object.hasOwn(protocolDeclarations, hostId)) {
+      if (!Object.hasOwn(cache,hostId)) cache[hostId]={exports:protocolHost(hostId,protocolDeclarations[hostId],load('deal/runtime.js'))};
+      return cache[hostId].exports;
+    }
     if (Object.hasOwn(dealHostContracts, hostId)) {
       if (!Object.hasOwn(cache, hostId)) {
         const exports = Object.create(null);

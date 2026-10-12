@@ -2,7 +2,7 @@
 
 Android implements `core/host` through native adapters and sandbox bindings. Core and experience compilation use DEAL's JavaScript backend; JavaScriptSandbox executes the output. Compose renders the checked tree.
 
-Call `ExperienceRuntime` serially. Mount and persist candidates before replacing healthy sessions. Source replacements preserve compatible state; generated candidates start fresh. Both reject replacement during outstanding effects.
+Call instance session operations serially. Keep `ExperienceRuntime` internal. Mount and persist before replacing healthy sessions; each new Experience starts fresh. Run returns the existing live session for that Experience. Cancellation and observation stay callable during awaiting generation.
 
 Preserve healthy sessions on candidate-local timeout. Clear unusable runtime resources on live termination and the shared engine on sandbox death. Classify typed failures; retain ordinary validation errors as rejections.
 

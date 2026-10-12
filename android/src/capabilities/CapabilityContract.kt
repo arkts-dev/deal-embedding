@@ -10,12 +10,14 @@ data class CapabilityType(
     val maximum: Int = 128,
     val minimumInt: Int = Int.MIN_VALUE,
     val maximumInt: Int = Int.MAX_VALUE,
+    val optionalFields: Set<String> = emptySet(),
 ) {
     init {
         require(kind in setOf("int", "string", "boolean", "null", "record", "array"))
         require(maximum in 0..8192 && minimumInt <= maximumInt)
         require((kind == "array") == (element != null))
-        require((kind == "record") == fields.isNotEmpty())
+        require(kind == "record" || fields.isEmpty())
+        require(optionalFields.all { it in fields })
         require(fields.size <= 32 && fields.keys.all { identifier(it) })
     }
     fun validate(value: Any?, depth: Int = 0) {
@@ -26,25 +28,26 @@ data class CapabilityType(
             "string" -> require(value is String && value.length <= maximum)
             "boolean" -> require(value is Boolean)
             "record" -> {
-                require(value is JSONObject && value.length() == fields.size)
-                fields.forEach { (name, type) -> require(value.has(name)); type.validate(value.get(name), depth + 1) }
+                require(value is JSONObject && value.keys().asSequence().all { it in fields })
+                fields.forEach { (name, type) -> if(value.has(name))type.validate(value.get(name), depth + 1) else require(name in optionalFields) }
             }
             "array" -> { require(value is JSONArray && value.length() <= maximum); for (i in 0 until value.length()) element!!.validate(value.get(i), depth + 1) }
         }
     }
     fun json(): JSONObject = JSONObject().put("kind", kind).put("maximum", maximum).put("minimumInt", minimumInt).put("maximumInt", maximumInt).also { output ->
         if (element != null) output.put("element", element.json())
-        if (fields.isNotEmpty()) output.put("fields", JSONObject().also { f -> fields.forEach { (name, type) -> f.put(name, type.json()) } })
+        if (kind=="record") output.put("fields", JSONObject().also { f -> fields.forEach { (name, type) -> f.put(name, type.json()) } })
+        if(optionalFields.isNotEmpty())output.put("optionalFields",JSONArray(optionalFields.toList()))
     }
     companion object {
         val IntType = CapabilityType("int")
         val NullType = CapabilityType("null")
         fun identifier(value: String) = value.matches(Regex("[A-Za-z][A-Za-z0-9_]{0,63}"))
         fun parse(json: JSONObject, depth: Int = 0): CapabilityType {
-            require(depth <= 8 && json.length() <= 6)
+            require(depth <= 8 && json.length() <= 7)
             val fields = json.optJSONObject("fields")
             return CapabilityType(json.getString("kind"), fields?.keys()?.asSequence()?.associateWith { parse(fields.getJSONObject(it), depth + 1) } ?: emptyMap(),
-                json.optJSONObject("element")?.let { parse(it, depth + 1) }, json.getInt("maximum"), json.getInt("minimumInt"), json.getInt("maximumInt"))
+                json.optJSONObject("element")?.let { parse(it, depth + 1) }, json.getInt("maximum"), json.getInt("minimumInt"), json.getInt("maximumInt"),json.optJSONArray("optionalFields")?.let{a->(0 until a.length()).map{a.getString(it)}.toSet()} ?: emptySet())
         }
     }
 }

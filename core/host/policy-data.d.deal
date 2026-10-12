@@ -1,3 +1,9 @@
+import * as embedding from "./embedding";
+
+export async function catalogJson(capabilities: embedding.CapabilityContract[]): string;
+export async function contextEntries(input: string): string;
+export async function member(input: table, key: string): table;
+export async function stringMember(input: table, key: string): string;
 // JSON shape normalization only: decode objects as tables and arrays as typed ABI arrays.
 // This avoids std/json's marked-table array representation on the current JS backend.
 export async function parse(input: string): table;

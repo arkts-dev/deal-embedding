@@ -5,7 +5,7 @@ import * as strings from "std/string";
 export class LogEvent {
     trace: string = ""; span: string = ""; parent: string = "";
     stage: string = ""; outcome: string = ""; code: string = "";
-    candidate: string = ""; workspace: string = ""; operation: string = "";
+    candidate: string = ""; workspace: string = ""; session: string = ""; operation: string = "";
     target: string = ""; durationMs: int = 0; version: int = -1;
     sequence: int = 0; time: string = ""; elapsed: string = "";
     capture: boolean = false; artifact: string = ""; bytes: int = 0;
@@ -28,7 +28,7 @@ export function normalize(event: LogEvent): string {
     return json.stringify({ schema: 1, sequence: event.sequence, time: event.time, elapsed: event.elapsed,
         trace: bounded(event.trace, 80), span: bounded(event.span, 80), parent: bounded(event.parent, 80),
         stage: stage, outcome: outcome, code: bounded(event.code, 80),
-        candidate: bounded(event.candidate, 80), workspace: bounded(event.workspace, 80), operation: bounded(event.operation, 80),
+        candidate: bounded(event.candidate, 80), workspace: bounded(event.workspace, 80), session: bounded(event.session,80), operation: bounded(event.operation, 80),
         target: bounded(event.target, 160), durationMs: duration, version: event.version,
         artifact: bounded(event.artifact, 80), content: content, bytes: event.bytes,
         summary: stage + " · " + outcome + " " + bounded(event.target, 160),

@@ -1,0 +1,25 @@
+# Android/JavaScript protocol
+
+`embedding.d.deal` and `catalogue-policy.d.deal` are the public signatures. `Embedding` is the Android bootstrap; `PublicProtocolBinding` links every embedding export to that instance. Compiler-derived `protocol-contracts.js` preserves nominal record identity. Generated UI has neither this declaration inventory nor these bindings. Only trusted orchestration/app policy may import them.
+
+Generation, bounded repair and fallback execute in `core/generation.deal`. App build links its own policy asset directory; absent policy offers no catalogue. Policy `offer`/`lower` executes compiled DEAL in the preparation isolate, which cannot invoke application providers. Native code implements generic answer validation, checking, execution, authenticated transport, persistence and observation.
+
+## Context and handles
+
+Contexts copy and validate schema/value. Six kinds only; closed records support omitted optional fields. Strings count UTF-16 units. Maximum length/count is 0–8192, schema depth at most 8, record fields at most 32, and encoded context at most 8192 UTF-8 bytes. Empty records are legal. Duplicate fields, cycles, unknown kinds, incorrect element/field metadata and inverted integer bounds reject, including in absent optional branches. Accessors return independent schemas. JSON is normalized at snapshot; values must consume the full input. No generic domain schema is implied.
+
+IDs must have been issued or reconstituted by the same instance; copied metadata grants nothing. Requests are single-use, freeze context/contracts and retain their trace until shutdown. Cancellation is checked before inference, after each host operation and atomically before accepting prepared source. It stops waiting/acceptance, not remote compute/cost. Context/request resources live until shutdown.
+
+## Source → Experience → Session
+
+`generate` and `load` prepare checked source without mounting or saving. `run` mounts and commits source before returning a session; repeated live runs return that session. There is one live session per experience. Mount/save failure retains the preparation for explicit retry/release. Close retains source; cold run checks stored source against current contracts without inference. `saved` reissues retained identities; supplied metadata never changes stored title/origin/attempts. Release removes unused preparation, not saved source. Forget closes/deletes; failed persistence reports failure. Invalid or closed handles fail rather than silently minting resources. Session operations serialize; initial poll produces the mounted tree, and publication acknowledges an already produced version. Native bootstrap must execute blocking async mechanisms off the UI thread. Cancellation and observation do not queue behind awaiting model inference.
+
+## Policy
+
+Available offers have 1–32 unique named questions; each has 1–255 unique described options and nonempty bounded instructions. Generic validation checks complete question coverage, selected issued options, finite probabilities/confidence and optional probability coverage/sum with rounding tolerance. Typed answers/confidence are not correctness or authority. App lowering validates domain relations; null source means unsupported fallback with a safe reason. Invalid deterministic source stops, not inference repair. Provider/transport exceptions stop. Source repair is at most three attempts with repeated-response stop; only eligible candidate diagnostics repair.
+
+## Observation
+
+Empty trace selects all; empty cursor starts a retained snapshot. Page limit 1–200; continuation is instance-local, single-use, bounded to 16 cursors and invalidated by clear. Appends do not disturb continuation. Events are chronological, wall time/elapsed are decimal millisecond strings, duration is nonnegative, and produced versus published versions remain distinct. Experience and session references are separate. Artifacts are captured/truncated/unavailable, with digests of stored bytes. Capture is private, explicit, bounded and nonretroactive. Eviction and incomplete health are not success evidence. Observation admission cannot replace an app result; clear removes observation only.
+
+Native JSON records are mechanism transport, not DEAL implementations. `public-protocol.js` supports Promise-pumped async exports and synchronous native turns for synchronous exports. The Android protocol instrumentation executes an actual compiler-emitted consumer through that linkage. Android/JS is the supported demo boundary; other backends and general host portability are not established.

@@ -12,7 +12,7 @@ enum class WorkspaceOrigin { AI_SOURCE, CATALOGUE, SAVED_SOURCE }
 class GenerationRejected(val attempts: Int, val reason: Reason, val diagnostics: String) : IllegalStateException("Generation rejected ($reason, attempts=$attempts): ${diagnostics.take(4000)}") {
     enum class Reason { ATTEMPT_LIMIT, REPEATED_RESPONSE, TEMPLATE_CHECK }
 }
-class CheckedCandidate internal constructor(internal val source: ExperienceSource, internal val output: File, internal val revision: String, val attempts: Int, internal val log: EmbeddingLog, internal val identity: String = UUID.randomUUID().toString(), val origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE) : AutoCloseable {
+internal class CheckedCandidate internal constructor(internal val source: ExperienceSource, internal val output: File, internal val revision: String, val attempts: Int, internal val log: EmbeddingLog, internal val identity: String = UUID.randomUUID().toString(), val origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE) : AutoCloseable {
     internal var consumed = false
     override fun close() { if (!consumed) output.parentFile.deleteRecursively() }
 }
@@ -20,30 +20,28 @@ internal fun catalogRevision(config: EmbeddingConfig): String = MessageDigest.ge
 
 /** Runs compiled trusted DEAL. No native retry loop, and no capability invocation during inference. */
 internal class ExperienceGenerator(private val context: Context, private val config: EmbeddingConfig, private val engine: JavaScriptSandbox) {
-    fun generate(intent: String, disclosedContext: String, model: ModelClient, cancellation: GenerationCancellation, progress: (String) -> Unit): CheckedCandidate {
+    fun generate(intent: String, disclosedContext: String, model: ModelClient, cancellation: GenerationCancellation, progress: (String) -> Unit, log: EmbeddingLog = EmbeddingLog(context), contextId: String = UUID.randomUUID().toString(), contextSchema: JSONObject = WireType("record").json()): CheckedCandidate {
         require(intent.isNotBlank() && intent.length <= 4096 && disclosedContext.length <= 8192)
+        cancellation.check()
         val revision = catalogRevision(config)
         val catalog = JSONArray(config.contracts.map { it.json() }).toString()
         val checked = mutableMapOf<String, Pair<ExperienceSource, File>>()
-        val log = EmbeddingLog(context)
         log.event("request", "started", detail = JSONObject().put("intent", intent).put("context", disclosedContext).put("catalog", catalog).toString())
-        // Neutral boundary representation: DEAL currently cannot read a dynamic string table key.
-        val disclosed = runCatching { JSONObject(disclosedContext) }.getOrElse { JSONObject() }
-        val entries = JSONArray(disclosed.keys().asSequence().filter { disclosed.opt(it) is String }.map {
-            JSONObject().put("key", it).put("value", disclosed.getString(it))
-        }.toList())
         val program = SandboxProgram(engine, 512 * 1024)
         fun eval(s: String) = program.evaluate(s)
         try {
-            val bundle = SandboxBundle.build(context, listOf("generation-contracts.js", "generation-session.js"), "",
-                "runGeneration(factories, ${JSONObject().put("intent", intent).put("context", disclosedContext).put("contextEntries", JSONObject().put("entries", entries).toString()).put("sourceName", config.sourceName).put("repairStrategy", config.repairStrategy)})", assetRoot = "generation")
-            eval(bundle)
+            val input = JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map { it.protocolJson() })).put("repairStrategy",config.repairStrategy)
+            val configure = "protocolContexts[${JSONObject.quote(contextId)}]={value:${JSONObject.quote(disclosedContext)},schema:$contextSchema};"
+            val bundle = SandboxBundle.build(context, listOf("generation-contracts.js", "protocol-contracts.js", "protocol-host.js", "generation-session.js"), configure,
+                "runGeneration(factories, $input)", assetRoot = config.generationAssets)
+            val extra = if(config.policyAssets.isNotEmpty()) SandboxBundle.factories(context,config.policyAssets) else "factories['app-policy.js']=function(require,module,exports){module.exports={offer:{\$f:async()=>loadedPolicyRuntime.makeClass('@\$external/catalogue-policy/CatalogueOffer','@\$external/catalogue-policy/CatalogueOffer',()=>({available:false,questions:[],stateJson:''}),{})}};};"
+            eval(bundle.replace("return runGeneration(factories,", extra+"\nreturn runGeneration(factories,"))
             var attempts = 0
             while (true) {
                 cancellation.check()
                 val snapshot = JSONObject(eval("generationSnapshot()"))
                 if (snapshot.getBoolean("done")) {
-                    check(snapshot.optString("error").isEmpty()) { snapshot.optString("error") }
+                    if(snapshot.optString("error").isNotEmpty())throw IllegalStateException(snapshot.optString("error"))
                     val result = snapshot.getJSONObject("result")
                     val id = result.getString("candidateId")
                     cancellation.check()
@@ -74,7 +72,17 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             JSONObject.NULL
                         }
                         "embedding/discovery" -> log.stage("discovery") { catalog }
+                        "embedding/protocol" -> when(request.getString("function")) {
+                            "questions" -> ChoiceProtocol.questions(args.getJSONArray(0)).toString()
+                            "answers" -> ChoiceProtocol.answers(args.getString(0),args.getJSONArray(1))
+                            "envelope" -> args.getJSONObject(0).toString()
+                            else -> error("Unknown protocol mechanism")
+                        }
                         "embedding/policy-data" -> when (request.getString("function")) {
+                            "catalogJson" -> protocolCatalog(args.getJSONArray(0)).toString()
+                            "contextEntries" -> { val v=JSONObject(args.getString(0));JSONObject().put("entries",JSONArray(v.keys().asSequence().filter{v.opt(it) is String}.map{JSONObject().put("key",it).put("value",v.getString(it))}.toList())).toString() }
+                            "member" -> args.getJSONObject(0).getJSONObject(args.getString(1))
+                            "stringMember" -> args.getJSONObject(0).getString(args.getString(1))
                             "lowercase" -> args.getString(0).lowercase()
                             "utf16Length" -> args.getString(0).length
                             "sha256" -> MessageDigest.getInstance("SHA-256").digest(args.getString(0).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }

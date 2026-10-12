@@ -1,0 +1,9 @@
+import * as embedding from "./embedding";
+export class ChoiceOption { name: string = ""; description: string = ""; }
+export class ChoiceQuestion { name: string = ""; instructions: string = ""; options: ChoiceOption[] = []; }
+export class OptionProbability { option: string = ""; probability: number = 0.0; }
+export class ChoiceAnswer { question: string = ""; choice: string = ""; probabilities: OptionProbability[] = []; confidence: number | null = null; }
+export class CatalogueOffer { available: boolean = false; questions: ChoiceQuestion[] = []; stateJson: string = ""; }
+export async function offer(intent: string, context: embedding.GenerationContext, capabilities: embedding.CapabilityContract[]): CatalogueOffer;
+export class CatalogueLowering { source: embedding.Source | null = null; reason: string = ""; }
+export async function lower(stateJson: string, answers: ChoiceAnswer[]): CatalogueLowering;

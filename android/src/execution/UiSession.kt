@@ -9,6 +9,7 @@ import java.io.File
 /** One live isolate and compiler-owned store, serialized by the activity worker. */
 internal class UiSession(private val context: Context, private val broker: CapabilityHost, private val engine: JavaScriptSandbox, private val config: EmbeddingConfig,
     private val log: EmbeddingLog = EmbeddingLog(context), private val candidate: String = "", private val workspace: String = "") : AutoCloseable {
+    internal fun logTrace(): String = log.run
     private val program = SandboxProgram(engine, 256 * 1024)
     private var capabilitySession: dev.deal.embedding.capabilities.CapabilitySession? = null
     private var closed = false
@@ -70,7 +71,7 @@ internal class UiSession(private val context: Context, private val broker: Capab
         }
         return snapshot
     }
-    fun published(version: Int) { log.event("snapshot", "published", candidate, workspace, version = version) }
+    fun published(version: Int) { require(version>=0 && version<=lastVersion) { "Unproduced snapshot version" }; log.event("snapshot", "published", candidate, workspace, version = version) }
     override fun close() {
         if (!closed) {
             closed = true

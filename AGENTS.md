@@ -2,7 +2,7 @@
 
 Update scoped `AGENTS.md` files with code changes. Remove obsolete instructions. Exclude history, completion claims, test results, gates, file counts and copied schemas. Code and executable contracts are the source of truth for behavior; keep instructions focused on editing constraints.
 
-Backends must implement `core/host` and execute `core/generation.deal`.
+Backends must implement `api/embedding.d.deal`, trusted `core/host` mechanisms and execute `core/generation.deal`. App builds link their own `api/catalogue-policy.d.deal` implementation. Preserve those exact signatures; native records are transport representations, not substitutes for DEAL orchestration.
 
 Keep the dependency direction apps → embedding → Deal UI → DEAL. Library build inputs must remain independent of consuming apps.
 
