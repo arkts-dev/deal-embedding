@@ -41,7 +41,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
         val log = EmbeddingLog(context)
         val identity = UUID.randomUUID().toString()
         log.event("route", "saved", candidate = identity)
-        CheckedCandidate(source, log.operation("check", candidate = identity) { child -> ExperienceCompiler(context, config, child).compile(source.deal, source.ui) }, catalogRevision(config), attempts, log, identity, origin)
+        CheckedCandidate(context,source, log.operation("check", candidate = identity) { child -> ExperienceCompiler(context, config, child).compile(source.deal, source.ui) }, catalogRevision(config), attempts, log, identity, origin)
     }
     /** Mount a workspace with its own capability session and return its initial snapshot. */
     fun open(title: String, candidate: CheckedCandidate, id: String, session:String): Pair<LiveWorkspace, JSONObject> = mountWorkspace(id, title, candidate,session)
@@ -82,11 +82,13 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     fun closeWorkspace(id: String) {
         val live = workspaces.remove(id) ?: return
         EmbeddingLog(context).event("session", "closed", workspace = id)
-        live.session.close(); live.output.parentFile?.deleteRecursively()
+        try{live.session.close()}finally{StagingReclamation.remove(context,live.output.parentFile)}
     }
 
     override fun close() {
-        workspaces.values.toList().forEach { closeWorkspace(it.id) }
+        var failure:Throwable?=null
+        workspaces.values.toList().forEach { try{closeWorkspace(it.id)}catch(error:Throwable){if(failure==null)failure=error else failure!!.addSuppressed(error)} }
         engine?.let { SandboxEngine.release(it) }; engine = null
+        failure?.let{throw it}
     }
 }

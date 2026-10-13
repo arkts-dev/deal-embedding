@@ -30,7 +30,7 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
     private fun epoch(module: String): String? = permission?.invoke(module)
     private fun allowed(module: String): Boolean = epoch(module)!=null
     private val io = Executors.newSingleThreadExecutor()
-    private data class Pending(val id: Int, val key: String, val provider: Provider, val deadline: Long, val permission: String)
+    private data class Pending(val id: Int, val key: String, val provider: Provider, val deadline: Long, val permission: String, val bytes:Int)
     private val sessions = mutableSetOf<Session>()
     private var closed = false
     init { require(locals.size == local.size) }
@@ -59,7 +59,9 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
         override val identity = UUID.randomUUID().toString()
         private val pending = mutableMapOf<Int, Pending>()
         private val replies = mutableListOf<JSONObject>()
-        private var nextId = 1
+        private var nextId = 1L
+        private val maximumBufferedBytes=128*1024
+        private fun bufferedBytes()=replies.sumOf{it.toString().toByteArray().size}+pending.values.sumOf{it.bytes}
         private var ended = false
         private fun live() { check(!closed && !ended) { "Capability session is closed" } }
         private fun fail(id: Int, code: String, message: String) {
@@ -82,8 +84,10 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
             synchronized(this@CapabilityRegistry) {
             live()
             val id = request.opt("id")
-            require(id is Int && id == nextId && nextId <= 128) { "Invalid capability request id: expected $nextId (session limit 128)" }
+            require(id is Int && id.toLong() == nextId) { "Invalid capability request id: expected $nextId" }
+            check(pending.size+replies.size<8 && bufferedBytes()<=maximumBufferedBytes-16*1024){"Capability buffer full; drain replies before admitting more work"}
             nextId++
+            if(request.toString().toByteArray().size>16*1024){fail(id,"LIMIT","Capability request too large");return@synchronized}
             log.event("transport", "received", operation = "$identity:$id", target = request.optString("module") + "." + request.optString("function"), detail = request.toString(), span = "$identity:$id")
             val provider = providers[request.optString("module")]
             val function = provider?.contract?.functions?.singleOrNull { it.name == request.optString("function") }
@@ -94,13 +98,18 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
             if (pending.size >= 8) { fail(id, "LIMIT", "Too many pending requests"); return@synchronized }
             if (provider.local != null) {
                 invocation.set(log.experienceIdentity)
-                try { success(id, provider.local.invoke(function.name, args)) }
+                try {
+                    val value=provider.local.invoke(function.name,args)
+                    function.result.validate(value)
+                    require(JSONArray().put(value).toString().toByteArray().size<=16*1024){"Host response too large"}
+                    success(id,value)
+                }
                 catch (error: Exception) { fail(id, "HOST_ERROR", error.message ?: "Host operation failed") }
                 finally { invocation.remove() }
                 return@synchronized
             }
             val endpoint = provider.endpoint!!
-            val item = Pending(id, "$identity:$id", provider, now + 5000, epoch(provider.contract.module) ?: run{fail(id,"REVOKED","Capability access revoked");return@synchronized})
+            val item = Pending(id, "$identity:$id", provider, now + 5000, epoch(provider.contract.module) ?: run{fail(id,"REVOKED","Capability access revoked");return@synchronized},16*1024)
             pending[id] = item
             val callback = object : ICapabilityResult.Stub() {
                 private fun authenticate() { require(Binder.getCallingUid() == endpoint.uid && context.packageManager.getPackagesForUid(endpoint.uid)?.contains(endpoint.component.packageName) == true) { "Unauthenticated provider callback" } }

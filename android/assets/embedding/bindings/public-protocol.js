@@ -87,5 +87,5 @@ globalThis.protocolInvoke=function(name,args){
 };
 globalThis.protocolCall=function(key,name,args){
   publicResults.set(key,{done:false});
-  Promise.resolve().then(()=>protocolInvoke(name,args)).then(value=>{publicResults.set(key,{done:true,value});},error=>{publicResults.set(key,{done:true,error:{code:error.code||'EMBEDDING_FAILED',message:error.message||'Embedding operation failed'}});});return '';
+  Promise.resolve().then(()=>{if(!publicResults.has(key))throw publicRuntime.errorValue('DETACHED','Observer detached');globalThis.protocolInvocation=key;try{return protocolInvoke(name,args);}finally{globalThis.protocolInvocation=null;}}).then(value=>{if(publicResults.has(key))publicResults.set(key,{done:true,value});},error=>{if(publicResults.has(key))publicResults.set(key,{done:true,error:{code:error.code||'EMBEDDING_FAILED',message:error.message||'Embedding operation failed'}});});return '';
 };

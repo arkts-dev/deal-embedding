@@ -12,9 +12,9 @@ enum class WorkspaceOrigin { AI_SOURCE, CATALOGUE, SAVED_SOURCE }
 class GenerationRejected(val attempts: Int, val reason: Reason, val diagnostics: String) : IllegalStateException("Generation rejected ($reason, attempts=$attempts): ${diagnostics.take(4000)}") {
     enum class Reason { ATTEMPT_LIMIT, REPEATED_RESPONSE, TEMPLATE_CHECK }
 }
-internal class CheckedCandidate internal constructor(internal val source: ExperienceSource, internal val output: File, internal val revision: String, val attempts: Int, internal val log: EmbeddingLog, internal val identity: String = UUID.randomUUID().toString(), val origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE) : AutoCloseable {
+internal class CheckedCandidate internal constructor(private val context:Context, internal val source: ExperienceSource, internal val output: File, internal val revision: String, val attempts: Int, internal val log: EmbeddingLog, internal val identity: String = UUID.randomUUID().toString(), val origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE) : AutoCloseable {
     internal var consumed = false
-    override fun close() { if (!consumed) output.parentFile.deleteRecursively() }
+    override fun close() { if (!consumed) StagingReclamation.remove(context,output.parentFile) }
 }
 internal fun catalogRevision(config: EmbeddingConfig): String = MessageDigest.getInstance("SHA-256").digest(JSONArray(config.contracts.map { it.json() }).toString().toByteArray()).joinToString("") { "%02x".format(it) }
 
@@ -28,6 +28,8 @@ internal class ExperienceGenerator(private val context: Context, private val con
         val checked = mutableMapOf<String, Pair<ExperienceSource, File>>()
         log.event("request", "started", detail = JSONObject().put("intent", intent).put("context", disclosedContext).put("catalog", catalog).toString())
         val program = SandboxProgram(engine, 512 * 1024)
+        var originalFailure:Throwable?=null
+        var accepted:CheckedCandidate?=null
         fun eval(s: String) = program.evaluate(s)
         try {
             val input = JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map { it.protocolJson() })).put("repairStrategy",config.repairStrategy)
@@ -57,7 +59,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                     }
                     log.event("candidate", "accepted", candidate = id)
                     log.event("request", "completed", candidate = id)
-                    return CheckedCandidate(candidate.first, candidate.second, revision, result.getInt("attempts"), log, id, if (result.getBoolean("usedFallback")) WorkspaceOrigin.AI_SOURCE else WorkspaceOrigin.CATALOGUE)
+                    return CheckedCandidate(context,candidate.first, candidate.second, revision, result.getInt("attempts"), log, id, if (result.getBoolean("usedFallback")) WorkspaceOrigin.AI_SOURCE else WorkspaceOrigin.CATALOGUE).also{accepted=it}
                 }
                 val requests = JSONArray(eval("dealCapabilities.take()"))
                 for (i in 0 until requests.length()) {
@@ -137,8 +139,18 @@ internal class ExperienceGenerator(private val context: Context, private val con
                 if (requests.length() == 0) Thread.sleep(10)
             }
         } catch (error: Throwable) {
+            originalFailure=error
             log.event("request", "failed", code = error.javaClass.simpleName)
             throw error
-        } finally { program.close(); checked.values.forEach { it.second.parentFile.deleteRecursively() } }
+        } finally {
+            var cleanup:Throwable?=null
+            fun clean(block:()->Unit){try{block()}catch(error:Throwable){if(cleanup==null)cleanup=error else cleanup!!.addSuppressed(error)}}
+            clean{program.close()}
+            checked.values.forEach { clean{StagingReclamation.remove(context,it.second.parentFile)} }
+            cleanup?.let{error->
+                accepted?.let{candidate->runCatching{candidate.close()}.onFailure{error.addSuppressed(it)}}
+                if(originalFailure!=null)originalFailure!!.addSuppressed(error)else throw error
+            }
+        }
     }
 }

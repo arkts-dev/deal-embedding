@@ -8,11 +8,17 @@
     request: (module, functionName, args) => new Promise((resolve, reject) => {
       if (pending.size >= 8) { reject({code: "LIMIT", message: "Too many pending requests"}); return; }
       const id = nextId++;
-      pending.set(id, {resolve, reject});
+      pending.set(id, {resolve, reject, owner:globalThis.protocolInvocation});
       outgoing.push({id, module, function: functionName, args});
     }),
     notify: (module, functionName, args) => { outgoing.push({id: 0, module, function: functionName, args}); },
     take: () => JSON.stringify(outgoing.splice(0)),
+    cancelOwner: owner => {
+      const ids=[];
+      for(const [id,operation] of pending)if(operation.owner===owner){pending.delete(id);ids.push(id);operation.reject({code:'DETACHED',message:'Observer detached'});}
+      for(let i=outgoing.length-1;i>=0;i--)if(ids.includes(outgoing[i].id))outgoing.splice(i,1);
+      return JSON.stringify(ids);
+    },
     deliver: replies => {
       for (const reply of replies) {
         const operation = pending.get(reply.id);

@@ -19,11 +19,37 @@ class ApplicationProtocol(context:Context, mechanisms:Embedding):AutoCloseable {
     fun load(title:String,source:Source)=experience(call("load",title,source.deal,source.dealui))
     fun source(experience:Experience)=(sync("source",experience.id) as JSONObject).let{Source(it.getString("deal"),it.getString("dealui"))}
     fun release(experience:Experience){sync("release",experience.id)}
+    /** Own a prepared result until the app accepts it. Failure releases preparation, not saved source. */
+    fun <T> withPreparation(experience:Experience,accept:(Experience)->T):T=try{accept(experience)}catch(error:Throwable){
+        runCatching{release(experience);flushReclamation()}.onFailure{error.addSuppressed(it)};throw error
+    }
+    fun flushReclamation()=controller.flushReclamation()
     fun run(experience:Experience)=Session((call("run",experience.id) as JSONObject).getString("id"))
     fun next(session:Session,cursor:String)=controller.update(session,cursor)
-    fun observe(session:Session,render:(UiSnapshot)->Unit,onFailure:(Throwable)->Unit){observers.execute{
-        try{var cursor="";while(!observers.isShutdown){val update=next(session,cursor);cursor=update.cursor;render(update.snapshot)}}catch(error:Throwable){if(!observers.isShutdown)onFailure(error)}
-    }}
+    fun observe(session:Session,render:(UiSnapshot)->Unit,onFailure:(Throwable)->Unit):AutoCloseable {
+        val subscription=Subscription(session,render,onFailure)
+        subscriptions.add(subscription)
+        try{observers.execute{subscription.receive()}}catch(error:Throwable){subscription.close();throw error}
+        return subscription
+    }
+    private val subscriptions=java.util.concurrent.ConcurrentHashMap.newKeySet<Subscription>()
+    private inner class Subscription(val session:Session,val render:(UiSnapshot)->Unit,val failed:(Throwable)->Unit):AutoCloseable {
+        private var detached=false
+        private var invocation:String?=null
+        fun receive(){
+            try{var cursor=""
+                while(true){
+                    val key=synchronized(this){if(detached)return;controller.start("next",args(session.id,cursor)).also{invocation=it}}
+                    val value=controller.await(key,Long.MAX_VALUE) as JSONObject
+                    synchronized(this){
+                        invocation=null;if(detached)return
+                        cursor=value.getString("cursor");render(UiSnapshot.parse(value.getJSONObject("snapshot")))
+                    }
+                }
+            }catch(error:Throwable){synchronized(this){if(!detached)failed(error)}}finally{synchronized(this){invocation?.let{controller.detach(it)};invocation=null};subscriptions.remove(this)}
+        }
+        @Synchronized override fun close(){if(detached)return;detached=true;invocation?.let{controller.detach(it)};invocation=null;subscriptions.remove(this)}
+    }
     fun dispatch(session:Session,slot:Int,payload:String?){call("dispatch",session.id,slot,payload ?: JSONObject.NULL)}
     fun published(session:Session,version:Int){sync("published",session.id,version)}
     fun close(session:Session){call("close",session.id)}
@@ -40,6 +66,6 @@ class ApplicationProtocol(context:Context, mechanisms:Embedding):AutoCloseable {
     fun capturesContent()=controller.capturing()
     fun capture(enabled:Boolean){sync("capture",enabled)}
     fun clearObservation(){call("clearObservation")}
-    fun shutdown(){observers.shutdownNow();controller.close()}
+    fun shutdown(){subscriptions.toList().forEach{it.close()};observers.shutdownNow();controller.close()}
     override fun close()=shutdown()
 }

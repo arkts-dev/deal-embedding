@@ -17,23 +17,29 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
     private val sessions=mutableMapOf<String,String>()
     private val runtime=ExperienceRuntime(context,registry,config)
     private var stopped=false
-    private data class Delivery(var snapshot:UiSnapshot, var cursor:String, val issued:MutableMap<String,Long> = mutableMapOf(), var revision:Long=0, var failure:Throwable?=null, val waiters:MutableList<Pair<Long,java.util.concurrent.CompletableFuture<SessionUpdate>>> = mutableListOf())
+    private data class Delivery(var snapshot:UiSnapshot, val cursors:UpdateCursor=UpdateCursor(), var revision:Long=0, var failure:Throwable?=null, val waiters:MutableList<Pair<Long,java.util.concurrent.CompletableFuture<SessionUpdate>>> = mutableListOf()) {
+        val cursor get()=cursors.issue(revision)
+    }
     private val deliveries=mutableMapOf<String,Delivery>()
     private val driver=java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
-    init { driver.scheduleWithFixedDelay({synchronized(this){if(!stopped)for((key,workspace) in sessions.toMap())try{
+    init { StagingReclamation.retry(context);driver.scheduleWithFixedDelay({synchronized(this){if(!stopped)for((key,workspace) in sessions.toMap())try{
         val snapshot=UiSnapshot.parse(runtime.advance(workspace) ?: error("Closed session"));val d=deliveries.getValue(key)
-        if(snapshot.json().toString()!=d.snapshot.json().toString()) {d.snapshot=snapshot;d.revision++;d.cursor=id();d.issued[d.cursor]=d.revision;deliver(d)}
-    }catch(error:Throwable){deliveries[key]?.let{d->d.failure=error;d.revision++;d.cursor=id();d.issued[d.cursor]=d.revision;d.snapshot=UiSnapshot(d.snapshot.tree,d.snapshot.version,error.message ?: "Session failed");deliver(d)};sessions.remove(key)}}},10,10,java.util.concurrent.TimeUnit.MILLISECONDS) }
-    private fun deliver(d:Delivery){val update=SessionUpdate(UiSnapshot.parse(d.snapshot.json()),d.cursor);d.waiters.removeAll{(revision,future)->if(revision<d.revision){future.complete(update);true}else false}}
+        if(snapshot.json().toString()!=d.snapshot.json().toString()) {d.snapshot=snapshot;d.revision++;deliver(d)}
+    }catch(error:Throwable){deliveries[key]?.let{d->d.failure=error;d.revision++;d.snapshot=UiSnapshot(d.snapshot.tree,d.snapshot.version,error.message ?: "Session failed");deliver(d)};sessions.remove(key)}}},10,10,java.util.concurrent.TimeUnit.MILLISECONDS) }
+    private fun deliver(d:Delivery){val update=SessionUpdate(UiSnapshot.parse(d.snapshot.json()),d.cursor);val ready=d.waiters.filter{it.first<d.revision};d.waiters.removeAll(ready.toSet());ready.forEach{it.second.complete(update)}}
     @Synchronized internal fun nextAsync(session:Session,cursor:String):java.util.concurrent.CompletableFuture<SessionUpdate> {
         val d=deliveries[session.id] ?: throw ProtocolFailure("INVALID_HANDLE","Unissued or closed session")
-        val revision=if(cursor.isEmpty())-1L else d.issued[cursor] ?: throw ProtocolFailure("INVALID_CURSOR","Unissued or foreign cursor")
+        val revision=if(cursor.isEmpty())-1L else d.cursors.revision(cursor,d.revision)
+        if(d.waiters.size>=8)throw ProtocolFailure("LIMIT","Too many pending update waits")
         val result=java.util.concurrent.CompletableFuture<SessionUpdate>()
-        if(revision<d.revision)result.complete(SessionUpdate(UiSnapshot.parse(d.snapshot.json()),d.cursor))else if(d.failure!=null)result.completeExceptionally(ProtocolFailure("SESSION_FAILED",d.snapshot.fault))else d.waiters.add(revision to result)
+        if(revision<d.revision)result.complete(SessionUpdate(UiSnapshot.parse(d.snapshot.json()),d.cursor))else if(d.failure!=null)result.completeExceptionally(ProtocolFailure("SESSION_FAILED",d.snapshot.fault))else {
+            d.waiters.add(revision to result)
+            result.whenComplete{_,_->synchronized(this){d.waiters.removeAll{it.second===result}}}
+        }
         return result
     }
     fun next(session:Session,cursor:String):SessionUpdate=try{nextAsync(session,cursor).get()}catch(e:java.util.concurrent.ExecutionException){throw e.cause!!}
-    private fun endDelivery(key:String){deliveries.remove(key)?.let{d->d.waiters.forEach{it.second.completeExceptionally(ProtocolFailure("CLOSED","Session closed"))}}}
+    private fun endDelivery(key:String){deliveries.remove(key)?.let{d->val waits=d.waiters.toList();d.waiters.clear();waits.forEach{it.second.completeExceptionally(ProtocolFailure("CLOSED","Session closed"))}}}
     private fun id()=UUID.randomUUID().toString()
     @Synchronized fun snapshot(schema:WireType,valueJson:String):GenerationContext {
         check(!stopped);require(valueJson.toByteArray().size<=8192)
@@ -60,7 +66,7 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
         val frozen=config.copy(contracts=state.contracts)
         val engine=synchronized(this){check(!stopped);runtime.sandbox()}
         val candidate=ExperienceGenerator(context,frozen,engine).generate(state.intent,contextJson(state.context),model,state.cancellation,{},state.log,state.context.id,contextSchema(state.context).json())
-        try { return synchronized(this){state.cancellation.check();check(!stopped);issue(state.title,candidate)} }catch(e:Throwable){candidate.close();throw e}
+        try { return synchronized(this){state.cancellation.check();check(!stopped);issue(state.title,candidate)} }catch(e:Throwable){runCatching{candidate.close()}.onFailure{e.addSuppressed(it)};throw e}
     }
     @Synchronized fun cancel(request:GenerationRequest){(requests[request.id] ?: error("Invalid request")).cancellation.cancel()}
     @Synchronized private fun issue(title:String,candidate:CheckedCandidate):Experience {
@@ -73,22 +79,31 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
         trusted(experience);val source=candidates[experience.id]?.source ?: runtime.workspace(experience.id)?.source ?: ExperienceStorage(context,config.storageName).source(experience.id) ?: error("Source unavailable")
         return Source(source.deal,source.ui)
     }
-    @Synchronized fun release(experience:Experience){trusted(experience);check(sessions.values.none{it==experience.id});candidates.remove(experience.id)?.close();if(runtime.savedWorkspaces().none{it.id==experience.id})experiences.remove(experience.id)}
+    @Synchronized fun release(experience:Experience){
+        if(!experiences.containsKey(experience.id))return // Idempotent deferred reclamation only; public handles remain checked in DEAL.
+        trusted(experience);check(sessions.values.none{it==experience.id})
+        candidates[experience.id]?.close();candidates.remove(experience.id)
+        if(runtime.savedWorkspaces().none{it.id==experience.id})experiences.remove(experience.id)
+    }
     @Synchronized fun run(experience:Experience):Session {
         check(!stopped);val e=trusted(experience)
         sessions.entries.firstOrNull{it.value==e.id}?.let{if(runtime.workspace(e.id)!=null)return Session(it.key);sessions.remove(it.key)}
         val prepared=candidates[e.id];val session=Session(id())
         val mounted=if(prepared!=null){runtime.open(e.title,prepared,e.id,session.id).also{candidates.remove(e.id)}}else runtime.reopen(e.id,session.id)
-        val cursor=id();val initial=UiSnapshot.parse(mounted.second)
-        deliveries[session.id]=Delivery(initial,cursor,mutableMapOf(cursor to 0L))
+        val initial=UiSnapshot.parse(mounted.second)
+        deliveries[session.id]=Delivery(initial)
         return session.also{sessions[it.id]=e.id}
     }
     @Synchronized fun experience(session:Session):Experience=experiences[sessions[session.id] ?: error("Invalid session")] ?: error("Invalid experience")
     @Synchronized fun dispatch(session:Session,actionSlot:Int,payload:String?){runtime.dispatch(experience(session).id,actionSlot,payload)}
     @Synchronized fun published(session:Session,version:Int){runtime.published(experience(session).id,version)}
-    @Synchronized fun close(session:Session){if(deliveries[session.id]?.failure!=null){endDelivery(session.id);return};val e=experience(session);try{runtime.closeWorkspace(e.id)}finally{sessions.remove(session.id);endDelivery(session.id)}}
+    @Synchronized fun close(session:Session){
+        if(deliveries[session.id]?.failure!=null){StagingReclamation.retry(context);endDelivery(session.id);return}
+        val e=experience(session);runtime.closeWorkspace(e.id);StagingReclamation.retry(context)
+        sessions.remove(session.id);endDelivery(session.id)
+    }
     @Synchronized fun saved():List<Experience> = runtime.savedWorkspaces().map{saved -> experiences.getOrPut(saved.id){Experience(saved.id,saved.title,when(saved.origin){WorkspaceOrigin.CATALOGUE->"catalogue";WorkspaceOrigin.AI_SOURCE->"generated";else->"supplied"},saved.attempts)} }
-    @Synchronized fun forget(experience:Experience){trusted(experience);sessions.entries.filter{it.value==experience.id}.map{it.key}.forEach{close(Session(it))};candidates.remove(experience.id)?.close();runtime.forgetWorkspace(experience.id);experiences.remove(experience.id)}
+    @Synchronized fun forget(experience:Experience){trusted(experience);sessions.entries.filter{it.value==experience.id}.map{it.key}.forEach{close(Session(it))};candidates[experience.id]?.close();candidates.remove(experience.id);runtime.forgetWorkspace(experience.id);experiences.remove(experience.id)}
     @Synchronized fun refresh():List<CapabilityContract>{check(!stopped);return registry.refresh().map{CapabilityContract.parse(it.json().toString())}.also{config.contracts=it.map{c->CapabilityContract.parse(c.json().toString())}}}
     @Synchronized fun liveSessions():List<Session> {sessions.entries.removeAll{runtime.workspace(it.value)==null};return sessions.keys.map{Session(it)}}
     @Synchronized fun requestTrace(request:GenerationRequest)=(requests[request.id] ?: error("Invalid request")).log.run
@@ -101,5 +116,15 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
     fun capture(enabled:Boolean)=EmbeddingLog.capture(context,enabled)
     fun capturesContent():Boolean=runCatching{context.getSharedPreferences("embedding-logging",0).getBoolean("content",false)}.getOrDefault(false)
     fun clearObservation(){EmbeddingLog.clear(context);EmbeddingLog.flush(context);observation.clear()}
-    @Synchronized fun shutdown(){if(stopped)return;requests.values.forEach{it.cancellation.cancel()};candidates.values.forEach{it.close()};driver.shutdownNow();deliveries.keys.toList().forEach(::endDelivery);runtime.close();registry.close();contexts.clear();requests.clear();experiences.clear();sessions.clear();candidates.clear();stopped=true}
+    @Synchronized fun shutdown(){
+        stopped=true;driver.shutdownNow();deliveries.keys.toList().forEach(::endDelivery)
+        requests.values.forEach{it.cancellation.cancel()}
+        var failure:Throwable?=null
+        fun attempt(block:()->Unit){try{block()}catch(error:Throwable){if(failure==null)failure=error else failure!!.addSuppressed(error)}}
+        for((id,candidate) in candidates.toMap())attempt{candidate.close();candidates.remove(id)}
+        attempt{runtime.close()};attempt{registry.close()};attempt{StagingReclamation.retry(context)}
+        contexts.clear();requests.clear();sessions.clear()
+        if(failure==null)experiences.clear()
+        failure?.let{throw it}
+    }
 }

@@ -8,6 +8,7 @@ import java.io.File
 internal class ExperienceCompiler(private val context: Context, private val config: EmbeddingConfig, private val log: EmbeddingLog = EmbeddingLog(context)) {
     private val storage = ExperienceStorage(context, config.storageName)
     fun compile(dealSource: String, uiSource: String): File {
+        StagingReclamation.retry(context)
         check(dealSource.toByteArray().size <= 128 * 1024 && uiSource.toByteArray().size <= 64 * 1024)
         val distribution = storage.distribution()
         System.setProperty("deal.home", distribution.absolutePath)
@@ -47,10 +48,10 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             }
             return output
         } catch (error: deal.ui.UiDiagnostic) {
-            project.deleteRecursively()
+            runCatching{StagingReclamation.remove(context,project)}.onFailure{error.addSuppressed(it)}
             throw CandidateRejected(JSONArray().put(JSONObject().put("stage", "ui").put("code", error.code()).put("message", error.message)
                 .put("file", error.file()?.fileName?.toString()).put("line", error.line()).put("column", error.column()).put("expected", error.expected()).put("actual", error.actual())).toString())
-        } catch (error: Throwable) { project.deleteRecursively(); throw error }
+        } catch (error: Throwable) { runCatching{StagingReclamation.remove(context,project)}.onFailure{error.addSuppressed(it)};throw error }
     }
 }
 
