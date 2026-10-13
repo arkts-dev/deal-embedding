@@ -108,5 +108,7 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
     if(snapshot==null){loading();return}
     DealRenderer(transformTree(snapshot.tree)){slot,payload->surface.event(snapshot,slot,payload,onAction)}
     SideEffect {surface.accepted(snapshot)}
-    LaunchedEffect(surface,snapshot.version,snapshot.fault){onSnapshot(snapshot)}
+    LaunchedEffect(surface,snapshot.version,snapshot.fault){
+        try{onSnapshot(snapshot)}catch(error:Exception){android.util.Log.w("DealDiagnostics","Snapshot hook failed",error)}
+    }
 }
