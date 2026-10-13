@@ -85,10 +85,13 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
     }
     /** Explicit closure retains saved source. A failed closure remains retryable. */
     @Synchronized override fun close(){
-        if(ended)return
-        observation?.close();observation=null;epoch++;ownership++
-        session?.let{protocol.close(it)};session=null;terminal=null
-        ended=true;actions.shutdown()
+        if(ended&&session==null&&observation==null)return
+        ended=true;epoch++;ownership++
+        teardown(
+            {observation?.close();observation=null},
+            {session?.let{protocol.close(it)};session=null;terminal=null},
+            {actions.shutdownNow()}
+        )
     }
 }
 

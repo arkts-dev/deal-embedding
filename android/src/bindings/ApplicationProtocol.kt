@@ -29,7 +29,7 @@ class ApplicationProtocol(context:Context, mechanisms:Embedding):AutoCloseable {
     fun observe(session:Session,render:(UiSnapshot)->Unit,onFailure:(Throwable)->Unit):AutoCloseable {
         val subscription=Subscription(session,render,onFailure)
         subscriptions.add(subscription)
-        try{observers.execute{subscription.receive()}}catch(error:Throwable){subscription.close();throw error}
+        try{observers.execute{subscription.receive()}}catch(error:Throwable){runCatching{subscription.close()}.onFailure{error.addSuppressed(it)};throw error}
         return subscription
     }
     private val subscriptions=java.util.concurrent.ConcurrentHashMap.newKeySet<Subscription>()
@@ -46,9 +46,13 @@ class ApplicationProtocol(context:Context, mechanisms:Embedding):AutoCloseable {
                         cursor=value.getString("cursor");render(UiSnapshot.parse(value.getJSONObject("snapshot")))
                     }
                 }
-            }catch(error:Throwable){synchronized(this){if(!detached)failed(error)}}finally{synchronized(this){invocation?.let{controller.detach(it)};invocation=null};subscriptions.remove(this)}
+            }catch(error:Throwable){synchronized(this){if(!detached)failed(error)}}finally{close()}
         }
-        @Synchronized override fun close(){if(detached)return;detached=true;invocation?.let{controller.detach(it)};invocation=null;subscriptions.remove(this)}
+        @Synchronized override fun close(){
+            if(detached)return
+            detached=true
+            try{invocation?.let{controller.detach(it)}}finally{invocation=null;subscriptions.remove(this)}
+        }
     }
     fun dispatch(session:Session,slot:Int,payload:String?){call("dispatch",session.id,slot,payload ?: JSONObject.NULL)}
     fun published(session:Session,version:Int){sync("published",session.id,version)}
@@ -66,6 +70,11 @@ class ApplicationProtocol(context:Context, mechanisms:Embedding):AutoCloseable {
     fun capturesContent()=controller.capturing()
     fun capture(enabled:Boolean){sync("capture",enabled)}
     fun clearObservation(){call("clearObservation")}
-    fun shutdown(){subscriptions.toList().forEach{it.close()};observers.shutdownNow();controller.close()}
+    fun shutdown()=teardown(
+        *subscriptions.toList().map{subscription->{subscription.close()}}.toTypedArray(),
+        {observers.shutdownNow()},
+        {controller.close()},
+        {check(observers.awaitTermination(10,java.util.concurrent.TimeUnit.SECONDS)){"Observer executor did not terminate"}}
+    )
     override fun close()=shutdown()
 }
