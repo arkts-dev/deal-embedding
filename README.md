@@ -4,6 +4,24 @@ Public signatures live in [`api/embedding.d.deal`](api/embedding.d.deal) and [`a
 
 `ApplicationProtocol` connects native rendering/lifecycle inputs to the production compiled DEAL consumer; `ProtocolController` executes it and services mechanisms autonomously. Its trusted local binding owns synchronous frozen contexts, requests, handle validation and returned copies; async operations reach Android mechanisms through nonblocking lanes. `Embedding` owns native resources and independently validates mechanism references. No per-call native turns are injected. `ExperienceRuntime` and prepared candidates are internal mechanisms, not alternate consumer APIs. Generate/load do not mount or read providers. First run mounts and atomically saves source; close retains it, cold run rechecks without inference, and forget deletes explicitly. Native apps own disclosure, permission choices, staging and confirmation, not progress scheduling. Grant/revoke synchronously update trusted permission epochs; native admissions and reply acceptance read those epochs while retaining provider security. Run starts automatic progress; next is the only snapshot-delivery path; dispatch returns null; publication means renderer acceptance, not presentation.
 
+## Standard Compose integration
+
+App authors do not wire the session protocol. Given an accepted Experience and the bootstrap's ApplicationProtocol:
+
+```kotlin
+val surface = ExperienceSurface(protocol, acceptedExperience)
+// Off the UI thread, when the app decides to activate:
+surface.activate { error -> showError(error) }
+
+// In the placement chosen by the app:
+ExperienceSurface(surface)
+
+// Off the UI thread, when the app decides to release the live session:
+surface.close()
+```
+
+The owner activates the experience and receives updates; the composable renders its tree, forwards widget events and acknowledges successful renderer acceptance. Leaving composition only detaches display, preserving live state. Explicit close retains saved source; forget remains a separate app decision. Optional tree presentation, action and snapshot hooks let apps integrate domain review/diagnostics without protocol wiring. Failed activation does not replace the app's existing owner. Bootstrap supplies mechanisms; the surface adapter owns routine integration. Low-level run/next/dispatch/published remain available for custom hosts and trusted DEAL consumers. `EmbeddedExperience` is an optional visual frame, not a lifecycle owner.
+
 ## Ownership
 
 - `core/generation.deal`: orchestration, app policy offer/lower, source fallback, maximum three source attempts, diagnostic repair and repeated-response stop.
