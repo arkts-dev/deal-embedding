@@ -27,7 +27,8 @@ abstract class CapabilityService : Service() {
         override fun describe(): String { caller(); return capabilities.contract.json().toString() }
         override fun invoke(id: String, name: String, arguments: String, callback: ICapabilityResult) = synchronized(this@CapabilityService) {
             val uid = caller()
-            require(id.matches(Regex("[a-f0-9-]{36}:[0-9]{1,3}")) && arguments.toByteArray().size <= 16 * 1024)
+            val sequence=id.substringAfter(':',"").toLongOrNull()
+            require(id.matches(Regex("[a-f0-9-]{36}:[1-9][0-9]{0,9}")) && sequence!=null && sequence<=Int.MAX_VALUE && arguments.toByteArray().size <= 16 * 1024)
             if (!consent()) { failure(callback, id, "PROVIDER_DENIED", "Provider owner has not allowed access"); return@synchronized }
             require(pending.size < 8 && !pending.containsKey(id))
             val args = JSONArray(arguments)
