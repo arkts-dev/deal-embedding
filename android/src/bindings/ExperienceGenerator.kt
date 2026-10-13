@@ -126,6 +126,8 @@ internal class ExperienceGenerator(private val context: Context, private val con
                                 JSONObject().put("accepted", true).put("candidateId", id).put("diagnostics", "")
                             } catch (error: Exception) {
                                 if (error !is CandidateRejected) throw error
+                                // Failed physical cleanup is an operational failure, not repair feedback.
+                                if(error.suppressed.isNotEmpty())throw error
                                 val diagnostics = error.diagnostics
                                 log.event("check", "rejected", candidate = id, code = "CANDIDATE_REJECTED")
                                 JSONObject().put("accepted", false).put("candidateId", "").put("diagnostics", diagnostics)

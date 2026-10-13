@@ -29,7 +29,7 @@ globalThis.publicProtocol = (() => {
     else {need(v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).every(k=>t.fields.some(f=>f.name===k)),'Closed record');for(const f of t.fields){if(Object.hasOwn(v,f.name))value(f.type,v[f.name]);else need(f.optional,'Required field');}}
   }
   const control=(name,args)=>dealCapabilities.notify('embedding/control',name,args);
-  async function native(name,args){try{return await dealCapabilities.request('embedding',name,args);}catch(e){fail(e.code||'EMBEDDING_FAILED',e.message||'Native mechanism failed');}}
+  async function native(name,args){try{return await dealCapabilities.request('embedding',name,args);}catch(e){throw e;}}
   function retain(e,source,isSaved=false){experiences.set(e.id,{metadata:copy(e),source:copy(source),saved:isSaved,session:null,starting:null});return copy(e);}
   async function prepared(name,args){const result=await native(name,args);if(stopped){control('release',[result.experience]);fail('STOPPED','Embedding instance is stopped');}return retain(result.experience,result.source);}
   return {
@@ -87,5 +87,5 @@ globalThis.protocolInvoke=function(name,args){
 };
 globalThis.protocolCall=function(key,name,args){
   publicResults.set(key,{done:false});
-  Promise.resolve().then(()=>{if(!publicResults.has(key))throw publicRuntime.errorValue('DETACHED','Observer detached');globalThis.protocolInvocation=key;try{return protocolInvoke(name,args);}finally{globalThis.protocolInvocation=null;}}).then(value=>{if(publicResults.has(key))publicResults.set(key,{done:true,value});},error=>{if(publicResults.has(key))publicResults.set(key,{done:true,error:{code:error.code||'EMBEDDING_FAILED',message:error.message||'Embedding operation failed'}});});return '';
+  Promise.resolve().then(()=>{if(!publicResults.has(key))throw publicRuntime.errorValue('DETACHED','Observer detached');globalThis.protocolInvocation=key;try{return protocolInvoke(name,args);}finally{globalThis.protocolInvocation=null;}}).then(value=>{if(publicResults.has(key))publicResults.set(key,{done:true,value});},error=>{if(publicResults.has(key))publicResults.set(key,{done:true,error:{code:error.code||'EMBEDDING_FAILED',message:error.message||'Embedding operation failed',suppressed:error.suppressed||[]}});});return '';
 };

@@ -94,7 +94,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
         if(replies.length()>0)program.evaluate("dealCapabilities.deliver($replies)")
         for(i in 0 until replies.length()){val r=replies.getJSONObject(i);r.optJSONArray("invalidSessions")?.let{program.evaluate("publicProtocol.liveSessions($it); ''")}}
         program.evaluate("publicProtocol.observed(${health()}); ''")
-        for((key,future)in futures){if(future.isDone)continue;val result=JSONObject(program.evaluate("JSON.stringify(publicResults.get(${JSONObject.quote(key)}))"));if(result.optBoolean("done")){if(result.has("error")){val e=result.getJSONObject("error");future.completeExceptionally(ProtocolFailure(e.getString("code"),e.getString("message")))}else future.complete(result.opt("value")?:JSONObject.NULL);program.evaluate("publicResults.delete(${JSONObject.quote(key)}); ''")}}
+        for((key,future)in futures){if(future.isDone)continue;val result=JSONObject(program.evaluate("JSON.stringify(publicResults.get(${JSONObject.quote(key)}))"));if(result.optBoolean("done")){if(result.has("error")){val e=result.getJSONObject("error");future.completeExceptionally(FailureEvidence.decode(e))}else future.complete(result.opt("value")?:JSONObject.NULL);program.evaluate("publicResults.delete(${JSONObject.quote(key)}); ''")}}
     }
     @Synchronized internal fun detach(key:String){
         if(ended){futures.remove(key)?.completeExceptionally(ProtocolFailure("CLOSED","Controller closed"));return}
@@ -147,10 +147,8 @@ class ProtocolController(private val context:Context, private val embedding:Embe
     private fun experience(e:Experience)=JSONObject().put("id",e.id).put("title",e.title).put("origin",e.origin).put("attempts",e.attempts)
     private fun source(s:Source)=JSONObject().put("deal",s.deal).put("dealui",s.dealui)
     private fun health()=embedding.health().let{JSONObject().put("incomplete",it.incomplete).put("active",it.active).put("code",it.code).put("lost",it.lost)}
-    private fun error(e:Throwable):JSONObject {
-        val code=when(e){is ProtocolFailure->e.code;is CancellationException->"CANCELLED";is GenerationRejected->"GENERATION_${e.reason.name}";is java.net.SocketTimeoutException->"MODEL_TIMEOUT";is java.net.ConnectException->"GATEWAY_UNREACHABLE";is CandidateRejected->"CANDIDATE_REJECTED";is IllegalArgumentException->"INVALID_ARGUMENT";else->"EMBEDDING_FAILED"}
-        return JSONObject().put("code",code).put("message",e.message?:"Native mechanism failed")
-    }
+    private fun error(e:Throwable):JSONObject=FailureEvidence.encode(e,::failureCode)
+    private fun failureCode(e:Throwable):String=when(e){is ProtocolFailure->e.code;is CancellationException->"CANCELLED";is GenerationRejected->"GENERATION_${e.reason.name}";is java.net.SocketTimeoutException->"MODEL_TIMEOUT";is java.net.ConnectException->"GATEWAY_UNREACHABLE";is CandidateRejected->"CANDIDATE_REJECTED";is IllegalArgumentException->"INVALID_ARGUMENT";else->"EMBEDDING_FAILED"}
     override fun close(){
         if(ended)return
         var failure:Throwable?=null

@@ -44,7 +44,7 @@ globalThis.protocolHost = function(id, declarations, rt) {
     else if(id==='catalogue-policy') raw[name]=async(...args)=>globalThis.loadedAppPolicy[name].$f(...args);
     else if(id==='embedding' && name==='contextJson')raw[name]=context=>{if(!Object.hasOwn(protocolContexts,context.id))throw rt.errorValue('INVALID_HANDLE','Invalid context');return protocolContexts[context.id].value;};
     else if(id==='embedding' && name==='contextSchema')raw[name]=context=>{if(!Object.hasOwn(protocolContexts,context.id))throw rt.errorValue('INVALID_HANDLE','Invalid context');return record('@$external/embedding/WireType',protocolContexts[context.id].schema);};
-    else raw[name]=async(...args)=>{try{return record(spec.$d.slice(spec.$d.lastIndexOf('->')+2),await dealCapabilities.request(id,name,args.map(plain)));}catch(error){throw rt.errorValue(error.code||'HOST_FAILED',error.message||'Host operation failed');}};
+    else raw[name]=async(...args)=>{try{return record(spec.$d.slice(spec.$d.lastIndexOf('->')+2),await dealCapabilities.request(id,name,args.map(plain)));}catch(error){const translated=rt.errorValue(error.code||'HOST_FAILED',error.message||'Host operation failed');translated.suppressed=error.suppressed||[];throw translated;}};
   }
   return raw;
 };
