@@ -29,7 +29,7 @@ globalThis.publicProtocol = (() => {
     else {need(v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).every(k=>t.fields.some(f=>f.name===k)),'Closed record');for(const f of t.fields){if(Object.hasOwn(v,f.name))value(f.type,v[f.name]);else need(f.optional,'Required field');}}
   }
   const control=(name,args)=>dealCapabilities.notify('embedding/control',name,args);
-  async function native(name,args){try{return await dealCapabilities.request('embedding',name,args);}catch(e){throw e;}}
+  async function native(name,args){try{return await dealCapabilities.request('embedding',name,args);}catch(e){const translated=publicRuntime.errorValue(e.code||'EMBEDDING_FAILED',e.message||'Native mechanism failed');translated.suppressed=e.suppressed||[];throw translated;}}
   function retain(e,source,isSaved=false){experiences.set(e.id,{metadata:copy(e),source:copy(source),saved:isSaved,session:null,starting:null});return copy(e);}
   async function prepared(name,args){const result=await native(name,args);if(stopped){control('release',[result.experience]);fail('STOPPED','Embedding instance is stopped');}return retain(result.experience,result.source);}
   return {
