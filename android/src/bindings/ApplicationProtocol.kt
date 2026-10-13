@@ -10,7 +10,7 @@ class ApplicationProtocol(context:Context, mechanisms:Embedding):AutoCloseable {
     private val observers=Executors.newCachedThreadPool()
     private fun args(vararg values:Any?)=JSONArray(values.toList())
     private fun sync(name:String,vararg values:Any?)=controller.synchronous(name,args(*values))
-    private fun call(name:String,vararg values:Any?)=controller.call(name,args(*values))
+    private fun call(name:String,vararg values:Any?)=controller.call(name,args(*values),if(name=="generate")Long.MAX_VALUE else 120)
     private fun experience(v:Any)= (v as JSONObject).let{Experience(it.getString("id"),it.getString("title"),it.getString("origin"),it.getInt("attempts"))}
     fun snapshot(schema:WireType,json:String)=GenerationContext((sync("snapshot",schema.json(),json) as JSONObject).getString("id"))
     fun request(title:String,intent:String,context:GenerationContext)=GenerationRequest((sync("request",title,intent,context.id) as JSONObject).getString("id"))
