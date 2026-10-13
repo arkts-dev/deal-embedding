@@ -28,9 +28,13 @@ export function cancel(request: GenerationRequest): null;
 export async function load(title: string, source: Source): Experience;
 export function source(experience: Experience): Source;
 export function release(experience: Experience): null;
+export class SessionUpdate {
+    snapshot: UiSnapshot = {};
+    cursor: string = "";
+}
 export async function run(experience: Experience): Session;
-export async function dispatch(session: Session, actionSlot: int, payload: string | null): UiSnapshot;
-export async function poll(session: Session): UiSnapshot;
+export async function next(session: Session, cursor: string): SessionUpdate;
+export async function dispatch(session: Session, actionSlot: int, payload: string | null): null;
 export function published(session: Session, version: int): null;
 export async function close(session: Session): null;
 export function saved(): Experience[];

@@ -5,7 +5,7 @@ globalThis.protocolHost = function(id, declarations, rt) {
     WireField:{name:"",type:null,optional:false}, WireType:{kind:"",fields:[],element:null,maximum:128,minimumInt:-2147483648,maximumInt:2147483647},
     Parameter:{name:"",type:null},CapabilityFunction:{name:"",description:"",parameters:[],result:null},CapabilityContract:{module:"",description:"",version:1,functions:[]},
     Source:{deal:"",dealui:""},GenerationContext:{id:""},GenerationRequest:{id:""},Experience:{id:"",title:"",origin:"",attempts:0},Session:{id:""},
-    UiSnapshot:{tree:null,version:0,fault:""},ChoiceOption:{name:"",description:""},ChoiceQuestion:{name:"",instructions:"",options:[]},
+    SessionUpdate:{snapshot:null,cursor:""},UiSnapshot:{tree:null,version:0,fault:""},ChoiceOption:{name:"",description:""},ChoiceQuestion:{name:"",instructions:"",options:[]},
     OptionProbability:{option:"",probability:0},ChoiceAnswer:{question:"",choice:"",probabilities:[],confidence:null},
     CatalogueOffer:{available:false,questions:[],stateJson:""},CatalogueLowering:{source:null,reason:""},Decision:{accepted:false,answers:[],reason:""},
     EventPage:{events:[],cursor:"",incomplete:false},Artifact:{status:"",text:""},ObservationHealth:{incomplete:false,active:false,code:"",lost:0}
@@ -25,6 +25,7 @@ globalThis.protocolHost = function(id, declarations, rt) {
     const fields={};for(const field of spec.$fields)fields[field.name]=record(field.$d,value[field.name]);
     return rt.makeClass(descriptor,descriptor,()=>fields,{});
   }
+  globalThis.protocolRecord=(descriptor,value)=>record(descriptor,value);
   function plain(value) {
     if(value instanceof Map)return Object.fromEntries([...value].map(([k,v])=>[k,plain(v)]));
     if(Array.isArray(value))return value.map(plain);
@@ -37,7 +38,7 @@ globalThis.protocolHost = function(id, declarations, rt) {
       raw[name]={$kind:'class',$classname:spec.$d};
       raw[name+'$defaults']=()=>{
         const values=defaults[name] || (name==='Event'?Object.fromEntries(spec.$fields.map(f=>[f.name,f.name==='version'?-1:f.$d==='int'?0:''])):null);if(!values)throw Error('Missing protocol defaults '+name);
-        return Object.fromEntries(Object.entries(values).map(([key,value])=>[key,Array.isArray(value)?[]:value===null&&['type','result'].includes(key)?record('@$external/embedding/WireType',defaults.WireType):key==='tree'?protocolUi['ViewNode$new']({}):value]));
+        return Object.fromEntries(Object.entries(values).map(([key,value])=>[key,Array.isArray(value)?[]:value===null&&['type','result'].includes(key)?record('@$external/embedding/WireType',defaults.WireType):key==='tree'?protocolUi['ViewNode$new']({}):key==='snapshot'?record('@$external/embedding/UiSnapshot',{tree:{},version:0,fault:''}):value]));
       };
     } else if(id==='embedding' && typeof publicProtocol !== 'undefined')raw[name]=(...args)=>publicProtocol.invoke(name,args.map(plain),value=>record(spec.$d.slice(spec.$d.lastIndexOf('->')+2),value));
     else if(id==='catalogue-policy') raw[name]=async(...args)=>globalThis.loadedAppPolicy[name].$f(...args);

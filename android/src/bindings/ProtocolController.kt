@@ -11,11 +11,12 @@ class ProtocolFailure(val code:String, message:String):IllegalStateException(mes
  * The controller owns synchronous state; workers implement asynchronous mechanisms.
  * The evaluation pump never waits for a mechanism to finish, so controls remain serviceable.
  */
-class ProtocolController(context:Context, private val embedding:Embedding, assets:String="protocol-consumer", consumer:String="consumer.js"):AutoCloseable {
+class ProtocolController(private val context:Context, private val embedding:Embedding, assets:String="protocol-consumer", consumer:String="consumer.js"):AutoCloseable {
     private val engine=SandboxEngine.acquire(context)
     private val program=SandboxProgram(engine,1024*1024)
     private val workers=Executors.newCachedThreadPool()
     private val serial=Executors.newSingleThreadExecutor()
+    private val driving=Executors.newSingleThreadScheduledExecutor()
     private val completed=ConcurrentLinkedQueue<JSONObject>()
     private val requests=ConcurrentHashMap<String,GenerationRequest>()
     private val cancelled=ConcurrentHashMap.newKeySet<String>()
@@ -26,24 +27,33 @@ class ProtocolController(context:Context, private val embedding:Embedding, asset
     init {
         try {
             val saved=embedding.saved().map{e->JSONObject().put("experience",experience(e)).put("source",source(embedding.source(e)))}
-            val bootstrap=JSONObject().put("seed",UUID.randomUUID().toString()).put("saved",JSONArray(saved)).put("contracts",JSONArray(embedding.refresh().map{it.protocolJson()})).put("health",health())
+            val bootstrap=JSONObject().put("seed",UUID.randomUUID().toString()).put("saved",JSONArray(saved)).put("contracts",JSONArray(embedding.refresh().map{it.protocolJson()})).put("health",health()).put("capturing",embedding.capturesContent())
             program.evaluate(SandboxBundle.build(context,listOf("protocol-contracts.js","protocol-host.js","public-protocol.js"),"","protocolInitialize(factories,${JSONObject.quote(consumer)},$bootstrap)",assetRoot=assets))
-        }catch(e:Throwable){program.close();SandboxEngine.release(engine);workers.shutdownNow();serial.shutdownNow();throw e}
+            embedding.registry.permissions { module -> program.evaluate("JSON.stringify(publicProtocol.permitted(${JSONObject.quote(module)}))").let{if(it=="null")null else JSONArray("[$it]").getString(0)} }
+            EmbeddingLog.capturePolicy(context){program.evaluate("String(publicProtocol.capturing())")=="true"}
+            driving.scheduleWithFixedDelay({try{advance()}catch(error:Throwable){for(future in futures.values)future.completeExceptionally(error)}},0,5,TimeUnit.MILLISECONDS)
+        }catch(e:Throwable){program.close();SandboxEngine.release(engine);workers.shutdownNow();serial.shutdownNow();driving.shutdownNow();throw e}
     }
     @Synchronized fun start(name:String,args:JSONArray=JSONArray()):String {
         check(!ended);val key=(++sequence).toString()
         program.evaluate("protocolCall(${JSONObject.quote(key)},${JSONObject.quote(name)},$args)")
-        futures[key]=CompletableFuture();pump();return key
+        futures[key]=CompletableFuture();return key
     }
-    @Synchronized fun pump(){
+    @Synchronized private fun advance(){
         check(!ended)
         val outgoing=JSONArray(program.evaluate("dealCapabilities.take()"))
         for(i in 0 until outgoing.length()){
             val r=outgoing.getJSONObject(i);val name=r.getString("function");val args=r.getJSONArray("args")
-            if(r.getString("module")=="embedding/control") {control(name,args);continue}
+            if(r.getString("module")=="embedding/control") {try{control(name,args)}catch(error:Throwable){embedding.controlFailure(name,error)};continue}
             require(r.getString("module")=="embedding")
             // Native resource/session operations are serialized. Generation must not occupy that lane.
             val executor=if(name=="generate")workers else serial
+            if(name=="next") {
+                try{embedding.nextAsync(Session(args.getJSONObject(0).getString("id")),args.getString(1)).whenComplete{update,error->
+                    val reply=JSONObject().put("id",r.getInt("id"));if(error==null){reply.put("ok",true).put("value",update.json());if(update.snapshot.fault.isNotEmpty())reply.put("invalidSessions",JSONArray(embedding.liveSessions().map{it.id}))}else reply.put("ok",false).put("error",error(error)).put("invalidSessions",JSONArray(embedding.liveSessions().map{it.id}));completed.add(reply)
+                }}catch(error:Throwable){completed.add(JSONObject().put("id",r.getInt("id")).put("ok",false).put("error",error(error)).put("invalidSessions",JSONArray(embedding.liveSessions().map{it.id})))}
+                continue
+            }
             executor.execute {
                 val reply=JSONObject().put("id",r.getInt("id"))
                 try{
@@ -53,28 +63,35 @@ class ProtocolController(context:Context, private val embedding:Embedding, asset
                         generatedTraces[key]=state.getString("trace");requests[key]=request;if(key in cancelled)embedding.cancel(request);request
                     }else null
                     reply.put("ok",true).put("value",invoke(name,args,preparation))
-                }catch(e:Throwable){reply.put("ok",false).put("error",error(e));if(name in setOf("dispatch","poll"))reply.put("invalidSessions",JSONArray(embedding.liveSessions().map{it.id}))}
+                }catch(e:Throwable){reply.put("ok",false).put("error",error(e));if(name in setOf("dispatch","run"))reply.put("invalidSessions",JSONArray(embedding.liveSessions().map{it.id}))}
                 completed.add(reply)
             }
         }
         val replies=JSONArray();while(true){val r=completed.poll()?:break;replies.put(r)}
-        for(i in 0 until replies.length()){val r=replies.getJSONObject(i);r.optJSONArray("invalidSessions")?.let{program.evaluate("publicProtocol.liveSessions($it); ''")}}
         if(replies.length()>0)program.evaluate("dealCapabilities.deliver($replies)")
+        for(i in 0 until replies.length()){val r=replies.getJSONObject(i);r.optJSONArray("invalidSessions")?.let{program.evaluate("publicProtocol.liveSessions($it); ''")}}
         program.evaluate("publicProtocol.observed(${health()}); ''")
-        for((key,future)in futures){if(future.isDone)continue;val result=JSONObject(program.evaluate("JSON.stringify(publicResults.get(${JSONObject.quote(key)}))"));if(result.optBoolean("done")){if(result.has("error")){val e=result.getJSONObject("error");future.completeExceptionally(ProtocolFailure(e.getString("code"),e.getString("message")))}else future.complete(result.opt("value")?:JSONObject.NULL)}}
+        for((key,future)in futures){if(future.isDone)continue;val result=JSONObject(program.evaluate("JSON.stringify(publicResults.get(${JSONObject.quote(key)}))"));if(result.optBoolean("done")){if(result.has("error")){val e=result.getJSONObject("error");future.completeExceptionally(ProtocolFailure(e.getString("code"),e.getString("message")))}else future.complete(result.opt("value")?:JSONObject.NULL);program.evaluate("publicResults.delete(${JSONObject.quote(key)}); ''")}}
     }
     fun await(key:String,timeoutSeconds:Long=120):Any {
-        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(timeoutSeconds)
+        val deadline=if(timeoutSeconds==Long.MAX_VALUE)Long.MAX_VALUE else System.nanoTime()+TimeUnit.SECONDS.toNanos(timeoutSeconds)
         val future=futures[key]?:error("Unknown invocation")
-        while(!future.isDone){check(System.nanoTime()<deadline){"Protocol consumer timeout"};pump();Thread.sleep(5)}
-        return try{future.get()}catch(e:ExecutionException){throw e.cause!!}
+        while(!future.isDone){check(System.nanoTime()<deadline){"Protocol consumer timeout"};Thread.sleep(5)}
+        return try{future.get()}catch(e:ExecutionException){throw e.cause!!}finally{futures.remove(key)}
     }
     fun call(name:String,args:JSONArray=JSONArray(),timeoutSeconds:Long=120):Any=await(start(name,args),timeoutSeconds)
+    @Synchronized fun synchronous(name:String,args:JSONArray=JSONArray()):Any {
+        check(!ended)
+        val declared=program.evaluate("String(publicConsumer[${JSONObject.quote(name)}].\$sig.startsWith('async'))")
+        require(declared=="false"){"Async export cannot be invoked synchronously"}
+        val result=JSONObject(program.evaluate("(() => {try {return JSON.stringify({ok:true,value:protocolInvoke(${JSONObject.quote(name)},$args)});}catch(error){return JSON.stringify({ok:false,code:error.code||'EMBEDDING_FAILED',message:error.message||'Embedding failed'});}})()"))
+        if(!result.getBoolean("ok"))throw ProtocolFailure(result.getString("code"),result.getString("message"))
+        return result.opt("value") ?: JSONObject.NULL
+    }
+    @Synchronized fun capturing():Boolean=program.evaluate("String(publicProtocol.capturing())")=="true"
+    fun update(session:Session,cursor:String=""):SessionUpdate=(call("next",JSONArray().put(session.id).put(cursor),Long.MAX_VALUE) as JSONObject).let{SessionUpdate(UiSnapshot.parse(it.getJSONObject("snapshot")),it.getString("cursor"))}
     private fun control(name:String,args:JSONArray){when(name){
         "cancel"->{val key=args.getString(0);cancelled.add(key);requests[key]?.let{embedding.cancel(it)}}
-        "grant"->embedding.grant(args.getString(0))
-        "revoke"->embedding.revoke(args.getString(0))
-        "capture"->embedding.capture(args.getBoolean(0))
         "release"->embedding.release(ref(args.getJSONObject(0)))
         "published"->embedding.published(Session(args.getJSONObject(0).getString("id")),args.getInt(1))
         else->error("Unknown controller instruction")
@@ -83,8 +100,7 @@ class ProtocolController(context:Context, private val embedding:Embedding, asset
         "generate"->prepared(embedding.generate(request!!)).also{it.put("trace",generatedTraces[args.getString(0)])}
         "load"->prepared(embedding.load(args.getString(0),args.getJSONObject(1).let{Source(it.getString("deal"),it.getString("dealui"))}))
         "run"->embedding.run(ref(args.getJSONObject(0))).let{JSONObject().put("id",it.id).put("trace",embedding.sessionTrace(it))}
-        "dispatch"->embedding.dispatch(Session(args.getJSONObject(0).getString("id")),args.getInt(1),if(args.isNull(2))null else args.getString(2)).json()
-        "poll"->embedding.poll(Session(args.getJSONObject(0).getString("id"))).json()
+        "dispatch"->{embedding.dispatch(Session(args.getJSONObject(0).getString("id")),args.getInt(1),if(args.isNull(2))null else args.getString(2));JSONObject.NULL}
         "close"->{embedding.close(Session(args.getJSONObject(0).getString("id")));JSONObject.NULL}
         "forget"->{embedding.forget(ref(args.getJSONObject(0)));JSONObject.NULL}
         "refresh"->JSONArray(embedding.refresh().map{it.protocolJson()})
@@ -103,5 +119,14 @@ class ProtocolController(context:Context, private val embedding:Embedding, asset
         val code=when(e){is ProtocolFailure->e.code;is CancellationException->"CANCELLED";is GenerationRejected->"GENERATION_REJECTED";is CandidateRejected->"CANDIDATE_REJECTED";is IllegalArgumentException->"INVALID_ARGUMENT";else->"EMBEDDING_FAILED"}
         return JSONObject().put("code",code).put("message",e.message?:"Native mechanism failed")
     }
-    @Synchronized override fun close(){if(ended)return;ended=true;requests.values.forEach{runCatching{embedding.cancel(it)}};workers.shutdown();serial.shutdown();workers.awaitTermination(10,TimeUnit.SECONDS);serial.awaitTermination(10,TimeUnit.SECONDS);embedding.shutdown();program.close();SandboxEngine.release(engine)}
+    override fun close(){
+        if(ended)return
+        // Let the trusted consumer terminate waits before releasing its isolate.
+        runCatching{call("shutdown",timeoutSeconds=10)}
+        synchronized(this){if(ended)return;ended=true;driving.shutdownNow();requests.values.forEach{runCatching{embedding.cancel(it)}};workers.shutdown();serial.shutdown()}
+        workers.awaitTermination(10,TimeUnit.SECONDS);serial.awaitTermination(10,TimeUnit.SECONDS)
+        embedding.shutdown();EmbeddingLog.capturePolicy(context,null)
+        futures.values.forEach{it.completeExceptionally(ProtocolFailure("CLOSED","Controller closed"))};futures.clear()
+        program.close();SandboxEngine.release(engine)
+    }
 }

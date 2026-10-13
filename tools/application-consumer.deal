@@ -1,0 +1,31 @@
+import * as embedding from "embedding";
+
+// Trusted application linkage. Generated experiences never import this module.
+export function snapshot(schema:embedding.WireType,json:string):embedding.GenerationContext {return embedding.snapshot(schema,json);}
+export function contextSchema(id:string):embedding.WireType {return embedding.contextSchema({id:id});}
+export function contextJson(id:string):string {return embedding.contextJson({id:id});}
+export function request(title:string,intent:string,id:string):embedding.GenerationRequest {return embedding.request(title,intent,{id:id});}
+export async function generate(id:string):embedding.Experience {return await embedding.generate({id:id});}
+export function cancel(id:string):null {return embedding.cancel({id:id});}
+export async function load(title:string,deal:string,dealui:string):embedding.Experience {return await embedding.load(title,{deal:deal,dealui:dealui});}
+export function source(id:string):embedding.Source {return embedding.source({id:id});}
+export function release(id:string):null {return embedding.release({id:id});}
+export async function run(id:string):embedding.Session {return await embedding.run({id:id});}
+export async function next(id:string,cursor:string):embedding.SessionUpdate {return await embedding.next({id:id},cursor);}
+export async function dispatch(id:string,slot:int,payload:string|null):null {return await embedding.dispatch({id:id},slot,payload);}
+export function published(id:string,version:int):null {return embedding.published({id:id},version);}
+export async function close(id:string):null {return await embedding.close({id:id});}
+export function saved():embedding.Experience[] {return embedding.saved();}
+export async function forget(id:string):null {return await embedding.forget({id:id});}
+export async function refresh():embedding.CapabilityContract[] {return await embedding.refresh();}
+export function grant(module:string):null {return embedding.grant(module);}
+export function revoke(module:string):null {return embedding.revoke(module);}
+export function requestTrace(id:string):string {return embedding.requestTrace({id:id});}
+export function sessionTrace(id:string):string {return embedding.sessionTrace({id:id});}
+export async function events(trace:string,cursor:string,limit:int):embedding.EventPage {return await embedding.events(trace,cursor,limit);}
+export async function artifact(id:string):embedding.Artifact {return await embedding.artifact(id);}
+export function health():embedding.ObservationHealth {return embedding.health();}
+export function capture(enabled:boolean):null {return embedding.capture(enabled);}
+export async function clearObservation():null {return await embedding.clearObservation();}
+export async function shutdown():null {return await embedding.shutdown();}
+export function main():null {return null;}

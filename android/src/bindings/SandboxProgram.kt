@@ -32,13 +32,13 @@ internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : Aut
         }
         isolate = engine.createIsolate(IsolateStartupParameters().apply { setMaxHeapSizeBytes(32L * 1024 * 1024); setMaxEvaluationReturnSizeBytes(returnLimit) })
     }
-    fun evaluate(source: String): String {
+    @Synchronized fun evaluate(source: String): String {
         if(closed)throw ClosedSandboxProgram()
         try { return isolate.evaluateJavaScriptAsync(source).get(2, TimeUnit.SECONDS) }
         catch(error:IllegalStateException){if(error.message?.startsWith("Calling evaluateJavaScriptAsync() when ")==true){closed=true;throw ClosedSandboxProgram()};throw error}
         catch (error: java.util.concurrent.TimeoutException) { close(); throw error }
     }
-    override fun close() { if (!closed) { closed = true; isolate.close() } }
+    @Synchronized override fun close() { if (!closed) { closed = true; isolate.close() } }
 }
 
 internal object SandboxBundle {

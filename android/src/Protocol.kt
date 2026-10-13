@@ -49,6 +49,9 @@ data class UiSnapshot(val tree: JSONObject, val version: Int, val fault: String)
     fun json(): JSONObject = JSONObject().put("tree",tree).put("version",version).put("fault",fault)
     companion object { fun parse(v: JSONObject)=UiSnapshot(v.getJSONObject("tree"),v.getInt("version"),v.optString("fault")) }
 }
+data class SessionUpdate(val snapshot: UiSnapshot, val cursor: String) {
+    fun json() = JSONObject().put("snapshot",snapshot.json()).put("cursor",cursor)
+}
 data class EventPage(val events: List<JSONObject>, val cursor: String, val incomplete: Boolean)
 data class Artifact(val status: String, val text: String)
 data class ObservationHealth(val incomplete: Boolean, val active: Boolean, val code: String, val lost: Int)

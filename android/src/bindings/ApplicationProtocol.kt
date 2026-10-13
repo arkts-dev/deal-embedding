@@ -1,0 +1,45 @@
+package dev.deal.embedding
+
+import android.content.Context
+import org.json.*
+import java.util.concurrent.Executors
+
+/** Rendering/lifecycle adapter to the compiled DEAL consumer. It never drives sessions. */
+class ApplicationProtocol(context:Context, mechanisms:Embedding):AutoCloseable {
+    private val controller=ProtocolController(context,mechanisms,"protocol-application","application.js")
+    private val observers=Executors.newCachedThreadPool()
+    private fun args(vararg values:Any?)=JSONArray(values.toList())
+    private fun sync(name:String,vararg values:Any?)=controller.synchronous(name,args(*values))
+    private fun call(name:String,vararg values:Any?)=controller.call(name,args(*values))
+    private fun experience(v:Any)= (v as JSONObject).let{Experience(it.getString("id"),it.getString("title"),it.getString("origin"),it.getInt("attempts"))}
+    fun snapshot(schema:WireType,json:String)=GenerationContext((sync("snapshot",schema.json(),json) as JSONObject).getString("id"))
+    fun request(title:String,intent:String,context:GenerationContext)=GenerationRequest((sync("request",title,intent,context.id) as JSONObject).getString("id"))
+    fun generate(request:GenerationRequest)=experience(call("generate",request.id))
+    fun cancel(request:GenerationRequest){sync("cancel",request.id)}
+    fun load(title:String,source:Source)=experience(call("load",title,source.deal,source.dealui))
+    fun source(experience:Experience)=(sync("source",experience.id) as JSONObject).let{Source(it.getString("deal"),it.getString("dealui"))}
+    fun release(experience:Experience){sync("release",experience.id)}
+    fun run(experience:Experience)=Session((call("run",experience.id) as JSONObject).getString("id"))
+    fun next(session:Session,cursor:String)=controller.update(session,cursor)
+    fun observe(session:Session,render:(UiSnapshot)->Unit,onFailure:(Throwable)->Unit){observers.execute{
+        try{var cursor="";while(!observers.isShutdown){val update=next(session,cursor);cursor=update.cursor;render(update.snapshot)}}catch(error:Throwable){if(!observers.isShutdown)onFailure(error)}
+    }}
+    fun dispatch(session:Session,slot:Int,payload:String?){call("dispatch",session.id,slot,payload ?: JSONObject.NULL)}
+    fun published(session:Session,version:Int){sync("published",session.id,version)}
+    fun close(session:Session){call("close",session.id)}
+    fun saved()=(sync("saved") as JSONArray).let{a->(0 until a.length()).map{experience(a.getJSONObject(it))}}
+    fun forget(experience:Experience){call("forget",experience.id)}
+    fun refresh()=(call("refresh") as JSONArray).let{a->(0 until a.length()).map{v->a.getJSONObject(v).let{c->val fs=c.getJSONArray("functions");SharedCapabilityContract(c.getString("module"),c.getString("description"),c.getInt("version"),(0 until fs.length()).map{i->val f=fs.getJSONObject(i);val ps=f.getJSONArray("parameters");SharedCapabilityFunction(f.getString("name"),f.getString("description"),(0 until ps.length()).map{j->val p=ps.getJSONObject(j);Parameter(p.getString("name"),WireType.parse(p.getJSONObject("type")))},WireType.parse(f.getJSONObject("result")))})}}}
+    fun grant(module:String){sync("grant",module)}
+    fun revoke(module:String){sync("revoke",module)}
+    fun requestTrace(request:GenerationRequest)=sync("requestTrace",request.id) as String
+    fun sessionTrace(session:Session)=sync("sessionTrace",session.id) as String
+    fun events(trace:String,cursor:String,limit:Int)=(call("events",trace,cursor,limit) as JSONObject).let{v->val a=v.getJSONArray("events");EventPage((0 until a.length()).map{a.getJSONObject(it)},v.getString("cursor"),v.getBoolean("incomplete"))}
+    fun artifact(id:String)=(call("artifact",id) as JSONObject).let{Artifact(it.getString("status"),it.getString("text"))}
+    fun health()=(sync("health") as JSONObject).let{ObservationHealth(it.getBoolean("incomplete"),it.getBoolean("active"),it.getString("code"),it.getInt("lost"))}
+    fun capturesContent()=controller.capturing()
+    fun capture(enabled:Boolean){sync("capture",enabled)}
+    fun clearObservation(){call("clearObservation")}
+    fun shutdown(){observers.shutdownNow();controller.close()}
+    override fun close()=shutdown()
+}

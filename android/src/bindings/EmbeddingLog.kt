@@ -14,9 +14,10 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
     constructor(context: Context) : this(context.applicationContext, UUID.randomUUID().toString(), "")
     private fun child(parent: String) = EmbeddingLog(context, run, parent).also{it.boundExperience=boundExperience;it.boundSession=boundSession}
     internal fun bind(workspace: String,session:String) = EmbeddingLog(context,run,defaultParent).also { it.boundExperience=workspace;it.boundSession=session }
+    internal val experienceIdentity: String get() = boundExperience
     private var boundExperience=""
     private var boundSession=""
-    val capturesContent: Boolean get() = runCatching { context.getSharedPreferences("embedding-logging", 0).getBoolean("content", false) }.getOrDefault(false)
+    val capturesContent: Boolean get() = runCatching { capturePolicies[context.applicationContext]?.invoke() ?: context.getSharedPreferences("embedding-logging", 0).getBoolean("content", false) }.getOrDefault(false)
     fun event(stage: String, outcome: String, candidate: String = "", workspace: String = "", operation: String = "", code: String = "", durationMs: Long = 0, version: Int = -1, parentOperation: String = "", target: String = "", detail: String? = null, span: String = UUID.randomUUID().toString()) {
         try {
             sink(context).submit(JSONObject().put("trace", run).put("span", span).put("parent", parentOperation.ifEmpty { defaultParent })
@@ -36,6 +37,8 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
         }
     }
     companion object {
+        private val capturePolicies=java.util.concurrent.ConcurrentHashMap<Context,()->Boolean>()
+        internal fun capturePolicy(context:Context,policy:(()->Boolean)?){if(policy==null)capturePolicies.remove(context.applicationContext)else capturePolicies[context.applicationContext]=policy}
         internal fun traced(context:Context,trace:String)=EmbeddingLog(context.applicationContext,trace,"")
         @Volatile private var instance: Sink? = null
         private fun sink(context: Context): Sink = instance ?: synchronized(this) { instance ?: Sink(context.applicationContext).also { instance = it } }

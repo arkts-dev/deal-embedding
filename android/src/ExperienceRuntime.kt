@@ -18,7 +18,7 @@ internal data class SavedWorkspace(val id: String, val title: String, val origin
 internal class LiveWorkspace internal constructor(val id: String, val title: String, internal val session: UiSession, internal val output: File, internal val source: ExperienceSource, val origin: WorkspaceOrigin, val attempts: Int)
 
 /**
- * Called serially by the host. Owns compilation, atomic mounting, live workspaces and the shared engine.
+ * Serialized by embedding mechanisms. Owns compilation, atomic mounting, live workspaces and the shared engine.
  * Several workspaces stay mounted at once; each keeps its own isolate and its own capability session.
  */
 internal class ExperienceRuntime(private val context: Context, private val capabilities: CapabilityHost, private val config: EmbeddingConfig) : AutoCloseable {
@@ -49,7 +49,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     /** Explicit reopen rechecks saved source against current contracts; never invokes inference. */
     fun savedWorkspaces(): List<SavedWorkspace> = storage.savedWorkspaces()
     fun reopen(id: String, session:String): Pair<LiveWorkspace, JSONObject> {
-        workspaces[id]?.let { return it to it.session.poll() }
+        workspaces[id]?.let { return it to it.session.advance() }
         val saved = savedWorkspaces().firstOrNull { it.id == id } ?: error("Saved workspace not found")
         val source = storage.source(id) ?: error("Saved workspace source missing")
         return check(source, saved.origin, saved.attempts).use { mountWorkspace(id, saved.title, it,session) }
@@ -73,8 +73,12 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     }
     fun workspaces(): List<LiveWorkspace> = workspaces.values.toList()
     fun workspace(id: String): LiveWorkspace? = workspaces[id]
-    fun dispatch(id: String, slot: Int, payload: String?): JSONObject? { val live = workspaces[id] ?: return null; guarded { live.session.dispatch(slot, payload) }; return poll(id) }
-    fun poll(id: String): JSONObject? = guarded { workspaces[id]?.session?.poll() }
+    fun dispatch(id: String, slot: Int, payload: String?) { val live = workspaces[id] ?: error("Closed session"); live.session.dispatch(slot, payload) }
+    fun advance(id: String): JSONObject? = try { workspaces[id]?.session?.advance() } catch(error:Exception) {
+        val dead=generateSequence<Throwable>(error){it.cause}.any{it is androidx.javascriptengine.SandboxDeadException}
+        if(dead){engine?.let{SandboxEngine.release(it,dead=true)};engine=null;close()}else closeWorkspace(id)
+        throw error
+    }
     fun closeWorkspace(id: String) {
         val live = workspaces.remove(id) ?: return
         EmbeddingLog(context).event("session", "closed", workspace = id)

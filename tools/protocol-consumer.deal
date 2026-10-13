@@ -39,16 +39,16 @@ export async function lifecycle(deal:string,dealui:string):string {
     insist(embedding.source(prepared).deal===deal,"Exact source");
     let fake:embedding.Experience={id:prepared.id,title:"Forged",origin:"generated",attempts:99};
     let live:embedding.Session=await embedding.run(fake);let again:embedding.Session=await embedding.run(prepared);insist(live.id===again.id,"One live session");
-    let snapshot:embedding.UiSnapshot=await embedding.poll(live);insist(snapshot.fault==="","Initial snapshot");
+    let update:embedding.SessionUpdate=await embedding.next(live,"");let snapshot:embedding.UiSnapshot=update.snapshot;insist(snapshot.fault==="","Initial snapshot");
     embedding.published(live,snapshot.version);
     let rejected:boolean=false;try{embedding.published(live,snapshot.version+1);}catch(e){rejected=true;}insist(rejected,"Unproduced version");
-    snapshot=await embedding.dispatch(live,0,null);embedding.published(live,snapshot.version);
+    await embedding.dispatch(live,0,null);update=await embedding.next(live,update.cursor);snapshot=update.snapshot;embedding.published(live,snapshot.version);
     insist(embedding.sessionTrace(live)!=="","Session trace");
     let found:boolean=false;for(let e:embedding.Experience of embedding.saved()){if(e.id===prepared.id){found=e.title==="Lifecycle proof"&&e.origin==="supplied"&&e.attempts===0;}}insist(found,"Metadata cannot mint provenance");
-    await embedding.close(live);rejected=false;try{await embedding.poll(live);}catch(e){rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Closed session");
+    await embedding.close(live);rejected=false;try{await embedding.next(live,"");}catch(e){rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Closed session");
     let cold:embedding.Session=await embedding.run(prepared);insist(cold.id!==live.id,"Cold new session");await embedding.close(cold);
     await embedding.forget(prepared);insist(embedding.saved().length===before,"Forget");
-    let unused:embedding.Experience=await embedding.load("Unused",{deal:deal,dealui:dealui});embedding.release(unused);rejected=false;try{embedding.source(unused);}catch(e){rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Release");return "load/run/same-live/poll/dispatch/published/close/cold/forget/release";
+    let unused:embedding.Experience=await embedding.load("Unused",{deal:deal,dealui:dealui});embedding.release(unused);rejected=false;try{embedding.source(unused);}catch(e){rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Release");return "load/run/same-live/next/dispatch/published/close/cold/forget/release";
 }
 export async function equipment(intent:string,json:string):embedding.Experience {
     let requirement:embedding.WireField={name:"requirement",type:{kind:"string",maximum:128}};
@@ -64,8 +64,21 @@ export async function equipment(intent:string,json:string):embedding.Experience 
     return await embedding.generate(request);
 }
 export async function run(id:string):embedding.Session {return await embedding.run({id:id});}
-export async function poll(id:string):embedding.UiSnapshot {return await embedding.poll({id:id});}
-export async function dispatch(id:string,slot:int):embedding.UiSnapshot {return await embedding.dispatch({id:id},slot,null);}
+export async function next(id:string,cursor:string):embedding.SessionUpdate {return await embedding.next({id:id},cursor);}
+export async function dispatch(id:string,slot:int):null {return await embedding.dispatch({id:id},slot,null);}
+export async function dispatchPayload(id:string,slot:int,payload:string):null {return await embedding.dispatch({id:id},slot,payload);}
+export function defaults():string {
+    let wire:embedding.WireType={};let field:embedding.WireField={};let parameter:embedding.Parameter={};let capability:embedding.CapabilityFunction={};let contract:embedding.CapabilityContract={};
+    let update:embedding.SessionUpdate={};let event:embedding.Event={};let answer:embedding.GenerationRequest={};
+    insist(wire.maximum===128&&wire.minimumInt===-2147483648&&wire.maximumInt===2147483647&&wire.element===null,"Wire defaults");
+    insist(field.type.maximum===128&&!field.optional&&parameter.type.maximum===128&&capability.result.maximum===128,"Nested defaults");
+    insist(contract.version===1&&contract.functions.length===0&&update.cursor===""&&update.snapshot.version===0&&update.snapshot.fault===""&&event.version===-1&&event.sequence===0&&answer.id==="","Record defaults");
+    return "defaults";
+}
+export async function invalidCursor(id:string,cursor:string):string {let caught:boolean=false;try{await embedding.next({id:id},cursor);}catch(error){caught=error.code==="INVALID_CURSOR";}insist(caught,"Invalid cursor must raise DEAL Error");return "invalid cursor";}
+export function invalidGrant():string {let caught:boolean=false;try{embedding.grant("missing/module");}catch(error){caught=error.code==="INVALID_ARGUMENT";}insist(caught,"Grant failure must raise in originating DEAL call");return "grant error";}
+export function grant(module:string):null {return embedding.grant(module);}
+export function revoke(module:string):null {return embedding.revoke(module);}
 export async function close(id:string):null {return await embedding.close({id:id});}
 export async function forget(id:string):null {return await embedding.forget({id:id});}
 export function saved():embedding.Experience[] {return embedding.saved();}
@@ -77,7 +90,7 @@ export async function observation():string {
     let missing:embedding.Artifact=await embedding.artifact("00000000-0000-0000-0000-000000000000");insist(missing.status==="unavailable","Missing artifact");
     await embedding.clearObservation();return "capture/health/events/continuation/artifact/clear";
 }
-export async function resumeSaved():int {let count:int=0;for(let e:embedding.Experience of embedding.saved()){let s:embedding.Session=await embedding.run(e);let snapshot:embedding.UiSnapshot=await embedding.poll(s);insist(snapshot.fault==="","Reconstituted saved source");await embedding.close(s);await embedding.forget(e);count=count+1;}return count;}
+export async function resumeSaved():int {let count:int=0;for(let e:embedding.Experience of embedding.saved()){let s:embedding.Session=await embedding.run(e);let update:embedding.SessionUpdate=await embedding.next(s,"");let snapshot:embedding.UiSnapshot=update.snapshot;insist(snapshot.fault==="","Reconstituted saved source");await embedding.close(s);await embedding.forget(e);count=count+1;}return count;}
 export function exactSource(id:string):embedding.Source {return embedding.source({id:id});}
 export function release(id:string):null {return embedding.release({id:id});}
 export async function artifact(id:string):embedding.Artifact {return await embedding.artifact(id);}

@@ -2,8 +2,8 @@
 // Trusted instance controller. This bundle is never supplied to generated UI.
 // Synchronous declarations operate on local state; only mechanism calls cross IPC.
 globalThis.publicProtocol = (() => {
-  let seed, sequence=0, stopped=false, contracts=[], saved=[], observation={incomplete:false,active:false,code:'',lost:0};
-  const contexts=new Map(), requests=new Map(), experiences=new Map(), sessions=new Map();
+  let seed, sequence=0, stopped=false, contracts=[], saved=[], observation={incomplete:false,active:false,code:'',lost:0},capturing=false;
+  const contexts=new Map(), requests=new Map(), experiences=new Map(), sessions=new Map(), grants=new Map();
   const copy=v=>JSON.parse(JSON.stringify(v));
   const fail=(code,message)=>{throw publicRuntime.errorValue(code,message);};
   const need=(condition,message)=>{if(!condition)fail('INVALID_ARGUMENT',message);};
@@ -33,7 +33,7 @@ globalThis.publicProtocol = (() => {
   function retain(e,source,isSaved=false){experiences.set(e.id,{metadata:copy(e),source:copy(source),saved:isSaved,session:null,starting:null});return copy(e);}
   async function prepared(name,args){const result=await native(name,args);if(stopped){control('release',[result.experience]);fail('STOPPED','Embedding instance is stopped');}return retain(result.experience,result.source);}
   return {
-    bootstrap(input){seed=input.seed;contracts=copy(input.contracts);observation=copy(input.health);for(const item of input.saved){retain(item.experience,item.source,true);saved.push(item.experience.id);}},
+    bootstrap(input){seed=input.seed;contracts=copy(input.contracts);observation=copy(input.health);capturing=input.capturing===true;for(const item of input.saved){retain(item.experience,item.source,true);saved.push(item.experience.id);}},
     invoke(name,args,convert){
       active();let result;
       switch(name){
@@ -50,26 +50,29 @@ globalThis.publicProtocol = (() => {
         case 'load':result=prepared('load',args);break;
         case 'source':result=copy(lookup(experiences,args[0]).source);break;
         case 'release':{const e=lookup(experiences,args[0]);need(!e.session&&!e.starting,'Experience is live');control('release',[e.metadata]);if(!e.saved)experiences.delete(e.metadata.id);result=null;break;}
-        case 'run':{const e=lookup(experiences,args[0]);if(e.session)result=copy(e.session);else {if(!e.starting)e.starting=native('run',[e.metadata]).then(s=>{e.session=copy(s);sessions.set(s.id,{experience:e,trace:s.trace,version:-1});if(!e.saved){e.saved=true;saved.push(e.metadata.id);}return {id:s.id};}).finally(()=>{e.starting=null;});result=e.starting;}break;}
-        case 'dispatch':case 'poll':{const s=lookup(sessions,args[0]);result=native(name,args).then(v=>{s.version=Math.max(s.version,v.version);return v;});break;}
-        case 'published':{const s=lookup(sessions,args[0]);need(args[1]>=0&&args[1]<=s.version,'Unproduced snapshot version');control('published',args);result=null;break;}
+        case 'run':{const e=lookup(experiences,args[0]);if(!e.starting)e.starting=native('run',[e.metadata]).then(s=>{if(e.session&&e.session.id!==s.id)sessions.delete(e.session.id);e.session={id:s.id};if(!sessions.has(s.id))sessions.set(s.id,{experience:e,trace:s.trace,version:-1});if(!e.saved){e.saved=true;saved.push(e.metadata.id);}return {id:s.id};}).finally(()=>{e.starting=null;});result=e.starting;break;}
+        case 'dispatch':lookup(sessions,args[0]);result=native(name,args);break;
+        case 'next':{const s=lookup(sessions,args[0]);result=native(name,args).then(update=>{s.version=Math.max(s.version,update.snapshot.version);return update;});break;}
+        case 'published':{const s=lookup(sessions,args[0]);need(args[1]>=0&&args[1]<=s.version,'Unproduced snapshot version');s.published=args[1];control('published',args);result=null;break;}
         case 'sessionTrace':result=lookup(sessions,args[0]).trace;break;
         case 'close':{const s=lookup(sessions,args[0]);result=native('close',args).then(()=>{sessions.delete(args[0].id);s.experience.session=null;return null;});break;}
         case 'saved':result=saved.map(key=>copy(experiences.get(key).metadata));break;
         case 'forget':{const e=lookup(experiences,args[0]);result=native('forget',[e.metadata]).then(()=>{if(e.session)sessions.delete(e.session.id);experiences.delete(e.metadata.id);saved=saved.filter(key=>key!==e.metadata.id);return null;});break;}
         case 'refresh':result=native(name,args).then(c=>{contracts=copy(c);return copy(c);});break;
-        case 'grant':case 'revoke':need(contracts.some(c=>c.module===args[0]),'Unknown module');control(name,args);result=null;break;
+        case 'grant':case 'revoke':need(contracts.some(c=>c.module===args[0]),'Unknown module');if(name==='grant'&&!grants.has(args[0]))grants.set(args[0],id());else if(name==='revoke')grants.delete(args[0]);result=null;break;
         case 'health':result=copy(observation);break;
-        case 'capture':control(name,args);result=null;break;
+        case 'capture':capturing=args[0];result=null;break;
         case 'events':case 'artifact':case 'clearObservation':result=native(name,args);break;
         case 'shutdown':stopped=true;for(const [key,r]of requests){r.cancelled=true;if(r.reject)r.reject(publicRuntime.errorValue('CANCELLED','Generation cancelled'));control('cancel',[key]);}result=native(name,args).then(()=>{contexts.clear();requests.clear();sessions.clear();experiences.clear();saved=[];return null;});break;
         default:fail('UNKNOWN_EXPORT',name);
       }
       // Async declarations always return an operation, including a cached live Session.
-      if(['generate','load','run','dispatch','poll','close','forget','refresh','events','artifact','clearObservation','shutdown'].includes(name))return Promise.resolve(result).then(convert);
+      if(['generate','load','run','dispatch','next','close','forget','refresh','events','artifact','clearObservation','shutdown'].includes(name))return Promise.resolve(result).then(convert);
       return convert(result);
     },
-    liveSessions(ids){for(const [key,s]of sessions){if(!ids.includes(key)){s.experience.session=null;sessions.delete(key);}}},
+    capturing(){return !stopped&&capturing;},
+    permitted(module){return !stopped ? grants.get(module)||null : null;},
+    liveSessions(ids){for(const [key,s]of sessions){if(!ids.includes(key)){s.experience.session=null;}}},
     observed(health){observation=copy(health);}
   };
 })();
@@ -78,7 +81,11 @@ globalThis.protocolInitialize=function(factories,consumer,input){
   globalThis.protocolUi=dealLoad(factories,'ui/core.js').entry;
   globalThis.publicConsumer=loaded.entry;globalThis.publicResults=new Map();publicProtocol.bootstrap(input);return '';
 };
+globalThis.protocolInvoke=function(name,args){
+  const fn=publicConsumer[name];const parameters=fn.$sig.slice(fn.$sig.indexOf('(')+1,fn.$sig.indexOf(')')).split(',').filter(Boolean);
+  return fn.$f(...args.map((value,index)=>protocolRecord(parameters[index],value,publicRuntime)));
+};
 globalThis.protocolCall=function(key,name,args){
   publicResults.set(key,{done:false});
-  Promise.resolve().then(()=>publicConsumer[name].$f(...args)).then(value=>{publicResults.set(key,{done:true,value});},error=>{publicResults.set(key,{done:true,error:{code:error.code||'EMBEDDING_FAILED',message:error.message||'Embedding operation failed'}});});return '';
+  Promise.resolve().then(()=>protocolInvoke(name,args)).then(value=>{publicResults.set(key,{done:true,value});},error=>{publicResults.set(key,{done:true,error:{code:error.code||'EMBEDDING_FAILED',message:error.message||'Embedding operation failed'}});});return '';
 };

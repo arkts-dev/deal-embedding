@@ -19,12 +19,18 @@ interface CapabilityHost {
 /** Discovery and grants are shared; each isolate owns an independent request/reply session. */
 class CapabilityRegistry(private val context: Context, private val discovery: CapabilityDiscovery, local: List<NativeCapabilities>) : CapabilityHost, AutoCloseable {
     private val log = dev.deal.embedding.EmbeddingLog(context)
+    private val invocation = ThreadLocal<String>()
+    fun invokingExperience(): String? = invocation.get()
     private data class Provider(val contract: CapabilityContract, val local: NativeCapabilities? = null, val endpoint: CapabilityDiscovery.Endpoint? = null)
     private val locals = local.associateBy { it.contract.module }
     private var providers = locals.mapValues { Provider(it.value.contract, it.value) }
-    private val grants = mutableSetOf<String>()
+    private var permission: ((String) -> String?)? = null
+    /** Trusted controller-local permission is authoritative; providers still enforce consent. */
+    @Synchronized internal fun permissions(check: (String) -> String?) { check(!closed && sessions.isEmpty()); permission = check }
+    private fun epoch(module: String): String? = permission?.invoke(module)
+    private fun allowed(module: String): Boolean = epoch(module)!=null
     private val io = Executors.newSingleThreadExecutor()
-    private data class Pending(val id: Int, val key: String, val provider: Provider, val deadline: Long)
+    private data class Pending(val id: Int, val key: String, val provider: Provider, val deadline: Long, val permission: String)
     private val sessions = mutableSetOf<Session>()
     private var closed = false
     init { require(locals.size == local.size) }
@@ -42,21 +48,13 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
         }
     }
     @Synchronized fun contracts(): List<CapabilityContract> = providers.values.map { it.contract }
-    @Synchronized fun grant(module: String) { check(!closed) { "Capability registry is closed" }; require(providers.containsKey(module)); grants.add(module); log.event("grant", "granted", target = module) }
-    @Synchronized fun revoke(module: String) {
-        grants.remove(module)
-        log.event("grant", "revoked", target = module)
-        sessions.forEach { it.revoke(module) }
-    }
-    @Synchronized fun grantAll() { providers.keys.forEach(::grant) }
-    @Synchronized fun revokeAll() { grants.toList().forEach(::revoke) }
     @Synchronized override fun openSession(log: dev.deal.embedding.EmbeddingLog): CapabilitySession {
         check(!closed) { "Capability registry is closed" }
         return Session(log).also { sessions.add(it) }
     }
     private fun cancelRemote(item: Pending) { io.execute { try { item.provider.endpoint?.remote?.cancel(item.key); log.event("transport", "cancelled", operation = item.key, target = item.provider.contract.module) } catch (_: Exception) { log.event("transport", "failed", operation = item.key, code = "CANCEL_FAILED") } } }
 
-    /** Every session operation and callback uses the registry lock, including grant changes. */
+    /** Session operations and callbacks serialize; permission queries read trusted isolate epochs. */
     private inner class Session(private val log: dev.deal.embedding.EmbeddingLog) : CapabilitySession {
         override val identity = UUID.randomUUID().toString()
         private val pending = mutableMapOf<Int, Pending>()
@@ -70,9 +68,6 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
             replies.add(JSONObject().put("id", id).put("ok", false).put("error", JSONObject().put("code", code).put("message", message.take(200))))
         }
         private fun success(id: Int, value: Any) { log.event("transport", "completed", operation = "$identity:$id", span = "$identity:$id"); pending.remove(id); replies.add(JSONObject().put("id", id).put("ok", true).put("value", value)) }
-        fun revoke(module: String) {
-            pending.values.filter { it.provider.contract.module == module }.toList().forEach { cancelRemote(it); fail(it.id, "REVOKED", "Capability access revoked") }
-        }
         override fun receive(request: JSONObject, now: Long) {
             // Reconnect only on a new explicit request, never replay a failed operation.
             // Discovery runs off the registry lock; refresh enforces unchanged active contracts.
@@ -95,21 +90,24 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
             val args = request.optJSONArray("args")
             if (request.length() != 4 || provider == null || function == null || args == null) { fail(id, "BAD_REQUEST", "Unknown typed capability"); return@synchronized }
             try { function.validateArguments(args) } catch (_: Exception) { fail(id, "BAD_REQUEST", "Invalid capability arguments"); return@synchronized }
-            if (provider.contract.module !in grants) { fail(id, "DENIED", "Capability access not granted"); return@synchronized }
+            if (!allowed(provider.contract.module)) { fail(id, "DENIED", "Capability access not granted"); return@synchronized }
             if (pending.size >= 8) { fail(id, "LIMIT", "Too many pending requests"); return@synchronized }
             if (provider.local != null) {
+                invocation.set(log.experienceIdentity)
                 try { success(id, provider.local.invoke(function.name, args)) }
                 catch (error: Exception) { fail(id, "HOST_ERROR", error.message ?: "Host operation failed") }
+                finally { invocation.remove() }
                 return@synchronized
             }
             val endpoint = provider.endpoint!!
-            val item = Pending(id, "$identity:$id", provider, now + 5000)
+            val item = Pending(id, "$identity:$id", provider, now + 5000, epoch(provider.contract.module) ?: run{fail(id,"REVOKED","Capability access revoked");return@synchronized})
             pending[id] = item
             val callback = object : ICapabilityResult.Stub() {
                 private fun authenticate() { require(Binder.getCallingUid() == endpoint.uid && context.packageManager.getPackagesForUid(endpoint.uid)?.contains(endpoint.component.packageName) == true) { "Unauthenticated provider callback" } }
                 override fun success(key: String, valueJson: String) = synchronized(this@CapabilityRegistry) {
                     authenticate()
                     if (pending[id] !== item || key != item.key || ended || closed) { log.event("transport", "discarded", operation = item.key, code = "STALE_CALLBACK"); return@synchronized }
+                    if (epoch(provider.contract.module)!=item.permission) { fail(id, "REVOKED", "Capability access revoked"); return@synchronized }
                     try {
                         require(valueJson.toByteArray().size <= 16 * 1024)
                         val values = JSONArray(valueJson); require(values.length() == 1)
@@ -127,6 +125,8 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
             }
             io.execute {
                 try {
+                    val admitted = synchronized(this@CapabilityRegistry) { pending[id] === item && epoch(provider.contract.module)==item.permission }
+                    if (!admitted) { synchronized(this@CapabilityRegistry) { if (pending[id] === item) fail(id, "REVOKED", "Capability access revoked") }; return@execute }
                     log.event("transport", "sent", operation = item.key, target = provider.contract.module + "." + function.name, span = item.key)
                     endpoint.remote.invoke(item.key, function.name, args.toString(), callback)
                     synchronized(this@CapabilityRegistry) { if (pending[id] !== item) endpoint.remote.cancel(item.key) }
@@ -136,8 +136,8 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
         }
         override fun drain(now: Long): List<JSONObject> = synchronized(this@CapabilityRegistry) {
             live()
-            pending.values.filter { it.deadline <= now || it.provider.endpoint?.remote?.asBinder()?.isBinderAlive == false }.toList().forEach {
-                cancelRemote(it); fail(it.id, if (it.deadline <= now) "TIMEOUT" else "PROVIDER_DIED", "Capability unavailable")
+            pending.values.filter { epoch(it.provider.contract.module)!=it.permission || it.deadline <= now || it.provider.endpoint?.remote?.asBinder()?.isBinderAlive == false }.toList().forEach {
+                cancelRemote(it); fail(it.id, if (epoch(it.provider.contract.module)!=it.permission) "REVOKED" else if (it.deadline <= now) "TIMEOUT" else "PROVIDER_DIED", "Capability unavailable")
             }
             replies.toList().also { replies.clear() }
         }

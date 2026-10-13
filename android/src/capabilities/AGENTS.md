@@ -6,7 +6,7 @@ Enforce discovery trust, host grants and provider consent independently. Authent
 
 Preserve closed-record validation, payload bounds, deadlines, session identity, cancellation and stale-reply rejection. A new explicit request may rediscover a dead Binder outside the registry lock; require unchanged active contracts, preserve grants and never replay the failed operation automatically. Reject ambiguous module ownership and incompatible active-contract changes.
 
-Share discovery and grants at the registry, not request streams. Give each isolate an independently closable session with its own request IDs, pending operations and replies. Serialize session callbacks and grant changes under the registry lock.
+Share discovery and grants at the registry, not request streams. Give each isolate an independently closable session with its own request IDs, pending operations and replies. Serialize session admissions and callbacks under the registry lock. Read the authoritative trusted-controller permission epoch at admission and reply acceptance; native code must not own another grant set. Regranting cannot validate replies from a revoked epoch. Keep provider authorization, consent, authentication and resource validation independent. Bind local preparation to the capability session's issued Experience identity, never an activity's current screen or mutable global guess.
 
 Treat received contracts and values as untrusted boundary data. `CapabilityContract` defines wire types; bindings derive DEAL declarations.
 

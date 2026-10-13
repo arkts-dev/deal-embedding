@@ -21,6 +21,10 @@ for m in modules:
 target=out/'aar/assets/embedding/bindings/protocol-contracts.js'
 target.parent.mkdir(parents=True,exist_ok=True)
 target.write_text('globalThis.protocolDeclarations={'+','.join(entries)+'};\n')
+# Production application linkage is separate from the assertion-bearing test consumer.
+shutil.copy(root/'tools/application-consumer.deal',stage/'src/application.deal')
+subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(compiler),'deal.Main','compile',str(stage/'src/application.deal'),'--backend','js','--output',str(stage/'application')],check=True)
+shutil.copytree(stage/'application',out/'aar/assets/protocol-application',dirs_exist_ok=True)
 # A production-compiled consumer retained for host ABI tests, not a generated UI.
 shutil.copy(root/'tools/protocol-consumer.deal',stage/'src/consumer.deal')
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(compiler),'deal.Main','compile',str(stage/'src/consumer.deal'),'--backend','js','--output',str(stage/'consumer')],check=True)

@@ -6,7 +6,7 @@ import org.json.*
 import dev.deal.embedding.capabilities.CapabilityHost
 import java.io.File
 
-/** One live isolate and compiler-owned store, serialized by the activity worker. */
+/** One live isolate and compiler-owned store, advanced by embedding. */
 internal class UiSession(private val context: Context, private val broker: CapabilityHost, private val engine: JavaScriptSandbox, private val config: EmbeddingConfig,
     private val log: EmbeddingLog = EmbeddingLog(context), private val candidate: String = "", private val workspace: String = "") : AutoCloseable {
     internal fun logTrace(): String = log.run
@@ -27,7 +27,7 @@ internal class UiSession(private val context: Context, private val broker: Capab
         check(bundle.toByteArray().size <= 2 * 1024 * 1024) { "UI bundle too large" }
         capabilitySession = broker.openSession(log)
         log.event("session", "opened", candidate, workspace)
-        try { return JSONObject(evaluate(bundle)) }
+        try { return JSONObject(evaluate(bundle)).also { lastVersion=it.getInt("version");lastFault=it.optString("fault").isNotEmpty() } }
         catch (error: Throwable) { close(); throw error }
     }
     fun dispatch(slot: Int, payload: String?) {
@@ -39,7 +39,7 @@ internal class UiSession(private val context: Context, private val broker: Capab
         try { evaluate(DealSessionBindings.dispatch(slot, payload)); log.event("action", "completed", candidate, workspace, span, span = span) }
         catch (error: Throwable) { log.event("action", "failed", candidate, workspace, span, code = error.javaClass.simpleName, span = span); throw error }
     }
-    fun poll(): JSONObject {
+    fun advance(): JSONObject {
         val encoded = evaluate(DealSessionBindings.requests)
         check(encoded.toByteArray().size <= 16 * 1024) { "Capability request batch too large" }
         val requests = JSONArray(encoded)
