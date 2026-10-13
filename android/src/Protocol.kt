@@ -31,6 +31,15 @@ data class WireType(val kind: String, val fields: List<WireField> = emptyList(),
     }
     companion object { fun parse(v: JSONObject,depth:Int=0): WireType { require(depth<=8);return WireType(v.getString("kind"),v.getJSONArray("fields").let { a -> (0 until a.length()).map { val f=a.getJSONObject(it);WireField(f.getString("name"),parse(f.getJSONObject("type"),depth+1),f.getBoolean("optional")) } },v.optJSONObject("element")?.let { parse(it,depth+1) },v.getInt("maximum"),v.getInt("minimumInt"),v.getInt("maximumInt")) } }
 }
+data class Parameter(val name:String,val type:WireType)
+data class SharedCapabilityFunction(val name:String,val description:String,val parameters:List<Parameter> = emptyList(),val result:WireType) {
+    fun json()=JSONObject().put("name",name).put("description",description).put("parameters",JSONArray(parameters.map{JSONObject().put("name",it.name).put("type",it.type.json())})).put("result",result.json())
+}
+data class SharedCapabilityContract(val module:String,val description:String,val version:Int=1,val functions:List<SharedCapabilityFunction>) {
+    fun json()=JSONObject().put("module",module).put("description",description).put("version",version).put("functions",JSONArray(functions.map{it.json()}))
+    fun native():CapabilityContract {functions.forEach{f->f.result.validateSchema();f.parameters.forEach{it.type.validateSchema()}};return CapabilityContract.parse(legacyContract(json()).toString())}
+}
+fun nativeCapabilities(contract:SharedCapabilityContract,handlers:Map<String,(JSONArray)->Any>)=NativeCapabilities(contract.native(),handlers)
 data class GenerationContext(val id: String)
 data class GenerationRequest(val id: String)
 data class Experience(val id: String, val title: String, val origin: String, val attempts: Int)
@@ -47,4 +56,5 @@ data class ObservationHealth(val incomplete: Boolean, val active: Boolean, val c
 internal fun CapabilityContract.protocolJson(): JSONObject = JSONObject().put("module",module).put("description",description).put("version",version).put("functions",JSONArray(functions.map { fn -> JSONObject().put("name",fn.name).put("description",fn.description).put("parameters",JSONArray(fn.parameters.map { JSONObject().put("name",it.name).put("type",it.type.protocolJson()) })).put("result",fn.result.protocolJson()) }))
 internal fun CapabilityType.protocolJson(): JSONObject = JSONObject().put("kind",kind).put("fields",JSONArray(fields.map { (name,type)->JSONObject().put("name",name).put("type",type.protocolJson()).put("optional",name in optionalFields) })).put("element",element?.protocolJson() ?: JSONObject.NULL).put("maximum",maximum).put("minimumInt",minimumInt).put("maximumInt",maximumInt)
 internal fun protocolCatalog(v: JSONArray): JSONArray = JSONArray((0 until v.length()).map { val c=v.getJSONObject(it); val fs=c.getJSONArray("functions"); for(i in 0 until fs.length()) { val fn=fs.getJSONObject(i); val ps=fn.getJSONArray("parameters");for(j in 0 until ps.length()){val p=ps.getJSONObject(j);p.put("type",legacyType(p.getJSONObject("type")))};fn.put("result",legacyType(fn.getJSONObject("result"))) };c })
+internal fun legacyContract(v:JSONObject):JSONObject=protocolCatalog(JSONArray().put(JSONObject(v.toString()))).getJSONObject(0)
 internal fun legacyType(v: JSONObject): JSONObject { val fields=v.getJSONArray("fields");val converted=JSONObject();for(i in 0 until fields.length()){val f=fields.getJSONObject(i);converted.put(f.getString("name"),legacyType(f.getJSONObject("type")))};v.put("fields",converted);v.put("optionalFields",JSONArray((0 until fields.length()).map{fields.getJSONObject(it)}.filter{it.optBoolean("optional")}.map{it.getString("name")}));v.optJSONObject("element")?.let { v.put("element",legacyType(it)) };return v }

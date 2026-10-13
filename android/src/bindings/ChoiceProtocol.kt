@@ -23,6 +23,7 @@ internal object ChoiceProtocol {
         val parsed=try{JSONObject(raw)}catch(e:JSONException){return rejected("CHOICE_JSON")}
         if(parsed.keys().asSequence().any{it !in setOf("answers","typedAnswers")})return rejected("CHOICE_SHAPE")
         val typed=parsed.optJSONArray("typedAnswers");val selected=parsed.optJSONObject("answers") ?: return rejected("CHOICE_SHAPE")
+        if(typed!=null&&(0 until typed.length()).any{typed.optJSONObject(it)?.let{a->a.opt("question") !is String||a.opt("choice") !is String}?:true})return rejected("CHOICE_SHAPE")
         if(parsed.has("typedAnswers")&&(typed==null||typed.length()!=issued.length()||(0 until typed.length()).any{typed.optJSONObject(it)==null}))return rejected("CHOICE_SHAPE")
         if(selected.length()!=issued.length()||selected.keys().asSequence().any{!issued.has(it)})return rejected("CHOICE_SHAPE")
         val answers=JSONArray()

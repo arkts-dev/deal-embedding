@@ -41,7 +41,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                 cancellation.check()
                 val snapshot = JSONObject(eval("generationSnapshot()"))
                 if (snapshot.getBoolean("done")) {
-                    if(snapshot.optString("error").isNotEmpty())throw IllegalStateException(snapshot.optString("error"))
+                    if(snapshot.optJSONObject("error")!=null){val e=snapshot.getJSONObject("error");throw ProtocolFailure(e.getString("code"),e.getString("message"))}
                     val result = snapshot.getJSONObject("result")
                     val id = result.getString("candidateId")
                     cancellation.check()

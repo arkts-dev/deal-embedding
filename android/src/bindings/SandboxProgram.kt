@@ -22,6 +22,7 @@ internal object SandboxEngine {
 }
 
 /** Only execution mechanics are shared. Callers select their own bindings and authority. */
+internal class ClosedSandboxProgram:IllegalStateException("Sandbox program is closed")
 internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : AutoCloseable {
     private val isolate: JavaScriptIsolate
     private var closed = false
@@ -32,8 +33,9 @@ internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : Aut
         isolate = engine.createIsolate(IsolateStartupParameters().apply { setMaxHeapSizeBytes(32L * 1024 * 1024); setMaxEvaluationReturnSizeBytes(returnLimit) })
     }
     fun evaluate(source: String): String {
-        check(!closed)
+        if(closed)throw ClosedSandboxProgram()
         try { return isolate.evaluateJavaScriptAsync(source).get(2, TimeUnit.SECONDS) }
+        catch(error:IllegalStateException){if(error.message?.startsWith("Calling evaluateJavaScriptAsync() when ")==true){closed=true;throw ClosedSandboxProgram()};throw error}
         catch (error: java.util.concurrent.TimeoutException) { close(); throw error }
     }
     override fun close() { if (!closed) { closed = true; isolate.close() } }

@@ -36,6 +36,7 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
         }
     }
     companion object {
+        internal fun traced(context:Context,trace:String)=EmbeddingLog(context.applicationContext,trace,"")
         @Volatile private var instance: Sink? = null
         private fun sink(context: Context): Sink = instance ?: synchronized(this) { instance ?: Sink(context.applicationContext).also { instance = it } }
         fun capture(context: Context, enabled: Boolean) { check(context.getSharedPreferences("embedding-logging", 0).edit().putBoolean("content", enabled).commit()) }
@@ -116,8 +117,9 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
                 check(stored.size <= normalized.getInt("contentLimit"))
                 val files = directory.listFiles()?.filter { it.extension == "json" && it.name != "health.json" }?.sortedBy { it.lastModified() }.orEmpty()
                 var used = files.sumOf { it.length() }
-                for (file in files) { if (used + stored.size <= normalized.getInt("artifactStoreLimit")) break; used -= file.length(); check(file.delete()) }
+                for (file in files) { if (used + stored.size <= normalized.getInt("artifactStoreLimit")) break; used -= file.length(); check(file.delete());File(directory,"${file.nameWithoutExtension}.truncated").delete() }
                 File(directory, "$artifact.json").writeBytes(stored)
+                if(truncated)File(directory,"$artifact.truncated").writeText("")
                 normalized.put("sha256", java.security.MessageDigest.getInstance("SHA-256").digest(stored).joinToString("") { "%02x".format(it) })
                 if (truncated) normalized.put("content", "truncated")
             }

@@ -11,6 +11,7 @@
       pending.set(id, {resolve, reject});
       outgoing.push({id, module, function: functionName, args});
     }),
+    notify: (module, functionName, args) => { outgoing.push({id: 0, module, function: functionName, args}); },
     take: () => JSON.stringify(outgoing.splice(0)),
     deliver: replies => {
       for (const reply of replies) {

@@ -17,7 +17,7 @@ globalThis.runGeneration = function(factories, input) {
   input.capabilities=tagged('[@$external/embedding/CapabilityContract]',input.capabilities);
   // The class argument is constructed/validated by the generated function ABI.
   entry.generate.$f(entry['GenerationInput$new'](input)).then(value => { generationResult = value; generationDone = true; })
-    .catch(error => { generationError = error.message || String(error); generationDone = true; });
+    .catch(error => { generationError = {code:error.code||'GENERATION_FAILED',message:error.message||String(error)}; generationDone = true; });
   return '';
 };
 globalThis.generationSnapshot = () => JSON.stringify({done:generationDone, result:generationResult, error:generationError});

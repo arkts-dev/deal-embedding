@@ -16,12 +16,12 @@ internal class Observation(private val context:Context) {
             val selected=page.events.drop(page.index).take(limit)
             val next=if(page.index+selected.size<page.events.size)UUID.randomUUID().toString().also{while(cursors.size>=16)cursors.remove(cursors.keys.first());cursors[it]=page.copy(index=page.index+selected.size)}else ""
             EventPage(selected.map{event->JSONObject(event.toString()).put("experience",event.optString("workspace").ifEmpty{event.optString("candidate")}).put("session",event.optString("session"))},next,health().incomplete)
-        }catch(e:java.io.IOException){EventPage(emptyList(),"",true)}
+        }catch(e:java.io.IOException){EventPage(emptyList(),"",true)}catch(e:org.json.JSONException){EventPage(emptyList(),"",true)}
     }
     fun artifact(id:String):Artifact {
         require(id.matches(Regex("[a-f0-9-]{36}")))
         val file=File(directory,"$id.json");if(!file.isFile)return Artifact("unavailable","")
-        return try{val truncated=listOf("previous.jsonl","events.jsonl").flatMap{File(directory,it).takeIf{it.isFile}?.readLines().orEmpty()}.any{val e=JSONObject(it);e.optString("artifact")==id&&e.optString("content")=="truncated"};Artifact(if(truncated)"truncated" else "captured",file.readText())}catch(e:Exception){Artifact("unavailable","")}
+        return try{val truncated=File(directory,"$id.truncated").isFile;Artifact(if(truncated)"truncated" else "captured",file.readText())}catch(e:Exception){Artifact("unavailable","")}
     }
     fun health():ObservationHealth = try{val file=File(directory,"health.json");if(!file.isFile)ObservationHealth(false,false,"",0)else JSONObject(file.readText()).let{ObservationHealth(it.optBoolean("incomplete"),it.optBoolean("active"),it.optString("code"),it.optInt("lost"))}}catch(e:Exception){ObservationHealth(true,true,"LOGGER_READ",0)}
     @Synchronized fun clear(){cursors.clear()}

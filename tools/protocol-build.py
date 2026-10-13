@@ -22,17 +22,19 @@ target=out/'aar/assets/embedding/bindings/protocol-contracts.js'
 target.parent.mkdir(parents=True,exist_ok=True)
 target.write_text('globalThis.protocolDeclarations={'+','.join(entries)+'};\n')
 # A production-compiled consumer retained for host ABI tests, not a generated UI.
-(stage/'src/consumer.deal').write_text('''import * as embedding from "embedding";
-export async function load(title:string, deal:string, dealui:string): embedding.Experience { return await embedding.load(title,{deal:deal,dealui:dealui}); }
-export async function run(id:string): embedding.Session { return await embedding.run({id:id}); }
-export async function poll(id:string): embedding.UiSnapshot { return await embedding.poll({id:id}); }
-export async function close(id:string): null { return await embedding.close({id:id}); }
-export async function forget(id:string): null { return await embedding.forget({id:id}); }
-export async function events(): embedding.EventPage { return await embedding.events("","",20); }
-export async function artifact(id:string): embedding.Artifact { return await embedding.artifact(id); }
-export function saved(): embedding.Experience[] { return embedding.saved(); }
-export function main():null {return null;}
-''')
+shutil.copy(root/'tools/protocol-consumer.deal',stage/'src/consumer.deal')
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(compiler),'deal.Main','compile',str(stage/'src/consumer.deal'),'--backend','js','--output',str(stage/'consumer')],check=True)
 shutil.copytree(stage/'consumer',out/'aar/assets/protocol-consumer',dirs_exist_ok=True)
 shutil.copytree(stage/'js/ui',out/'aar/assets/generation/ui',dirs_exist_ok=True)
+# Deliberately invalid catalogue source: exercises the real checker and template-stop rule.
+(stage/'src/invalid-policy.deal').write_text('''import * as embedding from "embedding";
+import * as policy from "catalogue-policy";
+export async function offer(intent:string,context:embedding.GenerationContext,capabilities:embedding.CapabilityContract[]):policy.CatalogueOffer {
+ let option:policy.ChoiceOption={name:"yes",description:"Select the invalid test source"};let options:policy.ChoiceOption[]=[option];
+ let question:policy.ChoiceQuestion={name:"choose",instructions:"Select the test option",options:options};let questions:policy.ChoiceQuestion[]=[question];return {available:true,questions:questions};
+}
+export async function lower(stateJson:string,answers:policy.ChoiceAnswer[]):policy.CatalogueLowering {let source:embedding.Source={deal:"invalid source",dealui:"invalid UI"};return {source:source};}
+export function main():null {return null;}
+''')
+subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(compiler),'deal.Main','compile',str(stage/'src/invalid-policy.deal'),'--backend','js','--output',str(stage/'invalid-policy')],check=True)
+invalid=out/'aar/assets/protocol-invalid-policy';shutil.copytree(stage/'invalid-policy',invalid,dirs_exist_ok=True);(invalid/'invalid-policy.js').rename(invalid/'app-policy.js')

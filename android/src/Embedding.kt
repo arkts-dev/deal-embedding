@@ -30,6 +30,13 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
         check(!stopped);require(title.isNotBlank()&&title.length<=512&&intent.isNotBlank()&&intent.length<=4096);contextJson(context)
         return GenerationRequest(id()).also{requests[it.id]=RequestState(title,intent,context,config.contracts.map{CapabilityContract.parse(it.json().toString())},GenerationCancellation(),EmbeddingLog(this.context))}
     }
+    /** Controller-to-mechanism admission preserves the controller's frozen catalogue and trace. */
+    @Synchronized internal fun protocolRequest(title:String,intent:String,schema:WireType,json:String,contracts:JSONArray,trace:String):GenerationRequest {
+        val facts=snapshot(schema,json);val request=request(title,intent,facts)
+        val state=requests.getValue(request.id)
+        requests[request.id]=state.copy(contracts=(0 until contracts.length()).map{CapabilityContract.parse(legacyContract(contracts.getJSONObject(it)).toString())},log=EmbeddingLog.traced(context,trace))
+        return request
+    }
     fun generate(request:GenerationRequest):Experience {
         val state=synchronized(this){val s=requests[request.id] ?: error("Invalid request");check(!s.used&&!stopped);s.used=true;s}
         state.cancellation.check()
@@ -52,7 +59,7 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
     @Synchronized fun release(experience:Experience){trusted(experience);check(sessions.values.none{it==experience.id});candidates.remove(experience.id)?.close();if(runtime.savedWorkspaces().none{it.id==experience.id})experiences.remove(experience.id)}
     @Synchronized fun run(experience:Experience):Session {
         check(!stopped);val e=trusted(experience)
-        sessions.entries.firstOrNull{it.value==e.id}?.let{return Session(it.key)}
+        sessions.entries.firstOrNull{it.value==e.id}?.let{if(runtime.workspace(e.id)!=null)return Session(it.key);sessions.remove(it.key)}
         val prepared=candidates[e.id];val session=Session(id())
         if(prepared!=null){runtime.open(e.title,prepared,e.id,session.id);candidates.remove(e.id)}else runtime.reopen(e.id,session.id)
         return session.also{sessions[it.id]=e.id}
@@ -67,7 +74,7 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
     @Synchronized fun refresh():List<CapabilityContract>{check(!stopped);return registry.refresh().map{CapabilityContract.parse(it.json().toString())}.also{config.contracts=it.map{c->CapabilityContract.parse(c.json().toString())}}}
     fun grant(module:String)=registry.grant(module)
     fun revoke(module:String)=registry.revoke(module)
-    @Synchronized fun liveSessions():List<Session> = sessions.keys.map{Session(it)}
+    @Synchronized fun liveSessions():List<Session> {sessions.entries.removeAll{runtime.workspace(it.value)==null};return sessions.keys.map{Session(it)}}
     @Synchronized fun requestTrace(request:GenerationRequest)=(requests[request.id] ?: error("Invalid request")).log.run
     @Synchronized fun sessionTrace(session:Session):String {val e=experience(session);return runtime.workspace(e.id)!!.session.logTrace()}
     private val observation by lazy{Observation(context)}

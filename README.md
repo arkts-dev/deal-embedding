@@ -2,7 +2,7 @@
 
 Public signatures live in [`api/embedding.d.deal`](api/embedding.d.deal) and [`api/catalogue-policy.d.deal`](api/catalogue-policy.d.deal); behavioral rules and linkage are in [`api/README.md`](api/README.md). This demo supports Android bootstrap, JavaScript execution and the checked Compose renderer pack—not general backend portability.
 
-`Embedding` issues frozen contexts, single-use requests, checked Experiences and Sessions. `PublicProtocolBinding` links every public export. `ExperienceRuntime` and prepared candidates are internal mechanisms, not alternate consumer APIs. Generate/load do not mount or read providers. First run mounts and atomically saves source; close retains it, cold run rechecks without inference, and forget deletes explicitly. Native apps own disclosure, grants, staging and confirmation.
+`ProtocolController` executes ordinary compiled DEAL consumers. Its trusted local binding owns synchronous frozen contexts, requests, handle validation and returned copies; async operations reach Android mechanisms through nonblocking lanes. `Embedding` owns native resources and independently validates mechanism references. No per-call native turns are injected. `ExperienceRuntime` and prepared candidates are internal mechanisms, not alternate consumer APIs. Generate/load do not mount or read providers. First run mounts and atomically saves source; close retains it, cold run rechecks without inference, and forget deletes explicitly. Native apps own disclosure, grants, staging and confirmation.
 
 ## Ownership
 
