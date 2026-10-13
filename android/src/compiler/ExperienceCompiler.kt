@@ -48,9 +48,10 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             }
             return output
         } catch (error: deal.ui.UiDiagnostic) {
-            runCatching{StagingReclamation.remove(context,project)}.onFailure{error.addSuppressed(it)}
-            throw CandidateRejected(JSONArray().put(JSONObject().put("stage", "ui").put("code", error.code()).put("message", error.message)
+            val rejection=CandidateRejected(JSONArray().put(JSONObject().put("stage", "ui").put("code", error.code()).put("message", error.message)
                 .put("file", error.file()?.fileName?.toString()).put("line", error.line()).put("column", error.column()).put("expected", error.expected()).put("actual", error.actual())).toString())
+            runCatching{StagingReclamation.remove(context,project)}.onFailure{rejection.addSuppressed(it)}
+            throw rejection
         } catch (error: Throwable) { runCatching{StagingReclamation.remove(context,project)}.onFailure{error.addSuppressed(it)};throw error }
     }
 }

@@ -4,7 +4,7 @@ Android implements `core/host` through native adapters and sandbox bindings. Cor
 
 Keep `ExperienceRuntime` internal. Applications use `ApplicationProtocol` through its compiled DEAL consumer; native `Embedding` is mechanism linkage, not a parallel application lifecycle. Standard apps use `ExperienceSurface` owners/composables for session/render/event/publication wiring; preserve the low-level protocol for custom adapters and trusted consumers. App lifecycle choices must explicitly activate/close owners; leaving composition is not closure. Embedding owns session driving and renderer observation wiring; never add application polling, transport pumps or progress timers. Mount and persist before replacing healthy sessions; each new Experience starts fresh. Run returns the existing live session for that Experience. Cancellation and observation stay callable during awaiting generation.
 
-Preserve healthy sessions on candidate-local timeout. Clear unusable runtime resources on live termination and the shared engine on sandbox death. Classify typed failures; retain ordinary validation errors as rejections.
+Preserve healthy sessions on candidate-local timeout. Clear unusable runtime resources on live termination and the shared engine on sandbox death. Preserve primary runtime/mount/session-close errors when cleanup also fails; attach reclamation failures as suppressed rather than replacing the initiating failure. Classify typed failures; retain ordinary validation errors as rejections.
 
 Open a dedicated capability session when mounting each UI isolate. Close sessions by attempting store disposal, then releasing isolates and their capability requests; never reset another workspace's session.
 

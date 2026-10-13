@@ -29,8 +29,9 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     private fun <T> guarded(live: Boolean = true, operation: () -> T): T = try { operation() } catch (error: Exception) {
         if (generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException || it is androidx.javascriptengine.MemoryLimitExceededException || (live && (it is java.util.concurrent.TimeoutException || it is androidx.javascriptengine.IsolateTerminatedException || it is ClosedSandboxProgram)) }) {
             val sandboxDead = generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException }
-            engine?.let { SandboxEngine.release(it, dead = sandboxDead) }; engine = null
-            close()
+            val active=engine;engine=null
+            runCatching{active?.let { SandboxEngine.release(it, dead = sandboxDead) }}.onFailure{error.addSuppressed(it)}
+            runCatching{close()}.onFailure{error.addSuppressed(it)}
         }
         throw error
     }
@@ -64,7 +65,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
             candidate.consumed = true
             workspaces[id] = live
             live to snapshot
-        } catch (error: Throwable) { live.session.close(); throw error }
+        } catch (error: Throwable) { runCatching{live.session.close()}.onFailure{error.addSuppressed(it)};throw error }
     }
     /** Native host acknowledges publication separately from runtime snapshot production. */
     fun published(id: String, version: Int) {
@@ -76,19 +77,27 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     fun dispatch(id: String, slot: Int, payload: String?) { val live = workspaces[id] ?: error("Closed session"); live.session.dispatch(slot, payload) }
     fun advance(id: String): JSONObject? = try { workspaces[id]?.session?.advance() } catch(error:Exception) {
         val dead=generateSequence<Throwable>(error){it.cause}.any{it is androidx.javascriptengine.SandboxDeadException}
-        if(dead){engine?.let{SandboxEngine.release(it,dead=true)};engine=null;close()}else closeWorkspace(id)
+        if(dead){
+            val active=engine;engine=null
+            runCatching{active?.let{SandboxEngine.release(it,dead=true)}}.onFailure{error.addSuppressed(it)}
+            runCatching{close()}.onFailure{error.addSuppressed(it)}
+        }else runCatching{closeWorkspace(id)}.onFailure{error.addSuppressed(it)}
         throw error
     }
     fun closeWorkspace(id: String) {
         val live = workspaces.remove(id) ?: return
         EmbeddingLog(context).event("session", "closed", workspace = id)
-        try{live.session.close()}finally{StagingReclamation.remove(context,live.output.parentFile)}
+        var failure:Throwable?=null
+        try{live.session.close()}catch(error:Throwable){failure=error}
+        try{StagingReclamation.remove(context,live.output.parentFile)}catch(error:Throwable){if(failure==null)failure=error else failure.addSuppressed(error)}
+        failure?.let{throw it}
     }
 
     override fun close() {
         var failure:Throwable?=null
         workspaces.values.toList().forEach { try{closeWorkspace(it.id)}catch(error:Throwable){if(failure==null)failure=error else failure!!.addSuppressed(error)} }
-        engine?.let { SandboxEngine.release(it) }; engine = null
+        val active=engine;engine=null
+        try{active?.let{SandboxEngine.release(it)}}catch(error:Throwable){if(failure==null)failure=error else failure!!.addSuppressed(error)}
         failure?.let{throw it}
     }
 }

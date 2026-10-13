@@ -23,7 +23,8 @@ class ProtocolController(private val context:Context, private val embedding:Embe
     private val futures=ConcurrentHashMap<String,CompletableFuture<Any>>()
     private var sequence=0
     private val generatedTraces=ConcurrentHashMap<String,String>()
-    private var ended=false
+    @Volatile private var ended=false
+    @Volatile private var shutdownRequested=false
     private val nextWaits=ConcurrentHashMap<Int,CompletableFuture<SessionUpdate>>()
     private val releases=linkedMapOf<String,Experience>()
     private var reclamationFailure:Throwable?=null
@@ -138,7 +139,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
         "events"->embedding.events(args.getString(0),args.getString(1),args.getInt(2)).let{JSONObject().put("events",JSONArray(it.events)).put("cursor",it.cursor).put("incomplete",it.incomplete)}
         "artifact"->embedding.artifact(args.getString(0)).let{JSONObject().put("status",it.status).put("text",it.text)}
         "clearObservation"->{embedding.clearObservation();JSONObject.NULL}
-        "shutdown"->{embedding.shutdown();JSONObject.NULL}
+        "shutdown"->{shutdownRequested=true;embedding.shutdown();JSONObject.NULL}
         else->error("Unknown native mechanism")
     }
     private fun prepared(e:Experience)=JSONObject().put("experience",experience(e)).put("source",source(embedding.source(e)))
@@ -152,15 +153,29 @@ class ProtocolController(private val context:Context, private val embedding:Embe
     }
     override fun close(){
         if(ended)return
-        flushReclamation()
+        var failure:Throwable?=null
+        fun attempt(block:()->Unit){try{block()}catch(error:Throwable){if(failure==null)failure=error else if(failure!==error)failure!!.addSuppressed(error)}}
+        // Reclamation failure must never veto execution/resource teardown.
+        attempt{flushReclamation()}
         // Let the trusted consumer terminate waits before releasing its isolate.
-        runCatching{call("shutdown",timeoutSeconds=10)}
-        synchronized(this){if(ended)return;ended=true;driving.shutdownNow();requests.values.forEach{runCatching{embedding.cancel(it)}};workers.shutdown();serial.shutdown()}
-        workers.awaitTermination(10,TimeUnit.SECONDS);serial.awaitTermination(10,TimeUnit.SECONDS)
-        try{embedding.shutdown()}finally{
-            EmbeddingLog.capturePolicy(context,null)
-            futures.values.forEach{it.completeExceptionally(ProtocolFailure("CLOSED","Controller closed"))};futures.clear()
-            program.close();SandboxEngine.release(engine)
+        if(!shutdownRequested)attempt{call("shutdown",timeoutSeconds=10)}
+        synchronized(this){
+            if(ended)return
+            ended=true
+            attempt{driving.shutdownNow()}
+            attempt{workers.shutdownNow()}
+            attempt{serial.shutdownNow()}
         }
+        attempt{embedding.shutdown()}
+        val closed=ProtocolFailure("CLOSED","Controller closed")
+        nextWaits.values.toList().forEach{it.completeExceptionally(closed)};nextWaits.clear()
+        futures.values.toList().forEach{it.completeExceptionally(closed)};futures.clear()
+        for(executor in listOf(driving,workers,serial))attempt{
+            check(executor.awaitTermination(10,TimeUnit.SECONDS)){"Controller executor did not terminate"}
+        }
+        attempt{EmbeddingLog.capturePolicy(context,null)}
+        attempt{program.close()}
+        attempt{SandboxEngine.release(engine)}
+        failure?.let{throw it}
     }
 }
