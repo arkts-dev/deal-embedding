@@ -10,8 +10,14 @@ internal class ExperienceStorage(private val context: Context, name: String) {
         check(prefs.edit().putString("workspace.$id.title", title).putString("workspace.$id.deal", source.deal).putString("workspace.$id.dealui", source.ui)
             .putString("workspace.$id.origin", origin.name).putInt("workspace.$id.attempts", attempts).commit()) { "Cannot persist workspace" }
     }
+    private fun digest(source: ExperienceSource) = java.security.MessageDigest.getInstance("SHA-256").digest((source.deal + "\u0000" + source.ui).toByteArray()).joinToString("") { "%02x".format(it) }
+    fun saveState(id: String, source: ExperienceSource, state: String) {
+        require(state.toByteArray().size <= 256 * 1024)
+        check(prefs.edit().putString("workspace.$id.state", state).putString("workspace.$id.stateSource", digest(source)).commit()) { "Cannot persist draft" }
+    }
+    fun state(id: String, source: ExperienceSource): String? = if (prefs.getString("workspace.$id.stateSource", "") == digest(source)) prefs.getString("workspace.$id.state", null) else null
     fun forgetWorkspace(id: String) {
-        check(prefs.edit().remove("workspace.$id.title").remove("workspace.$id.deal").remove("workspace.$id.dealui").remove("workspace.$id.origin").remove("workspace.$id.attempts").commit()) { "Cannot delete experience" }
+        check(prefs.edit().remove("workspace.$id.title").remove("workspace.$id.deal").remove("workspace.$id.dealui").remove("workspace.$id.origin").remove("workspace.$id.attempts").remove("workspace.$id.state").remove("workspace.$id.stateSource").commit()) { "Cannot delete experience" }
     }
     fun savedWorkspaces(): List<SavedWorkspace> = prefs.all.keys.filter { it.startsWith("workspace.") && it.endsWith(".deal") }
         .map { key ->

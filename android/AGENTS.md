@@ -8,7 +8,7 @@ Preserve healthy sessions on candidate-local timeout. Clear unusable runtime res
 
 Open a dedicated capability session when mounting each UI isolate. Close sessions by attempting store disposal, then releasing isolates and their capability requests; never reset another workspace's session.
 
-Keep accepted source in app-private storage; clean failed and superseded staging. Check physical deletion outcomes and retain failed staging reclamation in an app-private journal; do not orphan cleanup when retiring handles. Update cursors must use constant retained state without expiring valid session cursors. Use the unified DEAL logger for run/candidate/workspace/compiler/model/capability events. Distinguish produced snapshots from native publication acknowledgements and do not log every idle driver turn.
+Optional host-configured draft retention stores compiler-owned state bound to the exact source digest; replay checks state in the same sandbox and forget removes it. No application state replication or default retention for unrelated consumers. Keep accepted source in app-private storage; clean failed and superseded staging. Check physical deletion outcomes and retain failed staging reclamation in an app-private journal; do not orphan cleanup when retiring handles. Update cursors must use constant retained state without expiring valid session cursors. Use the unified DEAL logger for run/candidate/workspace/compiler/model/capability events. Distinguish produced snapshots from native publication acknowledgements and do not log every idle driver turn.
 
 Keep cancellation registration atomic and callbacks once-only. Host implementations own transport cancellation.
 

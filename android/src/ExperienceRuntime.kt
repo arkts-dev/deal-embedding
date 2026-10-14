@@ -8,7 +8,7 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-data class EmbeddingConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val repairStrategy: String = "full", val generationAssets: String = "generation", val policyAssets: String = "") {
+data class EmbeddingConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val repairStrategy: String = "full", val generationAssets: String = "generation", val policyAssets: String = "", val retainState: Boolean = false) {
     init { require(repairStrategy in setOf("full", "delta")) { "Unknown source repair strategy" } }
 }
 internal data class ExperienceSource(val deal: String, val ui: String)
@@ -60,7 +60,8 @@ internal class ExperienceRuntime(private val context: Context, private val capab
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
         val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config, candidate.log.bind(id,session), candidate.identity, id), candidate.output, candidate.source, candidate.origin, candidate.attempts)
         try {
-            val snapshot = candidate.log.stage("mount", candidate.identity, id) { live.session.mount(candidate.output) }
+            val restored = if (config.retainState) storage.state(id, candidate.source) else null
+            val snapshot = candidate.log.stage("mount", candidate.identity, id) { live.session.mount(candidate.output, restored) }
             storage.saveWorkspace(id, title, candidate.source, candidate.origin, candidate.attempts)
             candidate.consumed = true
             workspaces[id] = live
@@ -74,7 +75,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     }
     fun workspaces(): List<LiveWorkspace> = workspaces.values.toList()
     fun workspace(id: String): LiveWorkspace? = workspaces[id]
-    fun dispatch(id: String, slot: Int, payload: String?) { val live = workspaces[id] ?: error("Closed session"); live.session.dispatch(slot, payload) }
+    fun dispatch(id: String, slot: Int, payload: String?) { val live = workspaces[id] ?: error("Closed session"); live.session.dispatch(slot, payload); if (config.retainState) storage.saveState(id, live.source, live.session.state()) }
     fun advance(id: String): JSONObject? = try { workspaces[id]?.session?.advance() } catch(error:Exception) {
         val dead=generateSequence<Throwable>(error){it.cause}.any{it is androidx.javascriptengine.SandboxDeadException}
         if(dead){
@@ -88,7 +89,8 @@ internal class ExperienceRuntime(private val context: Context, private val capab
         val live = workspaces.remove(id) ?: return
         EmbeddingLog(context).event("session", "closed", workspace = id)
         var failure:Throwable?=null
-        try{live.session.close()}catch(error:Throwable){failure=error}
+        if (config.retainState) try{storage.saveState(id,live.source,live.session.state())}catch(error:Throwable){failure=error}
+        try{live.session.close()}catch(error:Throwable){if(failure==null)failure=error else failure.addSuppressed(error)}
         try{StagingReclamation.remove(context,live.output.parentFile)}catch(error:Throwable){if(failure==null)failure=error else failure.addSuppressed(error)}
         failure?.let{throw it}
     }
