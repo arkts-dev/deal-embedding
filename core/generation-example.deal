@@ -1,0 +1,19 @@
+import * as sample from "host/sample";
+export class State { loading: boolean = false; message: string = ""; value: int = 0; }
+export class Load {}
+export class Done { message: string = ""; value: int = 0; }
+export function initialState(): State { return {}; }
+// @ui-update
+export function begin(state: State, action: Load): State {
+    return { loading: true, message: "", value: state.value };
+}
+// @ui-effect
+export async function read(state: State, action: Load): Done {
+    try { let value: int = await sample.value(); return { value: value }; }
+    catch (error) { return { message: "Check access and try again", value: state.value }; }
+}
+// @ui-update
+export function finish(state: State, action: Done): State {
+    return { loading: false, message: action.message, value: action.value };
+}
+export function main(): null { return null; }

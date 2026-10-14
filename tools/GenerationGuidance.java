@@ -31,7 +31,9 @@ public final class GenerationGuidance {
             + "function empty(): table[] { return []; }\n"
             + "export function language(): string { return " + literal(Files.readString(Path.of(args[2]).resolve("language.md")).trim()) + "; }\n"
             + "export function renderer(): string { return " + literal(Files.readString(Path.of(args[1])).trim()) + "; }\n"
-            + "export function pack(): table { return { components: [" + String.join(",", components) + "] }; }\n");
+            + "export function pack(): table { return { components: [" + String.join(",", components) + "] }; }\n"
+            + "export function exampleDeal(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("generation-example.deal"))) + "; }\n"
+            + "export function exampleUi(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("generation-example.dealui"))) + "; }\n");
     }
     private static String array(List<String> values) { return values.isEmpty() ? "empty()" : "[" + String.join(",", values) + "]"; }
     private static String literal(String text) {

@@ -8,6 +8,7 @@ import * as checker from "./candidate-check";
 import * as observer from "embedding/observer";
 import * as repair from "./source-repair";
 import * as guidance from "./generation-guidance";
+import * as feedback from "./repair-guidance";
 import * as protocol from "embedding/protocol";
 
 export class GenerationInput { intent: string = ""; context: embedding.GenerationContext = {}; capabilities: embedding.CapabilityContract[] = []; repairStrategy: string = "full"; }
@@ -45,6 +46,7 @@ export async function generate(request: GenerationInput): GenerationResult {
         let sourceInput: string = input;
         let patching: boolean = request.repairStrategy === "delta" && previous !== "";
         if (patching) { sourceInput = sourceInput + await repair.instruction(previous); }
+        else { if (previous !== "") { sourceInput = sourceInput + await feedback.instruction(previous, diagnostics); } }
         let raw: string = await model.complete(sourceInput, previous, diagnostics);
         if (raw === lastResponse) { return { attempts: attempt + 1, diagnostics: "REPEATED_CANDIDATE: " + diagnostics, usedFallback: true }; }
         lastResponse = raw;

@@ -64,6 +64,8 @@ export function componentFacts(pack: table): string {
 }
 export function guidance(): string {
     return "DEAL RULES\n" + assets.language() + "\n\nHOW TO COMPOSE A VIEW\n" + composition() +
-        "\n\nTHIS RENDERER\n" + assets.renderer() + "\n\nCOMPONENTS (this is the complete set)\n" + componentFacts(assets.pack());
+        "\n\nTHIS RENDERER\n" + assets.renderer() + "\n\nCOMPONENTS (this is the complete set)\n" + componentFacts(assets.pack()) +
+        "\n\nCHECKED ASYNC EXAMPLE (syntax only, not an available capability or task template)\n" +
+        "The example-only host/sample exports async value(): int. Never import it unless present in the actual catalog. Adapt the pattern to actual contracts; do not copy its behavior.\nDEAL:\n" + assets.exampleDeal() + "\nDEALUI:\n" + assets.exampleUi();
 }
 export function main(): null { return null; }

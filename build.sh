@@ -28,7 +28,7 @@ mkdir -p "$OUTPUT_DIR/generation/src" "$OUTPUT_DIR/guidance-tools"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/guidance-tools" "$ROOT/tools/GenerationGuidance.java"
 java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/guidance-tools" GenerationGuidance \
     "$ROOT/android/assets/embedding/platform.dealui-pack" "$ROOT/core/generation-guidance.md" \
-    "$DEAL_ROOT/skills/write-deal/references" "$ROOT/core/generation-guidance.generated.deal"
+    "$DEAL_ROOT/skills/write-deal/references" "$ROOT/core/generation-guidance.generated.deal" "$ROOT/core"
 cp "$ROOT/core/"*.deal "$OUTPUT_DIR/generation/src/"
 cp "$ROOT/core/host/"*.d.deal "$OUTPUT_DIR/generation/"
 cp -r "$DEAL_UI_ROOT/ui" "$OUTPUT_DIR/generation/ui"

@@ -1,0 +1,67 @@
+import * as strings from "std/string";
+import * as data from "embedding/policy-data";
+import * as assets from "./generation-guidance.generated";
+import * as guidance from "./generation-guidance";
+
+// Advisory source feedback only. Complete compiler/behavioral admission remains mandatory.
+export async function instruction(previous: string, diagnostics: string): string {
+    let out: string = "\n\nREPAIR GUIDANCE\nPreserve requested behavior and return both complete source strings, not a patch. Fix the reported cause, then check both files for the same defect. Do not redesign the workflow.\n";
+    if (strings.contains(diagnostics, "Expected ')'" ) || strings.contains(diagnostics, "Expected '*' after 'import'")) {
+        out = out + "DEAL equality is === and !==, never == or != (including views). Use namespace imports only: import * as alias from \"module\";. Check these exact grammar rules in both files.\n";
+    }
+    if (strings.contains(diagnostics, "UI2050") || strings.contains(diagnostics, "UI2051")) {
+        out = out + "The state/action and borrowed collections are immutable. Compute locals and return a complete fresh State literal. A shallow-copy helper can still alias borrowed values. Build changed arrays with explicit loops.\n";
+    }
+    if (strings.contains(diagnostics, "UI2006")) {
+        out = out + "Each update must be bound by an existing UI event or be an effect completion. Remove only genuinely unused actions; do not invent an interaction to satisfy reachability.\n";
+    }
+    if (strings.contains(diagnostics, "UI2023")) {
+        out = out + "The view may traverse only checker-declared nominal fields. Keep view-visible scalars in the local State/row classes; do not traverse arrays or imported helper state.\n";
+    }
+    let nearby: string = await sourceWindow(previous, diagnostics);
+    return out + nearby;
+}
+async function sourceWindow(previous: string, diagnostics: string): string {
+    let envelope: table = {}; let wrapped: table = {};
+    try { envelope = await data.parse(previous); wrapped = await data.parse("{\"report\":" + diagnostics + "}"); }
+    catch (error) { if (error.code !== "INVALID_JSON") { throw error; } return ""; }
+    try {
+        let errors: table[] = [];
+        try { let items: table[] = wrapped.report; errors = items; }
+        catch (shape) { let report: table = wrapped.report; let items: table[] = report.diagnostics; errors = items; }
+        let out: string = "";
+        let count: int = 0;
+        for (let error: table of errors) {
+            if (count < 3) {
+                let file: string = ""; let line: int = 0;
+                try { file = error.file; line = error.line; }
+                catch (shape) { let range: table = error.range; file = range.file; line = range.startLine; }
+                let source: string = "";
+                if (strings.endsWith(file, ".dealui")) { source = envelope.dealui; }
+                else { if (strings.endsWith(file, ".deal")) { source = envelope.deal; } }
+                if (source !== "" && line > 0) {
+                    let lines: string[] = strings.split(source, "\n");
+                    if (line <= lines.length) {
+                        let reported: string = lines[line - 1];
+                        out = out + "\nExact reported source line:\n" + reported + "\n";
+                        let pack: table = assets.pack(); let components: table[] = pack.components;
+                        for (let component: table of components) {
+                            let name: string = component.name;
+                            if (strings.contains(reported, "ui." + name + "(")) {
+                                let selected: table[] = [component];
+                                out = out + "Exact renderer component contract:\n" + guidance.componentFacts({ components: selected }) + "\n";
+                            }
+                        }
+                        out = out + "Nearby source (context, not replacement authority):\n";
+                        let start: int = line - 3; if (start < 0) { start = 0; }
+                        let end: int = line + 2; if (end > lines.length) { end = lines.length; }
+                        for (let index: int = start; index < end; index = index + 1) { out = out + lines[index] + "\n"; }
+                    }
+                }
+                count = count + 1;
+            }
+        }
+        return out;
+    } catch (shape) { return ""; }
+}
+export function main(): null { return null; }

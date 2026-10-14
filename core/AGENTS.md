@@ -8,7 +8,9 @@ Catch only expected input/JSON shape rejection; keep awaited host primitives out
 
 Keep envelope validation in `candidate-check.deal`; call the native checker with two validated source strings. Native candidate rejection supplies diagnostics; unexpected compiler/resource failures propagate without repair.
 
-Keep composition and prompt formatting in `generation-guidance.deal`. Generated guidance contains asset text and pack AST facts only; build tooling must not select example arguments or composition rules.
+Keep composition and prompt formatting in `generation-guidance.deal`. Generated guidance contains asset text, pack AST facts and the authored `generation-example` source pair only; build tooling must not select example arguments or composition rules. The example's `host/sample` is fixture-only, not an application capability. Keep it compiler-checked with an explicit-read/success/failure/retry regression.
+
+`repair-guidance.deal` adds bounded source windows and pack-derived component facts to full-source repair only. It has no edit authority and must not swallow operational shape-parser failures. Keep diagnostic-specific instructions aligned with compiler rejection codes; the complete candidate remains subject to ordinary admission.
 
 Treat those declarations as canonical signatures and `host/check-result.json` as the canonical checker-result wire schema. Keep native replies, core field reads and generated binding metadata aligned with them.
 
