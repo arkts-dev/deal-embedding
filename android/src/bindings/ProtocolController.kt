@@ -98,10 +98,11 @@ class ProtocolController(private val context:Context, private val embedding:Embe
     }
     @Synchronized internal fun detach(key:String){
         if(ended){futures.remove(key)?.completeExceptionally(ProtocolFailure("CLOSED","Controller closed"));return}
-        val ids=JSONArray(program.evaluate("dealCapabilities.cancelOwner(${JSONObject.quote(key)})"))
-        for(i in 0 until ids.length())nextWaits.remove(ids.getInt(i))?.cancel(false)
-        program.evaluate("publicResults.delete(${JSONObject.quote(key)}); ''")
-        futures.remove(key)?.completeExceptionally(ProtocolFailure("DETACHED","Observer detached"))
+        try{
+            val ids=JSONArray(program.evaluate("dealCapabilities.cancelOwner(${JSONObject.quote(key)})"))
+            for(i in 0 until ids.length())nextWaits.remove(ids.getInt(i))?.cancel(false)
+            program.evaluate("publicResults.delete(${JSONObject.quote(key)}); ''")
+        }finally{futures.remove(key)?.completeExceptionally(ProtocolFailure("DETACHED","Observer detached"))}
     }
     fun await(key:String,timeoutSeconds:Long=120):Any {
         val deadline=if(timeoutSeconds==Long.MAX_VALUE)Long.MAX_VALUE else System.nanoTime()+TimeUnit.SECONDS.toNanos(timeoutSeconds)
