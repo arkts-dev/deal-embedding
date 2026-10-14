@@ -1,5 +1,7 @@
 # Capabilities
 
+Trusted foreground reads use the same independently closed capability session, schema, grants, provider consent and deadlines as experience calls; do not bypass Binder validation or share a UI request stream.
+
 Use provider-owned contracts and matching handlers. Keep discovery and invocation driven by those contracts.
 
 Enforce discovery trust, host grants and provider consent independently. Authenticate callers and callbacks. Providers notify `consentChanged()` through their own consent storage.

@@ -10,4 +10,6 @@ Use the single compiled `core/logging.deal` contract through `EmbeddingLog`. Kee
 
 `DealSessionBindings` loads Deal UI's packaged JS session runtime before the embedding transport adapter. Keep drain/completion/fault/replacement policy in Deal UI, not embedding bindings. Hosts implement module loading and Promise scheduling; preserve generated store, action, effect and reconciliation semantics.
 
+`TrustedProgram` executes only app-linked compiled policy with explicitly supplied mechanisms, isolated from generated UI. It owns asynchronous servicing and shutdown; hosts must not build their own evaluator/pump. Built-in trusted data/choice mechanisms normalize shapes and transport issued questions without domain interpretation.
+
 Share evaluation and module bundling through `SandboxProgram` and `SandboxBundle`. Keep generation and experience host-module inventories separate. Confine loading to compiled bundle modules and configured contracts.

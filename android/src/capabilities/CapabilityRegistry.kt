@@ -52,6 +52,21 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
         check(!closed) { "Capability registry is closed" }
         return Session(log).also { sessions.add(it) }
     }
+    /** One explicit trusted read through the same grant/provider/schema boundary as UI calls.
+     * The caller selects disclosed data; this method adds no model or write authority. */
+    fun read(module: String, function: String, arguments: JSONArray, log: dev.deal.embedding.EmbeddingLog): Any {
+        openSession(log).use { session ->
+            session.receive(JSONObject().put("id", 1).put("module", module).put("function", function).put("args", arguments), android.os.SystemClock.elapsedRealtime())
+            while (true) {
+                val reply = session.drain(android.os.SystemClock.elapsedRealtime()).firstOrNull()
+                if (reply != null) {
+                    if (!reply.getBoolean("ok")) { val e = reply.getJSONObject("error"); throw dev.deal.embedding.ProtocolFailure(e.getString("code"), e.getString("message")) }
+                    return reply.get("value")
+                }
+                Thread.sleep(10)
+            }
+        }
+    }
     private fun cancelRemote(item: Pending) { io.execute { try { item.provider.endpoint?.remote?.cancel(item.key); log.event("transport", "cancelled", operation = item.key, target = item.provider.contract.module) } catch (_: Exception) { log.event("transport", "failed", operation = item.key, code = "CANCEL_FAILED") } } }
 
     /** Session operations and callbacks serialize; permission queries read trusted isolate epochs. */
