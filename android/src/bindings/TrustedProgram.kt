@@ -15,6 +15,8 @@ import java.util.concurrent.TimeUnit
 class TrustedProgram(context: Context, assets: String, entry: String, mechanisms: List<NativeCapabilities>, private val model: ModelClient) : AutoCloseable {
     private val cancellation = GenerationCancellation()
     private val log = EmbeddingLog(context)
+    /** Observation scope only; never an execution or authority handle. */
+    val trace: String get() = log.run
     private val engine = SandboxEngine.acquire(context)
     private val program = SandboxProgram(engine, 256 * 1024)
     private val handlers = mechanisms.associateBy { it.contract.module }
