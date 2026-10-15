@@ -3,10 +3,12 @@ import * as assets from "./generation-guidance.generated";
 // Composition discipline not enforced by the checker. Pack facts remain build-derived.
 export function composition(): string {
     return "- Use each component only for what its call line shows; never invent a property.\n" +
-        "- Keep one dominant heading per view and one primary action per surface.\n" +
+        "- The native shell supplies the task heading; start with useful controls/results, not another title or introduction.\n" +
+        "- Keep one primary action per surface; keep controls and their result visible together on a phone.\n" +
+        "- Put engineering/provenance/explanations in native Inspect, not paragraphs or safety banners in the tool. Preserve actual constraints and confirmation boundaries.\n" +
         "- Use a Card for a bounded group, not for spacing or every row.\n" +
         "- Never nest a Card inside a Card.\n" +
-        "- Show loading, empty and failure states with Progress, an explanatory Text, and Failure when a retry action exists.\n" +
+        "- Show one Progress while pending, a short empty/failure label when needed, and Failure only when a retry action exists. Never stack status prose.\n" +
         "- Every event action must consume its payload; never pass a constant where a payload is declared.\n" +
         "- Keep validation results in DEAL state and render them; the renderer holds no validated value.";
 }
