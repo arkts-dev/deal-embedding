@@ -5,6 +5,7 @@ export function composition(): string {
     return "- Use each component only for what its call line shows; never invent a property.\n" +
         "- The native shell supplies the task heading; start with useful controls/results, not another title or introduction.\n" +
         "- Keep one primary action per surface; keep controls and their result visible together on a phone.\n" +
+        "- Preserve units in displayed results. Currency stored as integer cents must display as euros with two decimal digits and a currency label, never as a raw cents integer. Format the result in DEAL state; do not invent renderer format properties.\n" +
         "- Put engineering/provenance/explanations in native Inspect, not paragraphs or safety banners in the tool. Preserve actual constraints and confirmation boundaries.\n" +
         "- Use a Card for a bounded group, not for spacing or every row.\n" +
         "- Never nest a Card inside a Card.\n" +
