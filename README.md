@@ -22,6 +22,14 @@ surface.close()
 
 The owner explicitly activates the experience; the composable attaches cancellable update reception, renders its tree, forwards widget events and acknowledges successful renderer acceptance. Leaving composition detaches reception and display, preserving automatic execution and live state. Explicit activate on a retained failed owner cold-reopens checked source without inference. Explicit close retains saved source; forget remains a separate app decision. Optional tree presentation, action and snapshot hooks let apps integrate domain review/diagnostics without protocol wiring. Failed activation does not replace the app's existing owner. Use `protocol.withPreparation(prepared) { candidate -> ... }` around acceptance/context validation: rejection releases unused preparation. Synchronous release retires the public handle immediately; physical cleanup is tracked, retried and retained in an app-private journal on deletion failure. `flushReclamation()` exposes outstanding release failures to custom hosts. Bootstrap supplies mechanisms; the surface adapter owns routine integration. Low-level run/next/dispatch/published remain available for custom hosts and trusted DEAL consumers. `EmbeddedExperience` is an optional visual frame, not a lifecycle owner.
 
+## Foreground opportunity discovery
+
+The Android AAR exposes `dev.deal.embedding.discovery.Discovery`. Supply `DiscoveryInput` with already-authorized `DiscoveryFact` values and the complete `ApplicationProtocol.refresh()` result. `discover()` returns a future containing nothing or one issued suggestion; inference-provider types stay internal. Nano currently implements inference and requires a foreground app and an available AICore model. Failures remain exceptional, distinct from abstention.
+
+The app owns foreground/context changes and calls `cancel()` immediately on invalidation. It renders and dismisses its own native suggestion card. On acceptance, `request(suggestion, currentInput, protocol)` checks issuance, unchanged captured facts and the current executable catalogue, then admits the exact brief and facts through the existing protocol. The app invokes normal generation and surface activation. Capability signatures remain registry-derived; detailed wire bounds are validated at runtime. Discovery executes no application providers. Suggestion acceptance grants no provider authority.
+
+Manual Android consumers must include ML Kit Prompt beta4 and its runtime dependencies, AICore manifest permission/query, and Java service/property resources. The demo build resolves and fingerprints these alongside its existing Android runtime. The standalone AAR continues to accept its dependency classpath explicitly.
+
 ## Ownership
 
 - `core/generation.deal`: orchestration, app policy offer/lower, source fallback, maximum three source attempts, diagnostic repair and repeated-response stop.

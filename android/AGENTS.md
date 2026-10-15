@@ -12,6 +12,6 @@ Optional host-configured draft retention stores compiler-owned state bound to th
 
 Keep cancellation registration atomic and callbacks once-only. Host implementations own transport cancellation.
 
-Keep native grants, context disclosure and write confirmation under host control.
+Keep native grants, context disclosure and write confirmation under host control. Foreground opportunity inference lives in discovery with provider types internal; it consumes already-authorized facts and mechanically serialized executable contracts, never application providers. Keep abstention separate from operational failure and preserve captured evidence through normal protocol admission.
 
 Keep source checking independent of inference and mounting. Saved-source replay must use the same checker and candidate ownership rules as generated source. Persist origin and attempt count as host-owned workspace metadata. Closing runtime resources or hiding a workspace must not delete accepted source; deletion is an explicit forget operation. Reopen checks saved source against current contracts without inference and keeps the same workspace identity. Missing legacy provenance means unknown saved source, not inferred AI authorship.
