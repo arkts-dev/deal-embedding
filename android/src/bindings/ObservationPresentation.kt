@@ -40,6 +40,34 @@ fun dialogueExchanges(entries:List<JSONObject>,limit:Int=100):List<DialogueExcha
     return groups.entries.reversed().take(limit).map{DialogueExchange(it.key,stages.getValue(it.key),it.value.toList())}
 }
 
+/** Inspect selection over an API observation page, never native storage or resource handles.
+ * Expands only retained experience/trace relationships and explicit discovery handoffs.
+ * Missing/evicted links are not inferred; the page's incompleteness is preserved.
+ * Empty selectors mean all activity. Since selects traces observed at/after that time.
+ */
+fun EventPage.inspection(experiences:Set<String> = emptySet(), traces:Set<String> = emptySet(), since:Long = 0):EventPage {
+    require(since >= 0)
+    val selectedExperiences=experiences.filter{it.isNotEmpty()}.toMutableSet()
+    val selectedTraces=traces.filter{it.isNotEmpty()}.toMutableSet()
+    val all=selectedExperiences.isEmpty() && selectedTraces.isEmpty() && since==0L
+    if(!all){
+        if(since>0)events.filter{(it.optString("time").toLongOrNull() ?: 0)>=since}.forEach{event->event.optString("trace").takeIf{it.isNotEmpty()}?.let(selectedTraces::add)}
+        do {
+            var changed=false
+            for(event in events){
+                val trace=event.optString("trace");val experience=event.optString("experience")
+                if(trace in selectedTraces || experience in selectedExperiences){
+                    if(trace.isNotEmpty())changed=selectedTraces.add(trace)||changed
+                    if(experience.isNotEmpty())changed=selectedExperiences.add(experience)||changed
+                }
+                if(event.optString("stage")=="opportunity-handoff" && event.optString("outcome")=="admitted" && event.optString("target") in selectedTraces && trace.isNotEmpty())changed=selectedTraces.add(trace)||changed
+            }
+        }while(changed)
+    }
+    val selected=events.filter{all || it.optString("trace") in selectedTraces || it.optString("experience") in selectedExperiences}
+    return EventPage(selected.map{JSONObject(it.toString())},"",incomplete || cursor.isNotEmpty() || (!all && selected.isEmpty()))
+}
+
 /** Frozen observation pages, bounded independently of a consumer's display limit. */
 fun ApplicationProtocol.retainedEvents(trace:String="",maximum:Int=4096):EventPage {
     require(maximum in 1..4096)

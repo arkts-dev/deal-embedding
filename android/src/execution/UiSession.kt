@@ -27,7 +27,7 @@ internal class UiSession(private val context: Context, private val broker: Capab
         check(bundle.toByteArray().size <= 2 * 1024 * 1024) { "UI bundle too large" }
         capabilitySession = broker.openSession(log)
         log.event("session", "opened", candidate, workspace)
-        try { return JSONObject(evaluate(bundle)).also { lastVersion=it.getInt("version");lastFault=it.optString("fault").isNotEmpty() } }
+        try { return JSONObject(evaluate(bundle)).also { recordSnapshot(it) } }
         catch (error: Throwable) { close(); throw error }
     }
     fun dispatch(slot: Int, payload: String?) {
@@ -64,12 +64,20 @@ internal class UiSession(private val context: Context, private val broker: Capab
         }
         if (replies.isNotEmpty()) log.stage("effect-delivery", candidate, workspace, replies.joinToString(",") { it.getInt("id").toString() }) { evaluate("dealCapabilities.deliver(${JSONArray(replies)})") }
         val snapshot = JSONObject(evaluate(DealSessionBindings.snapshot))
-        val fault = snapshot.optString("fault").isNotEmpty()
-        if (snapshot.getInt("version") != lastVersion || fault != lastFault) {
-            lastVersion = snapshot.getInt("version"); lastFault = fault
-            log.event("snapshot", if (fault) "fault" else "produced", candidate, workspace, version = lastVersion, parentOperation = lastAction)
-        }
+        if (snapshot.getInt("version") != lastVersion || snapshot.optString("fault").isNotEmpty() != lastFault) recordSnapshot(snapshot)
         return snapshot
+    }
+    /** Optional bounded observation of production, not a second update or renderer delivery path. */
+    private fun recordSnapshot(snapshot: JSONObject) {
+        lastVersion = snapshot.getInt("version"); lastFault = snapshot.optString("fault").isNotEmpty()
+        log.event("snapshot", if (lastFault) "fault" else "produced", candidate, workspace, version = lastVersion, parentOperation = lastAction,
+            detail = if (log.capturesContent) runCatching { observationValue(snapshot).toString() }.getOrNull() else null)
+    }
+    /** Match public protocol transport: compiler nominal metadata is not snapshot data. */
+    private fun observationValue(value: Any): Any = when(value) {
+        is JSONObject -> JSONObject().also { out -> value.keys().forEach { key -> if (!key.startsWith("$")) out.put(key, observationValue(value.get(key))) } }
+        is JSONArray -> JSONArray().also { out -> for (i in 0 until value.length()) out.put(observationValue(value.get(i))) }
+        else -> value
     }
     fun published(version: Int) { require(version>=0 && version<=lastVersion) { "Unproduced snapshot version" }; log.event("snapshot", "published", candidate, workspace, version = version) }
     override fun close() {
