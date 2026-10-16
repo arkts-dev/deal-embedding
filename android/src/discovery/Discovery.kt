@@ -48,7 +48,6 @@ class DiscoverySuggestion internal constructor(
     private val referencedCapabilities = capabilityIds.toList()
     val factIds: List<String> get() = referencedFacts.toList()
     val capabilityIds: List<String> get() = referencedCapabilities.toList()
-    val identity = DiscoveryInput.digest(input.identity + "\n" + title + "\n" + brief + "\n" + referencedFacts + referencedCapabilities)
 }
 
 /** Foreground opportunity recognition only. Calls execute on an owned serial lane, never providers. */
