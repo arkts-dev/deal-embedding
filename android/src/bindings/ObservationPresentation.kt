@@ -30,7 +30,7 @@ fun dialogueExchanges(entries:List<JSONObject>,limit:Int=100):List<DialogueExcha
     val latest=mutableMapOf<String,String>()
     for(event in chronological){
         val trace=event.optString("trace");val stage=event.optString("stage");val outcome=event.optString("outcome")
-        if(stage in listOf("choice","source") && outcome in listOf("started","response","failed","cancelled")){
+        if(stage in listOf("choice","source","opportunity-inference") && outcome in listOf("started","response","failed","cancelled")){
             val span=if(outcome=="response")event.optString("parent").ifEmpty{event.optString("span")}else event.optString("span")
             if(trace.isEmpty()||span.isEmpty())continue
             val key="$trace:$span"

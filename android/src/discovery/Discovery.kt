@@ -9,40 +9,46 @@ import java.util.concurrent.*
 /** Already authorized, host-supplied evidence. Descriptions are data, not model instructions. */
 data class DiscoveryFact(val id: String, val text: String)
 
-/** Frozen copies of evidence and the executable catalogue returned by ApplicationProtocol.refresh. */
-class DiscoveryInput(facts: List<DiscoveryFact>, capabilities: List<SharedCapabilityContract>) {
+/** Frozen authorized evidence. The bound protocol supplies the catalogue, never the caller. */
+class DiscoveryInput(facts: List<DiscoveryFact>) {
     internal val factsJson: String
-    internal val catalogueJson: String
     internal val factIds: Set<String>
-    internal val capabilityIds: Set<String>
     val identity: String
     init {
         require(facts.size in 1..16 && facts.map { it.id }.distinct().size == facts.size)
         facts.forEach { require(it.id.matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")) && it.text.isNotBlank() && it.text.length <= 2048) }
-        require(capabilities.size <= 32 && capabilities.map { it.module }.distinct().size == capabilities.size)
-        capabilities.forEach { it.native() }
         factsJson = JSONArray(facts.sortedBy { it.id }.map { JSONObject().put("id", it.id).put("text", it.text) }).toString()
-        catalogueJson = catalogue(capabilities)
         factIds = facts.map { it.id }.toSet()
-        capabilityIds = capabilities.flatMap { c -> c.functions.map { "${c.module}.${it.name}" } }.toSet()
         require(contextJson().toByteArray(Charsets.UTF_8).size <= 8192) { "Discovery context exceeds generation context bound" }
-        require(catalogueJson.toByteArray(Charsets.UTF_8).size <= 16384) { "Discovery catalogue too large" }
-        identity = digest(factsJson + "\n" + catalogueJson)
+        identity = digest(factsJson)
     }
     internal fun contextJson() = JSONObject().put("facts", JSONArray(factsJson)).toString()
-    internal fun sameCatalogue(api: ApplicationProtocol) = catalogue(api.refresh()) == catalogueJson
-    companion object {
-        internal fun catalogue(contracts: List<SharedCapabilityContract>) = JSONArray(contracts.sortedBy { it.module }.map { c ->
+    internal companion object {
+        fun digest(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    }
+}
+
+/** Internal exact-input capture; canonical contract fields are serialized without additions. */
+internal class CapturedDiscoveryInput(val evidence: DiscoveryInput, contracts: List<SharedCapabilityContract>) {
+    val factsJson get() = evidence.factsJson
+    val factIds get() = evidence.factIds
+    val catalogueJson: String
+    val capabilityIds: Set<String>
+    init {
+        require(contracts.size <= 32 && contracts.map { it.module }.distinct().size == contracts.size)
+        contracts.forEach { it.native() }
+        catalogueJson = JSONArray(contracts.sortedBy { it.module }.map { c ->
             c.json().put("functions", JSONArray(c.functions.sortedBy { it.name }.map { it.json() }))
         }).toString()
-        internal fun digest(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        require(catalogueJson.toByteArray(Charsets.UTF_8).size <= 16384) { "Discovery catalogue too large" }
+        capabilityIds = contracts.flatMap { c -> c.functions.map { "${c.module}.${it.name}" } }.toSet()
     }
 }
 
 /** Issued by one discovery owner; text and evidence stay frozen through generation admission. */
 class DiscoverySuggestion internal constructor(
     val title: String, val brief: String, factIds: List<String>, capabilityIds: List<String>,
-    internal val input: DiscoveryInput,
+    internal val input: CapturedDiscoveryInput,
 ) {
     private val referencedFacts = factIds.toList()
     private val referencedCapabilities = capabilityIds.toList()
@@ -51,32 +57,48 @@ class DiscoverySuggestion internal constructor(
 }
 
 /** Foreground opportunity recognition only. Calls execute on an owned serial lane, never providers. */
-class Discovery private constructor(private val inference: DiscoveryInference) : AutoCloseable {
-    constructor(context: Context) : this(NanoDiscovery(context.applicationContext))
+class Discovery private constructor(private val api: ApplicationProtocol, private val inference: DiscoveryInference, private val context: Context, private val catalogue: () -> List<SharedCapabilityContract>) : AutoCloseable {
+    constructor(context: Context, api: ApplicationProtocol) : this(api, NanoDiscovery(context.applicationContext), context.applicationContext, { api.refresh() })
     private val worker = Executors.newSingleThreadExecutor()
     private var revision = 0L
     private var closed = false
     private var pending: CompletableFuture<DiscoverySuggestion?>? = null
     private var issued: DiscoverySuggestion? = null
-    internal constructor(infer: (String) -> String) : this(object : DiscoveryInference {
+    private var issuedLog: EmbeddingLog? = null
+    internal constructor(context: Context, api: ApplicationProtocol, catalogue: () -> List<SharedCapabilityContract> = { api.refresh() }, infer: (String) -> String) : this(api, object : DiscoveryInference {
         override fun complete(prompt: String) = infer(prompt)
         override fun cancel() {}
         override fun close() {}
-    })
+    }, context.applicationContext, catalogue)
     @Synchronized fun discover(input: DiscoveryInput): CompletableFuture<DiscoverySuggestion?> {
         check(!closed)
         cancel()
         val epoch = revision
         val result = CompletableFuture<DiscoverySuggestion?>()
         pending = result
-        result.whenComplete { _, _ -> if (result.isCancelled) synchronized(this) { if (pending === result) cancel() } }
+        val log = EmbeddingLog(context)
+        val started = android.os.SystemClock.elapsedRealtime()
+        log.event("opportunity", "started", target = "On-device", detail = input.contextJson())
+        result.whenComplete { tip, error ->
+            log.event("opportunity", if (error is CancellationException) "cancelled" else if (error != null) "failed" else if (tip == null) "none" else "suggested",
+                target = "On-device", durationMs = android.os.SystemClock.elapsedRealtime() - started,
+                detail = if (error != null) android.util.Log.getStackTraceString(error) else tip?.let { proposalJson(it) })
+            if (result.isCancelled) synchronized(this) { if (pending === result) cancel() }
+        }
         worker.execute {
             try {
                 synchronized(this) { check(!closed && epoch == revision) { "Discovery superseded" } }
-                val suggestion = parse(inference.complete(prompt(input)), input)
+                val captured = log.stage("opportunity-catalogue") { CapturedDiscoveryInput(input, catalogue()) }
+                log.event("opportunity-input", "captured", detail = JSONObject(input.contextJson()).put("capabilities", JSONArray(captured.catalogueJson)).toString())
+                synchronized(this) { if (closed || epoch != revision) throw CancellationException("Discovery superseded") }
+                val reply = log.operation("opportunity-inference", target = "On-device", detail = prompt(captured)) { inferenceLog ->
+                    inference.complete(prompt(captured)).also { inferenceLog.event("opportunity-inference", "response", target = "On-device", detail = it) }
+                }
+                val suggestion = log.stage("opportunity-validation", detail = reply) { parse(reply, captured) }
                 synchronized(this) {
                     if (closed || epoch != revision) throw CancellationException("Discovery superseded")
-                    issued = suggestion; pending = null; result.complete(suggestion)
+                    issued = suggestion; issuedLog = if (suggestion == null) null else log
+                    pending = null; result.complete(suggestion)
                 }
             } catch (error: Throwable) {
                 synchronized(this) { if (pending === result) pending = null }
@@ -87,28 +109,34 @@ class Discovery private constructor(private val inference: DiscoveryInference) :
     }
     /** Host calls this immediately when foreground, facts or permissions change. */
     @Synchronized fun cancel() {
-        revision++; issued = null
+        issuedLog?.event("opportunity", "invalidated")
+        revision++; issued = null; issuedLog = null
         val old = pending; pending = null
         inference.cancel(); old?.completeExceptionally(CancellationException("Discovery superseded"))
     }
     /** Admission uses the exact brief/evidence and verifies the executable catalogue again. */
-    fun request(suggestion: DiscoverySuggestion, current: DiscoveryInput, api: ApplicationProtocol): GenerationRequest {
-        val epoch = synchronized(this) {
-            check(!closed && issued === suggestion && current.identity == suggestion.input.identity) { "Stale or unissued suggestion" }
-            revision
+    fun request(suggestion: DiscoverySuggestion, current: DiscoveryInput): GenerationRequest {
+        val (epoch, log) = synchronized(this) {
+            check(!closed && issued === suggestion && current.identity == suggestion.input.evidence.identity) { "Stale or unissued suggestion" }
+            revision to checkNotNull(issuedLog)
         }
+        return log.stage("opportunity-admission", detail = proposalJson(suggestion)) {
         // Catalogue discovery can block: cancellation must remain callable while it runs.
-        check(suggestion.input.sameCatalogue(api)) { "Capability catalogue changed" }
+        check(CapturedDiscoveryInput(current, catalogue()).catalogueJson == suggestion.input.catalogueJson) { "Capability catalogue changed" }
         val references = WireType("array", maximum = 16, element = WireType("string", maximum = 512))
         val schema = WireType("record", fields = listOf(
             WireField("facts", WireType("array", maximum = 16, element = WireType("record", fields = listOf(
                 WireField("id", WireType("string", maximum = 64)), WireField("text", WireType("string", maximum = 2048)))))),
             WireField("factIds", references), WireField("capabilityIds", references)))
-        val context = JSONObject(suggestion.input.contextJson()).put("factIds", JSONArray(suggestion.factIds)).put("capabilityIds", JSONArray(suggestion.capabilityIds)).toString()
+        val context = JSONObject(suggestion.input.evidence.contextJson()).put("factIds", JSONArray(suggestion.factIds)).put("capabilityIds", JSONArray(suggestion.capabilityIds)).toString()
         require(context.toByteArray(Charsets.UTF_8).size <= 8192) { "Captured discovery handoff exceeds context bound" }
-        return synchronized(this) {
+        synchronized(this) {
             check(!closed && revision == epoch && issued === suggestion) { "Discovery invalidated during admission" }
-            api.request(suggestion.title, suggestion.brief, api.snapshot(schema, context)).also { issued = null }
+            api.request(suggestion.title, suggestion.brief, api.snapshot(schema, context)).also { request ->
+                issued = null; issuedLog = null
+                log.event("opportunity-handoff", "admitted", target = runCatching { api.requestTrace(request) }.getOrDefault(""))
+            }
+        }
         }
     }
     override fun close() {
@@ -116,7 +144,8 @@ class Discovery private constructor(private val inference: DiscoveryInference) :
         teardown({ worker.shutdownNow() }, { inference.close() }, { check(worker.awaitTermination(10, TimeUnit.SECONDS)) { "Discovery worker did not terminate" } })
     }
     internal companion object {
-        fun prompt(input: DiscoveryInput): String = """
+        private fun proposalJson(tip: DiscoverySuggestion) = JSONObject().put("title", tip.title).put("brief", tip.brief).put("factIds", JSONArray(tip.factIds)).put("capabilityIds", JSONArray(tip.capabilityIds)).toString()
+        fun prompt(input: CapturedDiscoveryInput): String = """
             Decide whether to interrupt the user with ONE useful interactive aid. This is not a request to help with every event.
             Output null unless the facts explicitly establish unfinished work AND enough specific inputs for a useful calculation, item checklist, comparison or supported control. Titles and callable functions do not establish a need. Completed work, vague notes, missing essential evidence and ordinary appointments require null. Never substitute generic preparation, reminders or a request for missing inputs.
             Otherwise output exactly {"title":"short title","brief":"complete interaction specification","factIds":["supporting IDs"],"capabilityIds":["required module.function IDs"]}.
@@ -139,7 +168,7 @@ class Discovery private constructor(private val inference: DiscoveryInference) :
             Apply the decision rule to these facts. An unfinished explicit comparison with both supplied amounts IS sufficient: propose editable amounts and a recomputing difference. No external capability is needed for local arithmetic. A routine appointment without unfinished work is NOT sufficient, even when calendar functions exist.
             If there is no concrete unfinished need, output null. Otherwise the brief MUST specify the editable inputs, their supplied initial values and recomputing/checkable outcome. Output null or exactly one object, nothing else.
         """.trimIndent()
-        fun parse(text: String, input: DiscoveryInput): DiscoverySuggestion? {
+        fun parse(text: String, input: CapturedDiscoveryInput): DiscoverySuggestion? {
             require(text.toByteArray(Charsets.UTF_8).size <= 8192) { "Discovery reply too large" }
             if (text.trim() == "null") return null
             val value = android.util.JsonReader(java.io.StringReader(text)).use { reader ->
