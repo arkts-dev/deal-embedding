@@ -8,6 +8,7 @@ import java.util.UUID
 
 /** Android bootstrap for the protocol. No generated experience receives this authority surface. */
 class Embedding(private val context: Context, val registry: CapabilityRegistry, private val model: ModelClient, bootstrap: EmbeddingConfig) {
+    constructor(context: Context, registry: CapabilityRegistry, gateway: GenerationGatewayConfig, bootstrap: EmbeddingConfig) : this(context, registry, GatewayModelClient(gateway), bootstrap)
     private val config=bootstrap.copy(contracts=bootstrap.contracts.map{CapabilityContract.parse(it.json().toString())})
     private data class RequestState(val title:String,val intent:String,val context:GenerationContext,val contracts:List<CapabilityContract>,val cancellation:GenerationCancellation,val log:EmbeddingLog,var used:Boolean=false)
     private val contexts=mutableMapOf<String,Pair<WireType,String>>()

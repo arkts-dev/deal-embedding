@@ -3,7 +3,7 @@ package dev.deal.embedding
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Host-selected inference mechanism; no transport or credential policy belongs here. */
+/** Injection seam for alternative inference mechanisms and deterministic tests. Gateway integration is library-owned. */
 interface ModelClient {
     fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog): String
 }
