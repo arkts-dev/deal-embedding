@@ -2,7 +2,7 @@
 // Trusted instance controller. This bundle is never supplied to generated UI.
 // Synchronous declarations operate on local state; only mechanism calls cross IPC.
 globalThis.publicProtocol = (() => {
-  let seed, sequence=0, stopped=false, contracts=[], saved=[], observation={incomplete:false,active:false,code:'',lost:0},capturing=false;
+  let seed, sequence=0, stopped=false, contracts=[], saved=[], observation={incomplete:false,active:false,code:'',lost:0};
   const contexts=new Map(), requests=new Map(), experiences=new Map(), sessions=new Map(), grants=new Map();
   const copy=v=>JSON.parse(JSON.stringify(v));
   const fail=(code,message)=>{throw publicRuntime.errorValue(code,message);};
@@ -33,7 +33,7 @@ globalThis.publicProtocol = (() => {
   function retain(e,source,isSaved=false){experiences.set(e.id,{metadata:copy(e),source:copy(source),saved:isSaved,session:null,starting:null});return copy(e);}
   async function prepared(name,args){const result=await native(name,args);if(stopped){control('release',[result.experience]);fail('STOPPED','Embedding instance is stopped');}return retain(result.experience,result.source);}
   return {
-    bootstrap(input){seed=input.seed;contracts=copy(input.contracts);observation=copy(input.health);capturing=input.capturing===true;for(const item of input.saved){retain(item.experience,item.source,true);saved.push(item.experience.id);}},
+    bootstrap(input){seed=input.seed;contracts=copy(input.contracts);observation=copy(input.health);for(const item of input.saved){retain(item.experience,item.source,true);saved.push(item.experience.id);}},
     invoke(name,args,convert){
       active();let result;
       switch(name){
@@ -61,7 +61,7 @@ globalThis.publicProtocol = (() => {
         case 'refresh':result=native(name,args).then(c=>{contracts=copy(c);return copy(c);});break;
         case 'grant':case 'revoke':need(contracts.some(c=>c.module===args[0]),'Unknown module');if(name==='grant'&&!grants.has(args[0]))grants.set(args[0],id());else if(name==='revoke')grants.delete(args[0]);result=null;break;
         case 'health':result=copy(observation);break;
-        case 'capture':capturing=args[0];result=null;break;
+        case 'capture':result=null;break; // Controller synchronously persists the shared private choice.
         case 'events':case 'artifact':case 'clearObservation':result=native(name,args);break;
         case 'shutdown':stopped=true;for(const [key,r]of requests){r.cancelled=true;if(r.reject)r.reject(publicRuntime.errorValue('CANCELLED','Generation cancelled'));control('cancel',[key]);}result=native(name,args).then(()=>{contexts.clear();requests.clear();sessions.clear();experiences.clear();saved=[];return null;});break;
         default:fail('UNKNOWN_EXPORT',name);
@@ -70,7 +70,6 @@ globalThis.publicProtocol = (() => {
       if(['generate','load','run','dispatch','next','close','forget','refresh','events','artifact','clearObservation','shutdown'].includes(name))return Promise.resolve(result).then(convert);
       return convert(result);
     },
-    capturing(){return !stopped&&capturing;},
     permitted(module){return !stopped ? grants.get(module)||null : null;},
     liveSessions(ids){for(const [key,s]of sessions){if(!ids.includes(key)){s.experience.session=null;}}},
     observed(health){observation=copy(health);}

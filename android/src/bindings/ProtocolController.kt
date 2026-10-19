@@ -42,10 +42,9 @@ class ProtocolController(private val context:Context, private val embedding:Embe
     init {
         try {
             val saved=embedding.saved().map{e->JSONObject().put("experience",experience(e)).put("source",source(embedding.source(e)))}
-            val bootstrap=JSONObject().put("seed",UUID.randomUUID().toString()).put("saved",JSONArray(saved)).put("contracts",JSONArray(embedding.refresh().map{it.protocolJson()})).put("health",health()).put("capturing",embedding.capturesContent())
+            val bootstrap=JSONObject().put("seed",UUID.randomUUID().toString()).put("saved",JSONArray(saved)).put("contracts",JSONArray(embedding.refresh().map{it.protocolJson()})).put("health",health())
             program.evaluate(SandboxBundle.build(context,listOf("protocol-contracts.js","protocol-host.js","public-protocol.js"),"","protocolInitialize(factories,${JSONObject.quote(consumer)},$bootstrap)",assetRoot=assets))
             embedding.registry.permissions { module -> program.evaluate("JSON.stringify(publicProtocol.permitted(${JSONObject.quote(module)}))").let{if(it=="null")null else JSONArray("[$it]").getString(0)} }
-            EmbeddingLog.capturePolicy(context){program.evaluate("String(publicProtocol.capturing())")=="true"}
             driving.scheduleWithFixedDelay({try{advance()}catch(error:Throwable){for(future in futures.values)future.completeExceptionally(error)}},0,5,TimeUnit.MILLISECONDS)
         }catch(e:Throwable){program.close();SandboxEngine.release(engine);workers.shutdownNow();serial.shutdownNow();driving.shutdownNow();throw e}
     }
@@ -119,9 +118,10 @@ class ProtocolController(private val context:Context, private val embedding:Embe
         require(declared=="false"){"Async export cannot be invoked synchronously"}
         val result=JSONObject(program.evaluate("(() => {try {return JSON.stringify({ok:true,value:protocolInvoke(${JSONObject.quote(name)},$args)});}catch(error){return JSON.stringify({ok:false,code:error.code||'EMBEDDING_FAILED',message:error.message||'Embedding failed'});}})()"))
         if(!result.getBoolean("ok"))throw ProtocolFailure(result.getString("code"),result.getString("message"))
+        if(name=="capture")embedding.capture(args.getBoolean(0))
         return result.opt("value") ?: JSONObject.NULL
     }
-    @Synchronized fun capturing():Boolean=program.evaluate("String(publicProtocol.capturing())")=="true"
+    @Synchronized fun capturing():Boolean=embedding.capturesContent()
     fun update(session:Session,cursor:String=""):SessionUpdate=(call("next",JSONArray().put(session.id).put(cursor),Long.MAX_VALUE) as JSONObject).let{SessionUpdate(UiSnapshot.parse(it.getJSONObject("snapshot")),it.getString("cursor"))}
     private fun control(name:String,args:JSONArray){when(name){
         "cancel"->{val key=args.getString(0);cancelled.add(key);requests[key]?.let{embedding.cancel(it)}}
@@ -172,7 +172,6 @@ class ProtocolController(private val context:Context, private val embedding:Embe
         for(executor in listOf(driving,workers,serial))attempt{
             check(executor.awaitTermination(10,TimeUnit.SECONDS)){"Controller executor did not terminate"}
         }
-        attempt{EmbeddingLog.capturePolicy(context,null)}
         attempt{program.close()}
         attempt{SandboxEngine.release(engine)}
         failure?.let{throw it}
