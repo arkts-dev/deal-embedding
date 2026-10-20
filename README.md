@@ -22,6 +22,10 @@ surface.close()
 
 The owner explicitly activates the experience; the composable attaches cancellable update reception, renders its tree, forwards widget events and acknowledges successful renderer acceptance. Leaving composition detaches reception and display, preserving automatic execution and live state. Explicit activate on a retained failed owner cold-reopens checked source without inference. Explicit close retains saved source; forget remains a separate app decision. Optional tree presentation, action and snapshot hooks let apps integrate domain review without protocol wiring; snapshot diagnostics are captured by embedding, not host files. Failed activation does not replace the app's existing owner. Use `protocol.withPreparation(prepared) { candidate -> ... }` around acceptance/context validation: rejection releases unused preparation. Synchronous release retires the public handle immediately; physical cleanup is tracked, retried and retained in an app-private journal on deletion failure. `flushReclamation()` exposes outstanding release failures to custom hosts. Bootstrap supplies mechanisms; the surface adapter owns routine integration. Low-level run/next/dispatch/published remain available for custom hosts and trusted DEAL consumers. `EmbeddedExperience` is an optional visual frame, not a lifecycle owner.
 
+## Portable toolkit
+
+[`ui/`](ui/README.md) owns the component pack, composition guidance and checked examples. Android packages the same pack at the existing `./platform.dealui-pack` import path. Semantic Row/Heading/Caption, primary/secondary actions and labeled Money/Metric/Comparison extend the existing vocabulary without changing legacy contracts. The backend handles adaptive layout, native typography and localized formatting; DEAL retains calculations, validation and explicit comparison status. Applications need no component-specific Kotlin. Toolkit verification separates host compilation/runtime, Android interaction/retention, fresh generation and native visual review.
+
 ## Generation gateway bootstrap
 
 Standard hosts pass `GenerationGatewayConfig(endpoint, backend)` to the `Embedding(context, registry, gateway, config)` constructor. Embedding constructs its internal gateway client; apps supply no HTTP implementation. This implements the existing trusted `core/host/model.complete` mechanism used by compiled `core/generation.deal` and public `generate(request)`, not a new DEAL API or capability. The `ModelClient` constructor remains an alternative-inference/test injection seam.
@@ -40,7 +44,8 @@ Manual Android consumers must include ML Kit Prompt beta4 and its runtime depend
 
 - `core/generation.deal`: orchestration, app policy offer/lower, source fallback, maximum three source attempts, diagnostic repair and repeated-response stop.
 - Consuming app's compiled policy: domain eligibility, described questions/options, domain answer validation and deterministic source synthesis. The library contains no equipment catalogue policy.
-- `core/candidate-check.deal`, `source-repair.deal`, `generation-guidance.deal`: closed envelope validation, bounded digest-bound optional delta repair, composition/prompt guidance.
+- `core/candidate-check.deal`, `source-repair.deal`, `generation-guidance.deal`: closed envelope validation, bounded digest-bound optional delta repair and prompt assembly.
+- `ui/`: authoritative portable component contract, composition prose and authored examples; packaged and build-derived guidance share those exact inputs.
 - `android/src/bindings`: generic answer validation, compiler-derived public ABI linkage, shape conversion and transport. Operational errors never become unsupported choices or automatic provider switching.
 - `android/src/compiler`, `execution`, `storage`, `inference`, `capabilities`, `rendering`: concrete checker, sandbox, persistence, cancellable inference, authenticated Binder transport and Compose mechanisms.
 - Deal UI: generated state/action/effect/reconciliation and mounted-root accounting. Embedding does not duplicate those semantics.

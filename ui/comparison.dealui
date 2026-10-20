@@ -1,0 +1,16 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+// @ui-root
+export view Budget(state: app.State): View {
+    ui.Column() {
+        ui.Comparison(status: state.status) {
+            ui.Money(label: "Difference", minorUnits: state.difference)
+            ui.Money(label: "Committed", minorUnits: state.committed)
+        }
+        ui.Row() {
+            ui.IntField(label: "Approved budget (€)", value: state.approved, minimum: 0, maximum: 10000000, step: 100, format: "euro-cents", onChange: action app.Approved { value: payload })
+            ui.IntField(label: "Commitments (€)", value: state.committed, minimum: 0, maximum: 10000000, step: 100, format: "euro-cents", onChange: action app.Committed { value: payload })
+        }
+        ui.SecondaryAction(text: "Reset amounts", onClick: action app.Reset {})
+    }
+}

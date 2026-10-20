@@ -1,18 +1,7 @@
 import * as assets from "./generation-guidance.generated";
 
-// Composition discipline not enforced by the checker. Pack facts remain build-derived.
-export function composition(): string {
-    return "- Use each component only for what its call line shows; never invent a property.\n" +
-        "- The native shell supplies the task heading; start with useful controls/results, not another title or introduction.\n" +
-        "- Keep one primary action per surface; keep controls and their result visible together on a phone.\n" +
-        "- Preserve units in displayed results. Currency stored as integer cents must display as euros with two decimal digits and a currency label, never as a raw cents integer. Format the result in DEAL state; do not invent renderer format properties.\n" +
-        "- Put engineering/provenance/explanations in native Inspect, not paragraphs or safety banners in the tool. Preserve actual constraints and confirmation boundaries.\n" +
-        "- Use a Card for a bounded group, not for spacing or every row.\n" +
-        "- Never nest a Card inside a Card.\n" +
-        "- Show one Progress while pending, a short empty/failure label when needed, and Failure only when a retry action exists. Never stack status prose.\n" +
-        "- Every event action must consume its payload; never pass a constant where a payload is declared.\n" +
-        "- Keep validation results in DEAL state and render them; the renderer holds no validated value.";
-}
+// Portable composition prose is packaged from ui/; contract facts remain build-derived.
+export function composition(): string { return assets.composition(); }
 export function workflow(): string {
     return "\n\nFINAL WORKFLOW CHECK\n" +
         "Check proposed initial values against supporting facts. Task deadlines are not operation periods. Preserve an explicit operation period and its timezone: convert local clock times to offset-bearing instants, never append Z to unchanged local time. The friendly period label must represent the same instants sent to capabilities.\n" +
@@ -24,10 +13,11 @@ export function componentFacts(pack: table): string {
     let out: string = ""; let components: table[] = pack.components;
     for (let component: table of components) {
         let name: string = component.name; let fields: table[] = component.fields; let contracts: table[] = component.contracts;
-        let arguments: string = "";
+        let arguments: string = ""; let requiredProps: string = "";
         for (let field: table of fields) {
             let fieldName: string = field.name; let type: string = field.type;
-            let defaultKind: string = field.defaultKind; let defaultText: string = field.defaultText;
+            let defaultKind: string = field.defaultKind; let defaultText: string = field.defaultText; let required: boolean = field.required;
+            if (required) { if (requiredProps !== "") { requiredProps = requiredProps + ", "; } requiredProps = requiredProps + fieldName; }
             let action: boolean = type === "Action";
             for (let contract: table of contracts) {
                 let kind: string = contract.kind;
@@ -52,6 +42,7 @@ export function componentFacts(pack: table): string {
             arguments = arguments + fieldName + ": " + value;
         }
         let behaviour: string = ""; let children: boolean = false;
+        if (requiredProps !== "") { behaviour = "required props: " + requiredProps; }
         for (let contract: table of contracts) {
             let kind: string = contract.kind; let text: string = "";
             if (kind === "event") {
@@ -60,8 +51,9 @@ export function componentFacts(pack: table): string {
                 if (payload !== "") { text = text + " carrying a " + payload + " payload"; }
             }
             if (kind === "children") {
-                children = true; let required: boolean = contract.required;
+                children = true; let required: boolean = contract.required; let childTypes: string = contract.types;
                 text = "accepts children"; if (required) { text = "requires children"; }
+                if (childTypes !== "") { text = text + " of types " + childTypes; }
             }
             if (text !== "") { if (behaviour !== "") { behaviour = behaviour + "; "; } behaviour = behaviour + text; }
         }
@@ -76,6 +68,7 @@ export function guidance(): string {
     return "DEAL RULES\n" + assets.language() + "\n\nHOW TO COMPOSE A VIEW\n" + composition() +
         "\n\nTHIS RENDERER\n" + assets.renderer() + "\n\nCOMPONENTS (this is the complete set)\n" + componentFacts(assets.pack()) +
         "\n\nCHECKED ASYNC EXAMPLE (syntax only, not an available capability or task template)\n" +
-        "The example-only host/sample exports async value(): int. Never import it unless present in the actual catalog. Adapt the pattern to actual contracts; do not copy its behavior.\nDEAL:\n" + assets.exampleDeal() + "\nDEALUI:\n" + assets.exampleUi();
+        "The example-only host/sample exports async value(): int. Never import it unless present in the actual catalog. Adapt the pattern to actual contracts; do not copy its behavior.\nDEAL:\n" + assets.exampleDeal() + "\nDEALUI:\n" + assets.exampleUi() +
+        "\n\nCHECKED LOCAL COMPARISON EXAMPLE (syntax only, not task facts)\nDEAL:\n" + assets.comparisonDeal() + "\nDEALUI:\n" + assets.comparisonUi();
 }
 export function main(): null { return null; }

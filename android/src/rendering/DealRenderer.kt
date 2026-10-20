@@ -17,10 +17,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.constrainHeight
 import org.json.JSONObject
 
 /** One entry per implemented component. Compilation verifies agreement with the pack. */
@@ -36,12 +41,58 @@ internal enum class RenderComponent(val component: String, val capability: Strin
     Choice("Choice", "renderer.compose.choice"), Filters("Filters", "renderer.compose.filters"),
     Notice("Notice", "renderer.compose.notice"), Progress("Progress", "renderer.compose.progress"),
     Failure("Failure", "renderer.compose.failure"), Item("Item", "renderer.compose.item"),
-    KeyedList("KeyedList", "renderer.compose.keyedlist");
+    KeyedList("KeyedList", "renderer.compose.keyedlist"),
+    Row("Row", "renderer.layout.row"), Heading("Heading", "renderer.text.heading"),
+    Caption("Caption", "renderer.text.caption"), PrimaryAction("PrimaryAction", "renderer.action.primary"),
+    SecondaryAction("SecondaryAction", "renderer.action.secondary"),
+    Money("Money", "renderer.value.money"), Metric("Metric", "renderer.value.metric"),
+    Comparison("Comparison", "renderer.value.comparison");
 
     companion object {
         fun verify(pack: deal.ui.UiModel.PackModule) {
             val declared = pack.components().mapValues { (_, c) -> c.contracts().filterIsInstance<deal.ui.UiModel.Capability>().map { it.name() }.single() }
             check(declared == entries.associate { it.component to it.capability }) { "Renderer and component pack disagree" }
+        }
+    }
+}
+
+/** Presentation only: amounts remain integer minor units and no domain status is inferred. */
+internal fun formatMoney(minorUnits: Int, currency: String, locale: java.util.Locale = java.util.Locale.getDefault()): String {
+    val unit = java.util.Currency.getInstance(currency)
+    val amount = java.math.BigDecimal.valueOf(minorUnits.toLong(), unit.defaultFractionDigits.coerceAtLeast(0))
+    return java.text.NumberFormat.getCurrencyInstance(locale).apply {
+        this.currency = unit
+        minimumFractionDigits = unit.defaultFractionDigits.coerceAtLeast(0)
+        maximumFractionDigits = minimumFractionDigits
+    }.format(amount)
+}
+
+@Composable private fun LabeledValue(label: String, value: String) {
+    Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** Measure every checked child at an equal share; wrap at font-scaled minimum widths.
+ * A Layout rather than a row/column branch preserves child composition identity on resize. */
+@Composable private fun AdaptiveRow(minimumChildWidth: Int, content: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    val minimum = with(density) { minimumChildWidth.coerceAtLeast(48).dp.toPx() * density.fontScale.coerceAtLeast(1f) }.toInt()
+    val gap = with(density) { 12.dp.roundToPx() }
+    Layout(content = content, modifier = Modifier.fillMaxWidth()) { children, constraints ->
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else minimum
+        val columns = ((width.toLong() + gap) / (minimum.toLong() + gap)).toInt().coerceAtLeast(1).coerceAtMost(children.size.coerceAtLeast(1))
+        val cell = ((width - gap * (columns - 1)) / columns).coerceAtLeast(0)
+        val measured = children.map { it.measure(Constraints(minWidth = cell, maxWidth = cell)) }
+        val rows = measured.chunked(columns)
+        val height = rows.sumOf { row -> row.maxOf { it.height } } + gap * (rows.size - 1).coerceAtLeast(0)
+        layout(width, constraints.constrainHeight(height)) {
+            var y = 0
+            for (row in rows) {
+                row.forEachIndexed { index, child -> child.placeRelative(index * (cell + gap), y) }
+                y += row.maxOf { it.height } + gap
+            }
         }
     }
 }
@@ -68,12 +119,37 @@ internal enum class RenderComponent(val component: String, val capability: Strin
     val component = if (name == "root" || name == "__root") RenderComponent.Column else RenderComponent.entries.single { it.component == name }
     when (component) {
         RenderComponent.Column -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) { children() }
+        RenderComponent.Row -> AdaptiveRow(number("minimumChildWidth", 240)) { children() }
+        RenderComponent.Heading -> Text(text("value"), style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+        RenderComponent.Caption -> Text(text("value"), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        RenderComponent.Money -> LabeledValue(text("label"), formatMoney(number("minorUnits"), prop("currency")?.getString("stringValue") ?: "EUR"))
+        RenderComponent.Metric -> LabeledValue(text("label"), listOf(text("value"), text("unit")).filter { it.isNotEmpty() }.joinToString(" "))
+        RenderComponent.Comparison -> Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text("status"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.semantics { heading() })
+                AdaptiveRow(160) { children() }
+            }
+        }
         RenderComponent.Card -> Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { children() }
         }
         RenderComponent.Text -> Text(text("value"), style = MaterialTheme.typography.bodyLarge)
         RenderComponent.Hero -> Text(text("value"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-        RenderComponent.Button -> Button(enabled = flag("enabled", true), onClick = { prop("onClick")?.let { dispatch(it.getInt("actionSlot"), null) } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = text("accessibilityLabel") }, contentPadding = PaddingValues(16.dp)) { Text(text("text")) }
+        RenderComponent.Button, RenderComponent.PrimaryAction, RenderComponent.SecondaryAction -> {
+            val actionModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics {
+                contentDescription = text("accessibilityLabel").ifEmpty { text("text") }
+            }
+            val click = { prop("onClick")?.let { dispatch(it.getInt("actionSlot"), null) }; Unit }
+            if (component == RenderComponent.SecondaryAction) {
+                OutlinedButton(enabled = flag("enabled", true), onClick = click, modifier = actionModifier, contentPadding = PaddingValues(16.dp)) { Text(text("text")) }
+            } else {
+                Button(enabled = flag("enabled", true), onClick = click, modifier = actionModifier, contentPadding = PaddingValues(16.dp)) { Text(text("text")) }
+            }
+        }
         RenderComponent.Toggle -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(text("text"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             Checkbox(flag("checked"), { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), text("value")) } }, modifier = Modifier.semantics { contentDescription = text("accessibilityLabel") })
@@ -123,12 +199,12 @@ internal enum class RenderComponent(val component: String, val capability: Strin
             val value = number("value")
             val lower = number("minimum"); val upper = number("maximum", 999); val step = number("step", 1).coerceAtLeast(1)
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(text("label"), style = MaterialTheme.typography.bodyMedium)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(text("label"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() - step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value > lower,
+                    OutlinedIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() - step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value > lower,
                         modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " decrease" }) { Text("−") }
-                    Text(if (text("format") == "euro-cents") "€%.2f".format(java.util.Locale.getDefault(), value / 100.0) else value.toString(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.widthIn(min = 32.dp))
-                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() + step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value < upper,
+                    Text(if (text("format") == "euro-cents") formatMoney(value, "EUR") else value.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    OutlinedIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() + step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value < upper,
                         modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " increase" }) { Text("+") }
                 }
                 val hint = text("error").ifEmpty { text("supporting") }

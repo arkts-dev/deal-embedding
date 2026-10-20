@@ -1,0 +1,19 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+// @ui-root
+export view Values(state: app.State): View {
+    ui.Column() {
+        ui.Comparison(status: state.status) {
+            ForEach(state.amounts, amount: app.Amount, key: amount.id) {
+                ui.Money(label: amount.label, minorUnits: amount.minorUnits)
+            }
+        }
+        ui.Money(label: "Refundable deposit", minorUnits: 5000)
+        ui.Heading(value: "Collection")
+        ui.Caption(value: "Friday, 16:15–22:30")
+        ui.Row(minimumChildWidth: 160) {
+            ui.Metric(label: "Travel", value: "29", unit: "min")
+            ui.Metric(label: "Latest departure", value: "15:16")
+        }
+    }
+}

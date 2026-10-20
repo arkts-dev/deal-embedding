@@ -1,6 +1,6 @@
 # Assets
 
-`embedding/platform.dealui-pack` defines the renderer's components, props, events and capability identities. Coordinate changes with renderer registration and generation guidance. Preserve existing defaults when adding input props; validation belongs in DEAL. Package search/text string payloads and integer steps with their exact checked contracts. IntField format is presentation only: euro-cents displays integer cents as euros while payload, limits and validation stay integer-valued.
+The pack is maintained only in `ui/platform.dealui-pack` and packaged at `embedding/platform.dealui-pack`. Do not restore a source copy here. Coordinate contract changes with renderer registration and generation guidance. Preserve existing defaults when adding input props; validation belongs in DEAL. Package search/text string payloads and integer steps with their exact checked contracts. IntField format is presentation only: euro-cents displays integer cents as euros while payload, limits and validation stay integer-valued.
 
 JavaScript bindings load compiled modules and transport compiler-issued operations. Preserve bundle confinement, visible-action validation, console output bounds and schema-directed record/table conversion. Trusted mechanism/public-result error translation preserves bounded suppressed code/message evidence; never expose native handles or stacks.
 

@@ -16,12 +16,12 @@ public final class GenerationGuidance {
                 Object declared = field.defaultValue() instanceof UiModel.Literal literal ? literal.value() : null;
                 String kind = declared instanceof Long ? "int" : declared instanceof String ? "string" : declared instanceof Boolean ? "boolean" : "other";
                 String text = declared == null ? "" : String.valueOf(declared);
-                fields.add("{ name: " + literal(field.name()) + ", type: " + literal(field.type().name()) + ", defaultKind: " + literal(kind) + ", defaultText: " + literal(text) + " }");
+                fields.add("{ name: " + literal(field.name()) + ", type: " + literal(field.type().name()) + ", required: " + (!field.type().optional() && field.defaultValue() == null) + ", defaultKind: " + literal(kind) + ", defaultText: " + literal(text) + " }");
             }
             List<String> contracts = new ArrayList<>();
             for (UiModel.Contract contract : component.contracts()) {
                 if (contract instanceof UiModel.Event event) contracts.add("{ kind: \"event\", prop: " + literal(event.prop()) + ", payload: " + literal(event.payload() == null ? "" : event.payload().name()) + " }");
-                else if (contract instanceof UiModel.Children children) contracts.add("{ kind: \"children\", required: " + children.required() + " }");
+                else if (contract instanceof UiModel.Children children) contracts.add("{ kind: \"children\", required: " + children.required() + ", types: " + literal(children.typed() ? children.componentType() : "") + " }");
             }
             components.add("{ name: " + literal(component.name()) + ", fields: " + array(fields) + ", contracts: " + array(contracts) + " }");
         });
@@ -31,9 +31,12 @@ public final class GenerationGuidance {
             + "function empty(): table[] { return []; }\n"
             + "export function language(): string { return " + literal(Files.readString(Path.of(args[2]).resolve("language.md")).trim()) + "; }\n"
             + "export function renderer(): string { return " + literal(Files.readString(Path.of(args[1])).trim()) + "; }\n"
+            + "export function composition(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("composition.md")).trim()) + "; }\n"
             + "export function pack(): table { return { components: [" + String.join(",", components) + "] }; }\n"
             + "export function exampleDeal(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("generation-example.deal"))) + "; }\n"
-            + "export function exampleUi(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("generation-example.dealui"))) + "; }\n");
+            + "export function exampleUi(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("generation-example.dealui"))) + "; }\n"
+            + "export function comparisonDeal(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("comparison.deal"))) + "; }\n"
+            + "export function comparisonUi(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("comparison.dealui"))) + "; }\n");
     }
     private static String array(List<String> values) { return values.isEmpty() ? "empty()" : "[" + String.join(",", values) + "]"; }
     private static String literal(String text) {

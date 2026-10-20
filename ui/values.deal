@@ -1,0 +1,8 @@
+export class Amount { id: string = ""; label: string = ""; minorUnits: int = 0; }
+export class State { amounts: Amount[] = []; status: string = "Package costs less"; }
+export function initialState(): State {
+    let packageAmount: Amount = { id: "package", label: "Package", minorUnits: 1200 };
+    let separateAmount: Amount = { id: "separate", label: "Separate items", minorUnits: 1300 };
+    return { amounts: [packageAmount, separateAmount], status: "Package costs less" };
+}
+export function main(): null { return null; }

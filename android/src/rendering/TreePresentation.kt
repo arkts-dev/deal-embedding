@@ -7,10 +7,13 @@ fun displayText(tree:JSONObject,transform:(String)->String):JSONObject {
     val copy=JSONObject(tree.toString())
     fun visit(node:JSONObject){
         val names=when(node.getString("component").substringAfterLast('.')){
-            "Text","Hero"->setOf("value")
+            "Text","Hero","Heading","Caption"->setOf("value")
+            "Money"->setOf("label")
+            "Metric"->setOf("label","value","unit")
+            "Comparison"->setOf("status")
             "Option","Item"->setOf("title","detail","meta","trailing")
             "Section"->setOf("title","summary")
-            "Notice","Failure","Toggle","Button"->setOf("text")
+            "Notice","Failure","Toggle","Button","PrimaryAction","SecondaryAction"->setOf("text")
             "Progress"->setOf("label")
             else->emptySet()
         }

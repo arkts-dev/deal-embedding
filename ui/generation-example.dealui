@@ -1,0 +1,15 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+// @ui-root
+export view Example(state: app.State): View {
+    ui.Column() {
+        ui.PrimaryAction(text: "Read value", enabled: !state.loading, onClick: action app.Load {})
+        When(state.loading) { ui.Progress(label: "Reading") } Else {
+            When(state.message !== "") {
+                ui.Failure(text: state.message, onRetry: action app.Load {})
+            } Else {
+                When(state.ready) { ui.IntText(value: state.value) } Else { ui.Caption(value: "No reading yet") }
+            }
+        }
+    }
+}

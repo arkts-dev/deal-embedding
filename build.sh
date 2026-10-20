@@ -27,8 +27,8 @@ javac --release 21 -cp "$ANDROID_JAR" -proc:none -d "$OUTPUT_DIR/classes" @"$OUT
 mkdir -p "$OUTPUT_DIR/generation/src" "$OUTPUT_DIR/guidance-tools"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/guidance-tools" "$ROOT/tools/GenerationGuidance.java"
 java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/guidance-tools" GenerationGuidance \
-    "$ROOT/android/assets/embedding/platform.dealui-pack" "$ROOT/core/generation-guidance.md" \
-    "$DEAL_ROOT/skills/write-deal/references" "$ROOT/core/generation-guidance.generated.deal" "$ROOT/core"
+    "$ROOT/ui/platform.dealui-pack" "$ROOT/ui/generation-guidance.md" \
+    "$DEAL_ROOT/skills/write-deal/references" "$ROOT/core/generation-guidance.generated.deal" "$ROOT/ui"
 cp "$ROOT/core/"*.deal "$OUTPUT_DIR/generation/src/"
 cp "$ROOT/core/host/"*.d.deal "$OUTPUT_DIR/generation/"
 cp -r "$DEAL_UI_ROOT/ui" "$OUTPUT_DIR/generation/ui"
@@ -44,6 +44,9 @@ java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/binding-tools" GenerationBindings "$RO
 python3 "$ROOT/tools/protocol-build.py" "$ROOT" "$OUTPUT_DIR" "$OUTPUT_DIR/classes" "$DEAL_ROOT" "$DEAL_UI_ROOT"
 jar --create --file "$OUTPUT_DIR/aar/classes.jar" -C "$OUTPUT_DIR/classes" .
 cp -r "$ROOT/android/assets/embedding" "$OUTPUT_DIR/aar/assets/"
+cp "$ROOT/ui/platform.dealui-pack" "$OUTPUT_DIR/aar/assets/embedding/platform.dealui-pack"
+mkdir -p "$OUTPUT_DIR/aar/assets/ui"
+cp "$ROOT/ui/"*.deal "$ROOT/ui/"*.dealui "$OUTPUT_DIR/aar/assets/ui/"
 cp "$DEAL_UI_ROOT/runtime-js/session.js" "$OUTPUT_DIR/aar/assets/embedding/bindings/dealui-session.js"
 cp -r "$DEAL_UI_ROOT/ui" "$OUTPUT_DIR/aar/assets/distribution/"
 mkdir -p "$OUTPUT_DIR/aar/assets/protocol"
