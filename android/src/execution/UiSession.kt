@@ -20,7 +20,7 @@ internal class UiSession(private val context: Context, private val broker: Capab
     private val requestParents = mutableMapOf<Int, String>()
     private val requestStarts = mutableMapOf<Int, Long>()
     private fun evaluate(source: String): String = program.evaluate(source)
-    fun state(): String = evaluate(DealSessionBindings.state)
+    fun state(): String? = evaluate(DealSessionBindings.checkpoint).takeUnless { it == "null" }
     fun mount(output: File, restored: String? = null): JSONObject {
         check(!closed && capabilitySession == null) { "UI session is closed or already mounted" }
         val bundle = DealSessionBindings.bundle(context, config, output, restored)

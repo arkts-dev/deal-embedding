@@ -43,7 +43,7 @@ export async function generate(request: GenerationInput): GenerationResult {
     }
     let previous: string = ""; let lastResponse: string = "";
     for (let attempt: int = 0; attempt < 3; attempt = attempt + 1) {
-        let sourceInput: string = input;
+        let sourceInput: string = input + guidance.workflow();
         let patching: boolean = request.repairStrategy === "delta" && previous !== "";
         if (patching) { sourceInput = sourceInput + await repair.instruction(previous); }
         else { if (previous !== "") { sourceInput = sourceInput + await feedback.instruction(previous, diagnostics); } }

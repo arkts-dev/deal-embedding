@@ -64,6 +64,7 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
     }
     private fun report(live:Session,generation:Long,error:Throwable,terminalFailure:Boolean=false){
         if(ended||generation!=epoch||session!=live)return
+        protocol.surfaceFailure(live,error)
         if(terminalFailure || error is ProtocolFailure && error.code in setOf("CLOSED","SESSION_FAILED","INVALID_HANDLE"))terminal=live
         main.post{if(!ended&&generation==epoch&&session==live)failure?.invoke(error)}
     }

@@ -13,6 +13,13 @@ export function composition(): string {
         "- Every event action must consume its payload; never pass a constant where a payload is declared.\n" +
         "- Keep validation results in DEAL state and render them; the renderer holds no validated value.";
 }
+export function workflow(): string {
+    return "\n\nFINAL WORKFLOW CHECK\n" +
+        "Check proposed initial values against supporting facts. Task deadlines are not operation periods. Preserve an explicit operation period and its timezone: convert local clock times to offset-bearing instants, never append Z to unchanged local time. The friendly period label must represent the same instants sent to capabilities.\n" +
+        "Implement the whole task from intent AND supporting facts, including alternatives, exact specifications, quantities and budget. Resolve unknown IDs/prices/stock through explicit reads. Match specification, units and included contents from returned records, not names alone; exclude incompatible options and show concise qualifying details. Never silently omit a requested alternative.\n" +
+        "Keep supplied numeric assumptions editable. Use IntField format euro-cents for budget and recompute against its state field, never a hard-coded ceiling. Changing provider inputs clears old results until refreshed; local budget edits recompute without reads. Keep exact instants internal when the pack has no typed local-time control; show a concise friendly period instead of machine-format text fields.\n" +
+        "Compare requested packages and components from actual returned data. Show hire cost and any returned deposit separately. Keep one useful primary action and concise results. Every local declaration needs an initializer. Return the exact two-field source envelope.\n";
+}
 export function componentFacts(pack: table): string {
     let out: string = ""; let components: table[] = pack.components;
     for (let component: table of components) {

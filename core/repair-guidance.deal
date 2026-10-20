@@ -9,6 +9,12 @@ export async function instruction(previous: string, diagnostics: string): string
     if (strings.contains(diagnostics, "Expected ')'" ) || strings.contains(diagnostics, "Expected '*' after 'import'")) {
         out = out + "DEAL equality is === and !==, never == or != (including views). Use namespace imports only: import * as alias from \"module\";. Check these exact grammar rules in both files.\n";
     }
+    if (strings.contains(diagnostics, "E1037")) {
+        out = out + "DEAL has no ternary conditional expression. Replace condition ? a : b with an initialized local followed by if/else assignments. Check both files for all ternary operators; do not confuse nullable type T | null with an expression.\n";
+    }
+    if (strings.contains(diagnostics, "E1013")) {
+        out = out + "Every local variable requires an initializer, even when assigned in later branches: let label: string = \"\"; never let label: string;. Initialize to an honest pending value, then assign in branches. Check all declarations in both files.\n";
+    }
     if (strings.contains(diagnostics, "UI2050") || strings.contains(diagnostics, "UI2051")) {
         out = out + "The state/action and borrowed collections are immutable. Compute locals and return a complete fresh State literal. A shallow-copy helper can still alias borrowed values. Build changed arrays with explicit loops.\n";
     }

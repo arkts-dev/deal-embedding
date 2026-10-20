@@ -32,16 +32,19 @@ internal class NanoDiscovery(private val context: Context) : DiscoveryInference 
         catch (error: TimeoutException) { future.cancel(true); throw error }
         finally { synchronized(this) { if (active === future) active = null } }
     }
-    override fun complete(prompt: String): String {
+    override fun complete(prompt: String, log: dev.deal.embedding.EmbeddingLog): String {
         val version = synchronized(this) { check(!stopped); epoch }
         val client = client()
         check(await(version, client.checkStatus(), 30) == FeatureStatus.AVAILABLE) { "On-device discovery model unavailable" }
         val request = GenerateContentRequest.Builder(TextPart(prompt)).apply {
-            maxOutputTokens = 1024; temperature = 0.0f; enableThinking = true
+            maxOutputTokens = 4096; temperature = 0.0f; enableThinking = true
         }.build()
         val response = await(version, client.generateContent(request), 90)
         check(response.candidates.size == 1) { "Missing discovery candidate" }
-        return response.candidates.single().text
+        val candidate = response.candidates.single()
+        log.event("opportunity-inference", "metadata", target = "On-device",
+            operation = "maxOutputTokens=4096;thinking=true;finishReason=${candidate.finishReason}")
+        return candidate.text
     }
     @Synchronized override fun cancel() { epoch++; active?.cancel(true); active = null }
     override fun close() {

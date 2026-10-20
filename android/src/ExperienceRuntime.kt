@@ -75,8 +75,14 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     }
     fun workspaces(): List<LiveWorkspace> = workspaces.values.toList()
     fun workspace(id: String): LiveWorkspace? = workspaces[id]
-    fun dispatch(id: String, slot: Int, payload: String?) { val live = workspaces[id] ?: error("Closed session"); live.session.dispatch(slot, payload); if (config.retainState) storage.saveState(id, live.source, live.session.state()) }
-    fun advance(id: String): JSONObject? = try { workspaces[id]?.session?.advance() } catch(error:Exception) {
+    private fun checkpoint(live: LiveWorkspace) {
+        if (config.retainState) live.session.state()?.let { state ->
+            if (retainedStates[live.id] != state) { storage.saveState(live.id,live.source,state); retainedStates[live.id] = state }
+        }
+    }
+    private val retainedStates = mutableMapOf<String,String>()
+    fun dispatch(id: String, slot: Int, payload: String?) { val live = workspaces[id] ?: error("Closed session"); live.session.dispatch(slot, payload); checkpoint(live) }
+    fun advance(id: String): JSONObject? = try { workspaces[id]?.let { live -> live.session.advance().also { checkpoint(live) } } } catch(error:Exception) {
         val dead=generateSequence<Throwable>(error){it.cause}.any{it is androidx.javascriptengine.SandboxDeadException}
         if(dead){
             val active=engine;engine=null
@@ -89,7 +95,8 @@ internal class ExperienceRuntime(private val context: Context, private val capab
         val live = workspaces.remove(id) ?: return
         EmbeddingLog(context).event("session", "closed", workspace = id)
         var failure:Throwable?=null
-        if (config.retainState) try{storage.saveState(id,live.source,live.session.state())}catch(error:Throwable){failure=error}
+        try{checkpoint(live)}catch(error:Throwable){failure=error}
+        retainedStates.remove(id)
         try{live.session.close()}catch(error:Throwable){if(failure==null)failure=error else failure.addSuppressed(error)}
         try{StagingReclamation.remove(context,live.output.parentFile)}catch(error:Throwable){if(failure==null)failure=error else failure.addSuppressed(error)}
         failure?.let{throw it}

@@ -5,7 +5,7 @@ import org.json.*
 import java.util.concurrent.Executors
 
 /** Rendering/lifecycle adapter to the compiled DEAL consumer. It never drives sessions. */
-class ApplicationProtocol(context:Context, mechanisms:Embedding):AutoCloseable {
+class ApplicationProtocol(private val context:Context, mechanisms:Embedding):AutoCloseable {
     private val controller=ProtocolController(context,mechanisms,"protocol-application","application.js")
     private val observers=Executors.newCachedThreadPool()
     private fun args(vararg values:Any?)=JSONArray(values.toList())
@@ -53,6 +53,9 @@ class ApplicationProtocol(context:Context, mechanisms:Embedding):AutoCloseable {
             detached=true
             try{invocation?.let{controller.detach(it)}}finally{invocation=null;subscriptions.remove(this)}
         }
+    }
+    internal fun surfaceFailure(session:Session,error:Throwable) {
+        runCatching { EmbeddingLog.traced(context,sessionTrace(session)).bind("",session.id).event("host","failed",target="ExperienceSurface",code=error.javaClass.simpleName,detail=android.util.Log.getStackTraceString(error)) }
     }
     fun dispatch(session:Session,slot:Int,payload:String?){call("dispatch",session.id,slot,payload ?: JSONObject.NULL)}
     fun published(session:Session,version:Int){sync("published",session.id,version)}
