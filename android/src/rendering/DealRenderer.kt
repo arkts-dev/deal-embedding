@@ -52,7 +52,7 @@ internal enum class RenderComponent(val component: String, val capability: Strin
     fun prop(name: String): JSONObject? = (0 until properties.length()).map { properties.getJSONObject(it) }.firstOrNull { it.getString("name") == name }
     fun text(name: String) = prop(name)?.optString("stringValue") ?: ""
     fun flag(name: String, default: Boolean = false) = prop(name)?.optBoolean("booleanValue", default) ?: default
-    fun number(name: String) = prop(name)?.optInt("intValue") ?: 0
+    fun number(name: String, default: Int = 0) = prop(name)?.optInt("intValue") ?: default
     fun choices(actions: List<String>): List<Pair<String, Int?>> =
         listOf("first", "second", "third").mapIndexed { index, name ->
             Pair(prop(name)?.optString("stringValue") ?: "", prop(actions[index])?.optInt("actionSlot"))
@@ -121,7 +121,7 @@ internal enum class RenderComponent(val component: String, val capability: Strin
         }
         RenderComponent.IntField -> {
             val value = number("value")
-            val lower = number("minimum"); val upper = number("maximum"); val step = number("step").coerceAtLeast(1)
+            val lower = number("minimum"); val upper = number("maximum", 999); val step = number("step", 1).coerceAtLeast(1)
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(text("label"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
