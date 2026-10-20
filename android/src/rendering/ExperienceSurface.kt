@@ -21,6 +21,7 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
     var snapshot:UiSnapshot? by mutableStateOf(null)
         private set
     @Volatile private var snapshotSession:Session?=null
+    private var renderedSnapshot:UiSnapshot?=null
     private var failure:((Throwable)->Unit)?=null
     private var acceptedVersion=-1
     private var acceptedFault=""
@@ -41,7 +42,7 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
         val live=protocol.run(experience)
         try {
             val first=protocol.next(live,"")
-            session=live;acceptedVersion=-1;acceptedFault=""
+            session=live;renderedSnapshot=null;acceptedVersion=-1;acceptedFault=""
             receive(live,epoch,first.snapshot)
             if(attachments>0)observe(live)
         }catch(error:Throwable){runCatching{protocol.close(live)}.onFailure{error.addSuppressed(it)};throw error}
@@ -70,7 +71,10 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
     }
     internal fun event(value:UiSnapshot,slot:Int,payload:String?,before:()->Unit={}) {
         synchronized(this){
-            if(ended||value!==snapshot||snapshotSession!=session)return
+            // Reception can run before Compose replaces the currently visible callbacks.
+            // Admit that still-rendered frame as well as the newest received frame; the
+            // runtime still validates the slot against its current checked tree.
+            if(ended||(value!==snapshot&&value!==renderedSnapshot)||snapshotSession!=session)return
             val live=session?:return;val generation=epoch;val owner=ownership
             before()
             actions.execute{if(!ended&&owner==ownership&&session==live)try{protocol.dispatch(live,slot,payload)}catch(error:Throwable){report(live,generation,error)}}
@@ -80,6 +84,7 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
         synchronized(this){
             if(ended||value!==snapshot||snapshotSession!=session||value.version==acceptedVersion&&value.fault==acceptedFault)return
             val live=session?:return;val generation=epoch;val owner=ownership
+            renderedSnapshot=value
             acceptedVersion=value.version;acceptedFault=value.fault
             actions.execute{if(!ended&&owner==ownership&&session==live)try{protocol.published(live,value.version)}catch(error:Throwable){report(live,generation,error)}}
         }
@@ -87,7 +92,7 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
     /** Explicit closure retains saved source. A failed closure remains retryable. */
     @Synchronized override fun close(){
         if(ended&&session==null&&observation==null)return
-        ended=true;epoch++;ownership++
+        ended=true;epoch++;ownership++;renderedSnapshot=null
         teardown(
             {observation?.close();observation=null},
             {session?.let{protocol.close(it)};session=null;terminal=null},

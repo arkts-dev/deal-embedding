@@ -67,10 +67,26 @@ internal fun formatMoney(minorUnits: Int, currency: String, locale: java.util.Lo
     }.format(amount)
 }
 
+private val LocalComparisonValue = compositionLocalOf { false }
+
 @Composable private fun LabeledValue(label: String, value: String) {
-    Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+    val comparison = LocalComparisonValue.current
+    val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+    BoxWithConstraints(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
+        // Comparison rows share a label/value grid. At large text sizes stack
+        // within each cell rather than squeezing either explicit label or value.
+        if (comparison && maxWidth / fontScale >= 300.dp) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(value, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                    style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            }
+        }
     }
 }
 
@@ -129,9 +145,11 @@ internal fun formatMoney(minorUnits: Int, currency: String, locale: java.util.Lo
         RenderComponent.Comparison -> Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainer,
             modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text("status"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.semantics { heading() })
-                AdaptiveRow(160) { children() }
+                Text(text("status"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary, modifier = Modifier.semantics { heading() })
+                CompositionLocalProvider(LocalComparisonValue provides true) {
+                    AdaptiveRow(320) { children() }
+                }
             }
         }
         RenderComponent.Card -> Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
@@ -145,7 +163,9 @@ internal fun formatMoney(minorUnits: Int, currency: String, locale: java.util.Lo
             }
             val click = { prop("onClick")?.let { dispatch(it.getInt("actionSlot"), null) }; Unit }
             if (component == RenderComponent.SecondaryAction) {
-                OutlinedButton(enabled = flag("enabled", true), onClick = click, modifier = actionModifier, contentPadding = PaddingValues(16.dp)) { Text(text("text")) }
+                OutlinedButton(enabled = flag("enabled", true), onClick = click,
+                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("text") } },
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)) { Text(text("text")) }
             } else {
                 Button(enabled = flag("enabled", true), onClick = click, modifier = actionModifier, contentPadding = PaddingValues(16.dp)) { Text(text("text")) }
             }
@@ -198,17 +218,21 @@ internal fun formatMoney(minorUnits: Int, currency: String, locale: java.util.Lo
         RenderComponent.IntField -> {
             val value = number("value")
             val lower = number("minimum"); val upper = number("maximum", 999); val step = number("step", 1).coerceAtLeast(1)
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(text("label"), style = MaterialTheme.typography.bodyMedium)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() - step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value > lower,
-                        modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " decrease" }) { Text("−") }
-                    Text(if (text("format") == "euro-cents") formatMoney(value, "EUR") else value.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    OutlinedIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() + step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value < upper,
-                        modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " increase" }) { Text("+") }
+            Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+              Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(text("label"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() - step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value > lower,
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
+                        modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " decrease" }) { Text("−", fontWeight = FontWeight.Bold) }
+                    Text(if (text("format") == "euro-cents") formatMoney(value, "EUR") else value.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.weight(1f))
+                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() + step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value < upper,
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
+                        modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " increase" }) { Text("+", fontWeight = FontWeight.Bold) }
                 }
                 val hint = text("error").ifEmpty { text("supporting") }
                 if (hint.isNotEmpty()) Text(hint, color = if (text("error").isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+              }
             }
         }
         RenderComponent.TextField, RenderComponent.SearchField -> {
