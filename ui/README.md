@@ -20,7 +20,7 @@ The source pairs are framework examples, not provider facts, app workflows or te
 
 ## Verification
 
-From the consuming workspace, build the library/test APK, then run `tools/verify-toolkit.py`. It uses `tools/ToolkitHarness.java`, the current UI/DEAL compiler, production JS loader/session and mocked provider replies. It checks exact packaged bytes, legacy source, required props, dynamic typed children, actions, bounds, state restoration and asynchronous states. Receipts include revisions and exact input hashes under ignored build output.
+From the consuming workspace, build the library/test APK, then run `tools/verify-toolkit.py`. It uses `tools/ToolkitHarness.java`, the current UI/DEAL compiler, production JS loader/session and mocked provider replies. It checks exact packaged bytes, current source, required props, dynamic typed children, actions, bounds, state restoration and asynchronous states. Receipts include revisions and exact input hashes under ignored build output.
 
 `ToolkitInstrumentation` exercises exact packaged examples through ApplicationProtocol and Android's real sandbox. `ToolkitActivity` is a test-APK-only gallery using ExperienceSurface, not a consumer-owned session driver. Native controls, device outcomes, saved-source migration, live generation and visual review are distinct checks. Host success is not native visual approval; an authored example is not fresh-model adherence.
 

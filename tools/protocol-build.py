@@ -8,13 +8,13 @@ shutil.copytree(ui/'ui',stage/'src/ui',dirs_exist_ok=True)
 for p in (root/'api').glob('*.d.deal'):shutil.copy(p,stage/'src'/p.name)
 for p in (root/'core/host').glob('*.d.deal'):shutil.copy(p,stage/'src'/p.name)
 modules={'embedding':'embedding.d.deal','catalogue-policy':'catalogue-policy.d.deal','embedding/protocol':'protocol.d.deal','embedding/policy-data':'policy-data.d.deal'}
-(stage/'deal.json').write_text(json.dumps({'languageVersion':'1.2','backend':'js','moduleRoots':['src'],'externals':{k:{'declaration':'src/'+v} for k,v in modules.items()}}))
+(stage/'deal.json').write_text(json.dumps({'languageVersion':'1.3','backend':'js','moduleRoots':['src'],'externals':{k:{'declaration':'src/'+v} for k,v in modules.items()}}))
 (stage/'src/main.deal').write_text('\n'.join('import * as m'+str(i)+' from "'+m+'";' for i,m in enumerate(modules))+'\nexport function main(): null { return null; }')
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(compiler),'deal.Main','compile',str(stage/'src/main.deal'),'--backend','js','--output',str(stage/'js')],check=True)
 text=(stage/'js/main.js').read_text()
 entries=[]
 for m in modules:
-    pattern=r'\$rt\.loadHost\(\$require\('+re.escape(json.dumps('./'+m))+r'\), (.*), '+re.escape(json.dumps(m))+r', '
+    pattern=r'\$rt\.loadHost\(\$[A-Za-z0-9]+, (.*), '+re.escape(json.dumps(m))+r', '
     match=re.search(pattern,text)
     if not match:raise RuntimeError('Missing compiler ABI inventory '+m)
     entries.append(json.dumps(m)+':'+match.group(1))

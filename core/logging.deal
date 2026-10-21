@@ -11,7 +11,9 @@ export class LogEvent {
     capture: boolean = false; artifact: string = ""; bytes: int = 0;
 }
 function bounded(value: string, maximum: int): string {
-    let cleaned: string = strings.replace(strings.replace(value, "\n", " "), "\r", " ");
+    let controls: table = json.parse("{\"cr\":\"\\r\"}");
+    let carriageReturn: string = controls.cr;
+    let cleaned: string = strings.replace(strings.replace(value, "\n", " "), carriageReturn, " ");
     return strings.substring(cleaned, 0, maximum);
 }
 export function normalize(event: LogEvent): string {

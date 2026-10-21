@@ -10,7 +10,7 @@ export async function instruction(previous: string, diagnostics: string): string
         out = out + "DEAL equality is === and !==, never == or != (including views). Use namespace imports only: import * as alias from \"module\";. Check these exact grammar rules in both files.\n";
     }
     if (strings.contains(diagnostics, "E1034")) {
-        out = out + "A wire record may have a DEAL keyword key such as from. Keyword member access record.from is invalid. Use other declared evidence fields when sufficient; do not rename provider fields or invent replacement keys. Check all member accesses for keyword keys.\n";
+        out = out + "A wire table may have a keyword key such as from. Read it with a string index and an explicit target type: let periodStart: string = record[\"from\"];. Keyword member access record.from is invalid. Preserve actual provider keys; check all keyword member accesses.\n";
     }
     if (strings.contains(diagnostics, "E1037")) {
         out = out + "DEAL has no ternary conditional expression. Replace condition ? a : b with an initialized local followed by if/else assignments. Check both files for all ternary operators; do not confuse nullable type T | null with an expression.\n";

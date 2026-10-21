@@ -36,7 +36,8 @@ export async function generate(request: GenerationInput): GenerationResult {
                 let checked: table = await checker.check(envelope);
                 let accepted: boolean = checked.accepted;
                 if (accepted) { return { candidateId: checked.candidateId, attempts: 1 }; }
-                return { attempts: 1, diagnostics: "TEMPLATE_CHECK_FAILED: " + checked.diagnostics };
+                let failure: string = checked.diagnostics;
+                return { attempts: 1, diagnostics: "TEMPLATE_CHECK_FAILED: " + failure };
             }
             diagnostics = "CHOICE_UNSUPPORTED: " + lowering.reason;
         }
