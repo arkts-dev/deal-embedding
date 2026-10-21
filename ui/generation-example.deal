@@ -3,9 +3,14 @@ export class State { loading: boolean = false; message: string = ""; value: int 
 export class Load {}
 export class Done { message: string = ""; value: int = 0; ready: boolean = false; }
 export function initialState(): State { return {}; }
+// A fresh outer helper preserves scalar fields without permitting nested alias mutation.
+function copy(state: State): State { return { loading: state.loading, message: state.message, value: state.value, ready: state.ready }; }
 // @ui-update
 export function begin(state: State, action: Load): State {
-    return { loading: true, message: "", value: state.value, ready: state.ready };
+    let result: State = copy(state);
+    result.loading = true;
+    result.message = "";
+    return result;
 }
 // @ui-effect
 export async function read(state: State, action: Load): Done {

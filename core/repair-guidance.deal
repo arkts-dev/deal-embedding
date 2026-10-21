@@ -5,7 +5,13 @@ import * as guidance from "./generation-guidance";
 
 // Advisory source feedback only. Complete compiler/behavioral admission remains mandatory.
 export async function instruction(previous: string, diagnostics: string): string {
-    let out: string = "\n\nREPAIR GUIDANCE\nPreserve requested behavior and return both complete source strings, not a patch. Fix the reported cause, then check both files for the same defect. Do not redesign the workflow.\n";
+    return "\n\nREPAIR GUIDANCE\nPreserve requested behavior and return both complete source strings, not a patch.\n" + await details(previous, diagnostics);
+}
+export async function patchInstruction(previous: string, diagnostics: string): string {
+    return "\n\nREPAIR GUIDANCE\nEdit only the smallest rejected source region and directly required dependencies. Preserve all unrelated source and behavior. Return only the requested digest-bound exact patch.\n" + await details(previous, diagnostics);
+}
+async function details(previous: string, diagnostics: string): string {
+    let out: string = "Fix the reported cause without redesigning the workflow. The bounded source windows below are context, not edit authority.\n";
     if (strings.contains(diagnostics, "E1034")) {
         out = out + "A wire table may have a keyword key such as from. Read it with a string index and an explicit target type: let periodStart: string = record[\"from\"];. Keyword member access record.from is invalid. Preserve actual provider keys; check all keyword member accesses.\n";
     }

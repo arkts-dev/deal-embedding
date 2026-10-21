@@ -15,6 +15,7 @@
 The source pairs are framework examples, not provider facts, app workflows or templates selected at runtime:
 
 - `comparison`: editable amounts, explicit bounds, DEAL over/under/equal transitions, payloads and reset.
+- `primitives`: checked `ui/values` decimal/clock/bounds helpers, signed integer edges and invalid time ranges.
 - `rows`: immutable keyed-row rebuilds, captured row IDs, reorder/removal and stale-event rejection.
 - `values`: distinct hire alternatives/deposit and travel metrics, including keyed typed children.
 - `generation-example`: example-only async capability; initial empty, explicit read, pending, success, failure and retry. `host/sample` is not a production capability.

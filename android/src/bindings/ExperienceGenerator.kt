@@ -16,7 +16,26 @@ internal class CheckedCandidate internal constructor(private val context:Context
     internal var consumed = false
     override fun close() { if (!consumed) StagingReclamation.remove(context,output.parentFile) }
 }
-internal fun catalogRevision(config: EmbeddingConfig): String = MessageDigest.getInstance("SHA-256").digest(JSONArray(config.contracts.map { it.json() }).toString().toByteArray()).joinToString("") { "%02x".format(it) }
+// Object keys and unordered module/function inventories are stable; positional arrays stay ordered.
+internal fun canonicalCatalog(config: EmbeddingConfig): String {
+    fun encode(value: Any?): String = when(value) {
+        is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") { val child = value.get(it)
+            val canonical = if (it == "optionalFields" && child is JSONArray && (0 until child.length()).all { index -> child.get(index) is String }) {
+                JSONArray((0 until child.length()).map { index -> child.getString(index) }.sorted())
+            } else child
+            JSONObject.quote(it) + ":" + encode(canonical) }
+        is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { encode(value.get(it)) }
+        null, JSONObject.NULL -> "null"
+        is String -> JSONObject.quote(value)
+        else -> value.toString()
+    }
+    val modules=config.contracts.sortedBy { it.module }.map { contract -> contract.json().also { module ->
+        val functions=module.getJSONArray("functions")
+        module.put("functions",JSONArray((0 until functions.length()).map { functions.getJSONObject(it) }.sortedBy { it.getString("name") }))
+    } }
+    return encode(JSONArray(modules))
+}
+internal fun catalogRevision(config: EmbeddingConfig): String = MessageDigest.getInstance("SHA-256").digest(canonicalCatalog(config).toByteArray()).joinToString("") { "%02x".format(it) }
 
 /** Runs compiled trusted DEAL. No native retry loop, and no capability invocation during inference. */
 internal class ExperienceGenerator(private val context: Context, private val config: EmbeddingConfig, private val engine: JavaScriptSandbox) {
@@ -24,7 +43,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
         require(intent.isNotBlank() && intent.length <= 4096 && disclosedContext.length <= 8192)
         cancellation.check()
         val revision = catalogRevision(config)
-        val catalog = JSONArray(config.contracts.map { it.json() }).toString()
+        val catalog = canonicalCatalog(config)
         val checked = mutableMapOf<String, Pair<ExperienceSource, File>>()
         log.event("request", "started", detail = JSONObject().put("intent", intent).put("context", disclosedContext).put("catalog", catalog).toString())
         val program = SandboxProgram(engine, 512 * 1024)

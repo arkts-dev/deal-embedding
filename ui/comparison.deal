@@ -1,3 +1,4 @@
+import * as values from "ui/values";
 export class State { approved: int = 18000; committed: int = 19750; difference: int = 1750; status: string = "Over budget"; }
 export class Approved { value: int = 0; }
 export class Committed { value: int = 0; }
@@ -12,12 +13,12 @@ function compare(approved: int, committed: int): State {
 }
 // @ui-update
 export function approved(state: State, action: Approved): State {
-    if (action.value < 0 || action.value > 10000000) { return compare(state.approved, state.committed); }
+    if (!values.inBounds(action.value, 0, 10000000)) { return compare(state.approved, state.committed); }
     return compare(action.value, state.committed);
 }
 // @ui-update
 export function committed(state: State, action: Committed): State {
-    if (action.value < 0 || action.value > 10000000) { return compare(state.approved, state.committed); }
+    if (!values.inBounds(action.value, 0, 10000000)) { return compare(state.approved, state.committed); }
     return compare(state.approved, action.value);
 }
 // @ui-update

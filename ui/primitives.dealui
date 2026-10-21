@@ -1,0 +1,4 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+// @ui-root
+export view Primitives(state: app.State): View { ui.Text(value: state.text) }

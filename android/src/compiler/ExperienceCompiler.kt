@@ -15,6 +15,7 @@ internal class ExperienceCompiler(private val context: Context, private val conf
         val project = storage.candidateDirectory()
         try {
             val sources = File(project, "src").apply { mkdirs() }
+            File(sources,"ui").apply { mkdirs() }.resolve("values.deal").writeText(File(distribution,"ui/values.deal").readText())
             val app = File(sources, "${config.sourceName}.deal").apply { writeText(dealSource) }
             val view = File(sources, "${config.sourceName}.dealui").apply { writeText(uiSource) }
             val packSource = context.assets.open("embedding/platform.dealui-pack").bufferedReader().use { it.readText() }
