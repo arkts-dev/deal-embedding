@@ -19,7 +19,7 @@ globalThis.protocolHost = function(id, declarations, rt) {
       return table(value);
     }
     if (descriptor[0] !== '@') return value;
-    if(descriptor.includes('/ui/'))return protocolUi[descriptor.split('/').pop()+'$new'](Object.fromEntries(Object.entries(value).filter(([key])=>!key.startsWith('$')).map(([key,v])=>[key,key==='children'?v.map(n=>record(descriptor,n)):key==='props'?v.map(p=>record(descriptor.replace('/ViewNode','/Prop'),p)):v])));
+    if(descriptor.includes('/ui/'))return protocolUi[descriptor.split('/').pop()+'$new'](Object.fromEntries(Object.entries(value).filter(([key])=>!key.startsWith('$')).map(([key,v])=>[key,key==='children'?v.map(n=>record(descriptor,n)):key==='props'?v.map(p=>record(descriptor.replace('/ViewNode','/Prop'),p)):key==='actionBindings'?record('table',v):v])));
     const spec = Object.values(protocolDeclarations).flatMap(m=>Object.values(m)).find(v=>v.$k==='class'&&v.$d===descriptor);
     if (!spec) throw Error('Unknown protocol record '+descriptor);
     const fields={};for(const field of spec.$fields)fields[field.name]=record(field.$d,value[field.name]);
