@@ -6,9 +6,6 @@ import * as guidance from "./generation-guidance";
 // Advisory source feedback only. Complete compiler/behavioral admission remains mandatory.
 export async function instruction(previous: string, diagnostics: string): string {
     let out: string = "\n\nREPAIR GUIDANCE\nPreserve requested behavior and return both complete source strings, not a patch. Fix the reported cause, then check both files for the same defect. Do not redesign the workflow.\n";
-    if (strings.contains(diagnostics, "Expected ')'" ) || strings.contains(diagnostics, "Expected '*' after 'import'")) {
-        out = out + "DEAL equality is === and !==, never == or != (including views). Use namespace imports only: import * as alias from \"module\";. Check these exact grammar rules in both files.\n";
-    }
     if (strings.contains(diagnostics, "E1034")) {
         out = out + "A wire table may have a keyword key such as from. Read it with a string index and an explicit target type: let periodStart: string = record[\"from\"];. Keyword member access record.from is invalid. Preserve actual provider keys; check all keyword member accesses.\n";
     }
@@ -52,6 +49,13 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                     let lines: string[] = strings.split(source, "\n");
                     if (line <= lines.length) {
                         let reported: string = lines[line - 1];
+                        let code: string = error.code;
+                        if (strings.endsWith(file, ".dealui") && code === "UI1016") {
+                            out = out + "View expressions cannot call functions. Compute this value in DEAL and bind a state/row field. Preserve other logic.\n";
+                        }
+                        if (strings.endsWith(file, ".deal") && code === "E1015" && (strings.contains(reported, " == ") || strings.contains(reported, " != "))) {
+                            out = out + "The reported DEAL condition uses unsupported equality syntax. Use === or !==, preserving the operands and behavior.\n";
+                        }
                         out = out + "\nExact reported source line:\n" + reported + "\n";
                         let pack: table = assets.pack(); let components: table[] = pack.components;
                         for (let component: table of components) {

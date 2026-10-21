@@ -10,6 +10,8 @@ Updates: a `// @ui-update` line immediately before `(state: State, action: Actio
 
 Effects: a `// @ui-effect` line immediately before `export async function run(state: State, action: RequestAction): CompletionAction`. The request update sets loading; the completion clears it and stores results. Catch failures and return an error completion so the UI recovers. Effects and updates may share the request action. No effect policies or failure mappers, and no effects from `main` or `initialState`.
 
+View expressions bind scalar state/row paths, literals and supported operators; they cannot call functions (for example `app.label(state)`). Compute derived labels in DEAL, store them in State/row fields, and bind those fields. Keyed row actions may capture checked row fields such as `id: row.id`; rebuild changed rows in the update, never mutate `state.rows[i]`.
+
 Views: imports, then a `// @ui-root` line, then `export view Name(state: app.State): View { ui.Column() { ... } }`. Properties use a colon; components end without a semicolon. `ForEach(state.items, item: app.Item, key: item.id)` needs a stable key.
 
 Capabilities: use only imports present in the catalog, await them, and read record fields explicitly. Follow their described argument formats and prerequisite reads. Resolve provider IDs from returned catalogue records; never send user prose as IDs or invent IDs. Unknown stock/price is pending, not zero or success. Validate availability and specification before calling an option suitable. Keep user requirements/budget editable and distinguish a local recomputation from a fresh provider read. Never use JavaScript collection methods (`map`, `filter`, `push`), `any` or `unknown`. Never concatenate an int into a string; show it with `IntText` or `Time`.

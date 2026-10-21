@@ -1,0 +1,29 @@
+export class Row { id: string = ""; quantity: int = 0; }
+export class State { rows: Row[] = []; }
+export class SetQuantity { id: string = ""; value: int = 0; }
+export class Reverse {}
+export class Remove {}
+export function initialState(): State { return { rows: [{ id: "a", quantity: 1 }, { id: "b", quantity: 2 }] }; }
+// @ui-update
+export function setQuantity(state: State, action: SetQuantity): State {
+    let rows: Row[] = [];
+    for (let row: Row of state.rows) {
+        let quantity: int = row.quantity;
+        if (row.id === action.id && action.value >= 0 && action.value <= 20) { quantity = action.value; }
+        rows[rows.length] = { id: row.id, quantity: quantity };
+    }
+    return { rows: rows };
+}
+// @ui-update
+export function reverse(state: State, action: Reverse): State {
+    let rows: Row[] = [];
+    for (let i: int = state.rows.length - 1; i >= 0; i = i - 1) { rows[rows.length] = state.rows[i]; }
+    return { rows: rows };
+}
+// @ui-update
+export function remove(state: State, action: Remove): State {
+    let rows: Row[] = [];
+    for (let row: Row of state.rows) { if (row.id !== "a") { rows[rows.length] = row; } }
+    return { rows: rows };
+}
+export function main(): null { return null; }

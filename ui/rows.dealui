@@ -1,0 +1,12 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+// @ui-root
+export view Rows(state: app.State): View {
+    ui.Column() {
+        ForEach(state.rows, row: app.Row, key: row.id) {
+            ui.IntField(label: row.id, value: row.quantity, minimum: 0, maximum: 20, onChange: action app.SetQuantity { id: row.id, value: payload })
+        }
+        ui.SecondaryAction(text: "Reverse rows", accessibilityLabel: "Reverse rows", onClick: action app.Reverse {})
+        ui.SecondaryAction(text: "Remove a", accessibilityLabel: "Remove a", onClick: action app.Remove {})
+    }
+}
