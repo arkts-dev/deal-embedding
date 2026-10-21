@@ -58,7 +58,9 @@ class DiscoverySuggestion internal constructor(
 
 /** Foreground opportunity recognition only. Calls execute on an owned serial lane, never providers. */
 class Discovery private constructor(private val api: ApplicationProtocol, private val inference: DiscoveryInference, private val context: Context, private val catalogue: () -> List<SharedCapabilityContract>) : AutoCloseable {
-    constructor(context: Context, api: ApplicationProtocol) : this(api, NanoDiscovery(context.applicationContext), context.applicationContext, { api.refresh() })
+    /** Null selects local inference. Remote selection is explicit native bootstrap configuration. */
+    constructor(context: Context, api: ApplicationProtocol, gateway: GenerationGatewayConfig? = null) : this(api,
+        if (gateway == null) NanoDiscovery(context.applicationContext) else GatewayDiscovery(gateway), context.applicationContext, { api.refresh() })
     private val worker = Executors.newSingleThreadExecutor()
     private var revision = 0L
     private var closed = false
@@ -78,7 +80,7 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
         pending = result
         val log = EmbeddingLog(context)
         val started = android.os.SystemClock.elapsedRealtime()
-        log.event("opportunity", "started", target = "On-device", detail = input.contextJson())
+        log.event("opportunity", "started", target = inference.target, detail = input.contextJson())
         result.whenComplete { tip, error ->
             // Classification belongs in evidence: an invalid reply must not look like a model outage.
             val code = when {
@@ -90,7 +92,7 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
             // Keep the failing rule visible: a rejected reply is a model-format problem, not an outage.
             val reason = error?.message?.take(120) ?: ""
             log.event("opportunity", if (error is CancellationException) "cancelled" else if (error != null) "failed" else if (tip == null) "none" else "suggested",
-                target = "On-device", code = code, operation = reason, durationMs = android.os.SystemClock.elapsedRealtime() - started,
+                target = inference.target, code = code, operation = reason, durationMs = android.os.SystemClock.elapsedRealtime() - started,
                 detail = if (error != null) android.util.Log.getStackTraceString(error) else tip?.let { proposalJson(it) })
             if (result.isCancelled) synchronized(this) { if (pending === result) cancel() }
         }
@@ -100,8 +102,8 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
                 val captured = log.stage("opportunity-catalogue") { CapturedDiscoveryInput(input, catalogue()) }
                 log.event("opportunity-input", "captured", detail = JSONObject(input.contextJson()).put("capabilities", JSONArray(captured.catalogueJson)).toString())
                 synchronized(this) { if (closed || epoch != revision) throw CancellationException("Discovery superseded") }
-                val reply = log.operation("opportunity-inference", target = "On-device", detail = prompt(captured)) { inferenceLog ->
-                    inference.complete(prompt(captured), inferenceLog).also { inferenceLog.event("opportunity-inference", "response", target = "On-device", detail = it) }
+                val reply = log.operation("opportunity-inference", target = inference.target, detail = prompt(captured)) { inferenceLog ->
+                    inference.complete(prompt(captured), inferenceLog).also { inferenceLog.event("opportunity-inference", "response", target = inference.target, detail = it) }
                 }
                 val suggestion = log.stage("opportunity-validation", detail = reply) {
                     try { parse(reply, captured) }
@@ -229,6 +231,7 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
 }
 
 internal interface DiscoveryInference : AutoCloseable {
+    val target: String get() = "On-device"
     fun complete(prompt: String, log: EmbeddingLog): String
     fun cancel()
 }
