@@ -8,8 +8,7 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-data class EmbeddingConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val repairStrategy: String = "full", val generationAssets: String = "generation", val policyAssets: String = "", val retainState: Boolean = false) {
-    init { require(repairStrategy in setOf("full", "delta")) { "Unknown source repair strategy" } }
+data class EmbeddingConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val policyAssets: String = "", val retainState: Boolean = false) {
 }
 internal data class ExperienceSource(val deal: String, val ui: String)
 internal data class SavedWorkspace(val id: String, val title: String, val origin: WorkspaceOrigin, val attempts: Int)

@@ -11,7 +11,7 @@ import * as guidance from "./generation-guidance";
 import * as feedback from "./repair-guidance";
 import * as protocol from "embedding/protocol";
 
-export class GenerationInput { intent: string = ""; context: embedding.GenerationContext = {}; capabilities: embedding.CapabilityContract[] = []; repairStrategy: string = "full"; }
+export class GenerationInput { intent: string = ""; context: embedding.GenerationContext = {}; capabilities: embedding.CapabilityContract[] = []; }
 export class GenerationResult { candidateId: string = ""; attempts: int = 0; diagnostics: string = ""; usedFallback: boolean = false; }
 
 // Embedding owns dialogue, validation and bounded repair. App policy owns domain lowering.
@@ -42,28 +42,32 @@ export async function generate(request: GenerationInput): GenerationResult {
             diagnostics = "CHOICE_UNSUPPORTED: " + lowering.reason;
         }
     }
-    let previous: string = ""; let lastResponse: string = "";
+    let previous: string = ""; let lastResponse: string = ""; let patchFailure: string = "";
     for (let attempt: int = 0; attempt < 3; attempt = attempt + 1) {
         let operation: string = "initial"; if (attempt > 0) { operation = "repair"; }
         let sourceInput: string = input + guidance.workflow() + "\nSOURCE OPERATION\n" + operation + "\n";
-        let patching: boolean = request.repairStrategy === "delta" && previous !== "";
-        if (patching) { sourceInput = sourceInput + await feedback.patchInstruction(previous, diagnostics) + await repair.instruction(previous); }
-        else { if (previous !== "") { sourceInput = sourceInput + await feedback.instruction(previous, diagnostics); } }
+        let patching: boolean = previous !== "";
+        if (patching) {
+            sourceInput = sourceInput + await feedback.patchInstruction(previous, diagnostics) + await repair.instruction(previous);
+            if (patchFailure !== "") { sourceInput = sourceInput + "\nPrevious patch rejected: " + patchFailure; }
+        }
         let raw: string = await model.complete(sourceInput, previous, diagnostics);
         if (raw === lastResponse) { return { attempts: attempt + 1, diagnostics: "REPEATED_CANDIDATE: " + diagnostics, usedFallback: true }; }
         lastResponse = raw;
         if (patching) {
             let edited: table = await repair.apply(previous, raw); let applied: boolean = edited.accepted;
-            if (!applied) { diagnostics = edited.diagnostics; continue; }
-            raw = edited.source;
+            if (!applied) { patchFailure = edited.diagnostics; continue; }
+            patchFailure = ""; raw = edited.source;
         }
         let checked: table = await checker.check(raw);
         let accepted: boolean = checked.accepted;
         diagnostics = checked.diagnostics;
         if (accepted) { return { candidateId: checked.candidateId, attempts: attempt + 1, usedFallback: true }; }
-        if (!patching || !strings.contains(diagnostics, "INVALID_CANDIDATE")) { previous = raw; }
-        if (request.repairStrategy === "delta" && strings.contains(diagnostics, "INVALID_CANDIDATE")) { previous = ""; }
+        // Without a valid pair there is no revision to patch. Never request a replacement pair.
+        if (strings.contains(diagnostics, "INVALID_CANDIDATE")) { return { attempts: attempt + 1, diagnostics: diagnostics, usedFallback: true }; }
+        previous = raw;
     }
+    if (patchFailure !== "") { diagnostics = diagnostics + "\nPatch rejected: " + patchFailure; }
     return { attempts: 3, diagnostics: diagnostics, usedFallback: true };
 }
 export function main(): null { return null; }

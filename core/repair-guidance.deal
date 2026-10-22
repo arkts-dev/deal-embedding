@@ -4,9 +4,6 @@ import * as assets from "./generation-guidance.generated";
 import * as guidance from "./generation-guidance";
 
 // Advisory source feedback only. Complete compiler/behavioral admission remains mandatory.
-export async function instruction(previous: string, diagnostics: string): string {
-    return "\n\nREPAIR GUIDANCE\nPreserve requested behavior and return both complete source strings, not a patch.\n" + await details(previous, diagnostics);
-}
 export async function patchInstruction(previous: string, diagnostics: string): string {
     return "\n\nREPAIR GUIDANCE\nEdit only the smallest rejected source region and directly required dependencies. Preserve all unrelated source and behavior. Return only the requested digest-bound exact patch.\n" + await details(previous, diagnostics);
 }

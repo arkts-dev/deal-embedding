@@ -10,7 +10,7 @@ import java.util.UUID
 /** Host-facing facts, never inferred from generated source or its title. */
 enum class WorkspaceOrigin { AI_SOURCE, CATALOGUE, SAVED_SOURCE }
 class GenerationRejected(val attempts: Int, val reason: Reason, val diagnostics: String) : IllegalStateException("Generation rejected ($reason, attempts=$attempts): ${diagnostics.take(4000)}") {
-    enum class Reason { ATTEMPT_LIMIT, REPEATED_RESPONSE, TEMPLATE_CHECK }
+    enum class Reason { ATTEMPT_LIMIT, REPEATED_RESPONSE, TEMPLATE_CHECK, INVALID_CANDIDATE }
 }
 internal class CheckedCandidate internal constructor(private val context:Context, internal val source: ExperienceSource, internal val output: File, internal val revision: String, val attempts: Int, internal val log: EmbeddingLog, internal val identity: String = UUID.randomUUID().toString(), val origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE) : AutoCloseable {
     internal var consumed = false
@@ -51,7 +51,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
         var accepted:CheckedCandidate?=null
         fun eval(s: String) = program.evaluate(s)
         try {
-            val input = JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map { it.protocolJson() })).put("repairStrategy",config.repairStrategy)
+            val input = JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map { it.protocolJson() }))
             val configure = "protocolContexts[${JSONObject.quote(contextId)}]={value:${JSONObject.quote(disclosedContext)},schema:$contextSchema};"
             val bundle = SandboxBundle.build(context, listOf("generation-contracts.js", "protocol-contracts.js", "protocol-host.js", "generation-session.js"), configure,
                 "runGeneration(factories, $input)", assetRoot = config.generationAssets)
@@ -72,6 +72,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         val reason = when {
                             !result.getBoolean("usedFallback") -> GenerationRejected.Reason.TEMPLATE_CHECK
                             diagnostics.startsWith("REPEATED_CANDIDATE:") -> GenerationRejected.Reason.REPEATED_RESPONSE
+                            diagnostics.contains("INVALID_CANDIDATE") -> GenerationRejected.Reason.INVALID_CANDIDATE
                             else -> GenerationRejected.Reason.ATTEMPT_LIMIT
                         }
                         throw GenerationRejected(result.getInt("attempts"), reason, diagnostics)
