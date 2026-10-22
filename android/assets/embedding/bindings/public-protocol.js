@@ -37,10 +37,10 @@ globalThis.publicProtocol = (() => {
     invoke(name,args,convert){
       active();let result;
       switch(name){
-        case 'snapshot': {const [s,json]=args;schema(s);need(utf8(json)<=8192,'Context size');let parsed;try{parsed=JSON.parse(json);}catch(e){fail('INVALID_JSON','Context JSON');}value(s,parsed);result={id:id()};contexts.set(result.id,{schema:copy(s),json:JSON.stringify(parsed)});break;}
+        case 'snapshot': {const [s,json]=args;schema(s);let parsed;try{parsed=JSON.parse(json);}catch(e){fail('INVALID_JSON','Context JSON');}value(s,parsed);result={id:id()};contexts.set(result.id,{schema:copy(s),json:JSON.stringify(parsed)});break;}
         case 'contextSchema':result=copy(lookup(contexts,args[0]).schema);break;
         case 'contextJson':result=lookup(contexts,args[0]).json;break;
-        case 'request': {const [title,intent,ref]=args;need(title.trim().length>0&&title.length<=512&&intent.trim().length>0&&intent.length<=4096,'Request text');const c=lookup(contexts,ref);result={id:id()};requests.set(result.id,{title,intent,context:copy(c),contracts:copy(contracts),trace:id(),used:false,cancelled:false});break;}
+        case 'request': {const [title,intent,ref]=args;need(title.trim().length>0&&intent.trim().length>0,'Request text');const c=lookup(contexts,ref);result={id:id()};requests.set(result.id,{title,intent,context:copy(c),contracts:copy(contracts),trace:id(),used:false,cancelled:false});break;}
         case 'requestTrace':result=lookup(requests,args[0]).trace;break;
         case 'cancel':{const r=lookup(requests,args[0]);r.cancelled=true;if(r.reject)r.reject(publicRuntime.errorValue('CANCELLED','Generation cancelled'));control('cancel',[args[0].id]);result=null;break;}
         case 'generate': {const ref=args[0],r=lookup(requests,ref);need(!r.used,'Request is single use');r.used=true;

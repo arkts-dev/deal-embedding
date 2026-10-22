@@ -10,15 +10,15 @@ import java.net.SocketTimeoutException
 class GenerationGatewayConfig(
     val endpoint: String,
     val backend: String,
-    val connectTimeoutMs: Int = 5000,
-    val readTimeoutMs: Int = 420_000
+    val connectTimeoutMs: Int = -1,
+    val readTimeoutMs: Int = -1
 ) {
     init {
         val uri = URI(endpoint)
         require(uri.isAbsolute && !uri.host.isNullOrEmpty() && uri.rawUserInfo == null && uri.rawFragment == null) { "Invalid generation gateway endpoint" }
         require(uri.scheme == "https" || uri.scheme == "http" && uri.host in setOf("127.0.0.1", "localhost", "[::1]")) { "Generation gateway requires HTTPS or loopback HTTP" }
         require(backend.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}"))) { "Invalid generation backend" }
-        require(connectTimeoutMs > 0 && readTimeoutMs > 0) { "Gateway timeouts must be positive" }
+        require((connectTimeoutMs == -1 || connectTimeoutMs > 0) && (readTimeoutMs == -1 || readTimeoutMs > 0)) { "Gateway timeouts must be -1 (unlimited) or positive" }
     }
 }
 
@@ -28,12 +28,11 @@ internal class GatewayModelClient(private val config: GenerationGatewayConfig) :
         cancellation.check()
         val capture = log.capturesContent
         val body = JSONObject().put("input", input).put("previous", previous).put("diagnostics", diagnostics).put("capture", capture).toString().toByteArray(Charsets.UTF_8)
-        require(body.size <= 256 * 1024) { "Gateway request too large" }
         val connection = URI(config.endpoint).toURL().openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
         connection.instanceFollowRedirects = false
-        connection.connectTimeout = config.connectTimeoutMs
-        connection.readTimeout = config.readTimeoutMs
+        connection.connectTimeout = if(config.connectTimeoutMs == -1)0 else config.connectTimeoutMs
+        connection.readTimeout = if(config.readTimeoutMs == -1)0 else config.readTimeoutMs
         connection.doOutput = true
         connection.setRequestProperty("Content-Type", "application/json")
         connection.setRequestProperty("X-Deal-Generation-Backend", config.backend)
@@ -54,7 +53,6 @@ internal class GatewayModelClient(private val config: GenerationGatewayConfig) :
                     cancellation.check()
                     val count = source.read(chunk)
                     if (count < 0) break
-                    if (output.size() + count > 2 * 1024 * 1024) throw ProtocolFailure("GATEWAY_FAILURE", "Gateway response too large")
                     output.write(chunk, 0, count)
                 }
                 output.toByteArray()
@@ -71,7 +69,6 @@ internal class GatewayModelClient(private val config: GenerationGatewayConfig) :
                 throw ProtocolFailure("GATEWAY_FAILURE", "Invalid generation gateway response")
             }
             val content = envelope.opt("content") as? String ?: throw ProtocolFailure("GATEWAY_FAILURE", "Missing model content")
-            if (content.toByteArray(Charsets.UTF_8).size > 256 * 1024) throw ProtocolFailure("GATEWAY_FAILURE", "Model content too large")
             val model = envelope.opt("model") as? String ?: throw ProtocolFailure("GATEWAY_FAILURE", "Missing model provenance")
             val metadata = envelope.optJSONObject("metadata") ?: throw ProtocolFailure("GATEWAY_FAILURE", "Missing model metadata")
             log.generationTelemetry?.provider(model, metadata)

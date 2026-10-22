@@ -38,9 +38,9 @@ internal fun canonicalCatalog(config: EmbeddingConfig): String {
 internal fun catalogRevision(config: EmbeddingConfig): String = MessageDigest.getInstance("SHA-256").digest(canonicalCatalog(config).toByteArray()).joinToString("") { "%02x".format(it) }
 
 /** Runs compiled trusted DEAL. No native retry loop, and no capability invocation during inference. */
-internal class ExperienceGenerator(private val context: Context, private val config: EmbeddingConfig, private val engine: JavaScriptSandbox) {
+internal class ExperienceGenerator(private val context: Context, private val config: EmbeddingConfig, private val engine: JavaScriptSandbox, private val capabilityHost: dev.deal.embedding.capabilities.CapabilityHost) {
     fun generate(intent: String, disclosedContext: String, model: ModelClient, cancellation: GenerationCancellation, progress: (String) -> Unit, log: EmbeddingLog = EmbeddingLog(context), contextId: String = UUID.randomUUID().toString(), contextSchema: JSONObject = WireType("record").json()): CheckedCandidate {
-        require(intent.isNotBlank() && intent.length <= 4096 && disclosedContext.length <= 8192)
+        require(intent.isNotBlank())
         val telemetry=GenerationTelemetry(log)
         log.generationTelemetry=telemetry
         val revision = catalogRevision(config)
@@ -92,6 +92,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             val code = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("[A-Z][A-Z0-9_]{0,79}")) } ?: ""
                             if (args.getString(0) == "check" && args.getString(1) == "rejected" && code == "INVALID_ENVELOPE") log.event("check", "rejected", code = code)
                             else if (args.getString(0) == "lower" && args.getString(1) in setOf("started", "completed", "failed")) log.event("lower", args.getString(1), code = code)
+                            else if(args.getString(0)=="recovery")log.event("recovery",args.getString(1),code=code)
                             else if(args.getString(0)=="patch") {
                                 if(args.getString(1)=="started")telemetry.patchStart()
                                 else runCatching { telemetry.patchEnd(JSONObject(args.getString(2))) }
@@ -137,20 +138,51 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             val reason = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("CHOICE_[A-Z_]+")) } ?: ""
                             log.event("route", if (attempts == 1) "fallback" else "repair", code = reason)
                             telemetry.modelStart(args.getString(1),args.getString(2))
-                            progress("AI writing logic and screen · attempt $attempts of 33")
-                            val raw = log.operation("source", operation = request.getInt("id").toString(), detail = args.toString()) { child ->
+                            progress("AI writing logic and screen · attempt $attempts")
+                            val raw = try { log.operation("source", operation = request.getInt("id").toString(), detail = args.toString()) { child ->
                                 model.complete(args.getString(0), args.getString(1), args.getString(2), cancellation, child).also { child.event("source", "response", detail = it) }
+                            } } catch(error:Exception) {
+                                cancellation.check()
+                                val code=when(error){is ProtocolFailure->error.code;is java.io.IOException->"PROVIDER_UNREACHABLE";else->""}
+                                if(code !in setOf("PROVIDER_HTTP","MODEL_TIMEOUT","PROVIDER_UNREACHABLE","GATEWAY_FAILURE","HTTP_429","HTTP_502","HTTP_503","HTTP_504"))throw error
+                                telemetry.modelEnd("")
+                                log.event("source","recovering",code=code)
+                                eval("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id",request.getInt("id")).put("ok",false).put("error",JSONObject().put("code","MODEL_RECOVERABLE").put("message",code)))})")
+                                // Cancellation-aware backoff prevents a provider outage from becoming a tight loop.
+                                repeat(10){cancellation.check();Thread.sleep(100)}
+                                continue
                             }
                             telemetry.modelEnd(raw)
                             raw
                         }
                         "embedding/checker" -> {
-                            progress(if (attempts == 0) "Checking catalogue workspace…" else "Checking AI-written code · attempt $attempts of 33")
+                            progress(if (attempts == 0) "Checking catalogue workspace…" else "Checking AI-written code · attempt $attempts")
                             val id = UUID.randomUUID().toString()
                             try {
                                 val source = ExperienceSource(args.getString(0), args.getString(1))
                                 telemetry.checkStart(source)
                                 val output = log.operation("check", candidate = id, detail = JSONObject().put("deal", source.deal).put("dealui", source.ui).toString()) { child -> ExperienceCompiler(context, config, child).compile(source.deal, source.ui) }
+                                val test=config.candidateTest
+                                if(test!=null) {
+                                    // Speculative test sessions must not mark the accepted
+                                    // request's runtime milestones/failures as final outcomes.
+                                    val testLog=EmbeddingLog.traced(context,log.run)
+                                    val session=UiSession(context,capabilityHost,engine,config,testLog,id,id)
+                                    var failed:String
+                                    var checkpoint:String?=null
+                                    try { session.mount(output);failed=test(CandidateTestSession(session,cancellation));checkpoint=session.state() }
+                                    finally { session.close() }
+                                    if(failed.isEmpty() && checkpoint!=null) {
+                                        val restored=UiSession(context,capabilityHost,engine,config,testLog,id,id)
+                                        try { restored.mount(output,checkpoint);failed=test(CandidateTestSession(restored,cancellation,true)) }
+                                        finally { restored.close() }
+                                    }
+                                    log.event("candidate-test",if(failed.isEmpty())"passed" else "rejected",candidate=id,detail=failed)
+                                    if(failed.isNotEmpty()) {
+                                        StagingReclamation.remove(context,output.parentFile)
+                                        throw CandidateRejected(JSONArray().put(JSONObject().put("stage","runtime-test").put("code","BEHAVIOR_TEST").put("message",failed)).toString())
+                                    }
+                                }
                                 telemetry.checkEnd(true,"");telemetry.checkedTime()
                                 checked[id] = source to output
                                 JSONObject().put("accepted", true).put("candidateId", id).put("diagnostics", "")

@@ -22,6 +22,7 @@ export async function check(raw: string): table {
         let keys: string[] = tables.keys(envelope);
         if (keys.length !== 2) { throw { code: "INVALID_ENVELOPE", message: "Envelope must contain exactly deal and dealui" }; }
         deal = envelope.deal; ui = envelope.dealui;
+        if (deal === "" || ui === "") { throw { code: "INVALID_ENVELOPE", message: "Both source files must be nonempty" }; }
     } catch (error) {
         await observer.record("check", "rejected", "INVALID_ENVELOPE");
         return invalid("Envelope must contain exactly deal and dealui strings");

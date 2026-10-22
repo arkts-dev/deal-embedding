@@ -9,7 +9,6 @@ internal class ExperienceCompiler(private val context: Context, private val conf
     private val storage = ExperienceStorage(context, config.storageName)
     fun compile(dealSource: String, uiSource: String): File {
         StagingReclamation.retry(context)
-        check(dealSource.toByteArray().size <= 128 * 1024 && uiSource.toByteArray().size <= 64 * 1024)
         val distribution = storage.distribution()
         System.setProperty("deal.home", distribution.absolutePath)
         val project = storage.candidateDirectory()

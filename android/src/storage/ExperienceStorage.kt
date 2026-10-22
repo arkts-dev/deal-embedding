@@ -17,7 +17,6 @@ internal class ExperienceStorage(private val context: Context, name: String) {
         String(android.util.Base64.decode(value, android.util.Base64.NO_WRAP), Charsets.UTF_8) else value
     private fun digest(source: ExperienceSource) = java.security.MessageDigest.getInstance("SHA-256").digest((source.deal + "\u0000" + source.ui).toByteArray()).joinToString("") { "%02x".format(it) }
     fun saveState(id: String, source: ExperienceSource, state: String) {
-        require(state.toByteArray().size <= 256 * 1024)
         check(prefs.edit().putString("workspace.$id.state", state).putString("workspace.$id.stateSource", digest(source)).commit()) { "Cannot persist draft" }
     }
     fun state(id: String, source: ExperienceSource): String? = if (prefs.getString("workspace.$id.stateSource", "") == digest(source)) prefs.getString("workspace.$id.state", null) else null
@@ -29,7 +28,7 @@ internal class ExperienceStorage(private val context: Context, name: String) {
             val id = key.removePrefix("workspace.").removeSuffix(".deal")
             SavedWorkspace(id, prefs.getString("workspace.$id.title", "Workspace")!!,
                 runCatching { WorkspaceOrigin.valueOf(prefs.getString("workspace.$id.origin", "")!!) }.getOrDefault(WorkspaceOrigin.SAVED_SOURCE),
-                prefs.getInt("workspace.$id.attempts", 0).coerceIn(0, 3))
+                prefs.getInt("workspace.$id.attempts", 0).coerceAtLeast(0))
         }.sortedBy { it.title }
     fun source(id: String): ExperienceSource? = prefs.getString("workspace.$id.deal", null)?.let { deal ->
         prefs.getString("workspace.$id.dealui", null)?.let { ui -> ExperienceSource(decode(id, deal), decode(id, ui)) }

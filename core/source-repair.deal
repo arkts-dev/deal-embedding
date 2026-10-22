@@ -9,7 +9,7 @@ export function digestInput(deal: string, ui: string): string {
 }
 
 function rejected(code: string): table { return { accepted: false, source: "", diagnostics: code }; }
-// Exact, bounded, revision-bound textual edits. Not a semantic editor or source authority.
+// Exact, revision-bound textual edits without count/size ceilings. Not a semantic editor or source authority.
 export async function apply(base: string, raw: string): table {
     let pair: table = await data.parse(base);
     let deal: string = pair.deal; let ui: string = pair.dealui;
@@ -23,7 +23,7 @@ export async function apply(base: string, raw: string): table {
         let supplied: string = patch.baseDigest;
         edits = patch.edits;
         if (keys.length !== 2 || supplied !== digest) { return rejected("PATCH_BASE"); }
-        if (edits.length < 1 || edits.length > 8) { return rejected("PATCH_LIMIT"); }
+        if (edits.length < 1) { return rejected("PATCH_LIMIT"); }
     } catch (error) { return rejected("PATCH_SHAPE"); }
     let dealSearch: string[] = []; let dealReplace: string[] = [];
     let uiSearch: string[] = []; let uiReplace: string[] = [];
@@ -34,8 +34,6 @@ export async function apply(base: string, raw: string): table {
             file = edit.file; search = edit.search; replacement = edit.replacement;
             if (keys.length !== 3 || search === "" || (file !== "deal" && file !== "dealui")) { return rejected("PATCH_SHAPE"); }
         } catch (error) { return rejected("PATCH_SHAPE"); }
-        let size: int = await data.utf16Length(search + replacement);
-        if (size > 32768) { return rejected("PATCH_LIMIT"); }
         let source: string = deal; let searches: string[] = dealSearch; let replacements: string[] = dealReplace;
         if (file === "dealui") { source = ui; searches = uiSearch; replacements = uiReplace; }
         let pieces: string[] = strings.split(source, search);
@@ -76,6 +74,6 @@ export async function apply(base: string, raw: string): table {
 export async function instruction(base: string): string {
     let pair: table = await data.parse(base); let deal: string = pair.deal; let ui: string = pair.dealui;
     let digest: string = await data.sha256(digestInput(deal, ui));
-    return "\nREPAIR PROTOCOL exact-source-patch-v1\nReturn ONLY {\"baseDigest\":\"" + digest + "\",\"edits\":[{\"file\":\"deal or dealui\",\"search\":\"exact unique original text\",\"replacement\":\"corrected text\"}]}. Maximum 8 disjoint edits against the original source. Preserve unaffected source and behavior. Do not return complete source files.\nBASE SOURCE\n" + base;
+    return "\nREPAIR PROTOCOL exact-source-patch-v1\nReturn ONLY {\"baseDigest\":\"" + digest + "\",\"edits\":[{\"file\":\"deal or dealui\",\"search\":\"exact unique original text\",\"replacement\":\"corrected text\"}]}. Use disjoint edits against the original source; no edit-count limit. Preserve unaffected source and behavior. Do not return complete source files.\nBASE SOURCE\n" + base;
 }
 export function main(): null { return null; }

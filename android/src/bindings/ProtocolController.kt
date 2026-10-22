@@ -103,15 +103,16 @@ class ProtocolController(private val context:Context, private val embedding:Embe
             program.evaluate("publicResults.delete(${JSONObject.quote(key)}); ''")
         }finally{futures.remove(key)?.completeExceptionally(ProtocolFailure("DETACHED","Observer detached"))}
     }
-    fun await(key:String,timeoutSeconds:Long=120):Any {
-        val deadline=if(timeoutSeconds==Long.MAX_VALUE)Long.MAX_VALUE else System.nanoTime()+TimeUnit.SECONDS.toNanos(timeoutSeconds)
+    fun await(key:String,timeoutSeconds:Long=-1):Any {
+        require(timeoutSeconds == -1L || timeoutSeconds > 0)
+        val deadline=if(timeoutSeconds == -1L || timeoutSeconds==Long.MAX_VALUE)Long.MAX_VALUE else System.nanoTime()+TimeUnit.SECONDS.toNanos(timeoutSeconds)
         val future=futures[key]?:error("Unknown invocation")
         return try{
             while(!future.isDone){check(System.nanoTime()<deadline){"Protocol consumer timeout"};Thread.sleep(5)}
             future.get()
         }catch(e:ExecutionException){throw e.cause!!}finally{if(!future.isDone)detach(key);futures.remove(key)}
     }
-    fun call(name:String,args:JSONArray=JSONArray(),timeoutSeconds:Long=120):Any=await(start(name,args),timeoutSeconds)
+    fun call(name:String,args:JSONArray=JSONArray(),timeoutSeconds:Long=-1):Any=await(start(name,args),timeoutSeconds)
     @Synchronized fun synchronous(name:String,args:JSONArray=JSONArray()):Any {
         check(!ended)
         val declared=program.evaluate("String(publicConsumer[${JSONObject.quote(name)}].\$sig.startsWith('async'))")

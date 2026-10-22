@@ -15,7 +15,7 @@ import * as protocol from "embedding/protocol";
 export class GenerationInput { intent: string = ""; context: embedding.GenerationContext = {}; capabilities: embedding.CapabilityContract[] = []; }
 export class GenerationResult { candidateId: string = ""; attempts: int = 0; diagnostics: string = ""; usedFallback: boolean = false; }
 
-// Embedding owns dialogue, validation and bounded repair. App policy owns domain lowering.
+// Embedding owns dialogue, validation and recovery until success or explicit cancellation.
 export async function generate(request: GenerationInput): GenerationResult {
     let disclosed: string = embedding.contextJson(request.context);
     let catalog: string = await discovery.catalog();
@@ -37,23 +37,36 @@ export async function generate(request: GenerationInput): GenerationResult {
                 let checked: table = await checker.check(envelope);
                 let accepted: boolean = checked.accepted;
                 if (accepted) { return { candidateId: checked.candidateId, attempts: 1 }; }
-                let failure: string = checked.diagnostics;
-                return { attempts: 1, diagnostics: "TEMPLATE_CHECK_FAILED: " + failure };
+                diagnostics = checked.diagnostics;
             }
             diagnostics = "CHOICE_UNSUPPORTED: " + lowering.reason;
         }
     }
     let previous: string = ""; let lastResponse: string = ""; let patchFailure: string = "";
-    for (let attempt: int = 0; attempt < 33; attempt = attempt + 1) {
-        let operation: string = "initial"; if (attempt > 0) { operation = "repair"; }
+    let attempt: int = 0;
+    while (true) {
+        attempt = attempt + 1;
+        let operation: string = "initial"; if (previous !== "") { operation = "repair"; }
         let sourceInput: string = input + guidance.workflow() + "\nSOURCE OPERATION\n" + operation + "\n";
         let patching: boolean = previous !== "";
         if (patching) {
             sourceInput = sourceInput + await feedback.patchInstruction(previous, diagnostics) + await repair.instruction(previous);
             if (patchFailure !== "") { sourceInput = sourceInput + "\nPrevious patch rejected: " + patchFailure; }
+        } else if (attempt > 1) {
+            sourceInput = sourceInput + "\nINITIAL ENVELOPE RECOVERY\nThe last response did not provide a valid complete source pair. Return the complete initial JSON object with both deal and dealui nonempty strings. This is initial admission recovery, not a source-patch repair.\nFeedback:\n" + diagnostics + "\nPrevious unadmitted response:\n" + lastResponse;
         }
-        let raw: string = await model.complete(sourceInput, previous, diagnostics);
-        if (raw === lastResponse) { return { attempts: attempt + 1, diagnostics: "REPEATED_CANDIDATE: " + diagnostics, usedFallback: true }; }
+        let raw: string = "";
+        try { raw = await model.complete(sourceInput, previous, diagnostics); }
+        catch (error) {
+            // Host classifies transport/provider failures; never turn permission/compiler failures into source edits.
+            if (error.code !== "MODEL_RECOVERABLE") { throw error; }
+            await observer.record("recovery", "model", error.message);
+            continue;
+        }
+        if (raw === lastResponse) {
+            await observer.record("recovery", "repeated", "REPEATED_RESPONSE");
+            patchFailure = "REPEATED_RESPONSE: provide a different valid correction; the last reply was rejected.";
+        }
         lastResponse = raw;
         if (patching) {
             await observer.record("patch", "started", "");
@@ -65,12 +78,13 @@ export async function generate(request: GenerationInput): GenerationResult {
         let checked: table = await checker.check(raw);
         let accepted: boolean = checked.accepted;
         diagnostics = checked.diagnostics;
-        if (accepted) { return { candidateId: checked.candidateId, attempts: attempt + 1, usedFallback: true }; }
-        // Without a valid pair there is no revision to patch. Never request a replacement pair.
-        if (strings.contains(diagnostics, "INVALID_CANDIDATE")) { return { attempts: attempt + 1, diagnostics: diagnostics, usedFallback: true }; }
+        if (accepted) { return { candidateId: checked.candidateId, attempts: attempt, usedFallback: true }; }
+        if (strings.contains(diagnostics, "INVALID_CANDIDATE")) {
+            await observer.record("recovery", "envelope", "INVALID_CANDIDATE");
+            continue;
+        }
         previous = raw;
     }
-    if (patchFailure !== "") { diagnostics = diagnostics + "\nPatch rejected: " + patchFailure; }
-    return { attempts: 33, diagnostics: diagnostics, usedFallback: true };
+    throw { code: "UNREACHABLE", message: "Generation loop exited unexpectedly" };
 }
 export function main(): null { return null; }

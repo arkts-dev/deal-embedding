@@ -11,7 +11,7 @@ internal object SandboxEngine {
     private var engine: JavaScriptSandbox? = null
     private var leases = 0
     @Synchronized fun acquire(context: Context): JavaScriptSandbox {
-        val active = engine ?: JavaScriptSandbox.createConnectedInstanceAsync(context.applicationContext).get(10, TimeUnit.SECONDS).also { engine = it }
+        val active = engine ?: JavaScriptSandbox.createConnectedInstanceAsync(context.applicationContext).get().also { engine = it }
         leases++; return active
     }
     @Synchronized fun release(active: JavaScriptSandbox, dead: Boolean = false) {
@@ -30,11 +30,11 @@ internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : Aut
         listOf(JavaScriptSandbox.JS_FEATURE_PROMISE_RETURN, JavaScriptSandbox.JS_FEATURE_ISOLATE_TERMINATION, JavaScriptSandbox.JS_FEATURE_ISOLATE_MAX_HEAP_SIZE).forEach {
             check(engine.isFeatureSupported(it)) { "Missing sandbox feature: $it" }
         }
-        isolate = engine.createIsolate(IsolateStartupParameters().apply { setMaxHeapSizeBytes(32L * 1024 * 1024); setMaxEvaluationReturnSizeBytes(returnLimit) })
+        isolate = engine.createIsolate(IsolateStartupParameters().apply { setMaxEvaluationReturnSizeBytes(returnLimit) })
     }
     @Synchronized fun evaluate(source: String): String {
         if(closed)throw ClosedSandboxProgram()
-        try { return isolate.evaluateJavaScriptAsync(source).get(2, TimeUnit.SECONDS) }
+        try { return isolate.evaluateJavaScriptAsync(source).get() }
         catch(error:IllegalStateException){if(error.message?.startsWith("Calling evaluateJavaScriptAsync() when ")==true){closed=true;throw ClosedSandboxProgram()};throw error}
         catch (error: java.util.concurrent.TimeoutException) { close(); throw error }
     }

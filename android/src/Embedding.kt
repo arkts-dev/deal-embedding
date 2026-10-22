@@ -43,7 +43,7 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
     private fun endDelivery(key:String){deliveries.remove(key)?.let{d->val waits=d.waiters.toList();d.waiters.clear();waits.forEach{it.second.completeExceptionally(ProtocolFailure("CLOSED","Session closed"))}}}
     private fun id()=UUID.randomUUID().toString()
     @Synchronized fun snapshot(schema:WireType,valueJson:String):GenerationContext {
-        check(!stopped);require(valueJson.toByteArray().size<=8192)
+        check(!stopped)
         schema.validateSchema();val copy=WireType.parse(schema.json());val value=JSONTokener(valueJson).let{parser->val v=parser.nextValue();require(parser.nextClean()=='\u0000'){"Trailing JSON"};v};copy.validate(value)
         val normalized=JSONArray().put(value).toString().let{it.substring(1,it.length-1)}
         return GenerationContext(id()).also{contexts[it.id]=copy to normalized}
@@ -51,7 +51,7 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
     @Synchronized fun contextSchema(context:GenerationContext)=WireType.parse((contexts[context.id] ?: error("Invalid context")).first.json())
     @Synchronized fun contextJson(context:GenerationContext)=(contexts[context.id] ?: error("Invalid context")).second
     @Synchronized fun request(title:String,intent:String,context:GenerationContext):GenerationRequest {
-        check(!stopped);require(title.isNotBlank()&&title.length<=512&&intent.isNotBlank()&&intent.length<=4096);contextJson(context)
+        check(!stopped);require(title.isNotBlank()&&intent.isNotBlank());contextJson(context)
         return GenerationRequest(id()).also{requests[it.id]=RequestState(title,intent,context,config.contracts.map{CapabilityContract.parse(it.json().toString())},GenerationCancellation(),EmbeddingLog(this.context))}
     }
     /** Controller-to-mechanism admission preserves the controller's frozen catalogue and trace. */
@@ -66,7 +66,7 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
         state.cancellation.check()
         val frozen=config.copy(contracts=state.contracts)
         val engine=synchronized(this){check(!stopped);runtime.sandbox()}
-        val candidate=ExperienceGenerator(context,frozen,engine).generate(state.intent,contextJson(state.context),model,state.cancellation,{},state.log,state.context.id,contextSchema(state.context).json())
+        val candidate=ExperienceGenerator(context,frozen,engine,registry).generate(state.intent,contextJson(state.context),model,state.cancellation,{},state.log,state.context.id,contextSchema(state.context).json())
         try { return synchronized(this){state.cancellation.check();check(!stopped);issue(state.title,candidate)} }catch(e:Throwable){runCatching{candidate.close()}.onFailure{e.addSuppressed(it)};throw e}
     }
     @Synchronized fun cancel(request:GenerationRequest){(requests[request.id] ?: error("Invalid request")).cancellation.cancel()}
@@ -74,7 +74,7 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
         val experience=Experience(candidate.identity,title,when(candidate.origin){WorkspaceOrigin.CATALOGUE->"catalogue";WorkspaceOrigin.AI_SOURCE->"generated";else->"supplied"},candidate.attempts)
         experiences[experience.id]=experience;candidates[experience.id]=candidate;return experience
     }
-    @Synchronized fun load(title:String,source:Source):Experience {check(!stopped);require(title.isNotBlank()&&title.length<=512);return issue(title,runtime.check(ExperienceSource(source.deal,source.dealui)))}
+    @Synchronized fun load(title:String,source:Source):Experience {check(!stopped);require(title.isNotBlank());return issue(title,runtime.check(ExperienceSource(source.deal,source.dealui)))}
     @Synchronized private fun trusted(experience:Experience)=experiences[experience.id] ?: error("Invalid experience")
     @Synchronized fun source(experience:Experience):Source {
         trusted(experience);val source=candidates[experience.id]?.source ?: runtime.workspace(experience.id)?.source ?: ExperienceStorage(context,config.storageName).source(experience.id) ?: error("Source unavailable")
