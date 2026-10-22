@@ -42,7 +42,7 @@ Manual Android consumers must include ML Kit Prompt beta4 and its runtime depend
 
 ## Ownership
 
-- `core/generation.deal`: orchestration, app policy offer/lower, source fallback, maximum three source attempts, diagnostic repair and repeated-response stop.
+- `core/generation.deal`: orchestration, app policy offer/lower, source fallback, one initial source call plus at most 32 targeted repairs, diagnostic repair and repeated-response stop.
 - Consuming app's compiled policy: domain eligibility, described questions/options, domain answer validation and deterministic source synthesis. The library contains no equipment catalogue policy.
 - `core/candidate-check.deal`, `source-repair.deal`, `generation-guidance.deal`: closed envelope validation, bounded digest-bound optional delta repair and prompt assembly.
 - `ui/`: authoritative portable component contract, composition prose and authored examples; packaged and build-derived guidance share those exact inputs.

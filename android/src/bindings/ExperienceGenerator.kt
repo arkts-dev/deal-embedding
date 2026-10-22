@@ -41,7 +41,8 @@ internal fun catalogRevision(config: EmbeddingConfig): String = MessageDigest.ge
 internal class ExperienceGenerator(private val context: Context, private val config: EmbeddingConfig, private val engine: JavaScriptSandbox) {
     fun generate(intent: String, disclosedContext: String, model: ModelClient, cancellation: GenerationCancellation, progress: (String) -> Unit, log: EmbeddingLog = EmbeddingLog(context), contextId: String = UUID.randomUUID().toString(), contextSchema: JSONObject = WireType("record").json()): CheckedCandidate {
         require(intent.isNotBlank() && intent.length <= 4096 && disclosedContext.length <= 8192)
-        cancellation.check()
+        val telemetry=GenerationTelemetry(log)
+        log.generationTelemetry=telemetry
         val revision = catalogRevision(config)
         val catalog = canonicalCatalog(config)
         val checked = mutableMapOf<String, Pair<ExperienceSource, File>>()
@@ -79,6 +80,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                     }
                     log.event("candidate", "accepted", candidate = id)
                     log.event("request", "completed", candidate = id)
+                    telemetry.end("source_checked")
                     return CheckedCandidate(context,candidate.first, candidate.second, revision, result.getInt("attempts"), log, id, if (result.getBoolean("usedFallback")) WorkspaceOrigin.AI_SOURCE else WorkspaceOrigin.CATALOGUE).also{accepted=it}
                 }
                 val requests = JSONArray(eval("dealCapabilities.take()"))
@@ -90,6 +92,10 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             val code = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("[A-Z][A-Z0-9_]{0,79}")) } ?: ""
                             if (args.getString(0) == "check" && args.getString(1) == "rejected" && code == "INVALID_ENVELOPE") log.event("check", "rejected", code = code)
                             else if (args.getString(0) == "lower" && args.getString(1) in setOf("started", "completed", "failed")) log.event("lower", args.getString(1), code = code)
+                            else if(args.getString(0)=="patch") {
+                                if(args.getString(1)=="started")telemetry.patchStart()
+                                else runCatching { telemetry.patchEnd(JSONObject(args.getString(2))) }
+                            }
                             else log.event("policy", if (args.getString(1) == "issued") "issued" else "validated", code = code)
                             JSONObject.NULL
                         }
@@ -130,18 +136,22 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             attempts++
                             val reason = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("CHOICE_[A-Z_]+")) } ?: ""
                             log.event("route", if (attempts == 1) "fallback" else "repair", code = reason)
-                            progress("AI writing logic and screen · attempt $attempts of 3")
+                            telemetry.modelStart(args.getString(1),args.getString(2))
+                            progress("AI writing logic and screen · attempt $attempts of 33")
                             val raw = log.operation("source", operation = request.getInt("id").toString(), detail = args.toString()) { child ->
                                 model.complete(args.getString(0), args.getString(1), args.getString(2), cancellation, child).also { child.event("source", "response", detail = it) }
                             }
+                            telemetry.modelEnd(raw)
                             raw
                         }
                         "embedding/checker" -> {
-                            progress(if (attempts == 0) "Checking catalogue workspace…" else "Checking AI-written code · attempt $attempts of 3")
+                            progress(if (attempts == 0) "Checking catalogue workspace…" else "Checking AI-written code · attempt $attempts of 33")
                             val id = UUID.randomUUID().toString()
                             try {
                                 val source = ExperienceSource(args.getString(0), args.getString(1))
+                                telemetry.checkStart(source)
                                 val output = log.operation("check", candidate = id, detail = JSONObject().put("deal", source.deal).put("dealui", source.ui).toString()) { child -> ExperienceCompiler(context, config, child).compile(source.deal, source.ui) }
+                                telemetry.checkEnd(true,"");telemetry.checkedTime()
                                 checked[id] = source to output
                                 JSONObject().put("accepted", true).put("candidateId", id).put("diagnostics", "")
                             } catch (error: Exception) {
@@ -149,6 +159,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                                 // Failed physical cleanup is an operational failure, not repair feedback.
                                 if(error.suppressed.isNotEmpty())throw error
                                 val diagnostics = error.diagnostics
+                                telemetry.checkEnd(false,diagnostics)
                                 log.event("check", "rejected", candidate = id, code = "CANDIDATE_REJECTED")
                                 JSONObject().put("accepted", false).put("candidateId", "").put("diagnostics", diagnostics)
                             }
@@ -162,6 +173,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
             }
         } catch (error: Throwable) {
             originalFailure=error
+            telemetry.end(if(error is java.util.concurrent.CancellationException)"cancelled" else "failed",when(error){is GenerationRejected->error.reason.name;is ProtocolFailure->error.code;is CompilerOperationFailed->"COMPILER_OPERATION_${error.status}";else->error.javaClass.simpleName})
             log.event("request", "failed", code = error.javaClass.simpleName)
             throw error
         } finally {

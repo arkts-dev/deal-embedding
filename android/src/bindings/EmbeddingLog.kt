@@ -12,8 +12,16 @@ import java.util.concurrent.TimeUnit
 /** Trusted observation only. Admission and persistence failures never replace application outcomes. */
 class EmbeddingLog private constructor(private val context: Context, val run: String, private val defaultParent: String) {
     constructor(context: Context) : this(context.applicationContext, UUID.randomUUID().toString(), "")
-    private fun child(parent: String) = EmbeddingLog(context, run, parent).also{it.boundExperience=boundExperience;it.boundSession=boundSession}
-    internal fun bind(workspace: String,session:String) = EmbeddingLog(context,run,defaultParent).also { it.boundExperience=workspace;it.boundSession=session }
+    internal var generationTelemetry: GenerationTelemetry? = null
+    private fun child(parent: String) = EmbeddingLog(context, run, parent).also{it.boundExperience=boundExperience;it.boundSession=boundSession;it.generationTelemetry=generationTelemetry}
+    internal fun bind(workspace: String,session:String) = EmbeddingLog(context,run,defaultParent).also { it.boundExperience=workspace;it.boundSession=session;it.generationTelemetry=generationTelemetry }
+    internal fun metric(stage: String, record: JSONObject) {
+        val raw=record.toString()
+        val target=if(raw.codePointCount(0,raw.length)<=16384)raw else JSONObject().put("schema",1).put("requestId",run)
+            .put("attemptId",record.opt("attemptId") ?: JSONObject.NULL).put("summaryRevision",record.opt("summaryRevision") ?: JSONObject.NULL)
+            .put("outcome","telemetry_oversized").put("telemetryComplete",false).put("missing",org.json.JSONArray().put("record_size_limit")).toString()
+        event(stage,"record",target=target)
+    }
     internal val experienceIdentity: String get() = boundExperience
     private var boundExperience=""
     private var boundSession=""

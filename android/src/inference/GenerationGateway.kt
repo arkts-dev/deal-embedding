@@ -74,6 +74,7 @@ internal class GatewayModelClient(private val config: GenerationGatewayConfig) :
             if (content.toByteArray(Charsets.UTF_8).size > 256 * 1024) throw ProtocolFailure("GATEWAY_FAILURE", "Model content too large")
             val model = envelope.opt("model") as? String ?: throw ProtocolFailure("GATEWAY_FAILURE", "Missing model provenance")
             val metadata = envelope.optJSONObject("metadata") ?: throw ProtocolFailure("GATEWAY_FAILURE", "Missing model metadata")
+            log.generationTelemetry?.provider(model, metadata)
             log.event("model-provider", "completed", target = model + " " + metadata.toString())
             if (envelope.optBoolean("captureOmitted")) log.event("model-provider", "omitted", code = "CAPTURE_LIMIT", target = model)
             else if (capture) {

@@ -1,4 +1,5 @@
 import * as strings from "std/string";
+import * as json from "std/json";
 import * as embedding from "embedding";
 import * as policy from "catalogue-policy";
 import * as discovery from "embedding/discovery";
@@ -43,7 +44,7 @@ export async function generate(request: GenerationInput): GenerationResult {
         }
     }
     let previous: string = ""; let lastResponse: string = ""; let patchFailure: string = "";
-    for (let attempt: int = 0; attempt < 3; attempt = attempt + 1) {
+    for (let attempt: int = 0; attempt < 33; attempt = attempt + 1) {
         let operation: string = "initial"; if (attempt > 0) { operation = "repair"; }
         let sourceInput: string = input + guidance.workflow() + "\nSOURCE OPERATION\n" + operation + "\n";
         let patching: boolean = previous !== "";
@@ -55,7 +56,9 @@ export async function generate(request: GenerationInput): GenerationResult {
         if (raw === lastResponse) { return { attempts: attempt + 1, diagnostics: "REPEATED_CANDIDATE: " + diagnostics, usedFallback: true }; }
         lastResponse = raw;
         if (patching) {
+            await observer.record("patch", "started", "");
             let edited: table = await repair.apply(previous, raw); let applied: boolean = edited.accepted;
+            await observer.record("patch", "completed", json.stringify(edited));
             if (!applied) { patchFailure = edited.diagnostics; continue; }
             patchFailure = ""; raw = edited.source;
         }
@@ -68,6 +71,6 @@ export async function generate(request: GenerationInput): GenerationResult {
         previous = raw;
     }
     if (patchFailure !== "") { diagnostics = diagnostics + "\nPatch rejected: " + patchFailure; }
-    return { attempts: 3, diagnostics: diagnostics, usedFallback: true };
+    return { attempts: 33, diagnostics: diagnostics, usedFallback: true };
 }
 export function main(): null { return null; }

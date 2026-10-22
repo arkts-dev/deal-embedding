@@ -18,7 +18,7 @@ function bounded(value: string, maximum: int): string {
 }
 export function normalize(event: LogEvent): string {
     let stage: string = event.stage;
-    let stages: string[] = ["opportunity", "opportunity-catalogue", "opportunity-input", "opportunity-inference", "opportunity-validation", "opportunity-admission", "opportunity-handoff", "request", "discovery", "grant", "session", "contract", "choice", "source", "policy", "lower", "check", "compiler-ui", "compiler-deal", "candidate", "route", "mount", "action", "capability", "effect-delivery", "snapshot", "storage", "host", "transport", "model-provider", "logger"];
+    let stages: string[] = ["opportunity", "opportunity-catalogue", "opportunity-input", "opportunity-inference", "opportunity-validation", "opportunity-admission", "opportunity-handoff", "request", "discovery", "grant", "session", "contract", "choice", "source", "policy", "lower", "check", "compiler-ui", "compiler-deal", "candidate", "route", "mount", "action", "capability", "effect-delivery", "snapshot", "storage", "host", "transport", "model-provider", "repair-metrics", "request-summary", "logger"];
     let known: boolean = false;
     for (let allowed: string of stages) { if (stage === allowed) { known = true; } }
     if (!known) { stage = "logger"; }
@@ -27,11 +27,13 @@ export function normalize(event: LogEvent): string {
     if (duration < 0) { duration = 0; }
     let content: string = "omitted";
     if (event.artifact !== "" && event.capture) { content = "captured"; }
+    let targetLimit: int = 160;
+    if (stage === "repair-metrics" || stage === "request-summary" || stage === "model-provider") { targetLimit = 16384; }
     return json.stringify({ schema: 1, sequence: event.sequence, time: event.time, elapsed: event.elapsed,
         trace: bounded(event.trace, 80), span: bounded(event.span, 80), parent: bounded(event.parent, 80),
         stage: stage, outcome: outcome, code: bounded(event.code, 80),
         candidate: bounded(event.candidate, 80), workspace: bounded(event.workspace, 80), session: bounded(event.session,80), operation: bounded(event.operation, 80),
-        target: bounded(event.target, 160), durationMs: duration, version: event.version,
+        target: bounded(event.target, targetLimit), durationMs: duration, version: event.version,
         artifact: bounded(event.artifact, 80), content: content, bytes: event.bytes,
         summary: stage + " · " + outcome + " " + bounded(event.target, 160),
         contentLimit: 262144, artifactStoreLimit: 4194304, eventStoreLimit: 524288, queueLimit: 256 });

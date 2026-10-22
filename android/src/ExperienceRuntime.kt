@@ -60,7 +60,9 @@ internal class ExperienceRuntime(private val context: Context, private val capab
         val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config, candidate.log.bind(id,session), candidate.identity, id), candidate.output, candidate.source, candidate.origin, candidate.attempts)
         try {
             val restored = if (config.retainState) storage.state(id, candidate.source) else null
-            val snapshot = candidate.log.stage("mount", candidate.identity, id) { live.session.mount(candidate.output, restored) }
+            val mountStarted=android.os.SystemClock.elapsedRealtime()
+            val snapshot = try { candidate.log.stage("mount", candidate.identity, id) { live.session.mount(candidate.output, restored) }.also { candidate.log.generationTelemetry?.mounted(android.os.SystemClock.elapsedRealtime()-mountStarted,true) } }
+                catch(error:Throwable){candidate.log.generationTelemetry?.mounted(android.os.SystemClock.elapsedRealtime()-mountStarted,false);throw error}
             storage.saveWorkspace(id, title, candidate.source, candidate.origin, candidate.attempts)
             candidate.consumed = true
             workspaces[id] = live
