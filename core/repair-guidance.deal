@@ -2,6 +2,7 @@ import * as strings from "std/string";
 import * as data from "embedding/policy-data";
 import * as assets from "./generation-guidance.generated";
 import * as guidance from "./generation-guidance";
+import * as literals from "./source-literals";
 
 // Advisory source feedback only. Complete compiler/behavioral admission remains mandatory.
 export async function patchInstruction(previous: string, diagnostics: string): string {
@@ -59,7 +60,19 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                         if (strings.endsWith(file, ".deal") && code === "E1015" && (strings.contains(reported, " == ") || strings.contains(reported, " != "))) {
                             out = out + "The reported DEAL condition uses unsupported equality syntax. Use === or !==, preserving the operands and behavior.\n";
                         }
-                        out = out + "\nExact reported source line:\n" + reported + "\n";
+                        let patchFile: string = "deal";
+                        if (strings.endsWith(file, ".dealui")) { patchFile = "dealui"; }
+                        out = out + "\nDiagnostic file: " + file + "; patch file: " + patchFile + "; line: " + literals.decimal(line) + "; code: " + code + "\n";
+                        if (code === "E1001" && strings.contains(reported, "\\")) {
+                            out = out + "The reported file contains an invalid backslash. Inspect this exact decoded file for JSON envelope fragments or escaped UI accidentally embedded in DEAL. If present, remove only the misplaced fragment from this file; do not edit the separate dealui file merely because the fragment contains UI. Do not unescape the whole file or change valid string escapes.\n";
+                        }
+                        if (strings.endsWith(file, ".deal") && code === "E3017") {
+                            out = out + "Array length is read-only. Append with array[array.length] = value; to truncate or replace contents, build a fresh typed array and assign it to the owned local/state field. Never assign array.length.\n";
+                        }
+                        if (strings.endsWith(file, ".deal") && code === "E3003") {
+                            out = out + "Table reads require an explicit contextual target type. Read into typed locals before arithmetic/comparison: let cents: int = record.cents;. Use the actual declared contract field/type; do not invent a field or cast.\n";
+                        }
+                        out = out + "Exact reported source line (line number is not source):\n" + literals.decimal(line) + " | " + reported + "\n";
                         let pack: table = assets.pack(); let components: table[] = pack.components;
                         for (let component: table of components) {
                             let name: string = component.name;
@@ -71,7 +84,7 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                         out = out + "Nearby source (context, not replacement authority):\n";
                         let start: int = line - 3; if (start < 0) { start = 0; }
                         let end: int = line + 2; if (end > lines.length) { end = lines.length; }
-                        for (let index: int = start; index < end; index = index + 1) { out = out + lines[index] + "\n"; }
+                        for (let index: int = start; index < end; index = index + 1) { out = out + literals.decimal(index + 1) + " | " + lines[index] + "\n"; }
                     }
                 }
                 count = count + 1;

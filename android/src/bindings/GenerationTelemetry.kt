@@ -110,7 +110,10 @@ internal class GenerationTelemetry(private val log: EmbeddingLog, private val cl
         val record=repair ?: return@safe
         record.put("patchApplyMs",ms)
         if(!result.optBoolean("accepted")) {
-            record.put("patchOutcome","rejected").put("patchRejectionCode",result.optString("diagnostics").take(80))
+            val rejection=result.optString("diagnostics")
+            record.put("patchOutcome","rejected").put("patchRejectionCode",rejection.substringBefore(':').take(80))
+            // Retain actionable indices/counts, never source or raw failed edits.
+            if(rejection.startsWith("PATCH_NO_MATCH:") || rejection.startsWith("PATCH_MULTIPLE_MATCHES:"))record.put("patchRejectionDetail",rejection.take(1024))
             record.put("resultRevision",nullable(base?.let(::revision))).put("immediate",base?.let { changes(it,it) } ?: JSONObject.NULL)
             record.put("cumulative",if(initial!=null&&base!=null)changes(initial!!,base!!) else JSONObject.NULL)
             base?.let { val unchanged=changes(it,it);for(key in listOf("filesChanged","addedLines","removedLines","changedBytes","unchangedDeal","unchangedUi"))record.put(key,unchanged.get(key)) }
