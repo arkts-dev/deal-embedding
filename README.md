@@ -42,9 +42,9 @@ Manual Android consumers must include ML Kit Prompt beta4 and its runtime depend
 
 ## Ownership
 
-- `core/generation.deal`: orchestration, app policy offer/lower, source fallback, unlimited initial-framing recovery and exact targeted repairs until acceptance/cancellation, including feedback from explicit trusted runtime tests.
+- `core/generation.deal`: orchestration, app policy offer/lower, source fallback, unlimited native-tool recovery and exact targeted repairs until acceptance/cancellation, including feedback from explicit trusted runtime tests.
 - Consuming app's compiled policy: domain eligibility, described questions/options, domain answer validation and deterministic source synthesis. The library contains no equipment catalogue policy.
-- `core/source-framing.deal`, `candidate-check.deal`, `source-repair.deal`, `generation-guidance.deal`: strict raw model source/patch framing, internal source-pair validation, digest-bound exact repair and prompt assembly. Model replies use DEAL-SOURCE/1 or DEAL-PATCH/1 only; JSON source/patch output is rejected with no compatibility fallback. Internal host/API serialization remains JSON. Boundary tokens must avoid payload marker collisions; framing preserves source whitespace, quotes, backslashes and Unicode without unescaping.
+- `core/source-agent.deal`, `candidate-check.deal`, `source-repair.deal`, `generation-guidance.deal`: native tool workspace orchestration, internal pair validation, host-bound exact repair and prompt assembly. Provider-native write/read/edit/check calls operate only on two staged source files. Core binds the revision, checks the full pair and returns native tool feedback; no raw framing or source-envelope fallback. Internal host/API serialization remains JSON.
 - `ui/`: authoritative portable component contract, composition prose and authored examples; packaged and build-derived guidance share those exact inputs.
 - `android/src/bindings`: generic answer validation, compiler-derived public ABI linkage, shape conversion and transport. Operational errors never become unsupported choices or automatic provider switching.
 - `android/src/compiler`, `execution`, `storage`, `inference`, `capabilities`, `rendering`: concrete checker, sandbox, persistence, cancellable inference, authenticated Binder transport and Compose mechanisms.

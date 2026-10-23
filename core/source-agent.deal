@@ -1,0 +1,100 @@
+import * as data from "embedding/policy-data";
+import * as tables from "std/table";
+import * as strings from "std/string";
+import * as json from "std/json";
+import * as model from "embedding/model";
+import * as observer from "embedding/observer";
+import * as checker from "./candidate-check";
+import * as repair from "./source-repair";
+import * as feedback from "./repair-guidance";
+
+// Portable restricted workspace. Provider adapters transport native calls, never execute them.
+export async function run(input: string, diagnostic: string): table {
+    let deal: string = ""; let ui: string = ""; let previous: string = "";
+    let history: table[] = []; let attempts: int = 0;
+    while (true) {
+        attempts = attempts + 1;
+        let operation: string = "initial"; if (previous !== "") { operation = "repair"; }
+        let prompt: string = input + "\nSOURCE OPERATION\n" + operation + "\nUse the native tools to create deal and dealui separately, then correct checker failures with exact edits. No textual source envelopes, boundary markers or copied digests. Source filenames are experience.deal and experience.dealui. No shell, other files or provider reads are available. Check complete files; keep correcting until accepted or cancelled.\nNATIVE TOOL TURN\n" + json.stringify({ messages: history });
+        let raw: string = "";
+        try { raw = await model.complete(prompt, previous, diagnostic); }
+        catch (error) {
+            if (error.code !== "MODEL_RECOVERABLE") { throw error; }
+            await observer.record("recovery", "model", error.message); continue;
+        }
+        let message: table = {}; let calls: table[] = [];
+        try {
+            message = await data.parse(raw); calls = message.tool_calls;
+            let role: string = message.role; let text: string = message.content;
+            if (role !== "assistant" || calls.length === 0 || text !== "") { throw { code: "INVALID_TOOL", message: "Use native tools without exterior text" }; }
+            let ids: string[] = [];
+            for (let call: table of calls) {
+                let id: string = call.id; let kind: string = call.type; let functionData: table = call["function"];
+                let name: string = functionData.name; let args: string = functionData.arguments;
+                if (id === "" || kind !== "function" || (calls.length > 1 && name !== "write_file")) { throw { code: "INVALID_TOOL", message: "Use one operation per turn except independent initial writes" }; }
+                for (let prior: string of ids) { if (prior === id) { throw { code: "INVALID_TOOL", message: "Duplicate tool identity" }; } }
+                ids[ids.length] = id;
+            }
+        } catch (error) {
+            if (error.code !== "INVALID_JSON" && error.code !== "INVALID_TOOL" && error.code !== "E8001") { throw error; }
+            history[history.length] = { role: "user", content: "Invalid tool response. Use write_file, edit_sources, read_file or check_sources; no textual envelope. The workspace is unchanged." };
+            await observer.record("recovery", "tool", "INVALID_TOOL"); continue;
+        }
+        history[history.length] = message;
+        for (let call: table of calls) {
+            let id: string = call.id; let functionData: table = call["function"]; let name: string = functionData.name; let arguments: string = functionData.arguments;
+            let result: table = { accepted: false, diagnostics: "INVALID_TOOL" }; let changed: boolean = false; let check: boolean = false;
+            let args: table = {};
+            try { args = await data.parse(arguments); }
+            catch (error) { if (error.code !== "INVALID_JSON") { throw error; } }
+            if (name === "write_file") {
+                try {
+                    let keys: string[] = tables.keys(args); let file: string = args.file; let source: string = args.source;
+                    if (keys.length !== 2 || strings.trim(source) === "" || (file !== "deal" && file !== "dealui")) { throw { code: "TOOL_SHAPE", message: "Invalid file/source" }; }
+                    if ((file === "deal" && deal !== "") || (file === "dealui" && ui !== "")) { result = { accepted: false, diagnostics: "FILE_EXISTS: use exact edits, never overwrite" }; }
+                    else {
+                        if (file === "deal") { deal = source; } else { ui = source; }
+                        result = { accepted: true, diagnostics: "File staged; create the other file before checking" }; changed = true;
+                    }
+                } catch (error) { result = { accepted: false, diagnostics: "TOOL_SHAPE: write_file requires one missing file and nonempty source" }; }
+            } else if (name === "edit_sources") {
+                if (deal === "" || ui === "") { result = { accepted: false, diagnostics: "INCOMPLETE_PAIR: write both files first" }; }
+                else {
+                    let base: string = json.stringify({ deal: deal, dealui: ui });
+                    let digest: string = await data.sha256(repair.digestInput(deal, ui));
+                    let emptyEdits: table[] = []; let patch: table = { baseDigest: digest, edits: emptyEdits };
+                    try { let edits: table[] = args.edits; let keys: string[] = tables.keys(args); if (keys.length === 1) { patch.edits = edits; } } catch (error) { }
+                    await observer.record("patch", "started", "");
+                    result = await repair.apply(base, json.stringify(patch));
+                    await observer.record("patch", "completed", json.stringify(result));
+                    let accepted: boolean = result.accepted;
+                    if (accepted) {
+                        let source: string = result.source; let pair: table = await data.parse(source); deal = pair.deal; ui = pair.dealui; changed = true;
+                    }
+                }
+            } else if (name === "read_file") {
+                try {
+                    let file: string = args.file; let keys: string[] = tables.keys(args);
+                    if (keys.length === 1 && (file === "deal" || file === "dealui")) {
+                        let source: string = deal; if (file === "dealui") { source = ui; }
+                        result = { accepted: true, file: file, source: source };
+                    }
+                } catch (error) { }
+            } else if (name === "check_sources") { let keys: string[] = tables.keys(args); check = keys.length === 0; }
+            if (changed || check) {
+                if (deal !== "" && ui !== "") {
+                    previous = json.stringify({ deal: deal, dealui: ui });
+                    let checked: table = await checker.check(previous); let accepted: boolean = checked.accepted;
+                    let candidate: string = checked.candidateId;
+                    if (accepted) { return { candidateId: candidate, attempts: attempts, usedFallback: true }; }
+                    diagnostic = checked.diagnostics;
+                    let advice: string = await feedback.patchInstruction(previous, diagnostic);
+                    result = { accepted: true, checked: false, diagnostics: diagnostic, guidance: advice };
+                } else if (check) { result = { accepted: false, diagnostics: "INCOMPLETE_PAIR: write both files first" }; }
+            }
+            history[history.length] = { role: "tool", tool_call_id: id, content: json.stringify(result) };
+        }
+    }
+    throw { code: "UNREACHABLE", message: "Source agent exited unexpectedly" };
+}
+export function main(): null { return null; }
