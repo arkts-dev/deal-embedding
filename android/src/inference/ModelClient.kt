@@ -3,7 +3,10 @@ package dev.deal.embedding
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Injection seam for alternative inference mechanisms and deterministic tests. Gateway integration is library-owned. */
+/** Injection seam for alternative inference mechanisms and deterministic tests. Gateway integration is library-owned.
+ * Source completions return raw DEAL-SOURCE/1 or DEAL-PATCH/1 text; previous is an internally serialized pair,
+ * not an instruction to emit JSON. Catalogue choice calls retain their independently specified JSON contract.
+ */
 interface ModelClient {
     fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog): String
 }

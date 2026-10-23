@@ -12,7 +12,6 @@ internal class GenerationTelemetry(private val log: EmbeddingLog, private val cl
     private var current: ExperienceSource? = null
     private var repair: JSONObject? = null
     private var base: ExperienceSource? = null
-    private var rawPatch = ""
     private var modelStarted = 0L
     private var modelActive = false
     private var patchStarted = 0L
@@ -86,7 +85,7 @@ internal class GenerationTelemetry(private val log: EmbeddingLog, private val cl
     }
     fun modelEnd(raw: String) = safe {
         val ms=elapsed(modelStarted);if(repair==null)initialMs+=ms else repairMs+=ms
-        repair?.put("modelMs",ms);modelActive=false;rawPatch=raw;failureStage="generation"
+        repair?.put("modelMs",ms);modelActive=false;failureStage="generation"
     }
     fun provider(model: String, metadata: JSONObject) = safe {
         if(ended||!modelActive)return@safe
@@ -117,12 +116,12 @@ internal class GenerationTelemetry(private val log: EmbeddingLog, private val cl
             record.put("resultRevision",nullable(base?.let(::revision))).put("immediate",base?.let { changes(it,it) } ?: JSONObject.NULL)
             record.put("cumulative",if(initial!=null&&base!=null)changes(initial!!,base!!) else JSONObject.NULL)
             base?.let { val unchanged=changes(it,it);for(key in listOf("filesChanged","addedLines","removedLines","changedBytes","unchangedDeal","unchangedUi"))record.put(key,unchanged.get(key)) }
-            record.put("editCount",runCatching { JSONObject(rawPatch).getJSONArray("edits").length() }.getOrNull() ?: JSONObject.NULL)
+            record.put("editCount",if(result.has("editCount"))result.getInt("editCount") else JSONObject.NULL)
             finishRepair();return@safe
         }
         current=pair(result.getString("source"))
         record.put("patchOutcome","applied").put("resultRevision",nullable(current?.let(::revision)))
-        record.put("editCount",runCatching { JSONObject(rawPatch).getJSONArray("edits").length() }.getOrNull() ?: JSONObject.NULL)
+        record.put("editCount",result.getInt("editCount"))
         val immediate=if(base!=null&&current!=null)changes(base!!,current!!) else JSONObject.NULL
         record.put("immediate",immediate).put("cumulative",if(initial!=null&&current!=null)changes(initial!!,current!!) else JSONObject.NULL)
         if(immediate is JSONObject)for(key in listOf("filesChanged","addedLines","removedLines","changedBytes","unchangedDeal","unchangedUi"))record.put(key,immediate.get(key))

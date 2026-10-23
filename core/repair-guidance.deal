@@ -67,7 +67,7 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                             out = out + "The reported file contains an invalid backslash. Inspect this exact decoded file for JSON envelope fragments or escaped UI accidentally embedded in DEAL. If present, remove only the misplaced fragment from this file; do not edit the separate dealui file merely because the fragment contains UI. Do not unescape the whole file or change valid string escapes.\n";
                         }
                         if (strings.endsWith(file, ".deal") && code === "E1052") {
-                            out = out + "Unsupported DEAL string escape: JSON decoding and source string parsing are separate. Write the intended literal Unicode character in source instead of a backslash-u sequence. Encode the final patch response once as JSON; do not unescape other valid source strings.\n";
+                            out = out + "Unsupported DEAL string escape: write the intended literal Unicode character in source instead of a backslash-u sequence. The final patch is raw DEAL-PATCH/1 text, never JSON-escaped; do not unescape other valid source strings.\n";
                         }
                         if (strings.endsWith(file, ".deal") && code === "E3017") {
                             out = out + "Array length is read-only. Append with array[array.length] = value; to truncate or replace contents, build a fresh typed array and assign it to the owned local/state field. Never assign array.length.\n";

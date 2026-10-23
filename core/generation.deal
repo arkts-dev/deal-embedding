@@ -11,6 +11,7 @@ import * as repair from "./source-repair";
 import * as guidance from "./generation-guidance";
 import * as feedback from "./repair-guidance";
 import * as protocol from "embedding/protocol";
+import * as framing from "./source-framing";
 
 export class GenerationInput { intent: string = ""; context: embedding.GenerationContext = {}; capabilities: embedding.CapabilityContract[] = []; }
 export class GenerationResult { candidateId: string = ""; attempts: int = 0; diagnostics: string = ""; usedFallback: boolean = false; }
@@ -52,8 +53,9 @@ export async function generate(request: GenerationInput): GenerationResult {
         if (patching) {
             sourceInput = sourceInput + await feedback.patchInstruction(previous, diagnostics) + await repair.instruction(previous);
             if (patchFailure !== "") { sourceInput = sourceInput + "\nPrevious patch rejected: " + patchFailure; }
-        } else if (attempt > 1) {
-            sourceInput = sourceInput + "\nINITIAL ENVELOPE RECOVERY\nThe last response did not provide a valid complete source pair. Return the complete initial JSON object with both deal and dealui nonempty strings. This is initial admission recovery, not a source-patch repair.\nFeedback:\n" + diagnostics + "\nPrevious unadmitted response:\n" + lastResponse;
+        } else {
+            sourceInput = sourceInput + framing.instruction();
+            if (attempt > 1) { sourceInput = sourceInput + "\nINITIAL FRAMING RECOVERY\nThe last response did not provide a valid complete raw source pair. Return both files using DEAL-SOURCE/1. No patch base exists yet.\nFeedback:\n" + diagnostics + "\nPrevious unadmitted response:\n" + lastResponse; }
         }
         let raw: string = "";
         try { raw = await model.complete(sourceInput, previous, diagnostics); }
@@ -74,6 +76,14 @@ export async function generate(request: GenerationInput): GenerationResult {
             await observer.record("patch", "completed", json.stringify(edited));
             if (!applied) { patchFailure = edited.diagnostics; continue; }
             patchFailure = ""; raw = edited.source;
+        } else {
+            try { let pair: table = framing.source(raw); raw = json.stringify(pair); }
+            catch (error) {
+                if (error.code !== "INVALID_FRAME") { throw error; }
+                diagnostics = "INVALID_FRAME: " + error.message;
+                await observer.record("recovery", "framing", "INVALID_FRAME");
+                continue;
+            }
         }
         let checked: table = await checker.check(raw);
         let accepted: boolean = checked.accepted;

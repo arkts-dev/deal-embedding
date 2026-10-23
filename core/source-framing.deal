@@ -1,0 +1,61 @@
+import * as strings from "std/string";
+
+// Model-authored text only. JSON remains an internal host ABI, never an output fallback.
+// One framing LF is removed at each boundary; every payload character is preserved.
+export function parse(raw: string, protocol: string): table {
+    // Exterior whitespace is framing, never payload; no source block is trimmed.
+    let text: string = strings.trim(raw);
+    if (text === "") { throw { code: "INVALID_FRAME", message: "Empty model response" }; }
+    let lines: string[] = strings.split(text, "\n");
+    let header: string[] = strings.split(lines[0], " ");
+    let expected: int = 2; if (protocol === "DEAL-PATCH/1") { expected = 3; }
+    if (header.length !== expected || header[0] !== protocol || header[1] === "") { throw { code: "INVALID_FRAME", message: "Invalid raw framing header" }; }
+    let token: string = header[1];
+    for (let character: string of token) {
+        if (!strings.contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-", character)) { throw { code: "INVALID_FRAME", message: "Boundary token must use ASCII letters, digits or hyphens" }; }
+    }
+    let parts: string[] = strings.split(text, "\n<<<" + token + ":");
+    if (parts.length < 2 || parts[0] !== lines[0]) { throw { code: "INVALID_FRAME", message: "Missing boundary or text outside frames" }; }
+    let last: string = parts[parts.length - 1];
+    if (last !== "end>>>" && last !== "end>>>\n") { throw { code: "INVALID_FRAME", message: "Missing end boundary or trailing text" }; }
+    let blocks: table[] = [];
+    for (let i: int = 1; i < parts.length - 1; i = i + 1) {
+        let pieces: string[] = strings.split(parts[i], ">>>\n");
+        if (pieces.length < 2) { throw { code: "INVALID_FRAME", message: "Malformed block header" }; }
+        let name: string = pieces[0];
+        let content: string = strings.substring(parts[i], strings.length(name) + 4, strings.length(parts[i]));
+        blocks[blocks.length] = { name: name, content: content };
+    }
+    let digest: string = ""; if (protocol === "DEAL-PATCH/1") { digest = header[2]; }
+    return { blocks: blocks, digest: digest };
+}
+export function source(raw: string): table {
+    let parsed: table = parse(raw, "DEAL-SOURCE/1"); let blocks: table[] = parsed.blocks;
+    if (blocks.length !== 2) { throw { code: "INVALID_FRAME", message: "Exactly two ordered source blocks required" }; }
+    let deal: table = blocks[0]; let ui: table = blocks[1];
+    let dealName: string = deal.name; let uiName: string = ui.name;
+    if (dealName !== "deal" || uiName !== "dealui") { throw { code: "INVALID_FRAME", message: "Expected deal then dealui" }; }
+    let application: string = deal.content; let view: string = ui.content;
+    if (strings.trim(application) === "" || strings.trim(view) === "") { throw { code: "INVALID_FRAME", message: "Both files must be nonempty" }; }
+    return { deal: application, dealui: view };
+}
+export function patch(raw: string): table {
+    let parsed: table = parse(raw, "DEAL-PATCH/1"); let blocks: table[] = parsed.blocks;
+    if (blocks.length === 0 || blocks.length % 2 !== 0) { throw { code: "INVALID_FRAME", message: "Nonempty search/replacement pairs required" }; }
+    let edits: table[] = [];
+    for (let i: int = 0; i < blocks.length; i = i + 2) {
+        let search: table = blocks[i]; let replacement: table = blocks[i + 1];
+        let file: string = ""; let name: string = search.name; let replacementName: string = replacement.name;
+        if (name === "deal-search") { file = "deal"; }
+        if (name === "dealui-search") { file = "dealui"; }
+        if (file === "" || replacementName !== "replacement") { throw { code: "INVALID_FRAME", message: "Expected deal-search or dealui-search then replacement" }; }
+        let original: string = search.content; let corrected: string = replacement.content;
+        edits[edits.length] = { file: file, search: original, replacement: corrected };
+    }
+    let digest: string = parsed.digest;
+    return { baseDigest: digest, edits: edits };
+}
+export function instruction(): string {
+    return "\nRAW SOURCE PROTOCOL DEAL-SOURCE/1\nReturn only the following raw text framing, not JSON, Markdown or quoted/escaped source. Choose a boundary token of ASCII letters/digits/hyphens not used by boundary-looking lines in either file. Substitute your token for TOKEN in every marker. The header and markers must be on their own lines, with LF newlines. Each marker's preceding LF belongs to framing, not file contents; include an extra LF before a marker if the source must end in a newline. Preserve literal quotes, backslashes and Unicode exactly as source syntax requires. Only optional exterior whitespace may precede the header or follow the end marker; it is framing, not source. Exactly deal then dealui; never combine files.\nDEAL-SOURCE/1 TOKEN\n<<<TOKEN:deal>>>\ncomplete application source\n<<<TOKEN:dealui>>>\ncomplete view source\n<<<TOKEN:end>>>\n";
+}
+export function main(): null { return null; }
