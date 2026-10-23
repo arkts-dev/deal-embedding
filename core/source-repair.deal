@@ -20,7 +20,7 @@ function matchCount(source: string, search: string): int {
     return count;
 }
 function matchRejected(code: string, index: int, file: string, count: int, otherFile: string, otherCount: int): table {
-    return rejected(code + ": editIndex=" + literals.decimal(index) + " (zero-based), file=" + file + ", matchCount=" + literals.decimal(count) + ", otherFile=" + otherFile + ", otherFileMatchCount=" + literals.decimal(otherCount) + ". Match decoded source in the selected file exactly; verify the reported diagnostic file. No edit was applied; the base digest is unchanged.");
+    return rejected(code + ": editIndex=" + literals.decimal(index) + " (zero-based), file=" + file + ", matchCount=" + literals.decimal(count) + ", otherFile=" + otherFile + ", otherFileMatchCount=" + literals.decimal(otherCount) + ". Match decoded source in the selected file exactly; verify the reported diagnostic file. For zero matches, copy a smaller unique region verbatim from that file instead of reconstructing whitespace or escape spelling. A displayed backslash is a source character: encode it once for the JSON response, not twice. For multiple matches include unique surrounding context. No fuzzy correction or file relocation is performed. No edit was applied; the base digest is unchanged.");
 }
 // Exact, revision-bound textual edits without count/size ceilings. Not a semantic editor or source authority.
 export async function apply(base: string, raw: string): table {
