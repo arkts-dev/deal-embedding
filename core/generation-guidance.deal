@@ -66,7 +66,10 @@ export function componentFacts(pack: table): string {
     return out;
 }
 export function guidance(): string {
-    return "DEAL RULES\n" + assets.language() + "\n\nHOW TO COMPOSE A VIEW\n" + composition() +
+    let reserved: string[] = assets.reservedWords(); let names: string = "";
+    for (let word: string of reserved) { if (names !== "") { names = names + ", "; } names = names + word; }
+    return "DEAL RULES\n" + assets.language() + "\n\nRESERVED IDENTIFIERS (derived from the compiler lexer)\n" + names +
+        "\nDo not use these words as variable, class, function or field names. Use descriptive non-keyword local names; preserve provider keys with explicitly typed string indexing, e.g. let periodStart: string = record[\"from\"];.\n\nHOW TO COMPOSE A VIEW\n" + composition() +
         "\n\nTHIS RENDERER\n" + assets.renderer() + "\n\nCOMPONENTS (this is the complete set)\n" + componentFacts(assets.pack()) +
         "\n\nCHECKED ASYNC EXAMPLE (syntax only, not an available capability or task template)\n" +
         "The example-only host/sample exports async value(): int. Never import it unless present in the actual catalog. Adapt the pattern to actual contracts; do not copy its behavior.\nDEAL:\n" + assets.exampleDeal() + "\nDEALUI:\n" + assets.exampleUi() +

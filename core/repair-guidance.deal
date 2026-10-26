@@ -6,7 +6,7 @@ import * as literals from "./source-literals";
 
 // Advisory source feedback only. Complete compiler/behavioral admission remains mandatory.
 export async function patchInstruction(previous: string, diagnostics: string): string {
-    return "\n\nREPAIR GUIDANCE\nEdit only the smallest rejected source region and directly required dependencies. Preserve all unrelated source and behavior. Return only the requested digest-bound exact patch.\n" + await details(previous, diagnostics);
+    return "\n\nREPAIR GUIDANCE\nEdit only the smallest rejected source region and directly required dependencies. Preserve all unrelated source and behavior. Call edit_sources with unique, disjoint exact edits; the host binds them to the current revision. Do not supply a digest or source envelope.\n" + await details(previous, diagnostics);
 }
 async function details(previous: string, diagnostics: string): string {
     let out: string = "Fix the reported cause without redesigning the workflow. The bounded source windows below are context, not edit authority.\n";
@@ -63,6 +63,21 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                         let patchFile: string = "deal";
                         if (strings.endsWith(file, ".dealui")) { patchFile = "dealui"; }
                         out = out + "\nDiagnostic file: " + file + "; patch file: " + patchFile + "; line: " + literals.decimal(line) + "; code: " + code + "\n";
+                        if (code === "E1007") {
+                            let column: int = error.column;
+                            let tail: string = strings.substring(reported, column - 1, strings.length(reported));
+                            let reserved: string[] = assets.reservedWords();
+                            for (let word: string of reserved) {
+                                if (strings.startsWith(tail, word)) {
+                                    let boundary: boolean = strings.length(tail) === strings.length(word);
+                                    if (!boundary) {
+                                        let next: string = strings.substring(tail, strings.length(word), strings.length(word) + 1);
+                                        boundary = !strings.contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$", next);
+                                    }
+                                    if (boundary) { out = out + "Offending token '" + word + "' is a reserved keyword, not an identifier. Rename this declaration and its references using unique contextual edits. Preserve provider keys via explicitly typed string indexing; do not rename wire fields.\n"; }
+                                }
+                            }
+                        }
                         if (code === "E1001" && strings.contains(reported, "\\")) {
                             out = out + "The reported file contains an invalid backslash. Inspect this exact decoded file for JSON envelope fragments or escaped UI accidentally embedded in DEAL. If present, remove only the misplaced fragment from this file; do not edit the separate dealui file merely because the fragment contains UI. Do not unescape the whole file or change valid string escapes.\n";
                         }

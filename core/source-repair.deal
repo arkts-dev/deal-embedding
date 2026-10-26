@@ -19,8 +19,34 @@ function matchCount(source: string, search: string): int {
     }
     return count;
 }
-function matchRejected(code: string, index: int, file: string, count: int, otherFile: string, otherCount: int): table {
-    return rejected(code + ": editIndex=" + literals.decimal(index) + " (zero-based), file=" + file + ", matchCount=" + literals.decimal(count) + ", otherFile=" + otherFile + ", otherFileMatchCount=" + literals.decimal(otherCount) + ". Match decoded source in the selected file exactly; verify the reported diagnostic file. For zero matches, copy a smaller unique region verbatim from that file instead of reconstructing whitespace or escape spelling. A displayed backslash is a source character: tool arguments must decode to that exact character. For multiple matches include unique surrounding context. No fuzzy correction or file relocation is performed. No edit was applied; the base digest is unchanged.");
+// Bounded preview only: locations cover every overlapping occurrence; larger cases
+// can retrieve additional literal context with read_file, without changing edit authority.
+function occurrenceContext(source: string, search: string): string {
+    let out: string = "\nMatching locations (1-based lines; numbers are not source):";
+    let remaining: string = source; let offset: int = 0; let occurrence: int = 0;
+    let lines: string[] = strings.split(source, "\n");
+    while (strings.contains(remaining, search)) {
+        let pieces: string[] = strings.split(remaining, search);
+        let start: int = offset + strings.length(pieces[0]);
+        let prefix: string = strings.substring(source, 0, start);
+        let before: string[] = strings.split(prefix, "\n");
+        let matched: string[] = strings.split(search, "\n");
+        let first: int = before.length; if (prefix === "") { first = 1; }
+        let last: int = first + matched.length - 1;
+        out = out + "\nOccurrence " + literals.decimal(occurrence + 1) + ": lines " + literals.decimal(first) + "-" + literals.decimal(last);
+        if (occurrence < 8) {
+            let low: int = first - 3; if (low < 0) { low = 0; }
+            let high: int = last + 2; if (high > lines.length) { high = lines.length; }
+            for (let i: int = low; i < high; i = i + 1) { out = out + "\n" + literals.decimal(i + 1) + " | " + lines[i]; }
+        }
+        occurrence = occurrence + 1; offset = start + 1;
+        remaining = strings.substring(source, offset, strings.length(source));
+    }
+    if (occurrence > 8) { out = out + "\nOnly the first eight contexts are previewed; use read_file with the listed line ranges for additional surrounding source. Full reads remain available."; }
+    return out;
+}
+function matchRejected(code: string, index: int, file: string, count: int, otherFile: string, otherCount: int, context: string): table {
+    return rejected(code + ": editIndex=" + literals.decimal(index) + " (zero-based), file=" + file + ", matchCount=" + literals.decimal(count) + ", otherFile=" + otherFile + ", otherFileMatchCount=" + literals.decimal(otherCount) + ". Match decoded source in the selected file exactly; verify the reported diagnostic file. For zero matches, copy a smaller unique region verbatim from that file instead of reconstructing whitespace or escape spelling. A displayed backslash is a source character: tool arguments must decode to that exact character. For multiple matches include unique surrounding context. No fuzzy correction or file relocation is performed. No edit was applied; the base digest is unchanged." + context);
 }
 // Exact, revision-bound textual edits without count/size ceilings. Not a semantic editor or source authority.
 export async function apply(base: string, raw: string): table {
@@ -61,7 +87,9 @@ async function applyEdits(base: string, patch: table): table {
             if (file === "dealui") { other = deal; otherFile = "deal"; }
             let code: string = "PATCH_MULTIPLE_MATCHES";
             if (matches === 0) { code = "PATCH_NO_MATCH"; }
-            return matchRejected(code, editIndex, file, matches, otherFile, matchCount(other, search));
+            let context: string = "";
+            if (matches > 1) { context = occurrenceContext(source, search); }
+            return matchRejected(code, editIndex, file, matches, otherFile, matchCount(other, search), context);
         }
         let pieces: string[] = strings.split(source, search);
         for (let prior: string of searches) {
