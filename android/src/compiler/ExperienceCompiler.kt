@@ -46,7 +46,7 @@ internal class ExperienceCompiler(private val context: Context, private val conf
                 val status = deal.module.CompilationTiming.observe { phase, nanos -> phases.put(phase, nanos / 1000000.0) }.use {
                     deal.Main.run(arrayOf("compile", entry.absolutePath, "--backend", "js", "--output", output.absolutePath, "--diagnostics-json", diagnostics.absolutePath))
                 }
-                log.event("compiler-deal", "phases", target = phases.toString())
+                log.event("compiler-deal", "phases", target = "Monotonic phase milliseconds; codegen-total includes lowering/emission", detail = phases.toString())
                 log.event("compiler-deal", "diagnostics", code = "STATUS_$status", detail = if (diagnostics.exists()) diagnostics.readText().replace(project.absolutePath, "candidate") else null)
                 classifyCompilerOutcome(status, if (diagnostics.exists()) diagnostics.readText() else null, app.absolutePath, project.absolutePath)
             }
