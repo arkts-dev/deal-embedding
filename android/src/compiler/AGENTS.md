@@ -8,4 +8,6 @@ Compile in candidate staging. Remove failed staging and return candidate diagnos
 
 A nonzero compiler status alone is not candidate rejection. Repair only structured source diagnostics attributed to the generated application; stop on missing/malformed reports, project configuration, framework/declaration diagnostics, backend or publication failures. Do not expose native paths in operational errors.
 
+Collect compiler phase receipts through the invocation-scoped compiler observer and unified logger; preserve failure-path timings, isolate concurrent invocations and never change acceptance based on telemetry. Parent codegen totals overlap lowering/emission children; do not add them as independent time.
+
 Keep checking distinct from native authorization and activation. Preserve existing compiler and Deal UI semantics when changing the embedding path.
