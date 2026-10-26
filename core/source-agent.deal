@@ -8,6 +8,27 @@ import * as checker from "./candidate-check";
 import * as repair from "./source-repair";
 import * as feedback from "./repair-guidance";
 
+// Reads are advisory only; numbered text never changes exact-edit authority.
+function readSource(args: table, deal: string, ui: string): table {
+    let file: string = args.file; let keys: string[] = tables.keys(args);
+    if (file !== "deal" && file !== "dealui") { return { accepted: false, diagnostics: "TOOL_SHAPE: read_file permits only deal or dealui" }; }
+    let source: string = deal; if (file === "dealui") { source = ui; }
+    let lines: string[] = strings.split(source, "\n"); let total: int = lines.length;
+    if (source === "") { total = 0; }
+    if (keys.length === 1) { return { accepted: true, file: file, source: source, total_lines: total }; }
+    if (keys.length !== 3) { return { accepted: false, diagnostics: "TOOL_SHAPE: supply file and both nullable line bounds" }; }
+    for (let key: string of keys) { if (key !== "file" && key !== "start_line" && key !== "end_line") { return { accepted: false, diagnostics: "TOOL_SHAPE: unknown read_file argument" }; } }
+    let start: int | null = args.start_line; let end: int | null = args.end_line;
+    if (start === null && end === null) { return { accepted: true, file: file, source: source, total_lines: total }; }
+    if (start === null) { return { accepted: false, diagnostics: "READ_RANGE: supply both bounds or null for both" }; }
+    if (end === null) { return { accepted: false, diagnostics: "READ_RANGE: supply both bounds or null for both" }; }
+    let first: int = args.start_line; let last: int = args.end_line;
+    if (first < 1 || last < first || last > total) { return { accepted: false, total_lines: total, diagnostics: "READ_RANGE: require 1 <= start_line <= end_line <= total_lines" }; }
+    let selected: table[] = [];
+    for (let index: int = first - 1; index < last; index = index + 1) { let text: string = lines[index]; selected[selected.length] = { number: index + 1, text: text }; }
+    return { accepted: true, file: file, start_line: first, end_line: last, total_lines: total, lines: selected };
+}
+
 // Portable restricted workspace. Provider adapters transport native calls, never execute them.
 export async function run(input: string, diagnostic: string): table {
     let deal: string = ""; let ui: string = ""; let previous: string = "";
@@ -15,7 +36,8 @@ export async function run(input: string, diagnostic: string): table {
     while (true) {
         attempts = attempts + 1;
         let operation: string = "initial"; if (previous !== "") { operation = "repair"; }
-        let prompt: string = input + "\nSOURCE OPERATION\n" + operation + "\nUse the native tools to create deal and dealui separately, then correct checker failures with exact edits. No textual source envelopes, boundary markers or copied digests. Source filenames are experience.deal and experience.dealui. No shell, other files or provider reads are available. Check complete files; keep correcting until accepted or cancelled.\nNATIVE TOOL TURN\n" + json.stringify({ messages: history });
+        let initialWrites: boolean = deal === "" && ui === "";
+        let prompt: string = input + "\nSOURCE OPERATION\n" + operation + "\nCreate both missing files in one response using two independent write_file calls, one for deal and one for dealui. After staging begins use one operation per turn; correct checker failures with exact edits. Prefer read_file line ranges around diagnostics over rereading whole files; line numbers are metadata, not source. No textual source envelopes, boundary markers or copied digests. Source filenames are experience.deal and experience.dealui. No shell, other files or provider reads are available. Check complete files; keep correcting until accepted or cancelled.\nNATIVE TOOL TURN\n" + json.stringify({ messages: history, initialWrites: initialWrites });
         let raw: string = "";
         try { raw = await model.complete(prompt, previous, diagnostic); }
         catch (error) {
@@ -27,12 +49,19 @@ export async function run(input: string, diagnostic: string): table {
             message = await data.parse(raw); calls = message.tool_calls;
             let role: string = message.role; let text: string = message.content;
             if (role !== "assistant" || calls.length === 0 || text !== "") { throw { code: "INVALID_TOOL", message: "Use native tools without exterior text" }; }
-            let ids: string[] = [];
+            let ids: string[] = []; let files: string[] = [];
+            if (calls.length > 1 && !initialWrites) { throw { code: "INVALID_TOOL", message: "Batching is only available before either file exists" }; }
             for (let call: table of calls) {
                 let id: string = call.id; let kind: string = call.type; let functionData: table = call["function"];
                 let name: string = functionData.name; let args: string = functionData.arguments;
                 if (id === "" || kind !== "function" || (calls.length > 1 && name !== "write_file")) { throw { code: "INVALID_TOOL", message: "Use one operation per turn except independent initial writes" }; }
                 for (let prior: string of ids) { if (prior === id) { throw { code: "INVALID_TOOL", message: "Duplicate tool identity" }; } }
+                if (calls.length > 1) {
+                    let write: table = await data.parse(args); let file: string = write.file; let source: string = write.source; let keys: string[] = tables.keys(write);
+                    if (keys.length !== 2 || (file !== "deal" && file !== "dealui") || strings.trim(source) === "") { throw { code: "INVALID_TOOL", message: "Invalid initial write" }; }
+                    for (let prior: string of files) { if (prior === file) { throw { code: "INVALID_TOOL", message: "Initial writes must target different files" }; } }
+                    files[files.length] = file;
+                }
                 ids[ids.length] = id;
             }
         } catch (error) {
@@ -73,13 +102,11 @@ export async function run(input: string, diagnostic: string): table {
                     }
                 }
             } else if (name === "read_file") {
-                try {
-                    let file: string = args.file; let keys: string[] = tables.keys(args);
-                    if (keys.length === 1 && (file === "deal" || file === "dealui")) {
-                        let source: string = deal; if (file === "dealui") { source = ui; }
-                        result = { accepted: true, file: file, source: source };
-                    }
-                } catch (error) { }
+                try { result = readSource(args, deal, ui); }
+                catch (error) {
+                    if (error.code !== "E8001") { throw error; }
+                    result = { accepted: false, diagnostics: "TOOL_SHAPE: read_file requires a valid file and integral nullable line bounds" };
+                }
             } else if (name === "check_sources") { let keys: string[] = tables.keys(args); check = keys.length === 0; }
             if (changed || check) {
                 if (deal !== "" && ui !== "") {
