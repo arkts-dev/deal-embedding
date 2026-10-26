@@ -92,6 +92,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             val code = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("[A-Z][A-Z0-9_]{0,79}")) } ?: ""
                             if (args.getString(0) == "check" && args.getString(1) == "rejected" && code == "INVALID_ENVELOPE") log.event("check", "rejected", code = code)
                             else if (args.getString(0) == "lower" && args.getString(1) in setOf("started", "completed", "failed")) log.event("lower", args.getString(1), code = code)
+                            else if(args.getString(0)=="composition")log.event("composition",args.getString(1),detail=args.getString(2))
                             else if(args.getString(0)=="recovery")log.event("recovery",args.getString(1),code=code)
                             else if(args.getString(0)=="patch") {
                                 if(args.getString(1)=="started")telemetry.patchStart()
@@ -99,6 +100,16 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             }
                             else log.event("policy", if (args.getString(1) == "issued") "issued" else "validated", code = code)
                             JSONObject.NULL
+                        }
+                        "embedding/composer" -> {
+                            try {
+                                val source = CompactCandidate.assemble(JSONObject(args.getString(0)), config.contracts.map { it.module }.toSet())
+                                log.event("composition", "assembled", detail = source.toString())
+                                JSONObject().put("accepted", true).put("source", source).put("diagnostics", "").toString()
+                            } catch (error: CompactCandidate.Rejected) {
+                                log.event("composition", "rejected", detail = error.message)
+                                JSONObject().put("accepted", false).put("source", JSONObject()).put("diagnostics", "COMPACT_PLAN: ${error.message}").toString()
+                            }
                         }
                         "embedding/discovery" -> log.stage("discovery") { catalog }
                         "embedding/protocol" -> when(request.getString("function")) {

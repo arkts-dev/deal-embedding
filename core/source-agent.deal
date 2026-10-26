@@ -8,6 +8,7 @@ import * as observer from "embedding/observer";
 import * as checker from "./candidate-check";
 import * as repair from "./source-repair";
 import * as feedback from "./repair-guidance";
+import * as composer from "embedding/composer";
 
 // Reads are advisory only; numbered text never changes exact-edit authority.
 function readSource(args: table, deal: string, ui: string): table {
@@ -33,12 +34,15 @@ function readSource(args: table, deal: string, ui: string): table {
 // Portable restricted workspace. Provider adapters transport native calls, never execute them.
 export async function run(input: string, diagnostic: string): table {
     let deal: string = ""; let ui: string = ""; let previous: string = "";
-    let history: table[] = []; let attempts: number = 0;
+    let history: table[] = []; let attempts: number = 0; let compact: boolean = true;
     while (true) {
         attempts = attempts + 1;
         let operation: string = "initial"; if (previous !== "") { operation = "repair"; }
         let initialWrites: boolean = deal === "" && ui === "";
-        let prompt: string = input + "\nSOURCE OPERATION\n" + operation + "\nCreate both missing files in one response using two independent write_file calls, one for deal and one for dealui. After staging begins use one operation per turn; correct checker failures with exact edits. Prefer read_file line ranges around diagnostics over rereading whole files; line numbers are metadata, not source. No textual source envelopes, boundary markers or copied digests. Source filenames are experience.deal and experience.dealui. No shell, other files or provider reads are available. Check complete files; keep correcting until accepted or cancelled.\nNATIVE TOOL TURN\n" + json.stringify({ messages: history, initialWrites: initialWrites });
+        let instruction: string = "Use submit_compact once to materialize the initial source pair. If genuinely unrepresentable call source_fallback with a reason; do not omit task behavior to fit. No other operation is available before materialization.";
+        if (!compact) { instruction = "Create both missing files using paired write_file calls. Once files exist use one operation per turn; repair with exact edit_sources, never overwrite. read_file supports inclusive ranges; both null reads full source. check_sources checks the complete pair."; }
+        if (!initialWrites) { instruction = "The canonical source pair already exists. Use exact edit_sources, read_file or check_sources only. No plan regeneration or source overwrite. Read relevant ranges; numbers are metadata, not search text."; }
+        let prompt: string = input + "\nSOURCE OPERATION\n" + operation + "\n" + instruction + "\nNATIVE TOOL TURN\n" + json.stringify({ messages: history, initialWrites: initialWrites, compact: compact && initialWrites });
         let raw: string = "";
         try { raw = await model.complete(prompt, previous, diagnostic); }
         catch (error) {
@@ -57,6 +61,7 @@ export async function run(input: string, diagnostic: string): table {
                 let name: string = functionData.name; let args: string = functionData.arguments;
                 if (id === "" || kind !== "function" || (calls.length > 1 && name !== "write_file")) { throw { code: "INVALID_TOOL", message: "Use one operation per turn except independent initial writes" }; }
                 for (let prior: string of ids) { if (prior === id) { throw { code: "INVALID_TOOL", message: "Duplicate tool identity" }; } }
+                if (compact && (name === "write_file" || calls.length > 1)) { throw { code: "INVALID_TOOL", message: "Initial compact submission is one atomic call; use source_fallback explicitly before writes" }; }
                 if (calls.length > 1) {
                     let write: table = await data.parse(args); let file: string = write.file; let source: string = write.source; let keys: string[] = tables.keys(write);
                     if (keys.length !== 2 || (file !== "deal" && file !== "dealui") || strings.trim(source) === "") { throw { code: "INVALID_TOOL", message: "Invalid initial write" }; }
@@ -77,8 +82,27 @@ export async function run(input: string, diagnostic: string): table {
             let args: table = {};
             try { args = await data.parse(arguments); }
             catch (error) { if (error.code !== "INVALID_JSON") { throw error; } }
-            if (name === "write_file") {
-                try {
+            if (name === "submit_compact") {
+                if (!initialWrites || !compact) { result = { accepted: false, diagnostics: "FILES_EXIST: repair canonical source with exact edits" }; }
+                else {
+                    let assembledJson: string = await composer.assemble(json.stringify(args));
+                    let assembled: table = await data.parse(assembledJson); let accepted: boolean = assembled.accepted;
+                    if (accepted) {
+                        let pair: table = assembled.source; let builtDeal: string = pair.deal; let builtUi: string = pair.dealui;
+                        deal = builtDeal; ui = builtUi; changed = true;
+                        // Return exact materialized bytes if checking rejects: the model never repairs an imagined expansion.
+                        result = { accepted: true, source: pair };
+                    } else { result = assembled; }
+                }
+            } else if (name === "source_fallback") {
+                if (!initialWrites || !compact) { result = { accepted: false, diagnostics: "FILES_EXIST" }; }
+                else {
+                    let reason: string = args.reason;
+                    if (strings.trim(reason) !== "") { compact = false; await observer.record("composition", "fallback", reason); result = { accepted: true, diagnostics: "Explicit full-source fallback; use write_file for both missing files" }; }
+                }
+            } else if (name === "write_file") {
+                if (compact) { result = { accepted: false, diagnostics: "COMPACT_REQUIRED: use submit_compact or explicit source_fallback first" }; }
+                else { try {
                     let keys: string[] = tables.keys(args); let file: string = args.file; let source: string = args.source;
                     if (keys.length !== 2 || strings.trim(source) === "" || (file !== "deal" && file !== "dealui")) { throw { code: "TOOL_SHAPE", message: "Invalid file/source" }; }
                     if ((file === "deal" && deal !== "") || (file === "dealui" && ui !== "")) { result = { accepted: false, diagnostics: "FILE_EXISTS: use exact edits, never overwrite" }; }
@@ -86,7 +110,7 @@ export async function run(input: string, diagnostic: string): table {
                         if (file === "deal") { deal = source; } else { ui = source; }
                         result = { accepted: true, diagnostics: "File staged; create the other file before checking" }; changed = true;
                     }
-                } catch (error) { result = { accepted: false, diagnostics: "TOOL_SHAPE: write_file requires one missing file and nonempty source" }; }
+                } catch (error) { result = { accepted: false, diagnostics: "TOOL_SHAPE: write_file requires one missing file and nonempty source" }; } }
             } else if (name === "edit_sources") {
                 if (deal === "" || ui === "") { result = { accepted: false, diagnostics: "INCOMPLETE_PAIR: write both files first" }; }
                 else {
@@ -117,7 +141,8 @@ export async function run(input: string, diagnostic: string): table {
                     if (accepted) { return { candidateId: candidate, attempts: attempts, usedFallback: true }; }
                     diagnostic = checked.diagnostics;
                     let advice: string = await feedback.patchInstruction(previous, diagnostic);
-                    result = { accepted: true, checked: false, diagnostics: diagnostic, guidance: advice };
+                    if (name === "submit_compact") { result = { accepted: true, checked: false, source: { deal: deal, dealui: ui }, diagnostics: diagnostic, guidance: advice }; }
+                    else { result = { accepted: true, checked: false, diagnostics: diagnostic, guidance: advice }; }
                 } else if (check) { result = { accepted: false, diagnostics: "INCOMPLETE_PAIR: write both files first" }; }
             }
             history[history.length] = { role: "tool", tool_call_id: id, content: json.stringify(result) };

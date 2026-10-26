@@ -1,0 +1,2 @@
+// Deterministic initial-source emission; JSON ABI, never capability execution or edits.
+export async function assemble(planJson: string): string;

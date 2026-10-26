@@ -10,4 +10,6 @@ A nonzero compiler status alone is not candidate rejection. Repair only structur
 
 Collect compiler phase receipts through the invocation-scoped compiler observer and unified logger; preserve failure-path timings, isolate concurrent invocations and never change acceptance based on telemetry. Parent codegen totals overlap lowering/emission children; do not add them as independent time.
 
+CompactCandidate owns deterministic initial-source construction, not compilation or source repair. Validate closed shapes, identifiers, disclosed imports, numeric controls and dependency references/cycles before returning a pair. Require explicit initializers and keep custom computation under ordinary compiler/borrowed-state checks; never call providers, infer domain answers or regenerate existing staged files. Recalculation must copy its borrowed input before writing derived fields. Keep generated async errors/pending distinct from success.
+
 Keep checking distinct from native authorization and activation. Preserve existing compiler and Deal UI semantics when changing the embedding path.

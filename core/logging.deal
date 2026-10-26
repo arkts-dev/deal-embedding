@@ -18,7 +18,7 @@ function bounded(value: string, maximum: number): string {
 }
 export function normalize(event: LogEvent): string {
     let stage: string = event.stage;
-    let stages: string[] = ["opportunity", "opportunity-catalogue", "opportunity-input", "opportunity-inference", "opportunity-validation", "opportunity-admission", "opportunity-handoff", "request", "discovery", "grant", "session", "contract", "choice", "source", "policy", "lower", "check", "compiler-ui", "compiler-deal", "candidate", "route", "mount", "action", "capability", "effect-delivery", "snapshot", "storage", "host", "transport", "model-provider", "repair-metrics", "request-summary", "candidate-test", "recovery", "logger"];
+    let stages: string[] = ["opportunity", "opportunity-catalogue", "opportunity-input", "opportunity-inference", "opportunity-validation", "opportunity-admission", "opportunity-handoff", "request", "discovery", "grant", "session", "contract", "choice", "source", "policy", "lower", "check", "compiler-ui", "compiler-deal", "candidate", "route", "mount", "action", "capability", "effect-delivery", "snapshot", "storage", "host", "transport", "model-provider", "repair-metrics", "request-summary", "candidate-test", "composition", "recovery", "logger"];
     let known: boolean = false;
     for (let allowed: string of stages) { if (stage === allowed) { known = true; } }
     if (!known) { stage = "logger"; }
