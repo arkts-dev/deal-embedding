@@ -37,7 +37,7 @@ internal class ExperienceCompiler(private val context: Context, private val conf
                 File(project, declaration).writeText(dev.deal.embedding.capabilities.CapabilityBindings.declaration(module))
                 externals.put(module.module, JSONObject().put("declaration", declaration))
             }
-            File(project, "deal.json").writeText(JSONObject().put("languageVersion", "1.3").put("backend", "js")
+            File(project, "deal.json").writeText(JSONObject().put("languageVersion", "1.4").put("backend", "js")
                 .put("moduleRoots", JSONArray(listOf("src"))).put("externals", externals).toString())
             val output = File(project, "output")
             val diagnostics = File(project, "diagnostics.json")

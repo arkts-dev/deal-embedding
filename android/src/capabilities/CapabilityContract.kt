@@ -2,19 +2,28 @@ package dev.deal.embedding.capabilities
 
 import org.json.*
 
+/** Integral native metadata must not silently truncate DEAL numbers. */
+internal fun JSONObject.requiredInteger(name: String): Int {
+    val raw = get(name)
+    require(raw is Number) { "Expected numeric $name" }
+    val value = raw.toDouble()
+    require(value.isFinite() && value == kotlin.math.floor(value) && value >= Int.MIN_VALUE && value <= Int.MAX_VALUE) { "Expected integral $name" }
+    return value.toInt()
+}
+
 /** Bounded, versioned wire types. Records become DEAL tables, never host objects. */
 data class CapabilityType(
     val kind: String,
     val fields: Map<String, CapabilityType> = emptyMap(),
     val element: CapabilityType? = null,
     val maximum: Int = 128,
-    val minimumInt: Int = Int.MIN_VALUE,
-    val maximumInt: Int = Int.MAX_VALUE,
+    val minimumNumber: Double = -Double.MAX_VALUE,
+    val maximumNumber: Double = Double.MAX_VALUE,
     val optionalFields: Set<String> = emptySet(),
 ) {
     init {
-        require(kind in setOf("int", "string", "boolean", "null", "record", "array"))
-        require(maximum in 0..8192 && minimumInt <= maximumInt)
+        require(kind in setOf("number", "string", "boolean", "null", "record", "array"))
+        require(maximum in 0..8192 && minimumNumber.isFinite() && maximumNumber.isFinite() && minimumNumber <= maximumNumber)
         require((kind == "array") == (element != null))
         require(kind == "record" || fields.isEmpty())
         require(optionalFields.all { it in fields })
@@ -24,7 +33,7 @@ data class CapabilityType(
         require(depth <= 8)
         when (kind) {
             "null" -> require(value == null || value === JSONObject.NULL)
-            "int" -> require(value is Int && value in minimumInt..maximumInt)
+            "number" -> require(value is Number && value.toDouble().isFinite() && value.toDouble() in minimumNumber..maximumNumber)
             "string" -> require(value is String && value.length <= maximum)
             "boolean" -> require(value is Boolean)
             "record" -> {
@@ -34,20 +43,20 @@ data class CapabilityType(
             "array" -> { require(value is JSONArray && value.length() <= maximum); for (i in 0 until value.length()) element!!.validate(value.get(i), depth + 1) }
         }
     }
-    fun json(): JSONObject = JSONObject().put("kind", kind).put("maximum", maximum).put("minimumInt", minimumInt).put("maximumInt", maximumInt).also { output ->
+    fun json(): JSONObject = JSONObject().put("kind", kind).put("maximum", maximum).put("minimumNumber", minimumNumber).put("maximumNumber", maximumNumber).also { output ->
         if (element != null) output.put("element", element.json())
         if (kind=="record") output.put("fields", JSONObject().also { f -> fields.forEach { (name, type) -> f.put(name, type.json()) } })
         if(optionalFields.isNotEmpty())output.put("optionalFields",JSONArray(optionalFields.toList()))
     }
     companion object {
-        val IntType = CapabilityType("int")
+        val NumberType = CapabilityType("number")
         val NullType = CapabilityType("null")
         fun identifier(value: String) = value.matches(Regex("[A-Za-z][A-Za-z0-9_]{0,63}"))
         fun parse(json: JSONObject, depth: Int = 0): CapabilityType {
             require(depth <= 8 && json.length() <= 7)
             val fields = json.optJSONObject("fields")
             return CapabilityType(json.getString("kind"), fields?.keys()?.asSequence()?.associateWith { parse(fields.getJSONObject(it), depth + 1) } ?: emptyMap(),
-                json.optJSONObject("element")?.let { parse(it, depth + 1) }, json.getInt("maximum"), json.getInt("minimumInt"), json.getInt("maximumInt"),json.optJSONArray("optionalFields")?.let{a->(0 until a.length()).map{a.getString(it)}.toSet()} ?: emptySet())
+                json.optJSONObject("element")?.let { parse(it, depth + 1) }, json.requiredInteger("maximum"), json.getDouble("minimumNumber"), json.getDouble("maximumNumber"),json.optJSONArray("optionalFields")?.let{a->(0 until a.length()).map{a.getString(it)}.toSet()} ?: emptySet())
         }
     }
 }
@@ -75,7 +84,7 @@ data class CapabilityContract(val module: String, val description: String, val f
                 CapabilityFunction(f.getString("name"), f.getString("description"), (0 until parameters.length()).map { j ->
                     val p = parameters.getJSONObject(j); CapabilityParameter(p.getString("name"), CapabilityType.parse(p.getJSONObject("type")))
                 }, CapabilityType.parse(f.getJSONObject("result")))
-            }, json.getInt("version"))
+            }, json.requiredInteger("version"))
         }
     }
 }

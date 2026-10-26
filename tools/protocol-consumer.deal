@@ -3,9 +3,9 @@ import * as strings from "std/string";
 
 function insist(value:boolean, message:string):null { if(!value){throw {code:"PROOF_FAILED",message:message};}return null; }
 export function contexts():string {
-    let name:embedding.WireField={name:"name",type:{kind:"string",maximum:16}};let count:embedding.WireField={name:"count",type:{kind:"int"},optional:true};
+    let name:embedding.WireField={name:"name",type:{kind:"string",maximum:16,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional: false};let count:embedding.WireField={name:"count",type:{kind:"number",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional:true};
     let fields:embedding.WireField[]=[name,count];
-    let schema:embedding.WireType={kind:"record",fields:fields};
+    let schema:embedding.WireType={kind:"record",fields:fields,element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308};
     let context:embedding.GenerationContext=embedding.snapshot(schema,"{\"name\":\"Ada\"}");
     schema.fields[0].type.maximum=1;
     let first:embedding.WireType=embedding.contextSchema(context);first.fields[0].type.maximum=2;
@@ -14,26 +14,27 @@ export function contexts():string {
     insist(embedding.contextJson(context)==="{\"name\":\"Ada\"}","Frozen value");
     let rejected:boolean=false;try{embedding.contextJson({id:"forged"});}catch(e){rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Forged context");
     rejected=false;try{embedding.snapshot(second,"{\"name\":\"Ada\",\"extra\":1}");}catch(e){rejected=true;}insist(rejected,"Closed record");
-    let bad:embedding.WireField={name:"bad",type:{kind:""},optional:true};let badFields:embedding.WireField[]=[bad];
-    rejected=false;try{embedding.snapshot({kind:"record",fields:badFields},"{}");}catch(e){rejected=true;}insist(rejected,"Invalid absent schema");
-    rejected=false;try{embedding.snapshot({kind:"string",maximum:1},"\"😀\"");}catch(e){rejected=true;}insist(rejected,"UTF16 bound");
+    let bad:embedding.WireField={name:"bad",type:{kind:"",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional:true};let badFields:embedding.WireField[]=[bad];
+    rejected=false;try{embedding.snapshot({kind:"record",fields:badFields,element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"{}");}catch(e){rejected=true;}insist(rejected,"Invalid absent schema");
+    rejected=false;try{embedding.snapshot({kind:"string",maximum:1,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"\"😀\"");}catch(e){rejected=true;}insist(rejected,"UTF16 bound");
     let pending:embedding.GenerationRequest=embedding.request("Proof","An authored test workflow",context);
     insist(embedding.requestTrace(pending)!=="","Request trace");
     embedding.cancel(pending);return pending.id;
 }
+export async function fractionalEvents():embedding.EventPage {return await embedding.events("","",1.5);}
 export async function cancelled(id:string):string {let rejected:boolean=false;try{await embedding.generate({id:id});}catch(e){rejected=e.code==="CANCELLED";}insist(rejected,"Precancel");return "cancelled";}
 export async function generated():embedding.Experience {
-    let context:embedding.GenerationContext=embedding.snapshot({kind:"record"},"{}");let pending:embedding.GenerationRequest=embedding.request("Generated proof","An authored test workflow",context);
+    let context:embedding.GenerationContext=embedding.snapshot({kind:"record",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"{}");let pending:embedding.GenerationRequest=embedding.request("Generated proof","An authored test workflow",context);
     let prepared:embedding.Experience=await embedding.generate(pending);insist(prepared.origin==="generated","Generated origin");return prepared;
 }
 export function waitingRequest():string {
-    let context:embedding.GenerationContext=embedding.snapshot({kind:"record"},"{}");let pending:embedding.GenerationRequest=embedding.request("Cancellation proof","Wait for explicit cancellation",context);return pending.id;
+    let context:embedding.GenerationContext=embedding.snapshot({kind:"record",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"{}");let pending:embedding.GenerationRequest=embedding.request("Cancellation proof","Wait for explicit cancellation",context);return pending.id;
 }
 export async function generateWaiting(id:string):embedding.Experience {return await embedding.generate({id:id});}
 export function cancelWaiting(id:string):null {embedding.cancel({id:id});return null;}
 export async function load(title:string, deal:string, dealui:string):embedding.Experience {return await embedding.load(title,{deal:deal,dealui:dealui});}
 export async function lifecycle(deal:string,dealui:string):string {
-    let before:int=embedding.saved().length;
+    let before:number=embedding.saved().length;
     let prepared:embedding.Experience=await embedding.load("Lifecycle proof",{deal:deal,dealui:dealui});
     insist(embedding.saved().length===before,"Preparation must not save");
     insist(embedding.source(prepared).deal===deal,"Exact source");
@@ -41,6 +42,8 @@ export async function lifecycle(deal:string,dealui:string):string {
     let live:embedding.Session=await embedding.run(fake);let again:embedding.Session=await embedding.run(prepared);insist(live.id===again.id,"One live session");
     let update:embedding.SessionUpdate=await embedding.next(live,"");let snapshot:embedding.UiSnapshot=update.snapshot;insist(snapshot.fault==="","Initial snapshot");
     embedding.published(live,snapshot.version);
+    let fractional:boolean=false;try{embedding.published(live,0.5);}catch(e){fractional=e.code==="INVALID_ARGUMENT";}insist(fractional,"Fractional publication");
+    fractional=false;try{await embedding.dispatch(live,0.5,null);}catch(e){fractional=e.code==="INVALID_ARGUMENT";}insist(fractional,"Fractional slot");
     let rejected:boolean=false;try{embedding.published(live,snapshot.version+1);}catch(e){rejected=true;}insist(rejected,"Unproduced version");
     await embedding.dispatch(live,0,null);update=await embedding.next(live,update.cursor);snapshot=update.snapshot;embedding.published(live,snapshot.version);
     insist(embedding.sessionTrace(live)!=="","Session trace");
@@ -51,38 +54,36 @@ export async function lifecycle(deal:string,dealui:string):string {
     let unused:embedding.Experience=await embedding.load("Unused",{deal:deal,dealui:dealui});embedding.release(unused);rejected=false;try{embedding.source(unused);}catch(e){rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Release");return "load/run/same-live/next/dispatch/published/close/cold/forget/release";
 }
 export async function equipment(intent:string,json:string):embedding.Experience {
-    let requirement:embedding.WireField={name:"requirement",type:{kind:"string",maximum:128}};
-    let specification:embedding.WireField={name:"specification",type:{kind:"string",maximum:128}};
-    let quantity:embedding.WireField={name:"quantity",type:{kind:"int",minimumInt:1,maximumInt:128}};
-    let start:embedding.WireField={name:"from",type:{kind:"string",maximum:128}};
-    let until:embedding.WireField={name:"until",type:{kind:"string",maximum:128}};
-    let term:embedding.WireType={kind:"string",maximum:128};
-    let terms:embedding.WireField={name:"searchTerms",type:{kind:"array",element:term,maximum:8}};
+    let requirement:embedding.WireField={name:"requirement",type:{kind:"string",maximum:128,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional: false};
+    let specification:embedding.WireField={name:"specification",type:{kind:"string",maximum:128,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional: false};
+    let quantity:embedding.WireField={name:"quantity",type:{kind:"number",minimumNumber:1,maximumNumber:128,fields: [], element: null, maximum: 128},optional: false};
+    let start:embedding.WireField={name:"from",type:{kind:"string",maximum:128,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional: false};
+    let until:embedding.WireField={name:"until",type:{kind:"string",maximum:128,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional: false};
+    let term:embedding.WireType={kind:"string",maximum:128,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308};
+    let terms:embedding.WireField={name:"searchTerms",type:{kind:"array",element:term,maximum:8,fields: [], minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional: false};
     let fields:embedding.WireField[]=[requirement,specification,quantity,start,until,terms];
-    let context:embedding.GenerationContext=embedding.snapshot({kind:"record",fields:fields},json);
+    let context:embedding.GenerationContext=embedding.snapshot({kind:"record",fields:fields,element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},json);
     let request:embedding.GenerationRequest=embedding.request("Equipment protocol proof",intent,context);
     return await embedding.generate(request);
 }
-export async function run(id:string):embedding.Session {return await embedding.run({id:id});}
+export async function run(id:string):embedding.Session {return await embedding.run({id:id,title:"",origin:"",attempts:0});}
 export async function next(id:string,cursor:string):embedding.SessionUpdate {return await embedding.next({id:id},cursor);}
-export async function dispatch(id:string,slot:int):null {return await embedding.dispatch({id:id},slot,null);}
-export async function dispatchPayload(id:string,slot:int,payload:string):null {return await embedding.dispatch({id:id},slot,payload);}
-export function defaults():string {
-    let wire:embedding.WireType={};let field:embedding.WireField={};let parameter:embedding.Parameter={};let capability:embedding.CapabilityFunction={};let contract:embedding.CapabilityContract={};
-    let update:embedding.SessionUpdate={};let event:embedding.Event={};let answer:embedding.GenerationRequest={};
-    insist(wire.maximum===128&&wire.minimumInt===-2147483648&&wire.maximumInt===2147483647&&wire.element===null,"Wire defaults");
-    insist(field.type.maximum===128&&!field.optional&&parameter.type.maximum===128&&capability.result.maximum===128,"Nested defaults");
-    insist(contract.version===1&&contract.functions.length===0&&update.cursor===""&&update.snapshot.version===0&&update.snapshot.fault===""&&event.version===-1&&event.sequence===0&&answer.id==="","Record defaults");
-    return "defaults";
+export async function dispatch(id:string,slot:number):null {return await embedding.dispatch({id:id},slot,null);}
+export async function dispatchPayload(id:string,slot:number,payload:string):null {return await embedding.dispatch({id:id},slot,payload);}
+export function construction():string {
+    let schema: embedding.WireType = {kind:"number",fields:[],element:null,maximum:128,minimumNumber:-10,maximumNumber:10};
+    let context: embedding.GenerationContext = embedding.snapshot(schema,"1.5");
+    insist(embedding.contextJson(context)==="1.5","Fractional number crosses public protocol");
+    return "construction";
 }
 export async function invalidCursor(id:string,cursor:string):string {let caught:boolean=false;try{await embedding.next({id:id},cursor);}catch(error){caught=error.code==="INVALID_CURSOR";}insist(caught,"Invalid cursor must raise DEAL Error");return "invalid cursor";}
 export function invalidGrant():string {let caught:boolean=false;try{embedding.grant("missing/module");}catch(error){caught=error.code==="INVALID_ARGUMENT";}insist(caught,"Grant failure must raise in originating DEAL call");return "grant error";}
 export function grant(module:string):null {return embedding.grant(module);}
 export function revoke(module:string):null {return embedding.revoke(module);}
 export async function close(id:string):null {return await embedding.close({id:id});}
-export async function forget(id:string):null {return await embedding.forget({id:id});}
+export async function forget(id:string):null {return await embedding.forget({id:id,title:"",origin:"",attempts:0});}
 export function saved():embedding.Experience[] {return embedding.saved();}
-export async function prepareCapabilities():int {let contracts:embedding.CapabilityContract[]=await embedding.refresh();for(let c:embedding.CapabilityContract of contracts){embedding.grant(c.module);embedding.revoke(c.module);embedding.grant(c.module);}return contracts.length;}
+export async function prepareCapabilities():number {let contracts:embedding.CapabilityContract[]=await embedding.refresh();for(let c:embedding.CapabilityContract of contracts){embedding.grant(c.module);embedding.revoke(c.module);embedding.grant(c.module);}return contracts.length;}
 export async function observation():string {
     embedding.capture(false);let health:embedding.ObservationHealth=embedding.health();
     let page:embedding.EventPage=await embedding.events("","",1);if(page.cursor!==""){page=await embedding.events("",page.cursor,1);}
@@ -90,11 +91,11 @@ export async function observation():string {
     let missing:embedding.Artifact=await embedding.artifact("00000000-0000-0000-0000-000000000000");insist(missing.status==="unavailable","Missing artifact");
     await embedding.clearObservation();return "capture/health/events/continuation/artifact/clear";
 }
-export async function resumeSaved():int {let count:int=0;for(let e:embedding.Experience of embedding.saved()){let s:embedding.Session=await embedding.run(e);let update:embedding.SessionUpdate=await embedding.next(s,"");let snapshot:embedding.UiSnapshot=update.snapshot;insist(snapshot.fault==="","Reconstituted saved source");await embedding.close(s);await embedding.forget(e);count=count+1;}return count;}
-export function exactSource(id:string):embedding.Source {return embedding.source({id:id});}
-export function release(id:string):null {return embedding.release({id:id});}
+export async function resumeSaved():number {let count:number=0;for(let e:embedding.Experience of embedding.saved()){let s:embedding.Session=await embedding.run(e);let update:embedding.SessionUpdate=await embedding.next(s,"");let snapshot:embedding.UiSnapshot=update.snapshot;insist(snapshot.fault==="","Reconstituted saved source");await embedding.close(s);await embedding.forget(e);count=count+1;}return count;}
+export function exactSource(id:string):embedding.Source {return embedding.source({id:id,title: "", origin: "", attempts: 0});}
+export function release(id:string):null {return embedding.release({id:id,title:"",origin:"",attempts:0});}
 export async function artifact(id:string):embedding.Artifact {return await embedding.artifact(id);}
 export function capture(enabled:boolean):null {return embedding.capture(enabled);}
-export async function events(trace:string,cursor:string,limit:int):embedding.EventPage {return await embedding.events(trace,cursor,limit);}
+export async function events(trace:string,cursor:string,limit:number):embedding.EventPage {return await embedding.events(trace,cursor,limit);}
 export async function shutdown():null {return await embedding.shutdown();}
 export function main():null {return null;}

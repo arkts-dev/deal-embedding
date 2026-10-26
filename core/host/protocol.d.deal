@@ -1,6 +1,6 @@
 import * as embedding from "./embedding";
 import * as policy from "./catalogue-policy";
-export class Decision { accepted: boolean = false; answers: policy.ChoiceAnswer[] = []; reason: string = ""; }
+export class Decision { accepted: boolean; answers: policy.ChoiceAnswer[] ; reason: string; }
 export async function questions(questions: policy.ChoiceQuestion[]): string;
 export async function answers(raw: string, questions: policy.ChoiceQuestion[]): Decision;
 export async function envelope(source: embedding.Source): string;

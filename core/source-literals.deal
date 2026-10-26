@@ -1,4 +1,5 @@
 import * as strings from "std/string";
+import * as math from "std/math";
 
 // Source literals use DEAL escaping, not JSON escaping (notably no escaped slash).
 export function quote(value: string): string {
@@ -13,15 +14,16 @@ export function quote(value: string): string {
     }
     return out + "\"";
 }
-export function decimal(value: int): string {
+export function decimal(value: number): string {
+    if (value - value !== 0 || math.floor(value) !== value) { throw {code: "INVALID_INTEGER", message: "Expected an integral value"}; }
     if (value === 0) { return "0"; }
     let out: string = "";
-    // Negative accumulation also represents INT_MIN without overflowing its negation.
-    let remaining: int = value; if (remaining > 0) { remaining = -remaining; }
+    let remaining: number = value; if (remaining > 0) { remaining = -remaining; }
     while (remaining < 0) {
-        let digit: int = -(remaining % 10);
+        let next: number = math.ceil(remaining / 10);
+        let digit: number = -(remaining - next * 10);
         out = strings.substring("0123456789", digit, digit + 1) + out;
-        remaining = remaining / 10;
+        remaining = next;
     }
     if (value < 0) { out = "-" + out; }
     return out;

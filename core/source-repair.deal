@@ -10,8 +10,8 @@ export function digestInput(deal: string, ui: string): string {
 
 function rejected(code: string): table { return { accepted: false, source: "", diagnostics: code }; }
 // Count overlapping occurrences too; zero and multiple matches need different feedback.
-function matchCount(source: string, search: string): int {
-    let count: int = 0; let remaining: string = source;
+function matchCount(source: string, search: string): number {
+    let count: number = 0; let remaining: string = source;
     while (strings.contains(remaining, search)) {
         let pieces: string[] = strings.split(remaining, search);
         count = count + 1;
@@ -23,21 +23,21 @@ function matchCount(source: string, search: string): int {
 // can retrieve additional literal context with read_file, without changing edit authority.
 function occurrenceContext(source: string, search: string): string {
     let out: string = "\nMatching locations (1-based lines; numbers are not source):";
-    let remaining: string = source; let offset: int = 0; let occurrence: int = 0;
+    let remaining: string = source; let offset: number = 0; let occurrence: number = 0;
     let lines: string[] = strings.split(source, "\n");
     while (strings.contains(remaining, search)) {
         let pieces: string[] = strings.split(remaining, search);
-        let start: int = offset + strings.length(pieces[0]);
+        let start: number = offset + strings.length(pieces[0]);
         let prefix: string = strings.substring(source, 0, start);
         let before: string[] = strings.split(prefix, "\n");
         let matched: string[] = strings.split(search, "\n");
-        let first: int = before.length; if (prefix === "") { first = 1; }
-        let last: int = first + matched.length - 1;
+        let first: number = before.length; if (prefix === "") { first = 1; }
+        let last: number = first + matched.length - 1;
         out = out + "\nOccurrence " + literals.decimal(occurrence + 1) + ": lines " + literals.decimal(first) + "-" + literals.decimal(last);
         if (occurrence < 8) {
-            let low: int = first - 3; if (low < 0) { low = 0; }
-            let high: int = last + 2; if (high > lines.length) { high = lines.length; }
-            for (let i: int = low; i < high; i = i + 1) { out = out + "\n" + literals.decimal(i + 1) + " | " + lines[i]; }
+            let low: number = first - 3; if (low < 0) { low = 0; }
+            let high: number = last + 2; if (high > lines.length) { high = lines.length; }
+            { let i: number = low; while (i < high) {  out = out + "\n" + literals.decimal(i + 1) + " | " + lines[i];  i = i + 1; } }
         }
         occurrence = occurrence + 1; offset = start + 1;
         remaining = strings.substring(source, offset, strings.length(source));
@@ -45,7 +45,7 @@ function occurrenceContext(source: string, search: string): string {
     if (occurrence > 8) { out = out + "\nOnly the first eight contexts are previewed; use read_file with the listed line ranges for additional surrounding source. Full reads remain available."; }
     return out;
 }
-function matchRejected(code: string, index: int, file: string, count: int, otherFile: string, otherCount: int, context: string): table {
+function matchRejected(code: string, index: number, file: string, count: number, otherFile: string, otherCount: number, context: string): table {
     return rejected(code + ": editIndex=" + literals.decimal(index) + " (zero-based), file=" + file + ", matchCount=" + literals.decimal(count) + ", otherFile=" + otherFile + ", otherFileMatchCount=" + literals.decimal(otherCount) + ". Match decoded source in the selected file exactly; verify the reported diagnostic file. For zero matches, copy a smaller unique region verbatim from that file instead of reconstructing whitespace or escape spelling. A displayed backslash is a source character: tool arguments must decode to that exact character. For multiple matches include unique surrounding context. No fuzzy correction or file relocation is performed. No edit was applied; the base digest is unchanged." + context);
 }
 // Exact, revision-bound textual edits without count/size ceilings. Not a semantic editor or source authority.
@@ -71,7 +71,7 @@ async function applyEdits(base: string, patch: table): table {
     } catch (error) { return rejected("PATCH_SHAPE"); }
     let dealSearch: string[] = []; let dealReplace: string[] = [];
     let uiSearch: string[] = []; let uiReplace: string[] = [];
-    for (let editIndex: int = 0; editIndex < edits.length; editIndex = editIndex + 1) {
+    { let editIndex: number = 0; while (editIndex < edits.length) {
         let edit: table = edits[editIndex];
         let file: string = ""; let search: string = ""; let replacement: string = "";
         try {
@@ -81,7 +81,7 @@ async function applyEdits(base: string, patch: table): table {
         } catch (error) { return rejected("PATCH_SHAPE"); }
         let source: string = deal; let searches: string[] = dealSearch; let replacements: string[] = dealReplace;
         if (file === "dealui") { source = ui; searches = uiSearch; replacements = uiReplace; }
-        let matches: int = matchCount(source, search);
+        let matches: number = matchCount(source, search);
         if (matches !== 1) {
             let other: string = ui; let otherFile: string = "dealui";
             if (file === "dealui") { other = deal; otherFile = "deal"; }
@@ -95,31 +95,35 @@ async function applyEdits(base: string, patch: table): table {
         for (let prior: string of searches) {
             // Disjoint occurrences in the ORIGINAL source, never sequential matching.
             let prefix: string[] = strings.split(source, prior);
-            let start: int = strings.length(pieces[0]); let end: int = start + strings.length(search);
-            let priorStart: int = strings.length(prefix[0]); let priorEnd: int = priorStart + strings.length(prior);
+            let start: number = strings.length(pieces[0]); let end: number = start + strings.length(search);
+            let priorStart: number = strings.length(prefix[0]); let priorEnd: number = priorStart + strings.length(prior);
             if (start < priorEnd && priorStart < end) { return rejected("PATCH_OVERLAP"); }
         }
         searches[searches.length] = search; replacements[replacements.length] = replacement;
-    }
+     editIndex = editIndex + 1; } }
     // Scan original source; replacement content never becomes an edit target.
     let files: string[] = [deal, ui]; let result: string[] = [];
-    for (let f: int = 0; f < 2; f = f + 1) {
+    { let f: number = 0; while (f < 2) {
         let source: string = files[f]; let searches: string[] = dealSearch; let replacements: string[] = dealReplace;
         if (f === 1) { searches = uiSearch; replacements = uiReplace; }
-        let cursor: int = 0; let out: string = "";
-        for (let n: int = 0; n < searches.length; n = n + 1) {
-            let next: int = strings.length(source); let selected: int = -1;
-            for (let i: int = 0; i < searches.length; i = i + 1) {
-                let prefix: string[] = strings.split(source, searches[i]); let start: int = strings.length(prefix[0]);
+        let cursor: number = 0; let out: string = "";
+        let n: number = 0;
+        while (n < searches.length) {
+            let next: number = strings.length(source); let selected: number = -1;
+            let i: number = 0;
+            while (i < searches.length) {
+                let prefix: string[] = strings.split(source, searches[i]); let start: number = strings.length(prefix[0]);
                 if (start >= cursor && start < next) { next = start; selected = i; }
+                i = i + 1;
             }
             if (selected < 0) { return rejected("PATCH_OVERLAP"); }
             out = out + strings.substring(source, cursor, next) + replacements[selected];
             cursor = next + strings.length(searches[selected]);
+            n = n + 1;
         }
         out = out + strings.substring(source, cursor, strings.length(source));
         result[result.length] = out;
-    }
+     f = f + 1; } }
     return { accepted: true, source: json.stringify({ deal: result[0], dealui: result[1] }), diagnostics: "", editCount: edits.length };
 }
 export async function instruction(base: string): string {

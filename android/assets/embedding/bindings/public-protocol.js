@@ -13,15 +13,14 @@ globalThis.publicProtocol = (() => {
   const lookup=(map,ref)=>{const value=map.get(ref.id);if(!value)fail('INVALID_HANDLE','Unissued or expired handle');return value;};
   function schema(t,depth=0,ancestors=new Set()) {
     need(depth<=8&&!ancestors.has(t),'Schema depth/cycle');ancestors.add(t);
-    need(['int','string','boolean','null','record','array'].includes(t.kind),'Wire kind');
-    need(Number.isInteger(t.maximum)&&t.maximum>=0&&t.maximum<=8192&&Number.isInteger(t.minimumInt)&&Number.isInteger(t.maximumInt)&&t.minimumInt<=t.maximumInt,'Wire bounds');
+    need(['number','string','boolean','null','record','array'].includes(t.kind),'Wire kind');
+    need(Number.isInteger(t.maximum)&&t.maximum>=0&&t.maximum<=8192&&Number.isFinite(t.minimumNumber)&&Number.isFinite(t.maximumNumber)&&t.minimumNumber<=t.maximumNumber,'Wire bounds');
     need(Array.isArray(t.fields)&&t.fields.length<=32&&(t.kind==='record'||t.fields.length===0)&&(t.kind==='array')===(t.element!==null),'Wire metadata');
-    need(t.minimumInt>=-2147483648&&t.maximumInt<=2147483647,'Integer bounds');
     const names=new Set();for(const f of t.fields){need(/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(f.name)&&!names.has(f.name)&&typeof f.optional==='boolean','Wire field');names.add(f.name);schema(f.type,depth+1,ancestors);}
     if(t.element!==null)schema(t.element,depth+1,ancestors);ancestors.delete(t);
   }
   function value(t,v) {
-    if(t.kind==='int')need(Number.isInteger(v)&&v>=t.minimumInt&&v<=t.maximumInt,'Integer value');
+    if(t.kind==='number')need(Number.isFinite(v)&&v>=t.minimumNumber&&v<=t.maximumNumber,'Numeric value');
     else if(t.kind==='string')need(typeof v==='string'&&v.length<=t.maximum,'String value');
     else if(t.kind==='boolean')need(typeof v==='boolean','Boolean value');
     else if(t.kind==='null')need(v===null,'Null value');
@@ -51,9 +50,9 @@ globalThis.publicProtocol = (() => {
         case 'source':result=copy(lookup(experiences,args[0]).source);break;
         case 'release':{const e=lookup(experiences,args[0]);need(!e.session&&!e.starting,'Experience is live');control('release',[e.metadata]);if(!e.saved)experiences.delete(e.metadata.id);result=null;break;}
         case 'run':{const e=lookup(experiences,args[0]);if(!e.starting)e.starting=native('run',[e.metadata]).then(s=>{if(e.session&&e.session.id!==s.id)sessions.delete(e.session.id);e.session={id:s.id};if(!sessions.has(s.id))sessions.set(s.id,{experience:e,trace:s.trace,version:-1});if(!e.saved){e.saved=true;saved.push(e.metadata.id);}return {id:s.id};}).finally(()=>{e.starting=null;});result=e.starting;break;}
-        case 'dispatch':lookup(sessions,args[0]);result=native(name,args);break;
+        case 'dispatch':lookup(sessions,args[0]);need(Number.isSafeInteger(args[1])&&args[1]>=0&&args[1]<=2147483647,'Action slot');result=native(name,args);break;
         case 'next':{const s=lookup(sessions,args[0]);result=native(name,args).then(update=>{s.version=Math.max(s.version,update.snapshot.version);return update;});break;}
-        case 'published':{const s=lookup(sessions,args[0]);need(args[1]>=0&&args[1]<=s.version,'Unproduced snapshot version');s.published=args[1];control('published',args);result=null;break;}
+        case 'published':{const s=lookup(sessions,args[0]);need(Number.isSafeInteger(args[1])&&args[1]>=0&&args[1]<=s.version,'Unproduced snapshot version');s.published=args[1];control('published',args);result=null;break;}
         case 'sessionTrace':result=lookup(sessions,args[0]).trace;break;
         case 'close':{const s=lookup(sessions,args[0]);result=native('close',args).then(()=>{sessions.delete(args[0].id);s.experience.session=null;return null;});break;}
         case 'saved':result=saved.map(key=>copy(experiences.get(key).metadata));break;
@@ -62,7 +61,8 @@ globalThis.publicProtocol = (() => {
         case 'grant':case 'revoke':need(contracts.some(c=>c.module===args[0]),'Unknown module');if(name==='grant'&&!grants.has(args[0]))grants.set(args[0],id());else if(name==='revoke')grants.delete(args[0]);result=null;break;
         case 'health':result=copy(observation);break;
         case 'capture':result=null;break; // Controller synchronously persists the shared private choice.
-        case 'events':case 'artifact':case 'clearObservation':result=native(name,args);break;
+        case 'events':need(Number.isInteger(args[2])&&args[2]>=1&&args[2]<=200,'Event limit');result=native(name,args);break;
+        case 'artifact':case 'clearObservation':result=native(name,args);break;
         case 'shutdown':stopped=true;for(const [key,r]of requests){r.cancelled=true;if(r.reject)r.reject(publicRuntime.errorValue('CANCELLED','Generation cancelled'));control('cancel',[key]);}result=native(name,args).then(()=>{contexts.clear();requests.clear();sessions.clear();experiences.clear();saved=[];return null;});break;
         default:fail('UNKNOWN_EXPORT',name);
       }

@@ -40,10 +40,10 @@ async function sourceWindow(previous: string, diagnostics: string): string {
         try { let items: table[] = wrapped.report; errors = items; }
         catch (shape) { let report: table = wrapped.report; let items: table[] = report.diagnostics; errors = items; }
         let out: string = "";
-        let count: int = 0;
+        let count: number = 0;
         for (let error: table of errors) {
             if (count < 3) {
-                let file: string = ""; let line: int = 0;
+                let file: string = ""; let line: number = 0;
                 try { file = error.file; line = error.line; }
                 catch (shape) { let range: table = error.range; file = range.file; line = range.startLine; }
                 let source: string = "";
@@ -64,7 +64,7 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                         if (strings.endsWith(file, ".dealui")) { patchFile = "dealui"; }
                         out = out + "\nDiagnostic file: " + file + "; patch file: " + patchFile + "; line: " + literals.decimal(line) + "; code: " + code + "\n";
                         if (code === "E1007") {
-                            let column: int = error.column;
+                            let column: number = error.column;
                             let tail: string = strings.substring(reported, column - 1, strings.length(reported));
                             let reserved: string[] = assets.reservedWords();
                             for (let word: string of reserved) {
@@ -88,7 +88,7 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                             out = out + "Array length is read-only. Append with array[array.length] = value; to truncate or replace contents, build a fresh typed array and assign it to the owned local/state field. Never assign array.length.\n";
                         }
                         if (strings.endsWith(file, ".deal") && code === "E3003") {
-                            out = out + "Table reads require an explicit contextual target type. Read into typed locals before arithmetic/comparison: let cents: int = record.cents;. Use the actual declared contract field/type; do not invent a field or cast.\n";
+                            out = out + "Table reads require an explicit contextual target type. Read into typed locals before arithmetic/comparison: let cents: number = record.cents;. Use the actual declared contract field/type; do not invent a field or cast.\n";
                         }
                         out = out + "Exact reported source line (line number is not source):\n" + literals.decimal(line) + " | " + reported + "\n";
                         let pack: table = assets.pack(); let components: table[] = pack.components;
@@ -100,9 +100,9 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                             }
                         }
                         out = out + "Nearby source (context, not replacement authority):\n";
-                        let start: int = line - 3; if (start < 0) { start = 0; }
-                        let end: int = line + 2; if (end > lines.length) { end = lines.length; }
-                        for (let index: int = start; index < end; index = index + 1) { out = out + literals.decimal(index + 1) + " | " + lines[index] + "\n"; }
+                        let start: number = line - 3; if (start < 0) { start = 0; }
+                        let end: number = line + 2; if (end > lines.length) { end = lines.length; }
+                        { let index: number = start; while (index < end) {  out = out + literals.decimal(index + 1) + " | " + lines[index] + "\n";  index = index + 1; } }
                     }
                 }
                 count = count + 1;

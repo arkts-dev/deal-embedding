@@ -56,7 +56,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
             val configure = "protocolContexts[${JSONObject.quote(contextId)}]={value:${JSONObject.quote(disclosedContext)},schema:$contextSchema};"
             val bundle = SandboxBundle.build(context, listOf("generation-contracts.js", "protocol-contracts.js", "protocol-host.js", "generation-session.js"), configure,
                 "runGeneration(factories, $input)", assetRoot = config.generationAssets)
-            val extra = if(config.policyAssets.isNotEmpty()) SandboxBundle.factories(context,config.policyAssets) else "factories['app-policy.js']=function(require,module,exports){module.exports={offer:{\$f:async()=>loadedPolicyRuntime.makeClass('@\$external/catalogue-policy/CatalogueOffer','@\$external/catalogue-policy/CatalogueOffer',()=>({available:false,questions:[],stateJson:''}),{})}};};"
+            val extra = if(config.policyAssets.isNotEmpty()) SandboxBundle.factories(context,config.policyAssets) else "factories['app-policy.js']=function(require,module,exports){module.exports={offer:{\$f:async()=>protocolRecord('@\$external/catalogue-policy/CatalogueOffer',{available:false,questions:[],stateJson:''})}};};"
             eval(bundle.replace("return runGeneration(factories,", extra+"\nreturn runGeneration(factories,"))
             var attempts = 0
             while (true) {

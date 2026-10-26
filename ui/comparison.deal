@@ -1,11 +1,11 @@
 import * as values from "ui/values";
-export class State { approved: int = 18000; committed: int = 19750; difference: int = 1750; status: string = "Over budget"; }
-export class Approved { value: int = 0; }
-export class Committed { value: int = 0; }
+export class State { approved: number; committed: number; difference: number; status: string; }
+export class Approved { value: number; }
+export class Committed { value: number; }
 export class Reset {}
-export function initialState(): State { return {}; }
-function compare(approved: int, committed: int): State {
-    let difference: int = committed - approved;
+export function initialState(): State { return {approved: 18000, committed: 19750, difference: 1750, status: "Over budget"}; }
+function compare(approved: number, committed: number): State {
+    let difference: number = committed - approved;
     let status: string = "On budget";
     if (difference > 0) { status = "Over budget"; }
     if (difference < 0) { status = "Under budget"; difference = 0 - difference; }

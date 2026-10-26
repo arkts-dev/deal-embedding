@@ -119,7 +119,11 @@ private val LocalComparisonValue = compositionLocalOf { false }
     fun prop(name: String): JSONObject? = (0 until properties.length()).map { properties.getJSONObject(it) }.firstOrNull { it.getString("name") == name }
     fun text(name: String) = prop(name)?.optString("stringValue") ?: ""
     fun flag(name: String, default: Boolean = false) = prop(name)?.optBoolean("booleanValue", default) ?: default
-    fun number(name: String, default: Int = 0) = prop(name)?.optInt("intValue") ?: default
+    fun number(name: String, default: Int = 0): Int {
+        val value = prop(name)?.getDouble("numberValue") ?: return default
+        require(value.isFinite() && value == kotlin.math.floor(value) && value >= Int.MIN_VALUE && value <= Int.MAX_VALUE) { "Expected integral $name for ${node.getString("component")}" }
+        return value.toInt()
+    }
     fun choices(actions: List<String>): List<Pair<String, Int?>> =
         listOf("first", "second", "third").mapIndexed { index, name ->
             Pair(prop(name)?.optString("stringValue") ?: "", prop(actions[index])?.optInt("actionSlot"))
@@ -128,7 +132,7 @@ private val LocalComparisonValue = compositionLocalOf { false }
         val nodes = node.getJSONArray("children")
         for (i in 0 until nodes.length()) {
             val child = nodes.getJSONObject(i)
-            key(child.getString("structural"), child.getString("keyKind"), child.getInt("keyInt"), child.getString("keyString")) { DealRenderer(child, dispatch) }
+            key(child.getString("structural"), child.getString("keyKind"), child.getDouble("keyNumber"), child.getString("keyString")) { DealRenderer(child, dispatch) }
         }
     }
     val name = node.getString("component").substringAfterLast('.')

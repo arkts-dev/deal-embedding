@@ -1,15 +1,6 @@
 "use strict";
 // Native transport for the checked public declarations. No domain policy.
 globalThis.protocolHost = function(id, declarations, rt) {
-  const defaults = {
-    WireField:{name:"",type:null,optional:false}, WireType:{kind:"",fields:[],element:null,maximum:128,minimumInt:-2147483648,maximumInt:2147483647},
-    Parameter:{name:"",type:null},CapabilityFunction:{name:"",description:"",parameters:[],result:null},CapabilityContract:{module:"",description:"",version:1,functions:[]},
-    Source:{deal:"",dealui:""},GenerationContext:{id:""},GenerationRequest:{id:""},Experience:{id:"",title:"",origin:"",attempts:0},Session:{id:""},
-    SessionUpdate:{snapshot:null,cursor:""},UiSnapshot:{tree:null,version:0,fault:""},ChoiceOption:{name:"",description:""},ChoiceQuestion:{name:"",instructions:"",options:[]},
-    OptionProbability:{option:"",probability:0},ChoiceAnswer:{question:"",choice:"",probabilities:[],confidence:null},
-    CatalogueOffer:{available:false,questions:[],stateJson:""},CatalogueLowering:{source:null,reason:""},Decision:{accepted:false,answers:[],reason:""},
-    EventPage:{events:[],cursor:"",incomplete:false},Artifact:{status:"",text:""},ObservationHealth:{incomplete:false,active:false,code:"",lost:0}
-  };
   function record(descriptor, value) {
     if (value === null || descriptor[0] === '?' && value === null) return null;
     if (descriptor[0] === '?') return record(descriptor.slice(1),value);
@@ -19,11 +10,17 @@ globalThis.protocolHost = function(id, declarations, rt) {
       return table(value);
     }
     if (descriptor[0] !== '@') return value;
-    if(descriptor.includes('/ui/'))return protocolUi[descriptor.split('/').pop()+'$new'](Object.fromEntries(Object.entries(value).filter(([key])=>!key.startsWith('$')).map(([key,v])=>[key,key==='children'?v.map(n=>record(descriptor,n)):key==='props'?v.map(p=>record(descriptor.replace('/ViewNode','/Prop'),p)):key==='actionBindings'?record('table',v):v])));
+    if(descriptor.includes('/ui/')) {
+      const name=descriptor.split('/').pop();
+      const fields=Object.fromEntries(Object.entries(value).filter(([key])=>!key.startsWith('$')).map(([key,v])=>[key,key==='children'?v.map(n=>record(descriptor,n)):key==='props'?v.map(p=>record(descriptor.replace('/ViewNode','/Prop'),p)):key==='actionBindings'?record('table',v):v]));
+      try { return protocolUi[name+'$new'](fields); }
+      catch(error) { throw rt.errorValue(error.code||'BAD_RESPONSE','Invalid '+name+' transport: '+(error.message||'construction failed')); }
+    }
     const spec = Object.values(protocolDeclarations).flatMap(m=>Object.values(m)).find(v=>v.$k==='class'&&v.$d===descriptor);
     if (!spec) throw Error('Unknown protocol record '+descriptor);
     const fields={};for(const field of spec.$fields)fields[field.name]=record(field.$d,value[field.name]);
-    return rt.makeClass(descriptor,descriptor,()=>fields,{});
+    try { return rt.classPlan(descriptor,spec.$fields.map(f=>({name:f.name,descriptor:f.$d,optional:f.optional})),fields); }
+    catch(error) { throw rt.errorValue(error.code||'BAD_RESPONSE','Invalid '+descriptor.split('/').pop()+' transport: '+(error.message||'construction failed')); }
   }
   globalThis.protocolRecord=(descriptor,value)=>record(descriptor,value);
   function plain(value) {
@@ -36,10 +33,6 @@ globalThis.protocolHost = function(id, declarations, rt) {
   for(const [name,spec]of Object.entries(declarations)) {
     if(spec.$k==='class') {
       raw[name]={$kind:'class',$classname:spec.$d};
-      raw[name+'$defaults']=()=>{
-        const values=defaults[name] || (name==='Event'?Object.fromEntries(spec.$fields.map(f=>[f.name,f.name==='version'?-1:f.$d==='int'?0:''])):null);if(!values)throw Error('Missing protocol defaults '+name);
-        return Object.fromEntries(Object.entries(values).map(([key,value])=>[key,Array.isArray(value)?[]:value===null&&['type','result'].includes(key)?record('@$external/embedding/WireType',defaults.WireType):key==='tree'?protocolUi['ViewNode$new']({}):key==='snapshot'?record('@$external/embedding/UiSnapshot',{tree:{},version:0,fault:''}):value]));
-      };
     } else if(id==='embedding' && typeof publicProtocol !== 'undefined')raw[name]=(...args)=>publicProtocol.invoke(name,args.map(plain),value=>record(spec.$d.slice(spec.$d.lastIndexOf('->')+2),value));
     else if(id==='catalogue-policy') raw[name]=async(...args)=>globalThis.loadedAppPolicy[name].$f(...args);
     else if(id==='embedding' && name==='contextJson')raw[name]=context=>{if(!Object.hasOwn(protocolContexts,context.id))throw rt.errorValue('INVALID_HANDLE','Invalid context');return protocolContexts[context.id].value;};

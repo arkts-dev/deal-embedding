@@ -9,7 +9,7 @@ ROOT=$(cd "$(dirname "$0")" && pwd)
 : "${OUTPUT_DIR:?Set OUTPUT_DIR to an absolute output directory}"
 KOTLIN_HOME=${KOTLIN_HOME:-/snap/kotlin/current}
 mkdir -p "$OUTPUT_DIR"
-rm -rf "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar"
+rm -rf "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar" "$OUTPUT_DIR/generation" "$OUTPUT_DIR/logging"
 mkdir -p "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar/assets/distribution/deal" "$OUTPUT_DIR/aar/assets/distribution/std"
 find "$DEAL_ROOT/deal" -name '*.java' | sort > "$OUTPUT_DIR/sources.txt"
 for source in UiModel UiParser UiDiagnostic UiChecker UiBorrowedValueChecker UiDealGenerator UiSourceGenerator DealUiDealSource; do
@@ -32,11 +32,11 @@ java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/guidance-tools" GenerationGuidance \
 cp "$ROOT/core/"*.deal "$OUTPUT_DIR/generation/src/"
 cp "$ROOT/core/host/"*.d.deal "$OUTPUT_DIR/generation/"
 cp -r "$DEAL_UI_ROOT/ui" "$OUTPUT_DIR/generation/ui"
-printf '%s' '{"languageVersion":"1.3","backend":"js","moduleRoots":["src","ui"],"externals":{"embedding/discovery":{"declaration":"discovery.d.deal"},"embedding/model":{"declaration":"model.d.deal"},"embedding/checker":{"declaration":"checker.d.deal"},"embedding/chooser":{"declaration":"chooser.d.deal"},"embedding/policy-data":{"declaration":"policy-data.d.deal"},"embedding/observer":{"declaration":"observer.d.deal"},"embedding":{"declaration":"embedding.d.deal"},"catalogue-policy":{"declaration":"catalogue-policy.d.deal"},"embedding/protocol":{"declaration":"protocol.d.deal"}}}' > "$OUTPUT_DIR/generation/deal.json"
+printf '%s' '{"languageVersion":"1.4","backend":"js","moduleRoots":["src","ui"],"externals":{"embedding/discovery":{"declaration":"discovery.d.deal"},"embedding/model":{"declaration":"model.d.deal"},"embedding/checker":{"declaration":"checker.d.deal"},"embedding/chooser":{"declaration":"chooser.d.deal"},"embedding/policy-data":{"declaration":"policy-data.d.deal"},"embedding/observer":{"declaration":"observer.d.deal"},"embedding":{"declaration":"embedding.d.deal"},"catalogue-policy":{"declaration":"catalogue-policy.d.deal"},"embedding/protocol":{"declaration":"protocol.d.deal"}}}' > "$OUTPUT_DIR/generation/deal.json"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/generation/src/generation.deal" --backend js --output "$OUTPUT_DIR/aar/assets/generation"
 mkdir -p "$OUTPUT_DIR/logging/src"
 cp "$ROOT/core/logging.deal" "$OUTPUT_DIR/logging/src/"
-printf '%s' '{"languageVersion":"1.3","backend":"js","moduleRoots":["src"]}' > "$OUTPUT_DIR/logging/deal.json"
+printf '%s' '{"languageVersion":"1.4","backend":"js","moduleRoots":["src"]}' > "$OUTPUT_DIR/logging/deal.json"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/logging/src/logging.deal" --backend js --output "$OUTPUT_DIR/aar/assets/logging"
 mkdir -p "$OUTPUT_DIR/binding-tools" "$OUTPUT_DIR/aar/assets/embedding/bindings"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/binding-tools" "$ROOT/tools/GenerationBindings.java"

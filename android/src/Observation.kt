@@ -15,7 +15,7 @@ internal class Observation(private val context:Context) {
             val page=if(cursor.isEmpty())Page(trace,listOf("previous.jsonl","events.jsonl").flatMap{File(directory,it).takeIf{it.isFile}?.readLines().orEmpty()}.map{JSONObject(it)}.filter{trace.isEmpty()||it.optString("trace")==trace},0) else (cursors.remove(cursor) ?: error("Expired observation cursor")).also{require(it.trace==trace)}
             val selected=page.events.drop(page.index).take(limit)
             val next=if(page.index+selected.size<page.events.size)UUID.randomUUID().toString().also{while(cursors.size>=16)cursors.remove(cursors.keys.first());cursors[it]=page.copy(index=page.index+selected.size)}else ""
-            EventPage(selected.map{event->JSONObject(event.toString()).put("experience",event.optString("workspace").ifEmpty{event.optString("candidate")}).put("session",event.optString("session"))},next,health().incomplete)
+            EventPage(selected.map{event->JSONObject(event.toString()).put("experience",event.optString("workspace").ifEmpty{event.optString("candidate")}).put("session",event.optString("session")).put("sha256",event.optString("sha256"))},next,health().incomplete)
         }catch(e:java.io.IOException){EventPage(emptyList(),"",true)}catch(e:org.json.JSONException){EventPage(emptyList(),"",true)}
     }
     fun artifact(id:String):Artifact {

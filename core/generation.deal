@@ -11,8 +11,8 @@ import * as guidance from "./generation-guidance";
 import * as protocol from "embedding/protocol";
 import * as agent from "./source-agent";
 
-export class GenerationInput { intent: string = ""; context: embedding.GenerationContext = {}; capabilities: embedding.CapabilityContract[] = []; }
-export class GenerationResult { candidateId: string = ""; attempts: int = 0; diagnostics: string = ""; usedFallback: boolean = false; }
+export class GenerationInput { intent: string; context: embedding.GenerationContext; capabilities: embedding.CapabilityContract[] ; }
+export class GenerationResult { candidateId: string; attempts: number; diagnostics: string; usedFallback: boolean; }
 
 // Embedding owns dialogue, validation and recovery until success or explicit cancellation.
 export async function generate(request: GenerationInput): GenerationResult {
@@ -35,14 +35,14 @@ export async function generate(request: GenerationInput): GenerationResult {
                 let envelope: string = await protocol.envelope(supplied);
                 let checked: table = await checker.check(envelope);
                 let accepted: boolean = checked.accepted;
-                if (accepted) { return { candidateId: checked.candidateId, attempts: 1 }; }
+                if (accepted) { let candidateId: string = checked.candidateId; return { candidateId: candidateId, attempts: 1, diagnostics: "", usedFallback: false}; }
                 diagnostics = checked.diagnostics;
             }
             diagnostics = "CHOICE_UNSUPPORTED: " + lowering.reason;
         }
     }
     let result: table = await agent.run(input + guidance.workflow(), diagnostics);
-    let candidate: string = result.candidateId; let attempts: int = result.attempts;
-    return { candidateId: candidate, attempts: attempts, usedFallback: true };
+    let candidate: string = result.candidateId; let attempts: number = result.attempts;
+    return { candidateId: candidate, attempts: attempts, usedFallback: true ,diagnostics: ""};
 }
 export function main(): null { return null; }

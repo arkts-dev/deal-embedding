@@ -4,7 +4,7 @@ export class ButtonProps { text: string = ""; enabled: boolean = true; onClick?:
 export class ToggleProps { value: string = ""; text: string = ""; checked: boolean = false; onChange?: Action; accessibilityLabel?: string; }
 export component Toggle(props: ToggleProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.toggle"; }
 export class EmptyProps {}
-export class MinuteProps { value: int = 0; }
+export class MinuteProps { value: number = 0; }
 export component Time(props: MinuteProps): View { capability "renderer.compose.time"; }
 export component IntText(props: MinuteProps): View { capability "renderer.compose.integer"; }
 export component Text(props: TextProps): View { capability "renderer.compose.text"; }
@@ -20,8 +20,8 @@ export component Section(props: SectionProps): View { children required; capabil
 export class OptionProps { value: string = ""; title: string = ""; detail: string = ""; price: string = ""; meta: string = ""; selected: boolean = false; enabled: boolean = true; onSelect?: Action; accessibilityLabel?: string; }
 export component Option(props: OptionProps): View { children optional; event onSelect(payload: string); accessibility accessibilityLabel; capability "renderer.compose.option"; }
 
-export class IntFieldProps { value: int = 0; label: string = ""; minimum: int = 0; maximum: int = 999; step: int = 1; format: string = "integer"; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
-export component IntField(props: IntFieldProps): View { event onChange(payload: int); accessibility accessibilityLabel; capability "renderer.compose.intfield"; }
+export class IntFieldProps { value: number = 0; label: string = ""; minimum: number = 0; maximum: number = 999; step: number = 1; format: string = "integer"; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
+export component IntField(props: IntFieldProps): View { event onChange(payload: number); accessibility accessibilityLabel; capability "renderer.compose.intfield"; }
 
 export class TextFieldProps { value: string = ""; label: string = ""; multiline: boolean = false; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
 export component TextField(props: TextFieldProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.textfield"; }
@@ -50,7 +50,7 @@ export class KeyedListProps { key: string = ""; }
 export component KeyedList(props: KeyedListProps): View { children required; capability "renderer.compose.keyedlist"; }
 
 // Semantic additions. Existing component contracts and defaults remain compatible.
-export class LayoutProps { minimumChildWidth: int = 240; }
+export class LayoutProps { minimumChildWidth: number = 240; }
 export component Row(props: LayoutProps): View { children required; capability "renderer.layout.row"; }
 export component Heading(props: TextProps): View { capability "renderer.text.heading"; }
 export component Caption(props: TextProps): View { capability "renderer.text.caption"; }
@@ -58,7 +58,7 @@ export component PrimaryAction(props: ButtonProps): View { event onClick; access
 export component SecondaryAction(props: ButtonProps): View { event onClick; accessibility accessibilityLabel; capability "renderer.action.secondary"; }
 
 // Monetary values are integer minor units; formatting does not change the value.
-export class MoneyProps { label: string; minorUnits: int; currency: string = "EUR"; }
+export class MoneyProps { label: string; minorUnits: number; currency: string = "EUR"; }
 export component Money(props: MoneyProps): View { capability "renderer.value.money"; }
 export class MetricProps { label: string; value: string; unit: string = ""; }
 export component Metric(props: MetricProps): View { capability "renderer.value.metric"; }

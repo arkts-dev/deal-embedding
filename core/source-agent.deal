@@ -1,3 +1,4 @@
+import * as math from "std/math";
 import * as data from "embedding/policy-data";
 import * as tables from "std/table";
 import * as strings from "std/string";
@@ -13,26 +14,26 @@ function readSource(args: table, deal: string, ui: string): table {
     let file: string = args.file; let keys: string[] = tables.keys(args);
     if (file !== "deal" && file !== "dealui") { return { accepted: false, diagnostics: "TOOL_SHAPE: read_file permits only deal or dealui" }; }
     let source: string = deal; if (file === "dealui") { source = ui; }
-    let lines: string[] = strings.split(source, "\n"); let total: int = lines.length;
+    let lines: string[] = strings.split(source, "\n"); let total: number = lines.length;
     if (source === "") { total = 0; }
     if (keys.length === 1) { return { accepted: true, file: file, source: source, total_lines: total }; }
     if (keys.length !== 3) { return { accepted: false, diagnostics: "TOOL_SHAPE: supply file and both nullable line bounds" }; }
     for (let key: string of keys) { if (key !== "file" && key !== "start_line" && key !== "end_line") { return { accepted: false, diagnostics: "TOOL_SHAPE: unknown read_file argument" }; } }
-    let start: int | null = args.start_line; let end: int | null = args.end_line;
+    let start: number | null = args.start_line; let end: number | null = args.end_line;
     if (start === null && end === null) { return { accepted: true, file: file, source: source, total_lines: total }; }
     if (start === null) { return { accepted: false, diagnostics: "READ_RANGE: supply both bounds or null for both" }; }
     if (end === null) { return { accepted: false, diagnostics: "READ_RANGE: supply both bounds or null for both" }; }
-    let first: int = args.start_line; let last: int = args.end_line;
-    if (first < 1 || last < first || last > total) { return { accepted: false, total_lines: total, diagnostics: "READ_RANGE: require 1 <= start_line <= end_line <= total_lines" }; }
+    let first: number = args.start_line; let last: number = args.end_line;
+    if (math.floor(first) !== first || math.floor(last) !== last || first < 1 || last < first || last > total) { return { accepted: false, total_lines: total, diagnostics: "READ_RANGE: require 1 <= start_line <= end_line <= total_lines" }; }
     let selected: table[] = [];
-    for (let index: int = first - 1; index < last; index = index + 1) { let text: string = lines[index]; selected[selected.length] = { number: index + 1, text: text }; }
+    { let index: number = first - 1; while (index < last) {  let text: string = lines[index]; selected[selected.length] = { number: index + 1, text: text };  index = index + 1; } }
     return { accepted: true, file: file, start_line: first, end_line: last, total_lines: total, lines: selected };
 }
 
 // Portable restricted workspace. Provider adapters transport native calls, never execute them.
 export async function run(input: string, diagnostic: string): table {
     let deal: string = ""; let ui: string = ""; let previous: string = "";
-    let history: table[] = []; let attempts: int = 0;
+    let history: table[] = []; let attempts: number = 0;
     while (true) {
         attempts = attempts + 1;
         let operation: string = "initial"; if (previous !== "") { operation = "repair"; }

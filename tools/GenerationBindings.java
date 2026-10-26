@@ -13,7 +13,7 @@ public final class GenerationBindings {
                 if (tableSchema == null) throw new IllegalArgumentException("Table result requires an explicit wire schema");
                 return tableSchema;
             }
-            if (Set.of("string", "int", "boolean", "null").contains(named.name())) return "{\"kind\":" + quote(named.name()) + "}";
+            if (Set.of("string", "number", "boolean", "null").contains(named.name())) return "{\"kind\":" + quote(named.name()) + "}";
         }
         throw new IllegalArgumentException("Unsupported trusted host type: " + type);
     }

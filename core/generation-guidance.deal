@@ -28,9 +28,9 @@ export function componentFacts(pack: table): string {
             if (fieldName === "value") { value = "state.value"; }
             if (type === "boolean") { value = "false"; }
             if (defaultKind === "boolean") { value = defaultText; }
-            if (type === "int") { value = "0"; }
+            if (type === "number") { value = "0"; }
             if (defaultKind === "string" && defaultText !== "") { value = "\"" + defaultText + "\""; }
-            if (defaultKind === "int") { value = defaultText; }
+            if (defaultKind === "number") { value = defaultText; }
             if (action) { value = "action app.Action {}";
                 for (let contract: table of contracts) {
                     let kind: string = contract.kind;
@@ -72,7 +72,7 @@ export function guidance(): string {
         "\nDo not use these words as variable, class, function or field names. Use descriptive non-keyword local names; preserve provider keys with explicitly typed string indexing, e.g. let periodStart: string = record[\"from\"];.\n\nHOW TO COMPOSE A VIEW\n" + composition() +
         "\n\nTHIS RENDERER\n" + assets.renderer() + "\n\nCOMPONENTS (this is the complete set)\n" + componentFacts(assets.pack()) +
         "\n\nCHECKED ASYNC EXAMPLE (syntax only, not an available capability or task template)\n" +
-        "The example-only host/sample exports async value(): int. Never import it unless present in the actual catalog. Adapt the pattern to actual contracts; do not copy its behavior.\nDEAL:\n" + assets.exampleDeal() + "\nDEALUI:\n" + assets.exampleUi() +
+        "The example-only host/sample exports async value(): number. Never import it unless present in the actual catalog. Adapt the pattern to actual contracts; do not copy its behavior.\nDEAL:\n" + assets.exampleDeal() + "\nDEALUI:\n" + assets.exampleUi() +
         "\n\nCHECKED LOCAL COMPARISON EXAMPLE (syntax only, not task facts)\nDEAL:\n" + assets.comparisonDeal() + "\nDEALUI:\n" + assets.comparisonUi();
 }
 export function main(): null { return null; }

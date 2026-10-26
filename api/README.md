@@ -6,7 +6,7 @@ Generation, bounded repair and fallback execute in `core/generation.deal`. App b
 
 ## Context and handles
 
-Contexts copy and validate schema/value. Six kinds only; closed records support omitted optional fields. Strings count UTF-16 units. Maximum length/count is 0–8192, schema depth at most 8, record fields at most 32, and encoded context at most 8192 UTF-8 bytes. Empty records are legal. Duplicate fields, cycles, unknown kinds, incorrect element/field metadata and inverted integer bounds reject, including in absent optional branches. Accessors return independent schemas. JSON is normalized at snapshot; values must consume the full input. No generic domain schema is implied.
+Contexts copy and validate schema/value. Six kinds only; closed records support omitted optional fields. Strings count UTF-16 units. Maximum length/count is 0–8192, schema depth at most 8, record fields at most 32, and encoded context at most 8192 UTF-8 bytes. Empty records are legal. Duplicate fields, cycles, unknown kinds, incorrect element/field metadata and nonfinite or inverted number bounds reject, including in absent optional branches. Accessors return independent schemas. JSON is normalized at snapshot; values must consume the full input. No generic domain schema is implied.
 
 IDs must have been issued or reconstituted by the same instance; copied metadata grants nothing. Requests are single-use, freeze context/contracts and retain their trace until shutdown. Cancellation is checked before inference, after each host operation and atomically before accepting prepared source. It stops waiting/acceptance, not remote compute/cost. Context/request resources live until shutdown.
 

@@ -1,5 +1,5 @@
 import * as values from "ui/values";
-export class State { text: string = ""; bounded: boolean = false; }
+export class State { text: string; bounded: boolean; }
 export function initialState(): State {
     return { text: values.decimal(-2147483648) + "|" + values.decimal(0) + "|" + values.clockMinutes(916) + "|" + values.clockMinutes(-1) + "|" + values.clockMinutes(1440), bounded: values.inBounds(20, 0, 20) && !values.inBounds(21, 0, 20) && !values.inBounds(0, 1, 0) };
 }

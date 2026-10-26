@@ -1,5 +1,7 @@
 # Rendering
 
+Preserve fractional numeric keys as numbers. Components whose contracts represent whole units must reject fractional/nonfinite/out-of-native-range props before conversion, never silently truncate the shared `number` lane.
+
 Render checked portable trees in Compose. Preserve structural/key identity and forward compiler-issued action slots and typed payloads.
 
 `RenderComponent` defines implemented components and capabilities. Keep dispatch exhaustive and registration aligned with `ui/platform.dealui-pack`. Adaptive rows must measure checked children without swapping composition branches on resize; account for font scale and preserve keyed identity. Money formats explicit integer minor units/currency; Comparison displays DEAL-supplied status and never infers conclusions. Required props and child composition are checked in Deal UI, not Kotlin. Use native typography, inherited themes and explicit text labels rather than color-only meaning. Comparison may use the inherited primary accent for hierarchy, never select a domain success/error color from values or status prose. Keep subordinate actions visually quieter than primary actions and center numeric values on a stable step-control grid. Comparison values share aligned label/value rows on phones; stack labels and amounts at large text sizes rather than compressing either, and keep all checked children in authored order.

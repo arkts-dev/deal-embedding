@@ -5,14 +5,14 @@ globalThis.runGeneration = function(factories, input) {
   globalThis.loadedAppPolicy=app;globalThis.loadedPolicyRuntime=rt;
   globalThis.protocolUi=dealLoad(factories,'ui/core.js').entry;
   const {entry} = dealLoad(factories, 'generation.js');
-  input.context=rt.makeClass('@$external/embedding/GenerationContext','@$external/embedding/GenerationContext',()=>({id:''}),input.context);
+  input.context=protocolRecord('@$external/embedding/GenerationContext',input.context);
   function tagged(type,value) {
     if(type[0]==='[')return value.map(v=>tagged(type.slice(1,-1),v));
     if(type[0]==='?')return value===null?null:tagged(type.slice(1),value);
     if(type[0]!=='@')return value;
     const spec=Object.values(protocolDeclarations).flatMap(m=>Object.values(m)).find(s=>s.$k==='class'&&s.$d===type);
     const fields={};for(const f of spec.$fields)fields[f.name]=tagged(f.$d,value[f.name]);
-    return rt.makeClass(type,type,()=>fields,{});
+    return rt.classPlan(type,spec.$fields.map(f=>({name:f.name,descriptor:f.$d,optional:f.optional})),fields);
   }
   input.capabilities=tagged('[@$external/embedding/CapabilityContract]',input.capabilities);
   // The class argument is constructed/validated by the generated function ABI.

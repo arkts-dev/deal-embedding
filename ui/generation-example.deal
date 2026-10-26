@@ -1,8 +1,8 @@
 import * as sample from "host/sample";
-export class State { loading: boolean = false; message: string = ""; value: int = 0; ready: boolean = false; }
+export class State { loading: boolean; message: string; value: number; ready: boolean; }
 export class Load {}
-export class Done { message: string = ""; value: int = 0; ready: boolean = false; }
-export function initialState(): State { return {}; }
+export class Done { message: string; value: number; ready: boolean; }
+export function initialState(): State { return {loading: false, message: "", value: 0, ready: false}; }
 // A fresh outer helper preserves scalar fields without permitting nested alias mutation.
 function copy(state: State): State { return { loading: state.loading, message: state.message, value: state.value, ready: state.ready }; }
 // @ui-update
@@ -14,8 +14,8 @@ export function begin(state: State, action: Load): State {
 }
 // @ui-effect
 export async function read(state: State, action: Load): Done {
-    try { let value: int = await sample.value(); return { value: value, ready: true }; }
-    catch (error) { return { message: "Check access and try again", value: state.value }; }
+    try { let value: number = await sample.value(); return { value: value, ready: true ,message: ""}; }
+    catch (error) { return { message: "Check access and try again", value: state.value ,ready: false}; }
 }
 // @ui-update
 export function finish(state: State, action: Done): State {

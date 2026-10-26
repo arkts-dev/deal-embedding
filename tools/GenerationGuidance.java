@@ -16,7 +16,7 @@ public final class GenerationGuidance {
             List<String> fields = new ArrayList<>();
             for (UiModel.Field field : props.fields()) {
                 Object declared = field.defaultValue() instanceof UiModel.Literal literal ? literal.value() : null;
-                String kind = declared instanceof Long ? "int" : declared instanceof String ? "string" : declared instanceof Boolean ? "boolean" : "other";
+                String kind = declared instanceof Number ? "number" : declared instanceof String ? "string" : declared instanceof Boolean ? "boolean" : "other";
                 String text = declared == null ? "" : String.valueOf(declared);
                 fields.add("{ name: " + literal(field.name()) + ", type: " + literal(field.type().name()) + ", required: " + (!field.type().optional() && field.defaultValue() == null) + ", defaultKind: " + literal(kind) + ", defaultText: " + literal(text) + " }");
             }

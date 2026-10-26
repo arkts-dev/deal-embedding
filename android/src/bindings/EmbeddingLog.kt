@@ -95,7 +95,10 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
                     val lost = synchronized(this) { val n = dropped; dropped = 0; n }
                     if (lost > 0) {
                         fault("QUEUE_LIMIT", lost)
-                        write(JSONObject().put("trace", "logger").put("span", UUID.randomUUID().toString()).put("stage", "logger").put("outcome", "dropped").put("code", "QUEUE_LIMIT").put("bytes", lost), null, false, false)
+                        write(JSONObject().put("trace", "logger").put("span", UUID.randomUUID().toString()).put("parent", "")
+                            .put("stage", "logger").put("outcome", "dropped").put("code", "QUEUE_LIMIT").put("bytes", lost)
+                            .put("candidate", "").put("workspace", "").put("session", "").put("operation", "")
+                            .put("target", "").put("durationMs", 0).put("version", -1), null, false, false)
                     }
                     write(value, retained, capture, truncated)
                     recovered()
