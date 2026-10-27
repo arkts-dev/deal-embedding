@@ -40,6 +40,7 @@ public final class GenerationGuidance {
         Files.createDirectories(output.getParent());
         Files.writeString(output, "/** Generated asset text and pack facts. Do not edit. */\n"
             + "function empty(): table[] { return []; }\n"
+            + "export function behavior(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("behavior-guidance.md")).trim()) + "; }\n"
             + "export function language(): string { return " + literal(Files.readString(Path.of(args[2]).resolve("language.md")).trim()) + "; }\n"
             + "export function reservedWords(): string[] { return [" + String.join(",", reserved.stream().map(GenerationGuidance::literal).toList()) + "]; }\n"
             + "export function renderer(): string { return " + literal(Files.readString(Path.of(args[1])).trim()) + "; }\n"

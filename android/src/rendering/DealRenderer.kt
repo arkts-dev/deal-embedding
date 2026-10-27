@@ -1,6 +1,7 @@
 package dev.deal.embedding
 
 import androidx.compose.animation.animateContentSize
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -37,7 +38,8 @@ internal enum class RenderComponent(val component: String, val capability: Strin
     Spinner("Spinner", "renderer.compose.spinner"),
     Section("Section", "renderer.compose.section"), Option("Option", "renderer.compose.option"),
     IntField("IntField", "renderer.compose.intfield"), TextField("TextField", "renderer.compose.textfield"),
-    SearchField("SearchField", "renderer.compose.searchfield"),
+    SearchField("SearchField", "renderer.compose.searchfield"), TimeField("TimeField", "renderer.input.time"),
+    SessionClock("SessionClock", "runtime.clock.session"),
     Choice("Choice", "renderer.compose.choice"), Filters("Filters", "renderer.compose.filters"),
     Notice("Notice", "renderer.compose.notice"), Progress("Progress", "renderer.compose.progress"),
     Failure("Failure", "renderer.compose.failure"), Item("Item", "renderer.compose.item"),
@@ -229,7 +231,18 @@ private val LocalComparisonValue = compositionLocalOf { false }
                     FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() - step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value > lower,
                         colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
                         modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " decrease" }) { Text("−", fontWeight = FontWeight.Bold) }
-                    Text(if (text("format") == "euro-cents") formatMoney(value, "EUR") else value.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.weight(1f))
+                    var draft by remember(value) { mutableStateOf(value.toString()) }
+                    OutlinedTextField(value = draft, onValueChange = { raw ->
+                        draft = raw
+                        raw.toIntOrNull()?.takeIf { it in lower..upper }?.let { entered ->
+                            prop("onChange")?.let { dispatch(it.getInt("actionSlot"), entered.toString()) }
+                        }
+                    }, enabled = flag("enabled", true), singleLine = true,
+                        label = if (text("format") == "euro-cents") ({ Text("EUR cents") }) else null,
+                        supportingText = if (text("format") == "euro-cents") ({ Text(formatMoney(value, "EUR")) }) else null,
+                        isError = draft.toIntOrNull()?.let { it !in lower..upper } ?: true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        modifier = Modifier.weight(1f).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } })
                     FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() + step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value < upper,
                         colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
                         modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " increase" }) { Text("+", fontWeight = FontWeight.Bold) }
@@ -238,6 +251,34 @@ private val LocalComparisonValue = compositionLocalOf { false }
                 if (hint.isNotEmpty()) Text(hint, color = if (text("error").isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
               }
             }
+        }
+        RenderComponent.SessionClock -> {
+            val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+            val send by rememberUpdatedState { epoch: Long -> prop("onTick")?.let { dispatch(it.getInt("actionSlot"), epoch.toString()) }; Unit }
+            LaunchedEffect(lifecycle) {
+                lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+                    // A fresh mount/resume cannot establish the age of restored provider data.
+                    send(-System.currentTimeMillis())
+                    while (true) { kotlinx.coroutines.delay(1000); send(System.currentTimeMillis()) }
+                }
+            }
+        }
+        RenderComponent.TimeField -> {
+            val value = number("value")
+            require(value in 0..1439) { "TimeField requires minute-of-day" }
+            var draft by remember(value) { mutableStateOf("%02d:%02d".format(value / 60, value % 60)) }
+            fun parsed(raw: String): Int? {
+                if (!raw.matches(Regex("[0-2][0-9]:[0-5][0-9]"))) return null
+                val hour = raw.substring(0, 2).toInt()
+                return if (hour < 24) hour * 60 + raw.substring(3).toInt() else null
+            }
+            OutlinedTextField(value = draft, onValueChange = { raw ->
+                draft = raw
+                parsed(raw)?.let { minute -> prop("onChange")?.let { dispatch(it.getInt("actionSlot"), minute.toString()) } }
+            }, label = { Text(text("label")) }, enabled = flag("enabled", true), singleLine = true,
+                isError = parsed(draft) == null || text("error").isNotEmpty(),
+                supportingText = { Text(text("error").ifEmpty { text("supporting").ifEmpty { "HH:mm" } }) },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } })
         }
         RenderComponent.TextField, RenderComponent.SearchField -> {
             val multiline = flag("multiline")

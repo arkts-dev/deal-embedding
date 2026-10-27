@@ -23,6 +23,13 @@ export component Option(props: OptionProps): View { children optional; event onS
 export class IntFieldProps { value: number = 0; label: string = ""; minimum: number = 0; maximum: number = 999; step: number = 1; format: string = "integer"; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
 export component IntField(props: IntFieldProps): View { event onChange(payload: number); accessibility accessibilityLabel; capability "renderer.compose.intfield"; }
 
+// SessionClock emits epoch milliseconds; a negative first/resume event invalidates age trust.
+export class SessionClockProps { onTick: Action; }
+export component SessionClock(props: SessionClockProps): View { event onTick(payload: number); capability "runtime.clock.session"; }
+
+export class TimeFieldProps { value: number = 0; label: string = ""; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
+export component TimeField(props: TimeFieldProps): View { event onChange(payload: number); accessibility accessibilityLabel; capability "renderer.input.time"; }
+
 export class TextFieldProps { value: string = ""; label: string = ""; multiline: boolean = false; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
 export component TextField(props: TextFieldProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.textfield"; }
 

@@ -8,4 +8,8 @@ DEAL owns values, quantities, validation, differences, suitability and status. N
 
 Prefer checked `ui/values` formatting/bounds helpers and typed fresh-outer State copy helpers over repeated digit loops/scalar copying. Keep async loading/error/retry on existing effect/update and component contracts; do not add task templates or silently change semantic decisions. Keep immutable keyed-row rebuild examples alongside the authoritative pack; exercise captured IDs, reordered/removed rows and stale events rather than banning row references in actions. View guidance must reflect the checked expression grammar, not introduce calls as an escape.
 
+SessionClock is a reusable typed platform event source, not a domain timer: emit epoch milliseconds and a negative mount/resume invalidation event through ordinary action slots. DEAL owns age trust, expiry and refresh decisions; restored quotes cannot become fresh merely because a clock started.
+
+TimeField transports integral minute-of-day through its numeric action payload; IntField retains minor-unit/integer values while allowing direct entry as well as steps. Parsing and formatting must not change domain values or bypass checked updates.
+
 Keep authoring guidance concise and nonduplicative with composition prose and mechanically extracted pack facts. Teach generic constraint propagation from current inputs and selected provider records, not task-specific answers. Keep guidance synchronized with the same pack and test examples through the real compiler/runtime and native renderer. Separate deterministic fixture behavior, settled-state restoration, live-model adherence and visual approval. Preserve failed evidence in ignored build output.

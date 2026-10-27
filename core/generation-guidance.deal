@@ -7,8 +7,8 @@ export function workflow(): string {
         "Check proposed initial values against supporting facts. Task deadlines are not operation periods. Preserve an explicit operation period and its timezone: convert local clock times to offset-bearing instants, never append Z to unchanged local time. The friendly period label must represent the same instants sent to capabilities.\n" +
         "Implement the whole task from intent AND supporting facts, including alternatives, exact specifications, quantities and budget. Resolve unknown IDs/prices/stock through explicit reads. Match specification, units and included contents from returned records, not names alone; exclude incompatible options and show concise qualifying details. Never silently omit a requested alternative.\n" +
         "Preserve provider authority: invoke every required external read on explicit user action, never emulate a provider formula or return sample values locally. After actual data loads, compute the requested initial feasible allocation/selection across all supplied constraints, unless manual selection was explicitly requested; editable empty controls alone do not satisfy a planning request. Keep pending and infeasible distinct from success.\n" +
-        "Keep supplied numeric assumptions editable. Use IntField format euro-cents for budget and recompute against its state field, never a hard-coded ceiling. Changing provider inputs clears old results until refreshed; local budget edits recompute without reads. Keep exact instants internal when the pack has no typed local-time control; show a concise friendly period instead of machine-format text fields.\n" +
-        "Compare requested packages and components from actual returned data. Show hire cost and any returned deposit separately. Keep one useful primary action and concise results. Every local declaration needs an initializer. Use submit_compact for initial construction, then edit_sources for exact targeted source repairs. Full-source write_file is available only after explicit source_fallback. Tool strings must decode to literal source text; do not mix files.\n";
+        "Keep supplied numeric assumptions editable. Use IntField format euro-cents for budget and recompute against its state field, never a hard-coded ceiling. Changing provider inputs clears old results until refreshed; local budget edits recompute without reads. Use TimeField for editable minute-of-day; preserve offset-bearing instants and show a concise friendly period instead of machine-format text fields.\n" +
+        "Compare requested packages and components from actual returned data. Show hire cost and any returned deposit separately. Keep one useful primary action and concise results. Use typed maintained operations for initial construction, then edit_sources for exact targeted source repairs. submit_custom is explicitly measured custom behavior; full-source write_file is available only after explicit source_fallback. Never put raw source into maintained data fields.\n";
 }
 export function componentFacts(pack: table): string {
     let out: string = ""; let components: table[] = pack.components;
@@ -66,11 +66,8 @@ export function componentFacts(pack: table): string {
     return out;
 }
 export function guidance(): string {
-    let reserved: string[] = assets.reservedWords(); let names: string = "";
-    for (let word: string of reserved) { if (names !== "") { names = names + ", "; } names = names + word; }
-    return "DEAL RULES\n" + assets.language() + "\n\nRESERVED IDENTIFIERS (derived from the compiler lexer)\n" + names +
-        "\nDo not use these words as variable, class, function or field names. Use descriptive non-keyword local names; preserve provider keys with explicitly typed string indexing, e.g. let periodStart: string = record[\"from\"];.\n\nHOW TO COMPOSE A VIEW\n" + composition() +
-        "\n\nTHIS RENDERER\n" + assets.renderer() + "\n\nCOMPONENTS (this is the complete set)\n" + componentFacts(assets.pack()) +
-        "\n\nCustom bodies and views obey the same checked DEAL/Deal UI contracts as ordinary source. The framework emits declarations, state copies, updates, effects and root view; never duplicate them in compact functions/view.\n";
+    return assets.behavior() + "\n\nPRESENTATION\n" + composition() +
+        "\n\nCOMPONENTS (this is the complete set; use names/typed props, not source snippets)\n" + componentFacts(assets.pack());
 }
+export function sourceGuidance(): string { return "DEAL 1.4 SOURCE RULES\n" + assets.language() + "\n\nRENDERER\n" + assets.renderer(); }
 export function main(): null { return null; }

@@ -61,7 +61,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
             var attempts = 0
             while (true) {
                 cancellation.check()
-                val snapshot = JSONObject(eval("generationSnapshot()"))
+                val snapshot = JSONObject(program.evaluateString("generationSnapshot()"))
                 if (snapshot.getBoolean("done")) {
                     if(snapshot.optJSONObject("error")!=null){val e=snapshot.getJSONObject("error");throw ProtocolFailure(e.getString("code"),e.getString("message"))}
                     val result = snapshot.getJSONObject("result")
@@ -83,7 +83,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                     telemetry.end("source_checked")
                     return CheckedCandidate(context,candidate.first, candidate.second, revision, result.getInt("attempts"), log, id, if (result.getBoolean("usedFallback")) WorkspaceOrigin.AI_SOURCE else WorkspaceOrigin.CATALOGUE).also{accepted=it}
                 }
-                val requests = JSONArray(eval("dealCapabilities.take()"))
+                val requests = JSONArray(program.evaluateString("dealCapabilities.take()"))
                 for (i in 0 until requests.length()) {
                     cancellation.check()
                     val request = requests.getJSONObject(i); val args = request.getJSONArray("args")
@@ -92,7 +92,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             val code = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("[A-Z][A-Z0-9_]{0,79}")) } ?: ""
                             if (args.getString(0) == "check" && args.getString(1) == "rejected" && code == "INVALID_ENVELOPE") log.event("check", "rejected", code = code)
                             else if (args.getString(0) == "lower" && args.getString(1) in setOf("started", "completed", "failed")) log.event("lower", args.getString(1), code = code)
-                            else if(args.getString(0)=="composition")log.event("composition",args.getString(1),detail=args.getString(2))
+                            else if(args.getString(0)=="composition")log.event("composition",args.getString(1),target=if(args.getString(1) in setOf("checked","materialized","source-repair"))args.getString(2)else "",detail=args.getString(2))
                             else if(args.getString(0)=="recovery")log.event("recovery",args.getString(1),code=code)
                             else if(args.getString(0)=="patch") {
                                 if(args.getString(1)=="started")telemetry.patchStart()
@@ -103,10 +103,15 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         }
                         "embedding/composer" -> {
                             try {
-                                val source = CompactCandidate.assemble(JSONObject(args.getString(0)), config.contracts.map { it.module }.toSet())
-                                log.event("composition", "assembled", detail = source.toString())
+                                val plan = JSONObject(args.getString(0))
+                                val custom = plan.has("custom")
+                                val source = BehaviorCandidate(config.contracts, custom).assemble(plan)
+                                log.event("composition", "assembled", detail = JSONObject().put("route",if(custom)"custom-section" else "maintained-only")
+                                    .put("operations",JSONArray((0 until plan.getJSONArray("nodes").length()).map{plan.getJSONArray("nodes").getJSONObject(it).getString("op")}))
+                                    .put("customCharacters",if(custom)(0 until plan.getJSONArray("custom").length()).sumOf{plan.getJSONArray("custom").getJSONObject(it).getString("body").length}else 0)
+                                    .put("reason",plan.optString("reason")).put("source",source).toString())
                                 JSONObject().put("accepted", true).put("source", source).put("diagnostics", "").toString()
-                            } catch (error: CompactCandidate.Rejected) {
+                            } catch (error: BehaviorCandidate.Rejected) {
                                 log.event("composition", "rejected", detail = error.message)
                                 JSONObject().put("accepted", false).put("source", JSONObject()).put("diagnostics", "COMPACT_PLAN: ${error.message}").toString()
                             }

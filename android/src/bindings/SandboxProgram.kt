@@ -38,6 +38,24 @@ internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : Aut
         catch(error:IllegalStateException){if(error.message?.startsWith("Calling evaluateJavaScriptAsync() when ")==true){closed=true;throw ClosedSandboxProgram()};throw error}
         catch (error: java.util.concurrent.TimeoutException) { close(); throw error }
     }
+    /** Evaluate once, then drain a lossless string result below the bridge return-size bound.
+     * JSON chunk envelopes preserve lone/split UTF-16 surrogates and source bytes on reassembly.
+     * Do not re-evaluate destructive operations (e.g. take()) for subsequent pages.
+     */
+    @Synchronized fun evaluateString(source: String): String {
+        val length = evaluate("globalThis.__embeddingTransfer = String($source); String(__embeddingTransfer.length)").toInt()
+        try {
+            val result = StringBuilder(length)
+            var offset = 0
+            while (offset < length) {
+                val end = minOf(offset.toLong() + 16384, length.toLong()).toInt()
+                val chunk = evaluate("JSON.stringify({text:__embeddingTransfer.slice($offset,$end)})")
+                result.append(JSONObject(chunk).getString("text"))
+                offset = end
+            }
+            return result.toString()
+        } finally { evaluate("delete globalThis.__embeddingTransfer; ''") }
+    }
     @Synchronized override fun close() { if (!closed) { closed = true; isolate.close() } }
 }
 

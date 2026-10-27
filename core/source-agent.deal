@@ -9,6 +9,7 @@ import * as checker from "./candidate-check";
 import * as repair from "./source-repair";
 import * as feedback from "./repair-guidance";
 import * as composer from "embedding/composer";
+import * as guidance from "./generation-guidance";
 
 // Reads are advisory only; numbered text never changes exact-edit authority.
 function readSource(args: table, deal: string, ui: string): table {
@@ -35,13 +36,14 @@ function readSource(args: table, deal: string, ui: string): table {
 export async function run(input: string, diagnostic: string): table {
     let deal: string = ""; let ui: string = ""; let previous: string = "";
     let history: table[] = []; let attempts: number = 0; let compact: boolean = true;
+    let route: string = "maintained-only"; let fallbacks: number = 0; let repairs: number = 0;
     while (true) {
         attempts = attempts + 1;
         let operation: string = "initial"; if (previous !== "") { operation = "repair"; }
         let initialWrites: boolean = deal === "" && ui === "";
-        let instruction: string = "Use submit_compact once to materialize the initial source pair. If genuinely unrepresentable call source_fallback with a reason; do not omit task behavior to fit. No other operation is available before materialization.";
-        if (!compact) { instruction = "Create both missing files using paired write_file calls. Once files exist use one operation per turn; repair with exact edit_sources, never overwrite. read_file supports inclusive ranges; both null reads full source. check_sources checks the complete pair."; }
-        if (!initialWrites) { instruction = "The canonical source pair already exists. Use exact edit_sources, read_file or check_sources only. No plan regeneration or source overwrite. Read relevant ranges; numbers are metadata, not search text."; }
+        let instruction: string = "Use submit_compact with typed maintained operations to materialize the initial source pair. Known required behavior belongs in maintained operations. Only genuinely uncovered behavior may use submit_custom with an explicit reason and typed function boundaries; full source_fallback is the last resort. Do not omit task behavior to fit. No other operation is available before materialization.";
+        if (!compact) { instruction = guidance.sourceGuidance() + "\nCreate both missing files using paired write_file calls. Once files exist use one operation per turn; repair with exact edit_sources, never overwrite. read_file supports inclusive ranges; both null reads full source. check_sources checks the complete pair."; }
+        if (!initialWrites) { instruction = guidance.sourceGuidance() + "\nThe canonical source pair already exists. Use exact edit_sources, read_file or check_sources only. No plan regeneration or source overwrite. Read relevant ranges; numbers are metadata, not search text." + await feedback.patchInstruction(previous, diagnostic); }
         let prompt: string = input + "\nSOURCE OPERATION\n" + operation + "\n" + instruction + "\nNATIVE TOOL TURN\n" + json.stringify({ messages: history, initialWrites: initialWrites, compact: compact && initialWrites });
         let raw: string = "";
         try { raw = await model.complete(prompt, previous, diagnostic); }
@@ -72,9 +74,14 @@ export async function run(input: string, diagnostic: string): table {
             }
         } catch (error) {
             if (error.code !== "INVALID_JSON" && error.code !== "INVALID_TOOL" && error.code !== "E8001") { throw error; }
-            history[history.length] = { role: "user", content: "Invalid tool response. Use write_file, edit_sources, read_file or check_sources; no textual envelope. The workspace is unchanged." };
+            let invalidHistory: table[] = []; history = invalidHistory;
+            history[history.length] = { role: "user", content: "Invalid tool response. Use the currently issued native tools, no textual envelope. The canonical workspace is unchanged." };
             await observer.record("recovery", "tool", "INVALID_TOOL"); continue;
         }
+        // Canonical source + current diagnostic are the repair authority. Retain the
+        // current native assistant/tool exchange, not an ever-growing duplicate of edits.
+        // Full prior exchanges remain in unified model/tool evidence, never regenerated.
+        let currentHistory: table[] = []; history = currentHistory;
         history[history.length] = message;
         for (let call: table of calls) {
             let id: string = call.id; let functionData: table = call["function"]; let name: string = functionData.name; let arguments: string = functionData.arguments;
@@ -82,14 +89,20 @@ export async function run(input: string, diagnostic: string): table {
             let args: table = {};
             try { args = await data.parse(arguments); }
             catch (error) { if (error.code !== "INVALID_JSON") { throw error; } }
-            if (name === "submit_compact") {
+            if (name === "submit_compact" || name === "submit_custom") {
                 if (!initialWrites || !compact) { result = { accepted: false, diagnostics: "FILES_EXIST: repair canonical source with exact edits" }; }
                 else {
-                    let assembledJson: string = await composer.assemble(json.stringify(args));
+                    let custom: boolean = name === "submit_custom";
+                    let hasCustom: boolean = false;
+                    for (let key: string of tables.keys(args)) { if (key === "custom") { hasCustom = true; } }
+                    let assembledJson: string = "{\"accepted\":false,\"diagnostics\":\"TOOL_SHAPE: maintained submission cannot contain custom source\"}";
+                    if (hasCustom === custom) { assembledJson = await composer.assemble(json.stringify(args)); }
                     let assembled: table = await data.parse(assembledJson); let accepted: boolean = assembled.accepted;
                     if (accepted) {
                         let pair: table = assembled.source; let builtDeal: string = pair.deal; let builtUi: string = pair.dealui;
                         deal = builtDeal; ui = builtUi; changed = true;
+                        if (custom) { route = "custom-section"; fallbacks = fallbacks + 1; }
+                        await observer.record("composition", "materialized", json.stringify({route:route,fallbacks:fallbacks}));
                         // Return exact materialized bytes if checking rejects: the model never repairs an imagined expansion.
                         result = { accepted: true, source: pair };
                     } else { result = assembled; }
@@ -98,7 +111,7 @@ export async function run(input: string, diagnostic: string): table {
                 if (!initialWrites || !compact) { result = { accepted: false, diagnostics: "FILES_EXIST" }; }
                 else {
                     let reason: string = args.reason;
-                    if (strings.trim(reason) !== "") { compact = false; await observer.record("composition", "fallback", reason); result = { accepted: true, diagnostics: "Explicit full-source fallback; use write_file for both missing files" }; }
+                    if (strings.trim(reason) !== "") { compact = false; route = "full-source"; fallbacks = fallbacks + 1; await observer.record("composition", "fallback", reason); result = { accepted: true, diagnostics: "Explicit full-source fallback; use write_file for both missing files" }; }
                 }
             } else if (name === "write_file") {
                 if (compact) { result = { accepted: false, diagnostics: "COMPACT_REQUIRED: use submit_compact or explicit source_fallback first" }; }
@@ -123,6 +136,8 @@ export async function run(input: string, diagnostic: string): table {
                     await observer.record("patch", "completed", json.stringify(result));
                     let accepted: boolean = result.accepted;
                     if (accepted) {
+                        repairs = repairs + 1;
+                        await observer.record("composition", "source-repair", json.stringify({route:route,repairs:repairs}));
                         let source: string = result.source; let pair: table = await data.parse(source); deal = pair.deal; ui = pair.dealui; changed = true;
                     }
                 }
@@ -138,11 +153,10 @@ export async function run(input: string, diagnostic: string): table {
                     previous = json.stringify({ deal: deal, dealui: ui });
                     let checked: table = await checker.check(previous); let accepted: boolean = checked.accepted;
                     let candidate: string = checked.candidateId;
-                    if (accepted) { return { candidateId: candidate, attempts: attempts, usedFallback: true }; }
+                    if (accepted) { await observer.record("composition","checked",json.stringify({route:route,fallbacks:fallbacks,repairs:repairs})); return { candidateId: candidate, attempts: attempts, usedFallback: true }; }
                     diagnostic = checked.diagnostics;
                     let advice: string = await feedback.patchInstruction(previous, diagnostic);
-                    if (name === "submit_compact") { result = { accepted: true, checked: false, source: { deal: deal, dealui: ui }, diagnostics: diagnostic, guidance: advice }; }
-                    else { result = { accepted: true, checked: false, diagnostics: diagnostic, guidance: advice }; }
+                    result = { accepted: true, checked: false, diagnostics: diagnostic, guidance: advice };
                 } else if (check) { result = { accepted: false, diagnostics: "INCOMPLETE_PAIR: write both files first" }; }
             }
             history[history.length] = { role: "tool", tool_call_id: id, content: json.stringify(result) };

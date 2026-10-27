@@ -1,5 +1,7 @@
 # Bindings
 
+Drain large generation bridge strings through lossless chunked transfer: evaluate destructive producers once, retain their exact result until drained, and preserve UTF-16 boundaries through JSON envelopes. Do not raise return limits as a substitute for paging or truncate source/tool identities. Keep transport chunking independent of compiler admission and source revisions.
+
 Serialize generation catalogues canonically: stable object keys and module/function order, preserving positional parameter arrays and all contract facts. Catalogue revisions and model prefixes must consume the same bytes, never a different provider schema.
 
 Derive application declarations and sandbox configuration from provider contracts. Convert wire records to DEAL tables and back according to their schemas. External parameter names are wire metadata; emit safe positional parameter identifiers in DEAL declarations. Escape generated DEAL strings using DEAL rules, not JSON escaping.
