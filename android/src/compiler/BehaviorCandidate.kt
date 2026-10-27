@@ -14,6 +14,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
     private val records = linkedMapOf<String, LinkedHashMap<String, Ty>>()
     private val declarations = StringBuilder(); private val helpers = StringBuilder()
     private val optionalTypes = mutableMapOf<String, Ty>()
+    private val allocationHelpers = mutableMapOf<String,Pair<String,Ty>>()
     private lateinit var nodes: Map<String, JSONObject>
     private var serial = 0
     private var custom = emptyMap<String,JSONObject>()
@@ -45,7 +46,13 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         "number" -> number; "string" -> string; "boolean" -> boolean; "null" -> Ty("null")
         else -> Ty(symbol(s)).also { if (it.name !in records) reject("Unknown type: $s") }
     }
-    private fun field(t: Ty, f: String): Ty = records[t.name]?.get(f) ?: reject("No field $f in $t")
+    private fun field(t: Ty, f: String): Ty = records[t.name]?.get(f) ?: run {
+        val available=records[t.name]?.entries?.joinToString(", ") { (key,type)->
+            val nested=records[type.name]?.keys?.joinToString(",")
+            "$key: $type" + if(nested!=null) " {$nested}" else ""
+        }.orEmpty()
+        reject("No field '$f' in $t. Available fields: $available. Preserve the disclosed nested field path; never flatten records.")
+    }
     private fun fields(t: Ty) = records[t.name] ?: reject("Expected record, got $t")
     private fun declare(n: String, fs: LinkedHashMap<String, Ty>): Ty {
         if (n in records) reject("Duplicate record $n")
@@ -179,6 +186,11 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
                 val v=fresh();b.append("let $v: ${a.type} = ${default(a.type)};\nif ($condition) {\n$yes$v = ${a.code};\n} else {\n$no$v = ${c.code};\n}\n");V(a.type,v)
             }
             "concat" -> emit(string,args.map { requireType(expr(it,env,b,chain),string).code }.joinToString(" + ").ifEmpty { "\"\"" })
+            "numberText" -> {
+                val value=scalar(0,number);val encoded=fresh();val text=fresh();val table=fresh()
+                b.append("if ($value - $value !== 0) { throw {code:\"INVALID_NUMBER\",message:\"Expected a finite value\"}; } let $table: table = {}; $table[\"value\"] = $value; let $encoded: string = json.stringify($table); let $text: string = strings.substring($encoded,9,strings.length($encoded) - 1);\n")
+                V(string,text)
+            }
             "integer","clock" -> emit(string,"values.${if(op=="clock")"clockMinutes" else "decimal"}(${scalar(0,number)})")
             "field" -> {val a=arg(0);val f=p.getString("field");V(field(a.type,f),a.code+"."+symbol(f))}
             "length" -> {val a=arg(0);if(a.type.element==null)reject("length needs array");emit(number,"${a.code}.length")}
@@ -246,6 +258,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
                 V(candidates.type,dest)
             }
             "selections" -> selections(arg(0),requireType(arg(1),number),p,env,b,chain)
+            "alternatives" -> alternatives(arg(0),p,env,b,chain)
             "allocate" -> allocation(arg(0),requireType(arg(1),number),requireType(arg(2),number),p,env,b,chain)
             "covers" -> coverage(arg(0),arg(1),p,env,b,chain)
             else -> reject("Unsupported operation $op; request an explicit custom section or full-source fallback")
@@ -280,11 +293,37 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         val dest=fresh();b.append("let $dest: $result = $fn(${src.code},0,${budget.code}${cs.indices.joinToString(""){", ${minima[it].code}, ${maxima[it].code}"}});\n")
         return V(result,dest)
     }
+    /** Exclusive physical-unit assignment. A unit may satisfy one role, never two; bundles
+     * expand into the same shared component inventory before assignment. No scenario cardinality. */
+    private fun alternatives(src:V,p:JSONObject,env:Map<String,V>,b:StringBuilder,chain:Set<String>):V {
+        val rt=src.type.element?:reject("Alternatives require catalogue rows")
+        val candidate=type(p.getString("type"));val out=Ty("array",candidate)
+        if(fields(candidate)!=linkedMapOf("items" to src.type,"key" to string,"label" to string))reject("Alternative requires items/key/label")
+        listOf("capacity","quantity").forEach { requireType(V(field(rt,it),""),number) }
+        requireType(V(field(rt,"id"),""),string)
+        val ct=field(rt,"components").element?:reject("Components required")
+        requireType(V(field(ct,"id"),""),string);requireType(V(field(ct,"quantity"),""),number)
+        val roles=array(p,"roles");if(roles.isEmpty())reject("At least one role required")
+        roles.forEach { requireType(V(field(rt,it.getString("field")),""),boolean) }
+        val quantities=roles.map { requireType(expr(it.getString("quantity"),env,b,chain),number) }
+        val base="alternatives${serial++}";val flags=roles.map { "row.${symbol(it.getString("field"))}" }
+        helpers.append("function ${base}assign(rows: ${src.type}, units: number[], role: number, remaining: number, requirements: number[]): boolean {\nif (role >= requirements.length) { return true; } if (remaining <= 0) { let nextRole: number = role + 1; if (nextRole >= requirements.length) { return true; } return ${base}assign(rows,units,nextRole,requirements[nextRole],requirements); }\nlet index: number = 0; while (index < rows.length) { let row: $rt = rows[index]; let matches: boolean = false;\n${flags.mapIndexed { i,f->"if (role === $i) { matches = $f; }" }.joinToString("\n")}\nif (matches && units[index] > 0) { let nextUnits: number[] = []; for (let unit: number of units) { nextUnits[nextUnits.length] = unit; } nextUnits[index] = nextUnits[index] - 1; if (${base}assign(rows,nextUnits,role,remaining - 1,requirements)) { return true; } } index = index + 1; } return false; }\n")
+        helpers.append("function ${base}search(rows: ${src.type}, index: number, quantities: number[], maximum: number, requirements: number[]): $out {\nlet output: $out = []; if (index < rows.length) { let row: $rt = rows[index]; let count: number = row.m_capacity; if (count > maximum) { count = maximum; } while (count >= 0) { let nextQuantities: number[] = []; for (let q: number of quantities) { nextQuantities[nextQuantities.length] = q; } nextQuantities[nextQuantities.length] = count; let tails: $out = ${base}search(rows,index + 1,nextQuantities,maximum - count,requirements); for (let tail: $candidate of tails) { output[output.length] = tail; } count = count - 1; } return output; }\nlet units: number[] = []; let demand: number[] = []; for (let row: $rt of rows) { units[units.length] = 0; demand[demand.length] = 0; }\nlet basket: ${src.type} = []; let key: string = \"\"; let label: string = \"\"; let i: number = 0; while (i < rows.length) { let row: $rt = rows[i]; let count: number = quantities[i]; demand[i] = demand[i] + count; if (count > 0) { let selected: $rt = ${copy(rt,"row",mapOf("quantity" to "count"))}; basket[basket.length] = selected; if (key !== \"\") { key = key + \",\"; label = label + \" + \"; } key = key + row.m_id + \":\" + values.decimal(count); label = label + row.m_label + \" × \" + values.decimal(count);\nif (row.m_components.length === 0) { units[i] = units[i] + count; } else { for (let component: $ct of row.m_components) { let j: number = 0; while (j < rows.length) { let known: $rt = rows[j]; if (known.m_id === component.m_id) { demand[j] = demand[j] + count * component.m_quantity; units[j] = units[j] + count * component.m_quantity; } j = j + 1; } } } } i = i + 1; }\ni = 0; while (i < rows.length) { let row: $rt = rows[i]; if (demand[i] > row.m_capacity) { return output; } i = i + 1; } if (key !== \"\" && ${base}assign(rows,units,0,requirements[0],requirements)) {\nlet removeIndex: number = 0; while (removeIndex < rows.length) { if (quantities[removeIndex] > 0) { let reduced: number[] = []; for (let unit: number of units) { reduced[reduced.length] = unit; } let removed: $rt = rows[removeIndex]; if (removed.m_components.length === 0) { reduced[removeIndex] = reduced[removeIndex] - 1; } else { for (let component: $ct of removed.m_components) { let j: number = 0; while (j < rows.length) { let known: $rt = rows[j]; if (known.m_id === component.m_id) { reduced[j] = reduced[j] - component.m_quantity; } j = j + 1; } } } if (${base}assign(rows,reduced,0,requirements[0],requirements)) { return output; } } removeIndex = removeIndex + 1; }\noutput[0] = {m_items:basket,m_key:key,m_label:label}; } return output; }\n")
+        val row=fresh();val other=fresh();val comp=fresh();val known=fresh()
+        b.append("for (let $row: $rt of ${src.code}) { if ($row.m_id === \"\" || $row.m_capacity < 0 || math.floor($row.m_capacity) !== $row.m_capacity || $row.m_capacity > 2147483647) { throw {code:\"INVALID_ALTERNATIVES\",message:\"Invalid catalogue identity or stock\"}; } let duplicates: number = 0; for (let $other: $rt of ${src.code}) { if ($other.m_id === $row.m_id) { duplicates = duplicates + 1; } } if (duplicates !== 1) { throw {code:\"INVALID_ALTERNATIVES\",message:\"Duplicate catalogue identity\"}; } for (let $comp: $ct of $row.m_components) { let found: boolean = false; for (let $known: $rt of ${src.code}) { if ($known.m_id === $comp.m_id && $known.m_components.length === 0) { found = true; } } if (!found || $comp.m_quantity < 1 || math.floor($comp.m_quantity) !== $comp.m_quantity || $comp.m_quantity > 2147483647) { throw {code:\"INVALID_ALTERNATIVES\",message:\"Unknown or nested component or invalid quantity\"}; } } }\n")
+        quantities.forEach { b.append("if (${it.code} < 0 || math.floor(${it.code}) !== ${it.code} || ${it.code} > 2147483647 || ${it.code} - ${it.code} !== 0) { throw {code:\"INVALID_ALTERNATIVES\",message:\"Invalid role quantity\"}; }\n") }
+        val requirements=fresh();val empty=fresh();val result=fresh();val max=quantities.joinToString(" + "){it.code}
+        b.append("let $requirements: number[] = [${quantities.joinToString(","){it.code}}]; let $empty: number[] = []; let $result: $out = ${base}search(${src.code},0,$empty,$max,$requirements);\n")
+        return V(out,result)
+    }
     private fun allocation(src: V,total: V,budget: V,p:JSONObject,env:Map<String,V>,b:StringBuilder,chain:Set<String>):V {
         val rt=src.type.element ?: reject("allocate needs rows");val q=p.getString("quantity");val cost=p.getString("cost");requireType(V(field(rt,q),""),number);requireType(V(field(rt,cost),""),number)
         val quotas=array(p,"quotas");val mins=quotas.map { requireType(expr(it.getString("minimum"),env,b,chain),number) }
         quotas.forEach { requireType(V(field(rt,it.getString("field")),""),boolean) }
-        val fn="allocate${serial++}";val result=declare("Allocation${serial++}",linkedMapOf("found" to boolean,"rows" to src.type))
+        val helperKey=listOf(src.type.toString(),q,cost,quotas.joinToString(","){it.getString("field")}).joinToString("|")
+        val cached=allocationHelpers[helperKey]
+        val fn=cached?.first?:"allocate${serial++}";val result=cached?.second?:declare("Allocation${serial++}",linkedMapOf("found" to boolean,"rows" to src.type))
+        if(cached==null)allocationHelpers[helperKey]=fn to result
         // Depth-first finite enumeration: stable catalogue order, no unproven infeasibility on a search quota.
         val quotaParams=quotas.indices.joinToString(""){", quota$it: number"}
         val leaf=quotas.indices.joinToString(" && "){"quota$it <= 0"}.ifEmpty{"true"}
@@ -293,7 +332,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         val remainingQuotas=quotas.indices.joinToString("\n"){i->"let nextQuota$i: number = quota$i - count * flag$i; if (nextQuota$i < 0) { nextQuota$i = 0; }"}
         val quotaFeasibility=quotas.mapIndexed { i,o -> "if (quota$i > 0) { let canSupply$i: boolean = false; let scan$i: number = index; while (scan$i < rows.length) { let candidate$i: $rt = rows[scan$i]; if (candidate$i.${symbol(o.getString("field"))}) { canSupply$i = true; } scan$i = scan$i + 1; } if (!canSupply$i || quota$i > remaining) { return {m_found:false,m_rows:empty}; } }" }.joinToString("\n")
         val flags=quotas.mapIndexed { i,o -> "let flag$i: number = 0; if (row.${symbol(o.getString("field"))}) { flag$i = 1; }" }.joinToString("\n")
-        helpers.append("function $fn(rows: ${src.type}, index: number, remaining: number, budget: number$quotaParams, failed: table): $result {\nlet empty: ${src.type} = [];\n$quotaFeasibility\nlet memoKey: string = values.decimal(index) + \":\" + values.decimal(remaining) + \":\" + values.decimal(budget)$memoQuota;\nfor (let failedKey: string of tables.keys(failed)) { if (failedKey === memoKey) { return {m_found:false,m_rows:empty}; } }\nif (budget < 0) { return {m_found:false,m_rows:empty}; }\nif (index >= rows.length) { if (remaining === 0 && $leaf) { return {m_found:true,m_rows:empty}; } return {m_found:false,m_rows:empty}; }\nlet row: $rt = rows[index];\n$flags\nlet count: number = remaining;\nwhile (count >= 0) {\n$remainingQuotas\nlet tail: $result = $fn(rows,index + 1,remaining - count,budget - count * row.${symbol(cost)}$recArgs,failed);\nif (tail.m_found) { let output: ${src.type} = []; let selected: $rt = ${copy(rt,"row",mapOf(q to "count"))}; output[output.length] = selected; for (let other: $rt of tail.m_rows) { output[output.length] = other; } return {m_found:true,m_rows:output}; }\ncount = count - 1;\n}\nfailed[memoKey] = true;\nreturn {m_found:false,m_rows:empty};\n}\n")
+        if(cached==null)helpers.append("function $fn(rows: ${src.type}, index: number, remaining: number, budget: number$quotaParams, failed: table): $result {\nlet empty: ${src.type} = [];\n$quotaFeasibility\nlet memoKey: string = values.decimal(index) + \":\" + values.decimal(remaining) + \":\" + values.decimal(budget)$memoQuota;\nfor (let failedKey: string of tables.keys(failed)) { if (failedKey === memoKey) { return {m_found:false,m_rows:empty}; } }\nif (budget < 0) { return {m_found:false,m_rows:empty}; }\nif (index >= rows.length) { if (remaining === 0 && $leaf) { return {m_found:true,m_rows:empty}; } return {m_found:false,m_rows:empty}; }\nlet row: $rt = rows[index];\n$flags\nlet count: number = remaining;\nwhile (count >= 0) {\n$remainingQuotas\nlet tail: $result = $fn(rows,index + 1,remaining - count,budget - count * row.${symbol(cost)}$recArgs,failed);\nif (tail.m_found) { let output: ${src.type} = []; let selected: $rt = ${copy(rt,"row",mapOf(q to "count"))}; output[output.length] = selected; for (let other: $rt of tail.m_rows) { output[output.length] = other; } return {m_found:true,m_rows:output}; }\ncount = count - 1;\n}\nfailed[memoKey] = true;\nreturn {m_found:false,m_rows:empty};\n}\n")
         b.append("if (${total.code} < 0 || math.floor(${total.code}) !== ${total.code} || ${total.code} - ${total.code} !== 0 || ${budget.code} - ${budget.code} !== 0) { throw {code:\"INVALID_ALLOCATION\",message:\"Invalid allocation inputs\"}; }\n")
         mins.forEach { b.append("if (${it.code} < 0 || math.floor(${it.code}) !== ${it.code} || ${it.code} - ${it.code} !== 0) { throw {code:\"INVALID_ALLOCATION\",message:\"Invalid quota\"}; }\n") }
         val row=fresh();b.append("for (let $row: $rt of ${src.code}) { if ($row.${symbol(cost)} < 0 || $row.${symbol(cost)} - $row.${symbol(cost)} !== 0) { throw {code:\"INVALID_ALLOCATION\",message:\"Invalid cost\"}; } }\n")
@@ -314,8 +353,8 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         b.append("if ($valid && $enough) { $dest[$dest.length] = $pkg; }\n}\n");return V(packages.type,dest)
     }
     fun assemble(p:JSONObject):JSONObject {
-        records.clear(); declarations.clear(); helpers.clear(); optionalTypes.clear(); serial = 0
-        try { return emit(if(p.has("behaviors")||p.has("kind")) MaintainedComposition(contracts).expand(p) else p) } catch(e:JSONException){reject("Malformed behavioral plan: ${e.message}")}
+        records.clear(); declarations.clear(); helpers.clear(); optionalTypes.clear(); allocationHelpers.clear(); serial = 0
+        try { return emit(when { p.has("fragments") -> FragmentComposition(contracts).expand(p);p.has("behaviors")||p.has("kind") -> MaintainedComposition(contracts).expand(p);else -> p }) } catch(e:JSONException){reject("Malformed behavioral plan: ${e.message}")}
     }
     private fun emit(p:JSONObject):JSONObject {
         val keys=listOf("records","state","nodes","derived","controls","actions","views","root")
@@ -354,9 +393,40 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
                 val module=step.getString("module");val fn=step.getString("function");val contract=contracts.singleOrNull{it.module==module} ?: reject("Undisclosed module $module")
                 val function=contract.functions.singleOrNull{it.name==fn} ?: reject("Unknown function $module.$fn")
                 val key=a.getString("id")+"/"+step.getString("id")
-                stepTypes[key]=providerType(function.result,"Provider${serial++}");imports.getOrPut(module){"provider${imports.size}"}
+                val target=step.getString("bind")
+                val declared=stateFields[target]
+                // Fragment-owned result records are contract-derived once; reuse their nominal types
+                // rather than rebuilding identical provider records under a different nominal name.
+                fun matches(t:Ty,c:CapabilityType):Boolean = when {
+                    c.kind=="array" -> t.element?.let { matches(it,c.element!!) } ?: false
+                    c.kind=="record" -> records[t.name]?.let { fs -> fs.keys==c.fields.keys && c.fields.all { (f,ct)->
+                        val ft=fs.getValue(f)
+                        if(f in c.optionalFields)records[ft.name]?.let { option -> option.keys==setOf("present","value") && option["present"]==boolean && matches(option.getValue("value"),ct) }?:false
+                        else matches(ft,ct)
+                    } }?:false
+                    else -> t.name==c.kind && t.element==null
+                }
+                if(declared!=null && step.getString("kind")=="call" && matches(declared,function.result)) {
+                    fun mark(t:Ty,c:CapabilityType) {
+                        if(c.kind=="array")mark(t.element!!,c.element!!)
+                        else if(c.kind=="record")c.fields.forEach { (f,ct)->val ft=field(t,f)
+                            if(f in c.optionalFields) { optionalTypes[ft.name]=field(ft,"value");mark(field(ft,"value"),ct) }else mark(ft,ct)
+                        }
+                    }
+                    mark(declared,function.result);stepTypes[key]=declared
+                }else stepTypes[key]=providerType(function.result,"Provider${serial++}")
+                imports.getOrPut(module){"provider${imports.size}"}
             }
         } }
+        val workflows=actions.filter { a -> array(a,"steps").any { it.getString("kind") in setOf("call","eachCall") } }
+        fun epoch(id:String)="workflow${name(id)}Epoch"
+        fun busy(id:String)="workflow${name(id)}Pending"
+        fun failure(id:String)="workflow${name(id)}Error"
+        workflows.forEach { a -> val id=a.getString("id")
+            mapOf(epoch(id) to number,busy(id) to boolean,failure(id) to string).forEach { (f,t) ->
+                if(stateFields.put(f,t)!=null)reject("Reserved workflow field $f")
+            }
+        }
         val state=declare("State",stateFields)
         nodes=array(p,"nodes").associateBy { name(it.getString("id")) };if(nodes.size!=p.getJSONArray("nodes").length())reject("Duplicate expression ID")
         fun checkNode(id:String, active:Set<String>) {
@@ -375,11 +445,53 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             val n=nodes[id]?:reject("Unknown expression $id")
             return references(n).flatMap{dependencies(it,seen+id)}.toSet()
         }
+        val derivedNodes=derived.associate { it.getString("field") to it.getString("node") }
+        fun transitiveDependencies(id:String,seen:Set<String> = emptySet()):Set<String> = dependencies(id).flatMap { f ->
+            if(f in seen)reject("Derived cycle at $f")
+            setOf(f)+(derivedNodes[f]?.let { transitiveDependencies(it,seen+f) } ?: emptySet())
+        }.toSet()
+        val workflowWrites=workflows.associate { a -> a.getString("id") to array(a,"steps").map { it.getString("bind") }.filter { it.isNotEmpty() }.toSet() }
+        val workflowReads=workflows.associate { a -> a.getString("id") to array(a,"steps").flatMap { s ->
+            val refs=when(s.getString("kind")) {
+                "call","eachCall" -> strings(s.getJSONArray("args"))+listOf(s.getString("when"),s.getString("node"))+if(s.has("each"))listOf(s.getString("each"))else emptyList()
+                else -> listOf(s.getString("node"))
+            }
+            refs.filter { it.isNotEmpty() }.flatMap { transitiveDependencies(it) }
+        }.toSet() }
+        val owners=mutableMapOf<String,String>()
+        workflowWrites.forEach { (id,writes) -> writes.forEach { f ->
+            val previous=owners.putIfAbsent(f,id)
+            if(previous!=null)reject("State field '$f' has multiple workflow owners: $previous, $id")
+        } }
+        fun invalidate(changed:Set<String>,except:String=""):String {
+            val affected=changed.toMutableSet();val invalidated=linkedSetOf<String>()
+            do {
+                val previous=invalidated.size
+                workflows.forEach { a -> val id=a.getString("id")
+                    if(id!=except && affected.intersect(workflowReads.getValue(id)+workflowWrites.getValue(id)).isNotEmpty()) {
+                        invalidated.add(id);affected.addAll(workflowWrites.getValue(id))
+                    }
+                }
+            } while(invalidated.size!=previous)
+            return workflows.filter { it.getString("id") in invalidated }.joinToString("\n") { a -> val id=a.getString("id")
+            val markers=workflowWrites.getValue(id).filter { stateFields[it]==boolean }.joinToString("\n") { "next.${symbol(it)} = false;" }
+            val providerInputs=array(a,"steps").filter { it.getString("kind") in setOf("call","eachCall") }.flatMap { s ->
+                (strings(s.getJSONArray("args"))+listOf(s.getString("when"))).filter { it.isNotEmpty() }.flatMap { transitiveDependencies(it) }
+            }.toSet()-workflowWrites.getValue(id)
+            val invalidateSuccess=if(affected.intersect(providerInputs).isNotEmpty())markers else "if (state.${symbol(busy(id))}) { $markers }"
+            "next.${symbol(epoch(id))} = state.${symbol(epoch(id))} + 1; next.${symbol(busy(id))} = false; next.${symbol(failure(id))} = \"\";\n$invalidateSuccess"
+            }
+        }
         val ordered=mutableListOf<JSONObject>();val pending=derived.toMutableList()
         while(pending.isNotEmpty()) {val ready=pending.firstOrNull { dependencies(it.getString("node")).intersect(targets.toSet()).all { d->ordered.any{it.getString("field")==d} } }?:reject("Derived cycle");ordered.add(ready);pending.remove(ready)}
         val recompute=StringBuilder("function recompute(state: State): State { let next: State = ${copy(state,"state")};\n")
+        if(workflows.isNotEmpty()) {
+            recompute.append("next.m_loading = ${workflows.joinToString(" || ") { "next.${symbol(busy(it.getString("id")))}" }}; next.m_error = \"\";\n")
+            workflows.forEach { a -> val f=symbol(failure(a.getString("id")));recompute.append("if (next.$f !== \"\") { next.m_error = next.$f; }\n") }
+        }
         ordered.forEach { d -> val v=requireType(expr(d.getString("node"),base,recompute),field(state,d.getString("field")));recompute.append("next.${symbol(d.getString("field"))} = ${v.code};\n") };recompute.append("return next; }\n")
-        val initial=stateDefs.associate { it.getString("name") to initial(field(state,it.getString("name")),dataValue(it.getString("initial"))) }+mapOf("loading" to "false","error" to "\"\"","sessionEpoch" to "0","sessionClock" to "0")
+        val workflowInitial=workflows.flatMap { a -> val id=a.getString("id");listOf(epoch(id) to "0",busy(id) to "false",failure(id) to "\"\"") }.toMap()
+        val initial=stateDefs.associate { it.getString("name") to initial(field(state,it.getString("name")),dataValue(it.getString("initial"))) }+mapOf("loading" to "false","error" to "\"\"","sessionEpoch" to "0","sessionClock" to "0")+workflowInitial
         val code=StringBuilder("export function initialState(): State { let next: State = ${copy(state,"",initial)}; return recompute(next); }\n")
         val actionTypes=linkedMapOf<String,Ty>()
         val controls=array(p,"controls")
@@ -391,7 +503,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             val invalid=strings(c.getJSONArray("invalidate")).joinToString("\n") {
                 if(field(state,it)!=boolean)reject("Control '$f' invalidate entry '$it' is not boolean. invalidate only sets boolean validity fields to false; remove numeric fields, declare a boolean validity flag, and invalidate that flag instead.")
                 "next.${symbol(it)} = false;"
-            } + if(c.getJSONArray("invalidate").length()>0) "\nnext.m_sessionEpoch = state.m_sessionEpoch + 1; next.m_loading = false;" else ""
+            } + "\n" + invalidate(setOf(f)+strings(c.getJSONArray("invalidate")))
             code.append("// @ui-update\nexport function update${symbol(a)}(state: State, action: $at): State { let next: State = ${copy(state,"state")}; if (action.m_value - action.m_value !== 0 || math.floor(action.m_value) !== action.m_value || !values.inBounds(action.m_value,${decimal(lo)},${decimal(hi)})) { return next; } next.${symbol(f)} = action.m_value; $invalid return recompute(next); }\n")
         }
         actions.forEach { a ->
@@ -401,11 +513,19 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             val updates=StringBuilder();val assignments=StringBuilder()
             array(a,"updates").forEach{u->val f=u.getString("field");val v=requireType(expr(u.getString("node"),env,updates),field(state,f));assignments.append("next.${symbol(f)} = ${v.code};\n")}
             updates.append(assignments)
+            if(array(a,"updates").any { it.getString("field")=="sessionEpoch" }) {
+                workflows.forEach { workflow -> val wid=workflow.getString("id")
+                    updates.append("next.${symbol(busy(wid))} = false; next.${symbol(epoch(wid))} = state.${symbol(epoch(wid))} + 1;\n")
+                }
+            }
+            val clockAction=array(p,"views").any { view -> view.getString("component")=="SessionClock" && array(view,"events").any { it.getString("action")==id && it.getString("name")=="onTick" } }
+            if(!clockAction)updates.append(invalidate(array(a,"updates").map { it.getString("field") }.toSet()+(if(async)workflowWrites.getValue(id)else emptySet()),if(async)id else ""))
             array(p,"views").filter { it.getString("component")=="SessionClock" }.forEach { view ->
                 array(view,"events").filter { it.getString("action")==id && it.getString("name")=="onTick" }.forEach { event ->
                     val payload=array(event,"payload").singleOrNull { it.getString("node")=="\$payload" } ?: reject("SessionClock requires one captured numeric payload")
                     val f=payload.getString("field");requireType(V(field(at,f),""),number)
-                    updates.append("let clockValue: number = action.${symbol(f)}; if (clockValue < 0) { clockValue = -clockValue; } if (action.${symbol(f)} < 0 || clockValue < state.m_sessionClock) { next.m_sessionEpoch = state.m_sessionEpoch + 1; next.m_loading = false; } next.m_sessionClock = clockValue;\n")
+                    val cancelPending=workflows.joinToString(" ") { workflow -> val wid=workflow.getString("id");"next.${symbol(busy(wid))} = false; next.${symbol(epoch(wid))} = state.${symbol(epoch(wid))} + 1;" }
+                    updates.append("let clockValue: number = action.${symbol(f)}; if (clockValue < 0) { clockValue = -clockValue; } if (action.${symbol(f)} < 0 || clockValue < state.m_sessionClock) { next.m_sessionEpoch = state.m_sessionEpoch + 1; $cancelPending } next.m_sessionClock = clockValue;\n")
                 }
             }
             code.append("// @ui-update\nexport function update${symbol(id)}(state: State, action: $at): State { let next: State = ${copy(state,"state")};\n$updates")
@@ -413,12 +533,12 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
                 // A workflow's explicit success markers are false until its entire sequence commits.
                 steps.filter { it.getString("kind")=="set" && fields(state)[it.getString("bind")]==boolean }
                     .forEach { code.append("next.${symbol(it.getString("bind"))} = false;\n") }
-                code.append("next.m_loading = true; next.m_error = \"\"; next.m_sessionEpoch = state.m_sessionEpoch + 1;\n")
+                code.append("next.${symbol(busy(id))} = true; next.${symbol(failure(id))} = \"\"; next.${symbol(epoch(id))} = state.${symbol(epoch(id))} + 1;\n")
             }
             code.append("return recompute(next); }\n")
             if(async) {
-                val changedFields=steps.map { it.getString("bind") }.filter { it.isNotEmpty() }.toSet()+setOf("loading","error")
-                val completionFields=linkedMapOf<String,Ty>("sessionEpoch" to number);stateFields.forEach { (f,t) -> if(f in changedFields)completionFields[f]=t }
+                val changedFields=workflowWrites.getValue(id)+setOf(busy(id),failure(id))
+                val completionFields=linkedMapOf<String,Ty>("sessionEpoch" to number,epoch(id) to number);stateFields.forEach { (f,t) -> if(f in changedFields)completionFields[f]=t }
                 val done=declare("Done${serial++}",completionFields);val body=StringBuilder();val stepEnv=env.toMutableMap()
                 steps.forEach { s -> when(s.getString("kind")) {
                     "call", "eachCall" -> {
@@ -456,10 +576,10 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
                     }
                     "set" -> {val f=s.getString("bind");val v=requireType(expr(s.getString("node"),stepEnv,body),field(state,f));body.append("next.${symbol(f)} = ${v.code};\n")}
                     else->reject("Unknown workflow step")
-                } }
-                code.append("// @ui-effect\nexport async function run${symbol(id)}(state: State, action: $at): $done { let next: State = ${copy(state,"state")}; try {\n$body next.m_loading = false; next.m_error = \"\"; return ${copy(done,"next")}; } catch (error) { return ${copy(done,"state",mapOf("loading" to "false","error" to quote("Check access and try again")))}; } }\n")
-                val completionValues=completionFields.keys.associateWith { "action.${symbol(it)}" }
-                code.append("// @ui-update\nexport function finish${symbol(id)}(state: State, action: $done): State { if (state.m_sessionEpoch !== action.m_sessionEpoch) { return state; } let next: State = ${copy(state,"state",completionValues)}; return recompute(next); }\n")
+                }; body.append("next = recompute(next);\n") }
+                code.append("// @ui-effect\nexport async function run${symbol(id)}(state: State, action: $at): $done { let next: State = ${copy(state,"state")}; try {\n$body next.${symbol(busy(id))} = false; next.${symbol(failure(id))} = \"\"; return ${copy(done,"next")}; } catch (error) { return ${copy(done,"state",mapOf(busy(id) to "false",failure(id) to quote("Check access and try again")))}; } }\n")
+                val completionValues=changedFields.associateWith { "action.${symbol(it)}" }
+                code.append("// @ui-update\nexport function finish${symbol(id)}(state: State, action: $done): State { if (state.m_sessionEpoch !== action.m_sessionEpoch || state.${symbol(epoch(id))} !== action.${symbol(epoch(id))}) { return state; } let next: State = ${copy(state,"state",completionValues)}; return recompute(next); }\n")
             } else if(steps.isNotEmpty())reject("Workflow without provider call: put local changes in updates")
         }
         val views=array(p,"views").associateBy{it.getString("id")};if(views.size!=p.getJSONArray("views").length())reject("Duplicate view ID")
@@ -491,7 +611,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             else "ui.IntField(value: state.${symbol(f)}, label: ${quote(c.getString("label"))}, minimum:${decimal(c.getDouble("minimum"))}, maximum:${decimal(c.getDouble("maximum"))}, step:${decimal(c.getDouble("step"))}, format:${quote(if(widget=="money")"euro-cents" else "integer")}, enabled: !state.m_loading, onChange: action app.${symbol("Set"+f)} {m_value:payload})"
         }
         val importsText=imports.entries.joinToString("\n"){(m,a)->"import * as $a from ${quote(m)};"}
-        val deal="$importsText\nimport * as math from \"std/math\";\nimport * as time from \"std/time\";\nimport * as tables from \"std/table\";\nimport * as values from \"ui/values\";\n$declarations$helpers$recompute$code\nexport function main(): null { return null; }\n"
+        val deal="$importsText\nimport * as math from \"std/math\";\nimport * as time from \"std/time\";\nimport * as tables from \"std/table\";\nimport * as json from \"std/json\";\nimport * as strings from \"std/string\";\nimport * as values from \"ui/values\";\n$declarations$helpers$recompute$code\nexport function main(): null { return null; }\n"
         val ui="import * as app from \"./experience\";\nimport * as ui from \"./platform.dealui-pack\";\n// @ui-root\nexport view Workspace(state: app.State): View { ui.Column() {\n$controlUi\nWhen(state.m_loading) { ui.Progress(label: \"Loading…\") }\nWhen(state.m_error !== \"\") { ui.Notice(text:state.m_error,tone:\"error\") }\n$view\n} }\n"
         return JSONObject().put("deal",deal).put("dealui",ui)
     }
@@ -514,6 +634,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         when (node.getString("op")) {
             "record", "update" -> refs.addAll(bindings(p,"fields").values)
             "selections" -> array(p,"constraints").forEach { refs.add(it.getString("minimum"));refs.add(it.getString("maximum")) }
+            "alternatives" -> array(p,"roles").forEach { refs.add(it.getString("quantity")) }
             "allocate" -> array(p,"quotas").forEach { refs.add(it.getString("minimum")) }
             "covers" -> array(p,"groups").forEach { refs.add(it.getString("minimum")); refs.add(it.getString("predicate")) }
         }
@@ -591,10 +712,10 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             array(v,"events").forEach { e -> closed(e,"name","action","payload"); array(e,"payload").forEach { closed(it,"field","node") };unique(array(e,"payload"),"field") }
         }
         val arities=mapOf("literal" to 0,"record" to 0,"add" to 2,"subtract" to 2,"multiply" to 2,"divide" to 2,
-            "floor" to 1,"ceil" to 1,"abs" to 1,"eq" to 2,"ne" to 2,"lt" to 2,"le" to 2,"gt" to 2,"ge" to 2,
+            "floor" to 1,"ceil" to 1,"abs" to 1,"numberText" to 1,"eq" to 2,"ne" to 2,"lt" to 2,"le" to 2,"gt" to 2,"ge" to 2,
             "and" to 2,"or" to 2,"not" to 1,"choose" to 3,"integer" to 1,"clock" to 1,"length" to 1,
             "filter" to 2,"project" to 2,"sum" to 2,"any" to 2,"all" to 2,"update" to 2,"first" to 1,"lookup" to 2,"field" to 1,
-            "now" to 0,"sort" to 1,"basket" to 1,"stockQualified" to 2,"selections" to 2,"allocate" to 3,"covers" to 2,"join" to 4)
+            "now" to 0,"sort" to 1,"basket" to 1,"alternatives" to 1,"stockQualified" to 2,"selections" to 2,"allocate" to 3,"covers" to 2,"join" to 4)
         array(p,"nodes").forEach { n ->
             closed(n,"id","op","args","params")
             val op=n.getString("op");val params=n.getJSONObject("params")
@@ -612,6 +733,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
                 "sort","field" -> closed(params,"field")
                 "basket" -> closed(params,"id","quantity")
                 "selections" -> { closed(params,"type","quantity","cost","capacity","constraints"); array(params,"constraints").forEach { closed(it,"field","minimum","maximum") } }
+                "alternatives" -> { closed(params,"type","roles"); array(params,"roles").forEach { closed(it,"field","quantity") } }
                 "allocate" -> { closed(params,"quantity","cost","quotas"); array(params,"quotas").forEach { closed(it,"field","minimum") } }
                 "covers" -> { closed(params,"components","key","itemId","quantity","groups"); array(params,"groups").forEach { closed(it,"predicate","minimum") } }
                 else -> closed(params)

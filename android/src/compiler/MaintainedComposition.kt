@@ -19,6 +19,10 @@ internal class MaintainedComposition(private val contracts: List<CapabilityContr
     private fun node(op:String,vararg args:String,params:JSONObject=JSONObject()):String {val id=id();add("nodes",JSONObject().put("id",id).put("op",op).put("args",JSONArray(args.toList())).put("params",params));return id}
     private fun jsonValue(v:Any):String=when(v){is String->JSONObject.quote(v);is Number,is Boolean,is JSONObject,is JSONArray->v.toString();else->reject("Unsupported literal data")}
     private fun lit(v:Any):String=node("literal",params=JSONObject().put("type",when(v){is Boolean->"boolean";is Number->"number";else->"string"}).put("value",jsonValue(v)))
+    private fun formula(source:String,ports:Map<String,String>):String = MaintainedFormula.lower(
+        MaintainedFormula.parse(source),
+        { path -> ports[path] ?: reject("Formula reads undeclared port '$path'") },
+        ::lit, { op,args -> node(op,*args.toTypedArray()) })
     private fun state(n:String,t:String,v:Any):String {add("state",JSONObject().put("name",n).put("type",t).put("initial",jsonValue(v)));return "\$state.$n"}
     private fun derived(n:String,t:String,v:Any,expr:String):String {val ref=state(n,t,v);add("derived",JSONObject().put("field",n).put("node",expr));return ref}
     private fun record(n:String,fields:Map<String,String>){add("records",JSONObject().put("name",n).put("fields",JSONArray(fields.map{JSONObject().put("name",it.key).put("type",it.value)})))}
@@ -47,7 +51,7 @@ internal class MaintainedComposition(private val contracts: List<CapabilityContr
     private fun comparison(b:JSONObject):List<String> {
         closed(b,"kind","limit","actual","limitLabel","actualLabel")
         val limit=numberInput(b,"limit",b.getString("limitLabel"),"money");val actual=numberInput(b,"actual",b.getString("actualLabel"),"money")
-        val delta=derived("difference","number",0,node("subtract",actual,limit));val zero=lit(0)
+        val delta=derived("difference","number",0,formula("actual - limit",mapOf("actual" to actual,"limit" to limit)));val zero=lit(0)
         val status=derived("status","string","",node("choose",node("gt",delta,zero),lit("Over budget"),node("choose",node("lt",delta,zero),lit("Under budget"),lit("Equal"))))
         val magnitude=derived("magnitude","number",0,node("abs",delta))
         return listOf(view("Comparison",mapOf("status" to status),listOf(view("Money",mapOf("label" to lit("Difference"),"minorUnits" to magnitude)))))
@@ -56,7 +60,7 @@ internal class MaintainedComposition(private val contracts: List<CapabilityContr
         closed(b,"kind","start","input","before","inspection","estimate")
         val cap=b.getJSONObject("estimate");val fn=binding(cap);if(fn.parameters.size!=1||fn.parameters.single().type.kind!="number"||fn.result.kind!="number")reject("Schedule estimate requires number -> number")
         val loaded=state("loaded","boolean",false);val start=numberInput(b,"start","Start","time",max=1439);val input=numberInput(b,"input",fn.parameters.single().name,"integer",1,Int.MAX_VALUE,listOf("loaded"));val before=numberInput(b,"before","Before-start buffer (minutes)",max=1439);val inspection=numberInput(b,"inspection","Inspection minutes",max=1439);val travel=state("travel","number",0)
-        val leave=derived("leave","number",0,node("subtract",node("subtract",start,before),travel));val check=derived("inspectionTime","number",0,node("subtract",leave,inspection))
+        val leave=derived("leave","number",0,formula("start - before - travel",mapOf("start" to start,"before" to before,"travel" to travel)));val check=derived("inspectionTime","number",0,formula("leave - inspection",mapOf("leave" to leave,"inspection" to inspection)))
         val leaveText=derived("leaveText","string","",node("clock",leave));val inspectText=derived("inspectText","string","",node("clock",check))
         action("Load",listOf(call("estimate",cap,listOf(input),"travel","\$estimate"),set("loaded",lit(true))))
         return listOf(view("PrimaryAction",mapOf("text" to lit("Get travel estimate")),events=listOf(event("onClick","Load"))),view("Metric",mapOf("label" to lit("Depart by"),"value" to leaveText),whenRef=loaded),view("Metric",mapOf("label" to lit("Inspection"),"value" to inspectText),whenRef=loaded))

@@ -18,8 +18,9 @@ internal class SelectionComposition(private val contracts: List<CapabilityContra
     private fun add(k:String,o:JSONObject){p.getJSONArray(k).put(o)}
     private fun id()="semantic${serial++}"
     private fun node(op:String,vararg args:String,params:JSONObject=JSONObject()):String {val n=id();add("nodes",JSONObject().put("id",n).put("op",op).put("args",JSONArray(args.toList())).put("params",params));return n}
-    private fun lit(v:Any):String=node("literal",params=JSONObject().put("type",when(v){is Boolean->"boolean";is Number->"number";is String->"string";else->fail("Scalar literal required")}).put("value",JSONObject.valueToString(v)))
-    private fun state(n:String,t:String,v:Any):String {add("state",JSONObject().put("name",n).put("type",t).put("initial",JSONObject.valueToString(v)));return "\$state.$n"}
+    private fun jsonValue(v:Any):String=when(v){is String->JSONObject.quote(v);is Number,is Boolean,is JSONObject,is JSONArray->v.toString();else->fail("Unsupported literal data")}
+    private fun lit(v:Any):String=node("literal",params=JSONObject().put("type",when(v){is Boolean->"boolean";is Number->"number";is String->"string";else->fail("Scalar literal required")}).put("value",jsonValue(v)))
+    private fun state(n:String,t:String,v:Any):String {add("state",JSONObject().put("name",n).put("type",t).put("initial",jsonValue(v)));return "\$state.$n"}
     private fun record(n:String,fs:Map<String,String>){add("records",JSONObject().put("name",n).put("fields",JSONArray(fs.map{JSONObject().put("name",it.key).put("type",it.value)})))}
     private fun bindings(fs:Map<String,String>)=JSONArray(fs.map{JSONObject().put("field",it.key).put("node",it.value)})
     private fun obj(t:String,fs:Map<String,String>)=node("record",params=JSONObject().put("type",t).put("fields",bindings(fs)))

@@ -41,7 +41,7 @@ export async function run(input: string, diagnostic: string): table {
         attempts = attempts + 1;
         let operation: string = "initial"; if (previous !== "") { operation = "repair"; }
         let initialWrites: boolean = deal === "" && ui === "";
-        let instruction: string = "Use submit_compact to select maintained state/handler/view behaviors with requirements and disclosed bindings. Do not author a state/action/node graph for supported behaviors. Only genuinely uncovered behavior may use submit_custom with an explicit reason and typed function boundaries; full source_fallback is the last resort. Do not omit task behavior to fit. No other operation is available before materialization.";
+        let instruction: string = "Use submit_compact with title, fragments, commands and display. Select independently named maintained fragments with semantic configuration, pure formulas and disclosed bindings. Commands name target instances; the embedding derives dependency execution. Do not author a state/action/node graph for supported behaviors. Only genuinely uncovered behavior may use submit_custom with an explicit reason and typed function boundaries; full source_fallback is the last resort. Do not omit task behavior to fit. No other operation is available before materialization.";
         if (!compact) { instruction = guidance.sourceGuidance() + "\nCreate both missing files using paired write_file calls. Once files exist use one operation per turn; repair with exact edit_sources, never overwrite. read_file supports inclusive ranges; both null reads full source. check_sources checks the complete pair."; }
         if (!initialWrites) { instruction = guidance.sourceGuidance() + "\nThe canonical source pair already exists. Use exact edit_sources, read_file or check_sources only. No plan regeneration or source overwrite. Read relevant ranges; numbers are metadata, not search text." + await feedback.patchInstruction(previous, diagnostic); }
         let prompt: string = input + "\nSOURCE OPERATION\n" + operation + "\n" + instruction + "\nNATIVE TOOL TURN\n" + json.stringify({ messages: history, initialWrites: initialWrites, compact: compact && initialWrites });
@@ -89,7 +89,7 @@ export async function run(input: string, diagnostic: string): table {
             let args: table = {};
             try { args = await data.parse(arguments); }
             catch (error) { if (error.code !== "INVALID_JSON") { throw error; } }
-            if (name === "submit_compact" || name === "submit_compact_comparison" || name === "submit_compact_providerSchedule" || name === "submit_compact_allocation" || name === "submit_compact_quotedAlternatives" || name === "submit_custom") {
+            if (name === "submit_compact" || name === "submit_custom") {
                 if (!initialWrites || !compact) { result = { accepted: false, diagnostics: "FILES_EXIST: repair canonical source with exact edits" }; }
                 else {
                     let custom: boolean = name === "submit_custom";
