@@ -4,7 +4,7 @@ import dev.deal.embedding.capabilities.*
 import org.json.*
 
 /** A typed, finite operation graph. No source strings are accepted by the maintained route. */
-internal class BehaviorCandidate(private val contracts: List<CapabilityContract>, private val allowCustom: Boolean = false) {
+internal class BehaviorCandidate(private val contracts: List<CapabilityContract>, private val allowCustom: Boolean = false, private val selectionPrototype: Boolean = false) {
     data class Ty(val name: String, val element: Ty? = null) {
         override fun toString() = element?.let { "$it[]" } ?: name
         val scalar get() = element == null && name in setOf("number", "string", "boolean", "null")
@@ -180,6 +180,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             }
             "concat" -> emit(string,args.map { requireType(expr(it,env,b,chain),string).code }.joinToString(" + ").ifEmpty { "\"\"" })
             "integer","clock" -> emit(string,"values.${if(op=="clock")"clockMinutes" else "decimal"}(${scalar(0,number)})")
+            "field" -> {val a=arg(0);val f=p.getString("field");V(field(a.type,f),a.code+"."+symbol(f))}
             "length" -> {val a=arg(0);if(a.type.element==null)reject("length needs array");emit(number,"${a.code}.length")}
             "record" -> {val t=type(p.getString("type"));val fs=bindings(p,"fields");if(fs.keys!=fields(t).keys)reject("Record fields");val v=fields(t).mapValues { (f,ft)->requireType(expr(fs.getValue(f),env,b,chain),ft).code };emit(t,copy(t,"",v))}
             "array" -> {val t=type(p.getString("element"));emit(Ty("array",t),args.map { requireType(expr(it,env,b,chain),t).code }.joinToString(",","[","]"))}
@@ -236,10 +237,48 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
                 emit(type(section.getString("result")),"custom_${name(section.getString("id"))}(${values.joinToString(",")})")
             }
             "now" -> V(number,"time.nowMillis()")
+            "stockQualified" -> {
+                val candidates=arg(0);val catalogue=arg(1);val ct=candidates.type.element?:reject("Candidates required");val rt=catalogue.type.element?:reject("Catalogue required")
+                if(field(ct,"items")!=catalogue.type)reject("Stock catalogue type")
+                val componentType=field(rt,"components").element?:reject("Components required")
+                val dest=fresh();val basket=fresh();val item=fresh();val component=fresh();val known=fresh();val stock=fresh();val demand=fresh();val valid=fresh();val found=fresh()
+                b.append("let $dest: ${candidates.type} = []; for (let $basket: $ct of ${candidates.code}) { let $valid: boolean = true;\nfor (let $item: $rt of $basket.m_items) { if ($item.m_quantity > 0) { for (let $component: $componentType of $item.m_components) { let $found: boolean = false; for (let $known: $rt of ${catalogue.code}) { if ($known.m_id === $component.m_id) { $found = true; } } if (!$found || $component.m_quantity < 1 || math.floor($component.m_quantity) !== $component.m_quantity || $component.m_quantity - $component.m_quantity !== 0) { $valid = false; } } } }\nfor (let $stock: $rt of ${catalogue.code}) { let $demand: number = 0; for (let $item: $rt of $basket.m_items) { if ($item.m_id === $stock.m_id) { $demand = $demand + $item.m_quantity; } for (let $component: $componentType of $item.m_components) { if ($component.m_id === $stock.m_id) { $demand = $demand + $item.m_quantity * $component.m_quantity; } } } if ($demand > $stock.m_capacity) { $valid = false; } } if ($valid) { $dest[$dest.length] = $basket; } }\n")
+                V(candidates.type,dest)
+            }
+            "selections" -> selections(arg(0),requireType(arg(1),number),p,env,b,chain)
             "allocate" -> allocation(arg(0),requireType(arg(1),number),requireType(arg(2),number),p,env,b,chain)
             "covers" -> coverage(arg(0),arg(1),p,env,b,chain)
             else -> reject("Unsupported operation $op; request an explicit custom section or full-source fallback")
         }
+    }
+    /** Enumerate bounded integer selections; no task cardinality, provider calls or guessed answers. */
+    private fun selections(src:V,budget:V,p:JSONObject,env:Map<String,V>,b:StringBuilder,chain:Set<String>):V {
+        val rt=src.type.element ?: reject("Selection rows required")
+        val candidate=type(p.getString("type"));val result=Ty("array",candidate)
+        if(fields(candidate)!=linkedMapOf("items" to src.type,"cost" to number))reject("Candidate requires items and cost")
+        val quantity=p.getString("quantity");val cost=p.getString("cost");val capacity=p.getString("capacity")
+        listOf(quantity,cost,capacity).forEach{requireType(V(field(rt,it),""),number)}
+        val cs=array(p,"constraints");if(cs.isEmpty())reject("At least one selection constraint required")
+        cs.forEach{requireType(V(field(rt,it.getString("field")),""),number)}
+        val minima=cs.map{requireType(expr(it.getString("minimum"),env,b,chain),number)}
+        val maxima=cs.map{requireType(expr(it.getString("maximum"),env,b,chain),number)}
+        val fn="select${serial++}"
+        val params=cs.indices.joinToString(""){", lo$it: number, hi$it: number"}
+        val nextArgs=cs.mapIndexed{i,c->", lo$i - count * row.${symbol(c.getString("field"))}, hi$i - count * row.${symbol(c.getString("field"))}"}.joinToString("")
+        val invalid=cs.indices.joinToString(" || "){"hi$it < 0"}
+        val complete=cs.indices.joinToString(" && "){"lo$it <= 0 && hi$it >= 0"}
+        val useful=cs.joinToString(" || "){"row.${symbol(it.getString("field"))} > 0"}
+        val bounds=cs.mapIndexed{i,c->"if (row.${symbol(c.getString("field"))} > 0 && count > math.floor(hi$i / row.${symbol(c.getString("field"))})) { count = math.floor(hi$i / row.${symbol(c.getString("field"))}); }"}.joinToString("\n")
+        helpers.append("function $fn(rows: ${src.type}, index: number, budget: number$params): $result {\nlet output: $result = []; if (budget < 0 || $invalid) { return output; }\nif (index >= rows.length) { if ($complete) { let empty: ${src.type} = []; output[0] = {m_items:empty,m_cost:0}; } return output; }\nlet row: $rt = rows[index]; let count: number = row.${symbol(capacity)}; if (!($useful)) { count = 0; }\n$bounds\nwhile (count >= 0) {\nlet tails: $result = $fn(rows,index + 1,budget - count * row.${symbol(cost)}$nextArgs);\nfor (let tail: $candidate of tails) { let items: ${src.type} = []; let selected: $rt = ${copy(rt,"row",mapOf(quantity to "count"))}; items[0] = selected; for (let item: $rt of tail.m_items) { items[items.length] = item; } output[output.length] = {m_items:items,m_cost:tail.m_cost + count * row.${symbol(cost)}}; }\ncount = count - 1; } return output; }\n")
+        val boundValues=minima+maxima
+        boundValues.forEach{b.append("if (${it.code} < 0 || math.floor(${it.code}) !== ${it.code} || ${it.code} - ${it.code} !== 0) { throw {code:\"INVALID_SELECTION\",message:\"Invalid quota bounds\"}; }\n")}
+        b.append("if (${budget.code} - ${budget.code} !== 0) { throw {code:\"INVALID_SELECTION\",message:\"Invalid budget\"}; }\n")
+        val row=fresh();val ids=fresh();val key=fresh()
+        b.append("let $ids: table = {}; for (let $row: $rt of ${src.code}) { for (let $key: string of tables.keys($ids)) { if ($key === $row.m_id) { throw {code:\"INVALID_SELECTION\",message:\"Duplicate item identity\"}; } } $ids[$row.m_id] = true;\n")
+        (listOf(capacity)+cs.map{it.getString("field")}).forEach{f->b.append("if ($row.${symbol(f)} < 0 || math.floor($row.${symbol(f)}) !== $row.${symbol(f)} || $row.${symbol(f)} - $row.${symbol(f)} !== 0) { throw {code:\"INVALID_SELECTION\",message:\"Invalid integral capacity or weight\"}; }\n")}
+        b.append("if ($row.${symbol(cost)} < 0 || $row.${symbol(cost)} - $row.${symbol(cost)} !== 0) { throw {code:\"INVALID_SELECTION\",message:\"Invalid cost\"}; } }\n")
+        val dest=fresh();b.append("let $dest: $result = $fn(${src.code},0,${budget.code}${cs.indices.joinToString(""){", ${minima[it].code}, ${maxima[it].code}"}});\n")
+        return V(result,dest)
     }
     private fun allocation(src: V,total: V,budget: V,p:JSONObject,env:Map<String,V>,b:StringBuilder,chain:Set<String>):V {
         val rt=src.type.element ?: reject("allocate needs rows");val q=p.getString("quantity");val cost=p.getString("cost");requireType(V(field(rt,q),""),number);requireType(V(field(rt,cost),""),number)
@@ -474,6 +513,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         val p = node.getJSONObject("params")
         when (node.getString("op")) {
             "record", "update" -> refs.addAll(bindings(p,"fields").values)
+            "selections" -> array(p,"constraints").forEach { refs.add(it.getString("minimum"));refs.add(it.getString("maximum")) }
             "allocate" -> array(p,"quotas").forEach { refs.add(it.getString("minimum")) }
             "covers" -> array(p,"groups").forEach { refs.add(it.getString("minimum")); refs.add(it.getString("predicate")) }
         }
@@ -553,11 +593,12 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         val arities=mapOf("literal" to 0,"record" to 0,"add" to 2,"subtract" to 2,"multiply" to 2,"divide" to 2,
             "floor" to 1,"ceil" to 1,"abs" to 1,"eq" to 2,"ne" to 2,"lt" to 2,"le" to 2,"gt" to 2,"ge" to 2,
             "and" to 2,"or" to 2,"not" to 1,"choose" to 3,"integer" to 1,"clock" to 1,"length" to 1,
-            "filter" to 2,"project" to 2,"sum" to 2,"any" to 2,"all" to 2,"update" to 2,"first" to 1,"lookup" to 2,
-            "now" to 0,"sort" to 1,"basket" to 1,"allocate" to 3,"covers" to 2,"join" to 4)
+            "filter" to 2,"project" to 2,"sum" to 2,"any" to 2,"all" to 2,"update" to 2,"first" to 1,"lookup" to 2,"field" to 1,
+            "now" to 0,"sort" to 1,"basket" to 1,"stockQualified" to 2,"selections" to 2,"allocate" to 3,"covers" to 2,"join" to 4)
         array(p,"nodes").forEach { n ->
             closed(n,"id","op","args","params")
             val op=n.getString("op");val params=n.getJSONObject("params")
+            if(op in setOf("selections","stockQualified","field") && !selectionPrototype)reject("Experimental selection operation is not registered for generation")
             val arity=arities[op]
             if(arity==null && op !in setOf("array","concat") && !(allowCustom && op=="custom"))reject("Unknown operation $op")
             if(arity!=null && n.getJSONArray("args").length()!=arity)reject("Wrong arity for $op")
@@ -568,8 +609,9 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
                 "update" -> { closed(params,"fields"); array(params,"fields").forEach { closed(it,"field","node") } }
                 "array" -> closed(params,"element")
                 "lookup" -> closed(params,"key")
-                "sort" -> closed(params,"field")
+                "sort","field" -> closed(params,"field")
                 "basket" -> closed(params,"id","quantity")
+                "selections" -> { closed(params,"type","quantity","cost","capacity","constraints"); array(params,"constraints").forEach { closed(it,"field","minimum","maximum") } }
                 "allocate" -> { closed(params,"quantity","cost","quotas"); array(params,"quotas").forEach { closed(it,"field","minimum") } }
                 "covers" -> { closed(params,"components","key","itemId","quantity","groups"); array(params,"groups").forEach { closed(it,"predicate","minimum") } }
                 else -> closed(params)
