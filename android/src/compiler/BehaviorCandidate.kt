@@ -321,6 +321,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             if(id in active)reject("Expression cycle at $id")
             references(nodes[id] ?: reject("Unknown expression $id")).forEach { checkNode(it,active+id) }
         }
+        validateBindings(p,state)
         nodes.keys.forEach { checkNode(it,emptySet()) }
         val base=mapOf("state" to V(state,"next"))
         val derived=array(p,"derived");val targets=derived.map{it.getString("field")};if(targets.distinct().size!=targets.size)reject("Duplicate derived field")
@@ -451,6 +452,43 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         return refs
     }
 
+    /** Diagnose independent authoring errors together; never infer missing fields or change a plan. */
+    private fun validateBindings(p:JSONObject,state:Ty) {
+        val issues=linkedSetOf<String>()
+        fun target(path:String,f:String) {
+            if(f !in fields(state))issues.add("$path: state field '$f' is undeclared. Declare its type and JSON initial value in state; derived binds an existing field, not a new declaration.")
+        }
+        fun reference(path:String,ref:String) {
+            if(ref.startsWith("\$state."))target(path,ref.substringAfter("\$state.").substringBefore('.'))
+            else if(ref.startsWith("\$payload"))issues.add("$path: '$ref' is only valid as an event payload binding. Action/node computations use \$action.field after the event captures its payload.")
+            else if(!ref.startsWith("$") && ref !in nodes)issues.add("$path: unknown expression '$ref'; supply a declared node ID or an explicit typed reference.")
+        }
+        nodes.forEach { (id,n) -> references(n).forEach { reference("nodes[$id]",it) } }
+        array(p,"derived").forEachIndexed { i,d -> target("derived[$i].field",d.getString("field"));reference("derived[$i].node",d.getString("node")) }
+        array(p,"controls").forEachIndexed { i,c ->
+            val f=c.getString("field");target("controls[$i].field",f)
+            strings(c.getJSONArray("invalidate")).forEach { invalid ->
+                if(fields(state)[invalid]!=boolean)issues.add("controls[$i].invalidate: '$invalid' must name a declared BOOLEAN validity field. Remove numeric cached values from invalidate and invalidate a separate boolean flag instead.")
+            }
+        }
+        array(p,"actions").forEachIndexed { i,a ->
+            array(a,"updates").forEachIndexed { j,u -> target("actions[$i].updates[$j].field",u.getString("field"));reference("actions[$i].updates[$j].node",u.getString("node")) }
+            array(a,"steps").forEachIndexed { j,s ->
+                val bind=s.getString("bind");if(bind.isNotEmpty())target("actions[$i].steps[$j].bind",bind)
+                if(s.getString("kind")=="call" && bind.isNotEmpty() && s.getString("node").isEmpty())issues.add("actions[$i].steps[$j].node: a nonempty bind requires an explicit projection. Use \$${s.getString("id")} for a scalar result, or a typed record/project node for structured results.")
+            }
+        }
+        array(p,"views").forEachIndexed { i,v ->
+            val component=v.getString("component")
+            if(!component.matches(Regex("[A-Za-z][A-Za-z0-9_]*")))issues.add("views[$i].component: use the bare pack name, for example Column, not '$component' or source syntax.")
+            val refs=array(v,"props").map{it.getString("node")}+listOf(v.getString("when"))
+            refs.filter{it.isNotEmpty()}.forEach { ref ->
+                reference("views[$i]",ref)
+                if(!ref.startsWith("$") && nodes[ref]?.getString("op")!="literal")issues.add("views[$i]: '$ref' is not a literal or scalar state/row reference. Declare a state field, bind the computation through derived, and use \$state.field here.")
+            }
+        }
+        if(issues.isNotEmpty())reject("Behavioral binding errors (workspace unchanged):\n"+issues.joinToString("\n"))
+    }
     private fun dataValue(text:String):Any {
         val parser=JSONTokener(text);val value=parser.nextValue()
         if(parser.nextClean()!='\u0000')reject("Trailing initializer data")

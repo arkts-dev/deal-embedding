@@ -28,7 +28,7 @@ export function normalize(event: LogEvent): string {
     let content: string = "omitted";
     if (event.artifact !== "" && event.capture) { content = "captured"; }
     let targetLimit: number = 160;
-    if (stage === "repair-metrics" || stage === "request-summary" || stage === "model-provider") { targetLimit = 16384; }
+    if (stage === "repair-metrics" || stage === "request-summary" || stage === "model-provider" || stage === "composition") { targetLimit = 16384; }
     return json.stringify({ schema: 1, sequence: event.sequence, time: event.time, elapsed: event.elapsed,
         trace: bounded(event.trace, 80), span: bounded(event.span, 80), parent: bounded(event.parent, 80),
         stage: stage, outcome: outcome, code: bounded(event.code, 80),

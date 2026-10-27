@@ -24,23 +24,14 @@ export function componentFacts(pack: table): string {
                 let kind: string = contract.kind;
                 if (kind === "event") { let prop: string = contract.prop; if (prop === fieldName) { action = true; } }
             }
-            let value: string = "\"" + fieldName + "\"";
-            if (fieldName === "value") { value = "state.value"; }
-            if (type === "boolean") { value = "false"; }
-            if (defaultKind === "boolean") { value = defaultText; }
-            if (type === "number") { value = "0"; }
-            if (defaultKind === "string" && defaultText !== "") { value = "\"" + defaultText + "\""; }
-            if (defaultKind === "number") { value = defaultText; }
-            if (action) { value = "action app.Action {}";
-                for (let contract: table of contracts) {
-                    let kind: string = contract.kind;
-                    if (kind === "event") {
-                        let prop: string = contract.prop; let payload: string = contract.payload;
-                        if (prop === fieldName && payload !== "") { value = "action app.Action { value: payload }"; }
-                    }
-                } }
             if (arguments !== "") { arguments = arguments + ", "; }
-            arguments = arguments + fieldName + ": " + value;
+            arguments = arguments + fieldName + ": " + type;
+            if (!required) { arguments = arguments + " (optional";
+                if (defaultKind === "string") { arguments = arguments + ", default string '" + defaultText + "'"; }
+                if (defaultKind === "number" || defaultKind === "boolean") { arguments = arguments + ", default " + defaultText; }
+                arguments = arguments + ")";
+            }
+            if (action) { arguments = arguments + " [use events, not props]"; }
         }
         let behaviour: string = ""; let children: boolean = false;
         if (requiredProps !== "") { behaviour = "required props: " + requiredProps; }
@@ -59,8 +50,8 @@ export function componentFacts(pack: table): string {
             if (text !== "") { if (behaviour !== "") { behaviour = behaviour + "; "; } behaviour = behaviour + text; }
         }
         if (out !== "") { out = out + "\n"; }
-        out = out + "- " + name + ": ui." + name + "(" + arguments + ")";
-        if (children) { out = out + " { ... }"; }
+        out = out + "- " + name + ": " + arguments;
+        if (children) { out = out + "; children are view IDs"; }
         if (behaviour !== "") { out = out + "  [" + behaviour + "]"; }
     }
     return out;
