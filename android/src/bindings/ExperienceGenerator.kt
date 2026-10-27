@@ -106,7 +106,8 @@ internal class ExperienceGenerator(private val context: Context, private val con
                                 val plan = JSONObject(args.getString(0))
                                 val custom = plan.has("custom")
                                 val source = BehaviorCandidate(config.contracts, custom).assemble(plan)
-                                val operations=(0 until plan.getJSONArray("nodes").length()).map{plan.getJSONArray("nodes").getJSONObject(it).getString("op")}
+                                val inventory=plan.optJSONArray("behaviors") ?: plan.getJSONArray("nodes")
+                                val operations=(0 until inventory.length()).map{inventory.getJSONObject(it).getString(if(plan.has("behaviors"))"kind" else "op")}
                                 val operationCounts=JSONObject();operations.groupingBy{it}.eachCount().forEach{(op,count)->operationCounts.put(op,count)}
                                 val route=JSONObject().put("route",if(custom)"custom-section" else "maintained-only")
                                     .put("operations",operationCounts)

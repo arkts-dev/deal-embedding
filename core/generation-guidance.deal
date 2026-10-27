@@ -57,8 +57,7 @@ export function componentFacts(pack: table): string {
     return out;
 }
 export function guidance(): string {
-    return assets.behavior() + "\n\nPRESENTATION\n" + composition() +
-        "\n\nCOMPONENTS (this is the complete set; use names/typed props, not source snippets)\n" + componentFacts(assets.pack());
+    return assets.behavior();
 }
 export function sourceGuidance(): string { return "DEAL 1.4 SOURCE RULES\n" + assets.language() + "\n\nRENDERER\n" + assets.renderer(); }
 export function main(): null { return null; }

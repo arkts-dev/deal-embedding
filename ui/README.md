@@ -2,7 +2,7 @@
 
 `platform.dealui-pack` is the authoritative component contract. `build.sh` packages these exact bytes at `embedding/platform.dealui-pack`; authored and saved views keep importing `./platform.dealui-pack`. Android assets must not maintain another pack.
 
-`composition.md` and `generation-guidance.md` describe portable composition and accepted authoring syntax. Build tooling extracts component/property/default/event/typed-child facts from this pack into generation guidance. The native renderer implements capabilities; it does not infer domain conclusions or duplicate compiler composition checks. Legacy `renderer.compose.*` identities remain for compatibility; additions use platform-neutral identities.
+`maintained-contract.json` and `behavior-guidance.md` define the initial requirement/binding-only behavioral fragments. Their implementation owns state, handlers and views; the model does not supply those graphs. `behavior-contract.json` retains lower-level typed operations for explicit custom sections and compiler fixtures. `composition.md` and `generation-guidance.md` describe portable composition and accepted source-authoring syntax. Build tooling extracts component/property/default/event/typed-child facts from this pack into generation guidance. The native renderer implements capabilities; it does not infer domain conclusions or duplicate compiler composition checks. Legacy `renderer.compose.*` identities remain for compatibility; additions use platform-neutral identities.
 
 ## Enrichment
 

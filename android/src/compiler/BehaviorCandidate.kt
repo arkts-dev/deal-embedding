@@ -235,6 +235,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
                 val values=args.mapIndexed { i,a -> requireType(expr(a,env,b,chain),type(params[i].getString("type"))).code }
                 emit(type(section.getString("result")),"custom_${name(section.getString("id"))}(${values.joinToString(",")})")
             }
+            "now" -> V(number,"time.nowMillis()")
             "allocate" -> allocation(arg(0),requireType(arg(1),number),requireType(arg(2),number),p,env,b,chain)
             "covers" -> coverage(arg(0),arg(1),p,env,b,chain)
             else -> reject("Unsupported operation $op; request an explicit custom section or full-source fallback")
@@ -248,13 +249,16 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         // Depth-first finite enumeration: stable catalogue order, no unproven infeasibility on a search quota.
         val quotaParams=quotas.indices.joinToString(""){", quota$it: number"}
         val leaf=quotas.indices.joinToString(" && "){"quota$it <= 0"}.ifEmpty{"true"}
-        val recArgs=quotas.indices.map { i -> "quota$i - count * flag$i" }.joinToString(""){", $it"}
+        val memoQuota=quotas.indices.joinToString(""){" + \":\" + values.decimal(quota$it)"}
+        val recArgs=quotas.indices.map { i -> "nextQuota$i" }.joinToString(""){", $it"}
+        val remainingQuotas=quotas.indices.joinToString("\n"){i->"let nextQuota$i: number = quota$i - count * flag$i; if (nextQuota$i < 0) { nextQuota$i = 0; }"}
+        val quotaFeasibility=quotas.mapIndexed { i,o -> "if (quota$i > 0) { let canSupply$i: boolean = false; let scan$i: number = index; while (scan$i < rows.length) { let candidate$i: $rt = rows[scan$i]; if (candidate$i.${symbol(o.getString("field"))}) { canSupply$i = true; } scan$i = scan$i + 1; } if (!canSupply$i || quota$i > remaining) { return {m_found:false,m_rows:empty}; } }" }.joinToString("\n")
         val flags=quotas.mapIndexed { i,o -> "let flag$i: number = 0; if (row.${symbol(o.getString("field"))}) { flag$i = 1; }" }.joinToString("\n")
-        helpers.append("function $fn(rows: ${src.type}, index: number, remaining: number, budget: number$quotaParams): $result {\nlet empty: ${src.type} = [];\nif (budget < 0) { return {m_found:false,m_rows:empty}; }\nif (index >= rows.length) { if (remaining === 0 && $leaf) { return {m_found:true,m_rows:empty}; } return {m_found:false,m_rows:empty}; }\nlet row: $rt = rows[index];\n$flags\nlet count: number = remaining;\nwhile (count >= 0) {\nlet tail: $result = $fn(rows,index + 1,remaining - count,budget - count * row.${symbol(cost)}$recArgs);\nif (tail.m_found) { let output: ${src.type} = []; let selected: $rt = ${copy(rt,"row",mapOf(q to "count"))}; output[output.length] = selected; for (let other: $rt of tail.m_rows) { output[output.length] = other; } return {m_found:true,m_rows:output}; }\ncount = count - 1;\n}\nreturn {m_found:false,m_rows:empty};\n}\n")
+        helpers.append("function $fn(rows: ${src.type}, index: number, remaining: number, budget: number$quotaParams, failed: table): $result {\nlet empty: ${src.type} = [];\n$quotaFeasibility\nlet memoKey: string = values.decimal(index) + \":\" + values.decimal(remaining) + \":\" + values.decimal(budget)$memoQuota;\nfor (let failedKey: string of tables.keys(failed)) { if (failedKey === memoKey) { return {m_found:false,m_rows:empty}; } }\nif (budget < 0) { return {m_found:false,m_rows:empty}; }\nif (index >= rows.length) { if (remaining === 0 && $leaf) { return {m_found:true,m_rows:empty}; } return {m_found:false,m_rows:empty}; }\nlet row: $rt = rows[index];\n$flags\nlet count: number = remaining;\nwhile (count >= 0) {\n$remainingQuotas\nlet tail: $result = $fn(rows,index + 1,remaining - count,budget - count * row.${symbol(cost)}$recArgs,failed);\nif (tail.m_found) { let output: ${src.type} = []; let selected: $rt = ${copy(rt,"row",mapOf(q to "count"))}; output[output.length] = selected; for (let other: $rt of tail.m_rows) { output[output.length] = other; } return {m_found:true,m_rows:output}; }\ncount = count - 1;\n}\nfailed[memoKey] = true;\nreturn {m_found:false,m_rows:empty};\n}\n")
         b.append("if (${total.code} < 0 || math.floor(${total.code}) !== ${total.code} || ${total.code} - ${total.code} !== 0 || ${budget.code} - ${budget.code} !== 0) { throw {code:\"INVALID_ALLOCATION\",message:\"Invalid allocation inputs\"}; }\n")
         mins.forEach { b.append("if (${it.code} < 0 || math.floor(${it.code}) !== ${it.code} || ${it.code} - ${it.code} !== 0) { throw {code:\"INVALID_ALLOCATION\",message:\"Invalid quota\"}; }\n") }
         val row=fresh();b.append("for (let $row: $rt of ${src.code}) { if ($row.${symbol(cost)} < 0 || $row.${symbol(cost)} - $row.${symbol(cost)} !== 0) { throw {code:\"INVALID_ALLOCATION\",message:\"Invalid cost\"}; } }\n")
-        val res=fresh();val dest=fresh();b.append("let $res: $result = $fn(${src.code},0,${total.code},${budget.code}${mins.joinToString(""){", ${it.code}"}});\nlet $dest: ${src.type} = $res.m_rows;\nif (!$res.m_found) {\n");val zeroRow=fresh();b.append("for (let $zeroRow: $rt of ${src.code}) { let cleared: $rt = ${copy(rt,zeroRow,mapOf(q to "0"))}; $dest[$dest.length] = cleared; }\n}\n");return V(src.type,dest)
+        val res=fresh();val dest=fresh();val failed=fresh();b.append("let $failed: table = {}; let $res: $result = $fn(${src.code},0,${total.code},${budget.code}${mins.joinToString(""){", ${it.code}"}},$failed);\nlet $dest: ${src.type} = $res.m_rows;\nif (!$res.m_found) {\n");val zeroRow=fresh();b.append("for (let $zeroRow: $rt of ${src.code}) { let cleared: $rt = ${copy(rt,zeroRow,mapOf(q to "0"))}; $dest[$dest.length] = cleared; }\n}\n");return V(src.type,dest)
     }
     private fun coverage(packages:V,catalogue:V,p:JSONObject,env:Map<String,V>,b:StringBuilder,chain:Set<String>):V {
         val rt=packages.type.element ?: reject("covers needs packages");if(catalogue.type.element!=rt)reject("covers catalogue type")
@@ -272,7 +276,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
     }
     fun assemble(p:JSONObject):JSONObject {
         records.clear(); declarations.clear(); helpers.clear(); optionalTypes.clear(); serial = 0
-        try { return emit(p) } catch(e:JSONException){reject("Malformed behavioral plan: ${e.message}")}
+        try { return emit(if(p.has("behaviors")) MaintainedComposition(contracts).expand(p) else p) } catch(e:JSONException){reject("Malformed behavioral plan: ${e.message}")}
     }
     private fun emit(p:JSONObject):JSONObject {
         val keys=listOf("records","state","nodes","derived","controls","actions","views","root")
@@ -303,11 +307,11 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             if(tokens.any{it.lexeme() in setOf("import","export","class","function") && it.type()!=deal.ast.TokenType.STRING_LITERAL})reject("Custom section must be a function body")
             helpers.append("function custom_${name(section.getString("id"))}(${parameters.joinToString(","){name(it.getString("name"))+": "+type(it.getString("type"))}}): ${type(section.getString("result"))} {\n$body\n}\n")
         }
-        val stateDefs=array(p,"state");val stateFields=linkedMapOf<String,Ty>("loading" to boolean,"error" to string,"sessionEpoch" to number)
+        val stateDefs=array(p,"state");val stateFields=linkedMapOf<String,Ty>("loading" to boolean,"error" to string,"sessionEpoch" to number,"sessionClock" to number)
         stateDefs.forEach { f -> val n=name(f.getString("name"));if(stateFields.put(n,type(f.getString("type")))!=null)reject("Duplicate state field") }
         val actions=array(p,"actions");val stepTypes=mutableMapOf<String,Ty>();val imports=linkedMapOf<String,String>()
         actions.forEach { a -> array(a,"steps").forEach { step ->
-            if(step.getString("kind")=="call") {
+            if(step.getString("kind") in setOf("call","eachCall")) {
                 val module=step.getString("module");val fn=step.getString("function");val contract=contracts.singleOrNull{it.module==module} ?: reject("Undisclosed module $module")
                 val function=contract.functions.singleOrNull{it.name==fn} ?: reject("Unknown function $module.$fn")
                 val key=a.getString("id")+"/"+step.getString("id")
@@ -336,7 +340,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         while(pending.isNotEmpty()) {val ready=pending.firstOrNull { dependencies(it.getString("node")).intersect(targets.toSet()).all { d->ordered.any{it.getString("field")==d} } }?:reject("Derived cycle");ordered.add(ready);pending.remove(ready)}
         val recompute=StringBuilder("function recompute(state: State): State { let next: State = ${copy(state,"state")};\n")
         ordered.forEach { d -> val v=requireType(expr(d.getString("node"),base,recompute),field(state,d.getString("field")));recompute.append("next.${symbol(d.getString("field"))} = ${v.code};\n") };recompute.append("return next; }\n")
-        val initial=stateDefs.associate { it.getString("name") to initial(field(state,it.getString("name")),dataValue(it.getString("initial"))) }+mapOf("loading" to "false","error" to "\"\"","sessionEpoch" to "0")
+        val initial=stateDefs.associate { it.getString("name") to initial(field(state,it.getString("name")),dataValue(it.getString("initial"))) }+mapOf("loading" to "false","error" to "\"\"","sessionEpoch" to "0","sessionClock" to "0")
         val code=StringBuilder("export function initialState(): State { let next: State = ${copy(state,"",initial)}; return recompute(next); }\n")
         val actionTypes=linkedMapOf<String,Ty>()
         val controls=array(p,"controls")
@@ -348,13 +352,13 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             val invalid=strings(c.getJSONArray("invalidate")).joinToString("\n") {
                 if(field(state,it)!=boolean)reject("Control '$f' invalidate entry '$it' is not boolean. invalidate only sets boolean validity fields to false; remove numeric fields, declare a boolean validity flag, and invalidate that flag instead.")
                 "next.${symbol(it)} = false;"
-            }
+            } + if(c.getJSONArray("invalidate").length()>0) "\nnext.m_sessionEpoch = state.m_sessionEpoch + 1; next.m_loading = false;" else ""
             code.append("// @ui-update\nexport function update${symbol(a)}(state: State, action: $at): State { let next: State = ${copy(state,"state")}; if (action.m_value - action.m_value !== 0 || math.floor(action.m_value) !== action.m_value || !values.inBounds(action.m_value,${decimal(lo)},${decimal(hi)})) { return next; } next.${symbol(f)} = action.m_value; $invalid return recompute(next); }\n")
         }
         actions.forEach { a ->
             val id=name(a.getString("id"));val fs=linkedMapOf<String,Ty>();array(a,"fields").forEach{fs[it.getString("name")]=type(it.getString("type"))}
             val at=declare(symbol(id),fs);if(actionTypes.put(id,at)!=null)reject("Duplicate action")
-            val env=base+("action" to V(at,"action"));val steps=array(a,"steps");val async=steps.any{it.getString("kind")=="call"}
+            val env=base+("action" to V(at,"action"));val steps=array(a,"steps");val async=steps.any{it.getString("kind") in setOf("call","eachCall")}
             val updates=StringBuilder();val assignments=StringBuilder()
             array(a,"updates").forEach{u->val f=u.getString("field");val v=requireType(expr(u.getString("node"),env,updates),field(state,f));assignments.append("next.${symbol(f)} = ${v.code};\n")}
             updates.append(assignments)
@@ -362,31 +366,54 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
                 array(view,"events").filter { it.getString("action")==id && it.getString("name")=="onTick" }.forEach { event ->
                     val payload=array(event,"payload").singleOrNull { it.getString("node")=="\$payload" } ?: reject("SessionClock requires one captured numeric payload")
                     val f=payload.getString("field");requireType(V(field(at,f),""),number)
-                    updates.append("if (action.${symbol(f)} < 0) { next.m_sessionEpoch = state.m_sessionEpoch + 1; next.m_loading = false; }\n")
+                    updates.append("let clockValue: number = action.${symbol(f)}; if (clockValue < 0) { clockValue = -clockValue; } if (action.${symbol(f)} < 0 || clockValue < state.m_sessionClock) { next.m_sessionEpoch = state.m_sessionEpoch + 1; next.m_loading = false; } next.m_sessionClock = clockValue;\n")
                 }
             }
             code.append("// @ui-update\nexport function update${symbol(id)}(state: State, action: $at): State { let next: State = ${copy(state,"state")};\n$updates")
-            if(async)code.append("next.m_loading = true; next.m_error = \"\"; next.m_sessionEpoch = state.m_sessionEpoch + 1;\n")
+            if(async) {
+                // A workflow's explicit success markers are false until its entire sequence commits.
+                steps.filter { it.getString("kind")=="set" && fields(state)[it.getString("bind")]==boolean }
+                    .forEach { code.append("next.${symbol(it.getString("bind"))} = false;\n") }
+                code.append("next.m_loading = true; next.m_error = \"\"; next.m_sessionEpoch = state.m_sessionEpoch + 1;\n")
+            }
             code.append("return recompute(next); }\n")
             if(async) {
                 val changedFields=steps.map { it.getString("bind") }.filter { it.isNotEmpty() }.toSet()+setOf("loading","error")
                 val completionFields=linkedMapOf<String,Ty>("sessionEpoch" to number);stateFields.forEach { (f,t) -> if(f in changedFields)completionFields[f]=t }
                 val done=declare("Done${serial++}",completionFields);val body=StringBuilder();val stepEnv=env.toMutableMap()
                 steps.forEach { s -> when(s.getString("kind")) {
-                    "call" -> {
+                    "call", "eachCall" -> {
+                        val each=s.getString("kind")=="eachCall"
+                        var scope:Map<String,V> = stepEnv
+                        var collection=""
+                        var row=""
+                        if(each) {
+                            val source=expr(s.getString("each"),stepEnv,body)
+                            val rt=source.type.element ?: reject("eachCall requires an array")
+                            row=fresh();collection=fresh()
+                            val target=field(state,s.getString("bind"))
+                            if(target.element==null)reject("eachCall bind requires an array")
+                            body.append("let $collection: $target = []; for (let $row: $rt of ${source.code}) {\n")
+                            scope=stepEnv+("item" to V(rt,row))
+                        }
                         val module=s.getString("module");val fn=s.getString("function");val function=contracts.single{it.module==module}.functions.single{it.name==fn};val args=strings(s.getJSONArray("args"))
                         if(args.size!=function.parameters.size)reject("Capability arity")
                         val guard=s.getString("when")
-                        val condition=if(guard.isEmpty())"true" else requireType(expr(guard,stepEnv,body),boolean).code
+                        val condition=if(guard.isEmpty())"true" else requireType(expr(guard,scope,body),boolean).code
                         val rt=stepTypes.getValue(id+"/"+s.getString("id"));val dest=fresh()
                         body.append("let $dest: $rt = ${default(rt)};\nif ($condition) {\n")
-                        val av=args.mapIndexed{i,n->encodeArgument(expr(n,stepEnv,body),function.parameters[i].type,body)}
+                        val av=args.mapIndexed{i,n->encodeArgument(expr(n,scope,body),function.parameters[i].type,body)}
                         val result=decode(rt,"await ${imports.getValue(module)}.$fn(${av.joinToString(",")})",body)
                         body.append("$dest = ${result.code};\n")
                         stepEnv[s.getString("id")]=V(rt,dest)
                         stepEnv[s.getString("id")+"Present"]=V(boolean,condition)
-                        val bind=s.getString("bind");if(bind.isNotEmpty()){val bt=field(state,bind);val projected=expr(s.getString("node"),stepEnv,body);requireType(projected,bt);body.append("next.${symbol(bind)} = ${projected.code};\n")}
+                        val bind=s.getString("bind");if(bind.isNotEmpty()){
+                            val bt=field(state,bind);val projected=expr(s.getString("node"),scope+stepEnv.filterKeys{it==s.getString("id")||it==s.getString("id")+"Present"},body)
+                            requireType(projected,if(each)bt.element!! else bt)
+                            body.append(if(each) "$collection[$collection.length] = ${projected.code};\n" else "next.${symbol(bind)} = ${projected.code};\n")
+                        }
                         body.append("}\n")
+                        if(each)body.append("}\nnext.${symbol(bind)} = $collection;\n")
                     }
                     "set" -> {val f=s.getString("bind");val v=requireType(expr(s.getString("node"),stepEnv,body),field(state,f));body.append("next.${symbol(f)} = ${v.code};\n")}
                     else->reject("Unknown workflow step")
@@ -425,12 +452,13 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             else "ui.IntField(value: state.${symbol(f)}, label: ${quote(c.getString("label"))}, minimum:${decimal(c.getDouble("minimum"))}, maximum:${decimal(c.getDouble("maximum"))}, step:${decimal(c.getDouble("step"))}, format:${quote(if(widget=="money")"euro-cents" else "integer")}, enabled: !state.m_loading, onChange: action app.${symbol("Set"+f)} {m_value:payload})"
         }
         val importsText=imports.entries.joinToString("\n"){(m,a)->"import * as $a from ${quote(m)};"}
-        val deal="$importsText\nimport * as math from \"std/math\";\nimport * as tables from \"std/table\";\nimport * as values from \"ui/values\";\n$declarations$helpers$recompute$code\nexport function main(): null { return null; }\n"
+        val deal="$importsText\nimport * as math from \"std/math\";\nimport * as time from \"std/time\";\nimport * as tables from \"std/table\";\nimport * as values from \"ui/values\";\n$declarations$helpers$recompute$code\nexport function main(): null { return null; }\n"
         val ui="import * as app from \"./experience\";\nimport * as ui from \"./platform.dealui-pack\";\n// @ui-root\nexport view Workspace(state: app.State): View { ui.Column() {\n$controlUi\nWhen(state.m_loading) { ui.Progress(label: \"Loading…\") }\nWhen(state.m_error !== \"\") { ui.Notice(text:state.m_error,tone:\"error\") }\n$view\n} }\n"
         return JSONObject().put("deal",deal).put("dealui",ui)
     }
     private fun renderComponent(v:JSONObject,env:Map<String,V>,active:Set<String>,row:Boolean,actions:Map<String,Ty>,value:(String,Map<String,V>)->String,render:(String,Map<String,V>,Set<String>,Boolean)->String):String {
         val component=name(v.getString("component"));val props=array(v,"props").map{symbolToProp(it.getString("name"))+": "+value(it.getString("node"),env)}.toMutableList()
+        if(component in setOf("Button","PrimaryAction","SecondaryAction") && array(v,"props").none{it.getString("name")=="enabled"})props.add("enabled: !state.m_loading")
         array(v,"events").forEach { e -> val a=e.getString("action");val t=actions[a]?:reject("Unknown event action $a");val vals=array(e,"payload");if(vals.map{it.getString("field")}.toSet()!=fields(t).keys)reject("Action payload fields")
             val payload=vals.joinToString(","){f->val node=f.getString("node");symbol(f.getString("field"))+": "+if(node=="\$payload")"payload" else value(node,env)}
             props.add(symbolToProp(e.getString("name"))+": action app.$t {$payload}")
@@ -511,7 +539,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             array(a,"updates").forEach { closed(it,"field","node") };unique(array(a,"updates"),"field")
             val steps=mutableSetOf("state","action","row","left","right")
             array(a,"steps").forEach { s -> when(s.getString("kind")) {
-                "call" -> { closed(s,"kind","id","module","function","args","bind","node","when"); val id=name(s.getString("id"));if(!steps.add(id)||!steps.add(id+"Present"))reject("Duplicate/reserved workflow reference") }
+                "call", "eachCall" -> { closed(s,*(listOf("kind","id","module","function","args","bind","node","when")+if(s.getString("kind")=="eachCall")listOf("each")else emptyList()).toTypedArray()); val id=name(s.getString("id"));if(!steps.add(id)||!steps.add(id+"Present"))reject("Duplicate/reserved workflow reference") }
                 "set" -> closed(s,"kind","bind","node")
                 else -> reject("Unknown workflow step")
             } }
@@ -526,7 +554,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             "floor" to 1,"ceil" to 1,"abs" to 1,"eq" to 2,"ne" to 2,"lt" to 2,"le" to 2,"gt" to 2,"ge" to 2,
             "and" to 2,"or" to 2,"not" to 1,"choose" to 3,"integer" to 1,"clock" to 1,"length" to 1,
             "filter" to 2,"project" to 2,"sum" to 2,"any" to 2,"all" to 2,"update" to 2,"first" to 1,"lookup" to 2,
-            "sort" to 1,"basket" to 1,"allocate" to 3,"covers" to 2,"join" to 4)
+            "now" to 0,"sort" to 1,"basket" to 1,"allocate" to 3,"covers" to 2,"join" to 4)
         array(p,"nodes").forEach { n ->
             closed(n,"id","op","args","params")
             val op=n.getString("op");val params=n.getJSONObject("params")
