@@ -344,7 +344,10 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
             val lo=c.getDouble("minimum");val hi=c.getDouble("maximum");val step=c.getDouble("step")
             if(c.getString("widget")=="time" && (lo<0 || hi>1439))reject("Time control requires minute-of-day bounds")
             if(!lo.isFinite()||!hi.isFinite()||!step.isFinite()||lo!=kotlin.math.floor(lo)||hi!=kotlin.math.floor(hi)||lo<Int.MIN_VALUE||hi>Int.MAX_VALUE||lo>hi||step<=0||step!=kotlin.math.floor(step))reject("Invalid integral control bounds")
-            val invalid=strings(c.getJSONArray("invalidate")).joinToString("\n") { requireType(V(field(state,it),""),boolean);"next.${symbol(it)} = false;" }
+            val invalid=strings(c.getJSONArray("invalidate")).joinToString("\n") {
+                if(field(state,it)!=boolean)reject("Control '$f' invalidate entry '$it' is not boolean. invalidate only sets boolean validity fields to false; remove numeric fields, declare a boolean validity flag, and invalidate that flag instead.")
+                "next.${symbol(it)} = false;"
+            }
             code.append("// @ui-update\nexport function update${symbol(a)}(state: State, action: $at): State { let next: State = ${copy(state,"state")}; if (action.m_value - action.m_value !== 0 || math.floor(action.m_value) !== action.m_value || !values.inBounds(action.m_value,${decimal(lo)},${decimal(hi)})) { return next; } next.${symbol(f)} = action.m_value; $invalid return recompute(next); }\n")
         }
         actions.forEach { a ->
