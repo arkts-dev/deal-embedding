@@ -10,7 +10,10 @@ internal class MaintainedComposition(private val contracts: List<CapabilityContr
     private var serial=0
     private fun reject(s:String):Nothing=throw BehaviorCandidate.Rejected(s)
     private fun closed(o:JSONObject,vararg fields:String) { if(o.keys().asSequence().toSet()!=fields.toSet())reject("Expected ${fields.joinToString()}") }
-    private fun list(o:JSONObject,k:String)=(0 until o.getJSONArray(k).length()).map{o.getJSONArray(k).getJSONObject(it)}
+    private fun list(o:JSONObject,k:String):List<JSONObject> {
+        val a=o.opt(k) as? JSONArray ?: reject("$k must be a JSON array, not a JSON-encoded string; submit structured tool arguments")
+        return (0 until a.length()).map{a.getJSONObject(it)}
+    }
     private fun add(k:String,v:JSONObject){plan.getJSONArray(k).put(v)}
     private fun id()="fragment${serial++}"
     private fun node(op:String,vararg args:String,params:JSONObject=JSONObject()):String {val id=id();add("nodes",JSONObject().put("id",id).put("op",op).put("args",JSONArray(args.toList())).put("params",params));return id}
@@ -81,10 +84,11 @@ internal class MaintainedComposition(private val contracts: List<CapabilityContr
             if(g.getString("label").isBlank()||list(g,"constraints").isEmpty())reject("Requirement groups need a label and explicit constraints")
             var result=lit(true)
             for(c in list(g,"constraints")){
-                closed(c,"field","operator","value")
+                closed(c,"field","operator","valueType","text","number","boolean")
                 val path=c.getString("field");if(!path.matches(Regex("[A-Za-z][A-Za-z0-9_.]*")))reject("Invalid attribute path")
                 val op=c.getString("operator");if(op !in setOf("eq","ge","le"))reject("Unsupported constraint operator")
-                result=node("and",result,node(op,"\$row.attributes.$path",lit(c.get("value"))))
+                val value:Any=when(c.getString("valueType")){"string"->c.getString("text");"number"->c.get("number") as? Number ?: reject("Numeric constraint required");"boolean"->c.getBoolean("boolean");else->reject("Unknown constraint value type")}
+                result=node("and",result,node(op,"\$row.attributes.$path",lit(value)))
             }
             return result
         }
