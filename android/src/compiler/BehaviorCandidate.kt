@@ -480,6 +480,10 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
         }
         array(p,"views").forEachIndexed { i,v ->
             val component=v.getString("component")
+            if(v.getString("each").isNotEmpty()) {
+                if(!v.getString("each").startsWith("$"))issues.add("views[$i].each: bind a prepared array reference, for example \$state.rows.")
+                if(!v.getString("key").startsWith("\$row."))issues.add("views[$i].key: use an explicit row-field reference such as \$row.id, not '${v.getString("key")}'.")
+            }
             if(!component.matches(Regex("[A-Za-z][A-Za-z0-9_]*")))issues.add("views[$i].component: use the bare pack name, for example Column, not '$component' or source syntax.")
             val refs=array(v,"props").map{it.getString("node")}+listOf(v.getString("when"))
             refs.filter{it.isNotEmpty()}.forEach { ref ->
