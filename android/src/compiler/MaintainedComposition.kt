@@ -32,7 +32,11 @@ internal class MaintainedComposition(private val contracts: List<CapabilityContr
     private fun control(n:String,label:String,widget:String,min:Int,max:Int,step:Int=1,invalidate:List<String> = emptyList()) {add("controls",JSONObject().put("field",n).put("label",label).put("widget",widget).put("minimum",min).put("maximum",max).put("step",step).put("invalidate",JSONArray(invalidate)))}
     private fun binding(b:JSONObject):CapabilityFunction {closed(b,"module","function");return contracts.singleOrNull{it.module==b.getString("module")}?.functions?.singleOrNull{it.name==b.getString("function")}?:reject("Undisclosed capability binding")}
     private fun numberInput(o:JSONObject,n:String,label:String,widget:String="integer",min:Int=0,max:Int=Int.MAX_VALUE,invalidate:List<String> = emptyList()):String {val v=(o.get(n) as? Number ?: reject("Numeric input required: $n"));val d=v.toDouble();if(!d.isFinite()||d!=kotlin.math.floor(d)||d<min||d>max)reject("Invalid whole-unit input $n");val r=state(n,"number",v);control(n,label,widget,min,max,invalidate=invalidate);return r}
-    fun expand(p:JSONObject):JSONObject {
+    fun expand(input:JSONObject):JSONObject {
+        val p=if(input.has("kind")) {
+            val b=JSONObject(input.toString());val title=b.remove("title") as? String ?: reject("Title required")
+            JSONObject().put("title",title).put("behaviors",JSONArray().put(b))
+        } else input
         closed(p,"title","behaviors")
         if(p.getString("title").isBlank())reject("Screen title is required")
         val behaviors=list(p,"behaviors");if(behaviors.size!=1)reject("Compose exactly one complete behavior per screen")

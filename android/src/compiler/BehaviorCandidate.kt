@@ -276,7 +276,7 @@ internal class BehaviorCandidate(private val contracts: List<CapabilityContract>
     }
     fun assemble(p:JSONObject):JSONObject {
         records.clear(); declarations.clear(); helpers.clear(); optionalTypes.clear(); serial = 0
-        try { return emit(if(p.has("behaviors")) MaintainedComposition(contracts).expand(p) else p) } catch(e:JSONException){reject("Malformed behavioral plan: ${e.message}")}
+        try { return emit(if(p.has("behaviors")||p.has("kind")) MaintainedComposition(contracts).expand(p) else p) } catch(e:JSONException){reject("Malformed behavioral plan: ${e.message}")}
     }
     private fun emit(p:JSONObject):JSONObject {
         val keys=listOf("records","state","nodes","derived","controls","actions","views","root")

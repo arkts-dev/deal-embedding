@@ -89,7 +89,7 @@ export async function run(input: string, diagnostic: string): table {
             let args: table = {};
             try { args = await data.parse(arguments); }
             catch (error) { if (error.code !== "INVALID_JSON") { throw error; } }
-            if (name === "submit_compact" || name === "submit_custom") {
+            if (name === "submit_compact" || name === "submit_compact_comparison" || name === "submit_compact_providerSchedule" || name === "submit_compact_allocation" || name === "submit_compact_quotedAlternatives" || name === "submit_custom") {
                 if (!initialWrites || !compact) { result = { accepted: false, diagnostics: "FILES_EXIST: repair canonical source with exact edits" }; }
                 else {
                     let custom: boolean = name === "submit_custom";
