@@ -66,7 +66,10 @@ internal class MaintainedComposition(private val contracts: List<CapabilityContr
         val catalogue=b.getJSONObject("catalogue");val quote=b.getJSONObject("quote");val cf=binding(catalogue);val qf=binding(quote)
         if(cf.parameters.map{it.type.kind}!=listOf("string","string")||cf.result.kind!="array"||qf.parameters.map{it.type.kind}!=listOf("string","string","string")||qf.result.kind!="record")reject("Quoted alternatives require period catalogue and whole-basket quote bindings")
         val f=b.getJSONObject("fields");closed(f,"id","name","cost","stock","components","componentId","componentQuantity","quoteCost","deposit","available","ttl")
-        val groups=list(b,"groups");if(groups.size!=2)reject("Quoted alternatives currently require two explicit requirement groups")
+        val encodedGroups=b.get("groups") as? String ?: reject("groups must contain JSON-encoded requirement data")
+        val parser=JSONTokener(encodedGroups);val groupArray=parser.nextValue() as? JSONArray ?: reject("groups must encode an array")
+        if(parser.nextClean()!='\u0000')reject("Trailing requirement group data")
+        val groups=(0 until groupArray.length()).map{groupArray.getJSONObject(it)};if(groups.size!=2)reject("Quoted alternatives currently require two explicit requirement groups")
         record("Component",linkedMapOf("id" to "string","quantity" to "number"))
         // Keep disclosed attributes structurally typed, without model-authored nominal projections.
         val item=cf.result.element ?: reject("Catalogue array required")
