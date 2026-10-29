@@ -1,0 +1,93 @@
+import * as m from "./lowering-model";
+import * as x from "./lowering-expressions";
+import * as codec from "./lowering-codec";
+import * as syntax from "embedding/syntax";
+import * as tables from "std/table";
+import * as math from "std/math";
+
+export class Context { model: m.Model; execution: table; workflows: table[]; stepTypes: table; imports: table; workflowSource: string; readSource: string; quotesSource: string; }
+export function workflow(action: table): boolean { let steps: table[] = action.steps; for (let step: table of steps) { let kind: string = step.kind; if (kind === "call" || kind === "eachCall") { return true; } } return false; }
+export function epoch(id: string): string { return "workflow"+m.name(id)+"Epoch"; }
+export function busy(id: string): string { return "workflow"+m.name(id)+"Pending"; }
+export function failure(id: string): string { return "workflow"+m.name(id)+"Error"; }
+export function names(id: string): table { let prefix: string = "workflow_"+m.symbol(id)+"_"; return {FragmentState:"State",requestEpoch:m.symbol(epoch(id)),requestPending:m.symbol(busy(id)),requestError:m.symbol(failure(id)),sessionEpoch:"m_sessionEpoch",sessionClock:"m_sessionClock",loading:"m_loading",error:"m_error",copyState:prefix+"copy",clearSuccess:prefix+"clear",start:prefix+"start",invalidate:prefix+"invalidate"}; }
+export function writes(c: Context, id: string): string[] { let workflows: table = c.execution.workflows; let entry: table = workflows[id]; let result: string[] = entry.writes; return result; }
+export function invalidate(c: Context, action: string): string { let invalidations: table = c.execution.invalidations; let entries: table[] = invalidations[action]; let result: string = ""; for (let entry: table of entries) { let id: string = entry.id; let clear: boolean = entry.clear; let markers: string = ""; for (let field: string of writes(c,id)) { if (m.field(c.model,"State",field) === "boolean") { markers = markers+"next."+m.symbol(field)+" = false;\n"; } } result = result+"next = workflow_"+m.symbol(id)+"_invalidate(next);\n"; if (!clear) { markers = "if (state."+m.symbol(busy(id))+") { "+markers+" }\n"; } result = result+markers; } return result; }
+export function cancelAll(c: Context): string { let result: string = ""; for (let action: table of c.workflows) { let id: string = action.id; result = result+"next."+m.symbol(busy(id))+" = false; next."+m.symbol(epoch(id))+" = state."+m.symbol(epoch(id))+" + 1;\n"; } return result; }
+export function emitControl(c: Context, control: table, actionTypes: table): string { let field: string = control.field; if (m.field(c.model,"State",field) !== "number") { m.reject("Numeric control requires number"); } let action: string = "Set"+m.name(field); let type: string = m.declare(c.model,m.symbol(action),[{name:"value",type:"number"}]); actionTypes[action] = type; let lo: number = control.minimum; let hi: number = control.maximum; let step: number = control.step; let widget: string = control.widget; if (widget === "time" && (lo < 0 || hi > 1439)) { m.reject("Time control requires minute-of-day bounds"); } if (lo-lo !== 0 || hi-hi !== 0 || step-step !== 0 || math.floor(lo) !== lo || math.floor(hi) !== hi || lo < -2147483648 || hi > 2147483647 || lo > hi || step <= 0 || math.floor(step) !== step) { m.reject("Invalid integral control bounds"); } let invalidations: string[] = control.invalidate; let invalid: string = ""; for (let entry: string of invalidations) { if (m.field(c.model,"State",entry) !== "boolean") { m.reject("Control invalidate entry must be boolean"); } invalid = invalid+"next."+m.symbol(entry)+" = false;\n"; } invalid = invalid+invalidate(c,action); return "// @ui-update\nexport function update"+m.symbol(action)+"(state: State, action: "+type+"): State { let next: State = "+m.copy(c.model,"State","state",{})+"; if (action.m_value - action.m_value !== 0 || math.floor(action.m_value) !== action.m_value || !values.inBounds(action.m_value,"+m.decimal(lo)+","+m.decimal(hi)+")) { return next; } next."+m.symbol(field)+" = action.m_value;\n"+invalid+"return recompute(next); }\n"; }
+export function emitAction(c: Context, action: table, views: table[], actionTypes: table): string {
+    let model: m.Model = c.model; let id: string = action.id; m.name(id); let fields: table[] = action.fields; let fs: table[] = []; for (let entry: table of fields) { let name: string = entry.name; let type: string = entry.type; fs[fs.length] = {name:name,type:m.type(model,type)}; } let type: string = m.declare(model,m.symbol(id),fs); if (m.present(actionTypes,id)) { m.reject("Duplicate action"); } actionTypes[id] = type;
+    let env: table = {state:m.value("State","next"),action:m.value(type,"action")};
+    let updates: string = localUpdates(c,action,env)+clockUpdate(c,id,type,views);
+    let steps: table[] = action.steps; let asynchronous: boolean = workflow(action); let result: string = "// @ui-update\nexport function update"+m.symbol(id)+"(state: State, action: "+type+"): State { let next: State = "+m.copy(model,"State","state",{})+";\n"+updates;
+    if (asynchronous) { for (let step: table of steps) { let kind: string = step.kind; let bind: string = step.bind; if (kind === "set" && m.field(model,"State",bind) === "boolean") { result = result+"next."+m.symbol(bind)+" = false;\n"; } } result = result+"next = workflow_"+m.symbol(id)+"_start(next);\n"; }
+    result = result+"return recompute(next); }\n";
+    if (asynchronous) { return result+execution(c,action,type,env); }
+    if (steps.length > 0) { m.reject("Workflow without provider call: put local changes in updates"); } return result;
+}
+function localUpdates(c: Context, action: table, env: table): string {
+    let model: m.Model = c.model; let updates: x.Output = {code:""}; let assignments: string = ""; let us: table[] = action.updates; let reset: boolean = false;
+    for (let update: table of us) { let field: string = update.field; let node: string = update.node; let value: m.Value = m.require(x.expr(model,node,env,updates,[]),m.field(model,"State",field)); assignments = assignments+"next."+m.symbol(field)+" = "+value.code+";\n"; if (field === "sessionEpoch") { reset = true; } }
+    updates.code = updates.code+assignments; if (reset) { updates.code = updates.code+cancelAll(c); }
+    return updates.code;
+}
+function clockUpdate(c: Context, id: string, type: string, views: table[]): string {
+    let model: m.Model = c.model; let updates: x.Output = {code:""}; let clock: boolean = false;
+    for (let view: table of views) { let component: string = view.component; if (component === "SessionClock") { let events: table[] = view.events; for (let event: table of events) { let target: string = event.action; let name: string = event.name; if (target === id && name === "onTick") { clock = true; let payload: table[] = event.payload; let field: string = ""; for (let entry: table of payload) { let node: string = entry.node; if (node === "$payload") { field = entry.field; } } if (field === "" || m.field(model,type,field) !== "number") { m.reject("SessionClock requires one captured numeric payload"); } let copy: string = "clockCopy"+m.symbol(id); let invalid: string = "clockInvalidate"+m.symbol(id); model.helpers = model.helpers+"function "+copy+"(state:State):State { return "+m.copy(model,"State","state",{})+"; }\nfunction "+invalid+"(state:State):State { let next:State = "+m.copy(model,"State","state",{})+"; "+cancelAll(c)+"return next; }\n"; model.helpers = model.helpers+syntax.functionSource(c.workflowSource,"clock",{FragmentState:"State",sessionEpoch:"m_sessionEpoch",sessionClock:"m_sessionClock",clock:"clock"+m.symbol(id),copyState:copy,invalidateAll:invalid}); updates.code = updates.code+"next = clock"+m.symbol(id)+"(next,action."+m.symbol(field)+");\n"; } } } }
+    if (!clock) { updates.code = updates.code+invalidate(c,id); }
+    return updates.code;
+}
+function stepBody(c: Context, action: table, env: table): string {
+    let model: m.Model = c.model; let id: string = action.id;
+    let body: x.Output = {code:""}; let steps: table[] = action.steps; let stepEnv: table = env;
+    for (let step: table of steps) { let kind: string = step.kind; let bind: string = step.bind; if (kind === "call" || kind === "eachCall") {
+        stepEnv = providerStep(c,id,step,stepEnv,body);
+    } else { let node: string = step.node; let value: m.Value = m.require(x.expr(model,node,stepEnv,body,[]),m.field(model,"State",bind)); body.code = body.code+"next."+m.symbol(bind)+" = "+value.code+";\n"; } body.code = body.code+"next = recompute(next);\n"; }
+    return body.code;
+}
+function providerStep(c: Context, id: string, step: table, stepEnv: table, body: x.Output): table {
+        let model: m.Model = c.model; let kind: string = step.kind; let bind: string = step.bind;
+        let scope: table = stepEnv; let source: string = ""; let row: string = ""; let collection: string = ""; let rowType: string = ""; let element: string = "";
+        if (kind === "eachCall") { let each: string = step.each; let input: m.Value = x.expr(model,each,stepEnv,body,[]); rowType = m.element(input.type); if (rowType === "") { m.reject("eachCall requires an array"); } row = m.fresh(model); collection = m.fresh(model); element = m.element(m.field(model,"State",bind)); if (element === "") { m.reject("eachCall bind requires an array"); } source = input.code; scope = m.extend(stepEnv,"item",{type:rowType,code:row}); }
+        let guard: string = step["when"]; let condition: string = "true"; if (guard !== "") { condition = m.require(x.expr(model,guard,scope,body,[]),"boolean").code; }
+        let stepId: string = step.id; let rt: string = c.stepTypes[id+"/"+stepId]; let dest: string = m.fresh(model);
+        let decoded: string = decodeStep(c,step,scope,rt,dest);
+        stepEnv = m.extend(stepEnv,stepId,{type:rt,code:dest}); stepEnv = m.extend(stepEnv,stepId+"Present",{type:"boolean",code:condition});
+        let projectionEnv: table = m.extend(m.extend(scope,stepId,{type:rt,code:dest}),stepId+"Present",{type:"boolean",code:condition});
+        body.code = body.code+readBlock(c,step,projectionEnv,{rt:rt,dest:dest,condition:condition,collection:collection,rowType:rowType,element:element,row:row,source:source,decoded:decoded});
+    return stepEnv;
+}
+function decodeStep(c: Context, step: table, scope: table, rt: string, dest: string): string {
+    let model: m.Model = c.model; let module: string = step.module; let fn: string = step["function"]; let contract: table = m.functionContract(model,module,fn);
+    let args: string[] = step.args; let params: table[] = contract.parameters; if (args.length !== params.length) { m.reject("Capability arity"); }
+    let decoded: x.Output = {code:""}; let av: string = ""; let index: number = 0;
+    for (let param: table of params) { let schema: table = param.type; let value: m.Value = x.expr(model,args[index],scope,decoded,[]); if (index > 0) { av = av+","; } av = av+codec.encode(model,value,schema,decoded); index = index+1; }
+    let alias: string = c.imports[module]; let value: m.Value = codec.decode(model,rt,"await "+alias+"."+fn+"("+av+")",decoded);
+    return decoded.code+dest+" = "+value.code+";\n";
+}
+function projectStep(c: Context, step: table, env: table, collection: string): string {
+    let model: m.Model = c.model; let kind: string = step.kind; let bind: string = step.bind; let projected: x.Output = {code:""};
+    if (bind !== "") { let expected: string = m.field(model,"State",bind); if (kind === "eachCall") { expected = m.element(expected); } let node: string = step.node; let value: m.Value = m.require(x.expr(model,node,env,projected,[]),expected); if (kind === "eachCall") { projected.code = projected.code+collection+"["+collection+".length] = "+value.code+";\n"; } else { projected.code = projected.code+"next."+m.symbol(bind)+" = "+value.code+";\n"; } }
+    return projected.code;
+}
+function readBlock(c: Context, step: table, env: table, bindings: table): string {
+    let model: m.Model = c.model; let kind: string = step.kind; let bind: string = step.bind;
+    let rt: string = bindings.rt; let dest: string = bindings.dest; let condition: string = bindings.condition; let collection: string = bindings.collection;
+    let projected: string = projectStep(c,step,env,collection);
+    let decoded: string = bindings.decoded;
+    let read: string = syntax.bodySource(c.readSource,"read",{ProviderReply:rt,reply:dest},{emptyReply:m.defaultValue(model,rt),available:condition},{decodeReply:decoded,projectReply:projected});
+    if (kind === "eachCall") { let rowType: string = bindings.rowType; let element: string = bindings.element; let row: string = bindings.row; let source: string = bindings.source; return syntax.bodySource(c.quotesSource,"collect",{QuoteRow:rowType,QuoteValue:element,results:collection,item:row},{source:source},{readQuote:read,commitQuotes:"next."+m.symbol(bind)+" = "+collection+";"}); }
+    return read;
+}
+function execution(c: Context, action: table, type: string, env: table): string {
+    let model: m.Model = c.model; let id: string = action.id; let changed: string[] = writes(c,id); let completion: table[] = [{name:"sessionEpoch",type:"number"}]; completion[completion.length] = {name:epoch(id),type:"number"}; let completionValues: table = {};
+    for (let entry: table of m.fields(model,"State")) { let field: string = entry.name; let type: string = entry.type; if (m.contains(changed,field) || field === busy(id) || field === failure(id)) { completion[completion.length] = {name:field,type:type}; completionValues[field] = "action."+m.symbol(field); } }
+    let done: string = m.declare(model,"Done"+m.decimal(model.serial),completion); model.serial = model.serial+1;
+    let body: string = stepBody(c,action,env);
+    let prefix: string = "workflow_"+m.symbol(id)+"_"; let names: table = names(id); names["FragmentAction"] = type; names["FragmentDone"] = done; names["complete"] = prefix+"complete"; names["execute"] = prefix+"execute"; names["merge"] = prefix+"merge"; names["run"] = "run"+m.symbol(id); names["finish"] = "finish"+m.symbol(id);
+    let result: string = "function "+prefix+"copy(state:State):State { return "+m.copy(model,"State","state",{})+"; }\nfunction "+prefix+"clear(state:State):State { return "+m.copy(model,"State","state",{})+"; }\n";
+    result = result+syntax.functionSource(c.workflowSource,"start",names)+syntax.functionSource(c.workflowSource,"invalidate",names);
+    result = result+"function "+prefix+"complete(state:State):"+done+" { return "+m.copy(model,done,"state",{})+"; }\nasync function "+prefix+"execute(state:State,action:"+type+"):State { let next:State = "+m.copy(model,"State","state",{})+";\n"+body+"return next; }\nfunction "+prefix+"merge(state:State,action:"+done+"):State { return "+m.copy(model,"State","state",completionValues)+"; }\n";
+    return result+"// @ui-effect\n"+syntax.functionSource(c.workflowSource,"run",names)+"// @ui-update\n"+syntax.functionSource(c.workflowSource,"finish",names);
+}
+export function main(): null { return null; }

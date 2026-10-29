@@ -53,6 +53,10 @@ function visit(id: string, ids: string[], dependencies: table, ordered: string[]
 }
 export function dependenciesJson(input: string): string {
     let plan: table = json.parse(input);
+    for (let key: string of ["fragments","commands","display"]) {
+        try { if (key === "display") { let values: string[] = plan[key]; } else { let values: table[] = plan[key]; } }
+        catch (error) { if (error.code !== "E8001" && error.code !== "E8009") { throw error; } throw {code:"INVALID_CONFIG",message:"Root '"+key+"' must be an actual JSON array (never a quoted/encoded document); submit all root fields title, fragments, commands, display."}; }
+    }
     shapes.validate(plan);
     let fragments: table[] = plan.fragments; let ids: string[] = []; let dependencies: table = {}; let kinds: table = {};
     for (let fragment: table of fragments) {

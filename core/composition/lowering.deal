@@ -1,0 +1,132 @@
+import * as m from "./lowering-model";
+import * as x from "./lowering-expressions";
+import * as codec from "./lowering-codec";
+import * as validation from "./lowering-validation";
+import * as actions from "./lowering-actions";
+import * as views from "./lowering-views";
+import * as executionPolicy from "./lowering-execution.generated";
+import * as syntax from "embedding/syntax";
+import * as json from "std/json";
+import * as tables from "std/table";
+
+function checkRecord(model: m.Model, type: string, active: string[]): null {
+    let child: string = m.element(type); if (child !== "") { return checkRecord(model,child,active); }
+    if (m.scalar(type)) { return null; } if (m.contains(active,type)) { m.reject("Recursive record type"); }
+    let next: string[] = []; for (let entry: string of active) { next[next.length] = entry; } next[next.length] = type;
+    for (let field: table of m.fields(model,type)) { let child: string = field.type; checkRecord(model,child,next); } return null;
+}
+function records(model: m.Model, plan: table): null {
+    let records: table[] = plan.records;
+    for (let record: table of records) { let name: string = record.name; let key: string = m.symbol(name); if (m.present(model.records,key)) { m.reject("Duplicate record "+name); } let fs: table[] = []; model.records[key] = fs; }
+    for (let record: table of records) { let name: string = record.name; let key: string = m.symbol(name); let fields: table[] = record.fields; let fs: table[] = []; for (let field: table of fields) { let name: string = field.name; let type: string = field.type; fs[fs.length] = {name:name,type:m.type(model,type)}; } delete model.records[key]; m.declare(model,key,fs); }
+    for (let name: string of tables.keys(model.records)) { checkRecord(model,name,[]); } return null;
+}
+function custom(model: m.Model, plan: table): null {
+    if (!model.allowCustom) { return null; }
+    let sections: table[] = plan.custom; let reason: string = plan.reason;
+    if (sections.length === 0 || reason === "") { m.reject("Custom sections require unique IDs and an uncovered-behavior reason"); }
+    for (let section: table of sections) {
+        m.closed(section,["id","parameters","result","body"]); let id: string = section.id; m.name(id);
+        if (m.present(model.custom,id)) { m.reject("Duplicate custom section"); }
+        let body: string = section.body; syntax.validateCustom(body); let parameters: table[] = section.parameters; let names: string[] = []; let args: string = "";
+        for (let parameter: table of parameters) { m.closed(parameter,["name","type"]); let name: string = parameter.name; let type: string = parameter.type; if (m.contains(names,name)) { m.reject("Duplicate custom parameter"); } names[names.length] = name; if (args !== "") { args = args+","; } args = args+m.name(name)+": "+m.type(model,type); }
+        let result: string = section.result; model.helpers = model.helpers+"function custom_"+id+"("+args+"): "+m.type(model,result)+" {\n"+body+"\n}\n"; model.custom[id] = section;
+    } return null;
+}
+function provider(c: actions.Context, action: table, step: table, stateFields: table[]): null {
+    let model: m.Model = c.model; let kind: string = step.kind;
+    if (kind !== "call" && kind !== "eachCall") { return null; }
+    let module: string = step.module; let fn: string = step["function"]; let declaration: table = m.functionContract(model,module,fn); let schema: table = declaration.result;
+    let target: string = step.bind; let declared: string = "";
+    for (let field: table of stateFields) { let name: string = field.name; if (name === target) { declared = field.type; } }
+    let type: string = "";
+    if (declared !== "" && kind === "call" && codec.matches(model,declared,schema)) { codec.mark(model,declared,schema); type = declared; }
+    else { let name: string = "Provider"+m.decimal(model.serial); model.serial = model.serial+1; type = codec.providerType(model,schema,name); }
+    let stepId: string = step.id; let id: string = action.id; c.stepTypes[id+"/"+stepId] = type;
+    if (!m.present(c.imports,module)) { c.imports[module] = "provider"+m.decimal(tables.keys(c.imports).length); } return null;
+}
+function prepare(model: m.Model, plan: table, execution: table, source: table): actions.Context {
+    let stateFields: table[] = [{name:"loading",type:"boolean"},{name:"error",type:"string"},{name:"sessionEpoch",type:"number"},{name:"sessionClock",type:"number"}];
+    let reserved: string[] = ["loading","error","sessionEpoch","sessionClock"]; let stateDefs: table[] = plan.state;
+    for (let field: table of stateDefs) { let name: string = field.name; m.name(name); if (m.contains(reserved,name)) { m.reject("Duplicate state field"); } reserved[reserved.length] = name; let type: string = field.type; stateFields[stateFields.length] = {name:name,type:m.type(model,type)}; }
+    let workflowSource: string = source.workflow; let readSource: string = source.read; let quotesSource: string = source.quotes;
+    let c: actions.Context = {model:model,execution:execution,workflows:[],stepTypes:{},imports:{},workflowSource:workflowSource,readSource:readSource,quotesSource:quotesSource};
+    let allActions: table[] = plan.actions;
+    for (let action: table of allActions) {
+        let steps: table[] = action.steps; for (let step: table of steps) { provider(c,action,step,stateFields); }
+        if (actions.workflow(action)) {
+            c.workflows[c.workflows.length] = action; let id: string = action.id;
+            let names: string[] = [actions.epoch(id),actions.busy(id),actions.failure(id)]; let types: string[] = ["number","boolean","string"]; let index: number = 0;
+            for (let name: string of names) { if (m.contains(reserved,name)) { m.reject("Reserved workflow field "+name); } reserved[reserved.length] = name; stateFields[stateFields.length] = {name:name,type:types[index]}; index = index+1; }
+        }
+    }
+    m.declare(model,"State",stateFields); let nodes: table[] = plan.nodes;
+    for (let node: table of nodes) { let id: string = node.id; model.nodes[id] = node; }
+    validation.bindings(model,plan); for (let id: string of tables.keys(model.nodes)) { validation.checkNode(model,id,[]); } return c;
+}
+function summary(c: actions.Context): string {
+    let model: m.Model = c.model; let result: string = "";
+    if (c.workflows.length > 0) {
+        result = "next.m_loading = false; next.m_error = \"\";\n";
+        for (let action: table of c.workflows) { let id: string = action.id; let names: table = actions.names(id); names["summarize"] = "workflow_"+m.symbol(id)+"_summarize"; model.helpers = model.helpers+syntax.functionSource(c.workflowSource,"summarize",names); result = result+"next = workflow_"+m.symbol(id)+"_summarize(next,next."+m.symbol(actions.busy(id))+",next."+m.symbol(actions.failure(id))+");\n"; }
+    }
+    return result;
+}
+function recompute(c: actions.Context): string {
+    let model: m.Model = c.model; let out: x.Output = {code:"function recompute(state: State): State { let next: State = "+m.copy(model,"State","state",{})+";\n"+summary(c)};
+    let ordered: table[] = c.execution.ordered; let env: table = {state:m.value("State","next")};
+    for (let entry: table of ordered) { let field: string = entry.field; let node: string = entry.node; let value: m.Value = m.require(x.expr(model,node,env,out,[]),m.field(model,"State",field)); out.code = out.code+"next."+m.symbol(field)+" = "+value.code+";\n"; }
+    return out.code+"return next; }\n";
+}
+function inputInitial(model: m.Model, action: table, initial: table): string {
+    let updates: table[] = action.updates; let found: boolean = false;
+    for (let update: table of updates) { let id: string = update.node; if (m.present(model.nodes,id)) { let node: table = model.nodes[id]; let op: string = node.op; if (op === "inputEdit") { found = true; } } }
+    if (!found) { return ""; } if (updates.length !== 1) { m.reject("Input transition requires one update"); }
+    let update: table = updates[0]; let field: string = update.field; let type: string = m.field(model,"State",field); let kind: string = "Text";
+    if (type === "number") { kind = "Number"; } if (type === "boolean") { kind = "Boolean"; }
+    let local: string = m.fresh(model); let value: string = initial[field]; initial[field] = local+".m_value";
+    return "let "+local+": inputFragment."+kind+"State = inputFragment.initial"+kind+"("+value+");\n";
+}
+function initial(c: actions.Context, plan: table): string {
+    let model: m.Model = c.model; let initial: table = {loading:"false",error:"\"\"",sessionEpoch:"0",sessionClock:"0"}; let stateDefs: table[] = plan.state;
+    for (let field: table of stateDefs) { let name: string = field.name; let raw: string = field.initial; initial[name] = m.initial(model,m.field(model,"State",name),m.data(raw)); }
+    for (let action: table of c.workflows) { let id: string = action.id; initial[actions.epoch(id)] = "0"; initial[actions.busy(id)] = "false"; initial[actions.failure(id)] = "\"\""; }
+    let setup: string = ""; let allActions: table[] = plan.actions; for (let action: table of allActions) { setup = setup+inputInitial(model,action,initial); }
+    return "export function initialState(): State {\n"+setup+"let next: State = "+m.copy(model,"State","",initial)+"; return recompute(next); }\n";
+}
+function controlUi(control: table): string {
+    let field: string = control.field; let widget: string = control.widget; if (!m.contains(["integer","money","time"],widget)) { m.reject("Unknown control widget"); }
+    let label: string = control.label;
+    if (widget === "time") { return "ui.TimeField(value: state."+m.symbol(field)+", label: "+m.quote(label)+", enabled: !state.m_loading, onChange: action app."+m.symbol("Set"+field)+" {m_value:payload})\n"; }
+    let lo: number = control.minimum; let hi: number = control.maximum; let step: number = control.step; let format: string = "integer"; if (widget === "money") { format = "euro-cents"; }
+    return "ui.IntField(value: state."+m.symbol(field)+", label: "+m.quote(label)+", minimum:"+m.decimal(lo)+", maximum:"+m.decimal(hi)+", step:"+m.decimal(step)+", format:"+m.quote(format)+", enabled: !state.m_loading, onChange: action app."+m.symbol("Set"+field)+" {m_value:payload})\n";
+}
+function imports(c: actions.Context, nodes: table[]): string {
+    let result: string = ""; for (let module: string of tables.keys(c.imports)) { let alias: string = c.imports[module]; result = result+"import * as "+alias+" from "+m.quote(module)+";\n"; }
+    let ops: string[] = []; for (let node: table of nodes) { let op: string = node.op; ops[ops.length] = op; }
+    let support: table[] = [{alias:"inputFragment",path:"fragments/input",ops:["inputEdit"]},{alias:"comparisonFragment",path:"fragments/comparison",ops:["fragmentComparison"]},{alias:"resultFragment",path:"fragments/result",ops:["resultText"]},{alias:"choiceFragment",path:"fragments/choice",ops:["choicePick","choiceSelect","choiceValid"]},{alias:"allocation",path:"fragments/allocation",ops:["allocate"]},{alias:"alternatives",path:"fragments/alternatives",ops:["alternatives"]},{alias:"alternativeSearch",path:"fragments/support/alternatives",ops:["alternatives"]}];
+    for (let entry: table of support) { let used: string[] = entry.ops; let selected: boolean = false; for (let op: string of used) { if (m.contains(ops,op)) { selected = true; } } if (selected) { let alias: string = entry.alias; let path: string = entry.path; result = result+"import * as "+alias+" from "+m.quote(path)+";\n"; } }
+    return result;
+}
+function emit(c: actions.Context, plan: table): string {
+    let model: m.Model = c.model; let recomputed: string = recompute(c); let code: string = initial(c,plan); let actionTypes: table = {}; let controls: table[] = plan.controls;
+    for (let control: table of controls) { code = code+actions.emitControl(c,control,actionTypes); }
+    let viewList: table[] = plan.views; let allActions: table[] = plan.actions;
+    for (let action: table of allActions) { code = code+actions.emitAction(c,action,viewList,actionTypes); }
+    let viewMap: table = {}; for (let view: table of viewList) { let id: string = view.id; viewMap[id] = view; }
+    let root: string = plan.root; let rendered: string = views.render(model,viewMap,actionTypes,root,{state:m.value("State","state")},[]);
+    let controlsUi: string = ""; for (let control: table of controls) { controlsUi = controlsUi+controlUi(control); }
+    let nodes: table[] = plan.nodes;
+    let deal: string = imports(c,nodes)+"import * as math from \"std/math\";\nimport * as time from \"std/time\";\nimport * as tables from \"std/table\";\nimport * as json from \"std/json\";\nimport * as strings from \"std/string\";\nimport * as values from \"ui/values\";\n"+model.declarations+model.helpers+recomputed+code+"export function main(): null { return null; }\n";
+    let status: string = ""; if (!model.fragments) { status = "When(state.m_loading) { ui.Progress(label: \"Loading…\") }\nWhen(state.m_error !== \"\") { ui.Notice(text:state.m_error,tone:\"error\") }\n"; }
+    let ui: string = "import * as app from \"./experience\";\nimport * as ui from \"./platform.dealui-pack\";\n// @ui-root\nexport view Workspace(state: app.State): View { ui.Column() {\n"+controlsUi+status+rendered+"} }\n";
+    return json.stringify({deal:deal,dealui:ui});
+}
+export function lowerJson(input: string, catalogue: string, assets: string, fragments: boolean, allowCustom: boolean, experimental: boolean): string {
+    let plan: table = json.parse(input); let catalogueData: table = json.parse(catalogue); let contracts: table[] = catalogueData.contracts; let source: table = json.parse(assets);
+    let model: m.Model = m.create(contracts,allowCustom,experimental); model.fragments = fragments;
+    validation.shapes(model,plan); records(model,plan); custom(model,plan);
+    let executionText: string = executionPolicy.executionJson(input); let execution: table = json.parse(executionText);
+    return emit(prepare(model,plan,execution,source),plan);
+}
+export function main(): null { return null; }

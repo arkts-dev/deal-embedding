@@ -1,0 +1,52 @@
+import * as syntax from "embedding/syntax";
+import * as json from "std/json";
+import * as strings from "std/string";
+import * as tables from "std/table";
+function fail(message: string): null { throw {code:"INVALID_CONFIG",message:"Fragments: "+message}; }
+function contains(values: string[], key: string): boolean { for (let value: string of values) { if (value === key) { return true; } } return false; }
+function present(value: table, key: string): boolean { return contains(tables.keys(value),key); }
+function bare(value: string, prefix: string): string { if (strings.startsWith(value,prefix)) { return strings.substring(value,strings.length(prefix),strings.length(value)); } return value; }
+function expression(value: table, bindings: table): string {
+    let kind: string = value.kind; if (kind !== "path") { fail("Unsupported authored view expression"); }
+    let parts: string[] = value.parts;
+    if (parts.length === 1 && parts[0] === "payload") { return "$payload"; }
+    if (parts[0] === "row") { let result: string = "$row"; let index: number = 1; while (index < parts.length) { result = result+"."+parts[index]; index = index+1; } return result; }
+    if (parts.length === 2 && parts[0] === "state" && present(bindings,parts[1])) { let result: string = bindings[parts[1]]; return result; }
+    fail("Unbound authored view path"); return "";
+}
+class Context { views: table[]; serial: number; }
+function call(c: Context, node: table, bindings: table, actions: table, condition: string, each: string, key: string): string {
+    let props: table[] = []; let events: table[] = []; let arguments: table[] = node.arguments;
+    for (let argument: table of arguments) { let name: string = argument.name; let value: table = argument.value; let kind: string = value.kind;
+        if (kind === "action") { let actionName: string = value.name; actionName = bare(actionName,"app."); if (!present(actions,actionName)) { fail("Unbound authored action"); } let action: string = actions[actionName]; let fields: table[] = value.fields; let payload: table[] = []; for (let field: table of fields) { let name: string = field.name; let value: table = field.value; payload[payload.length] = {field:name,node:expression(value,bindings)}; } events[events.length] = {name:name,action:action,payload:payload}; }
+        else { props[props.length] = {name:name,node:expression(value,bindings)}; }
+    }
+    let id: string = "boundView"+decimal(c.serial); c.serial = c.serial+1;
+    let name: string = node.name; let children: table[] = node.children; let childIds: string[] = nodes(c,children,bindings,actions,"","","");
+    c.views[c.views.length] = {id:id,component:bare(name,"ui."),props:props,events:events,children:childIds,each:each,key:key,when:condition}; return id;
+}
+function decimal(value: number): string { let encoded: string = json.stringify({value:value}); let result: string = strings.substring(encoded,9,strings.length(encoded)-1); if (strings.endsWith(result,".0")) { return strings.substring(result,0,strings.length(result)-2); } return result; }
+function nodes(c: Context, values: table[], bindings: table, actions: table, condition: string, each: string, key: string): string[] {
+    let result: string[] = [];
+    for (let node: table of values) { let kind: string = node.kind; let ids: string[] = [];
+        if (kind === "each") { let children: table[] = node.children; let source: table = node.source; let keyValue: table = node.key; ids = nodes(c,children,bindings,actions,condition,expression(source,bindings),expression(keyValue,bindings)); }
+        else { if (kind === "when") { let otherwise: table[] = node["else"]; if (condition !== "" || otherwise.length !== 0) { fail("Unsupported authored view condition"); } let children: table[] = node["then"]; let test: table = node.condition; ids = nodes(c,children,bindings,actions,expression(test,bindings),each,key); }
+        else { if (kind === "call") { ids = [call(c,node,bindings,actions,condition,each,key)]; } else { fail("Unsupported authored view node"); } } }
+        for (let id: string of ids) { result[result.length] = id; }
+    } return result;
+}
+function replace(ids: string[], replacements: table): string[] { let result: string[] = []; for (let id: string of ids) { if (present(replacements,id)) { let values: string[] = replacements[id]; for (let value: string of values) { result[result.length] = value; } } else { result[result.length] = id; } } return result; }
+function editable(plan: table, expanded: table, replacements: table): null {
+    let views: table[] = plan.views; let byId: table = {}; for (let view: table of views) { let id: string = view.id; byId[id] = view; }
+    let editable: table = expanded.editable; let instanceViews: table = expanded.instanceViews;
+    for (let instance: string of tables.keys(editable)) { let enabled: string = editable[instance]; let source: string[] = instanceViews[instance]; let ids: string[] = replace(source,replacements);
+        for (let id: string of ids) { let view: table = byId[id]; let component: string = view.component; if (contains(["IntField","TimeField","TextField","Option","SecondaryAction"],component)) { let props: table[] = view.props; let found: boolean = false; for (let prop: table of props) { let name: string = prop.name; if (name === "enabled") { if (found) { fail("Duplicate enabled property"); } prop.node = enabled; found = true; } } if (!found) { props[props.length] = {name:"enabled",node:enabled}; } } }
+    } return null;
+}
+export function bindJson(input: string): string {
+    let expanded: table = json.parse(input); let plan: table = expanded.plan; let views: table[] = plan.views; let c: Context = {views:views,serial:0}; let replacements: table = {}; let authored: table[] = expanded.authoredViews;
+    for (let view: table of authored) { let id: string = view.id; let kind: string = view.kind; let bindings: table = view.bindings; let actions: table = view.actions; replacements[id] = nodes(c,syntax.viewTree(kind),bindings,actions,"","",""); }
+    for (let view: table of views) { let children: string[] = view.children; view.children = replace(children,replacements); }
+    editable(plan,expanded,replacements); return json.stringify(plan);
+}
+export function main(): null { return null; }

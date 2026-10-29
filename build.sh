@@ -30,16 +30,20 @@ javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes"
 mkdir -p "$OUTPUT_DIR/composition/core/composition" "$OUTPUT_DIR/composition/ui/fragments/support"
 cp -r "$ROOT/core/composition/." "$OUTPUT_DIR/composition/core/composition/"
 cp -r "$ROOT/ui/fragments/." "$OUTPUT_DIR/composition/ui/fragments/"
-# Separate compiled closures must not overwrite one another's process-global module exports.
+# Separate compiled closures must not overwrite one another's module exports.
 cp "$ROOT/core/composition/formula.deal" "$OUTPUT_DIR/composition/ui/fragments/support/formula.deal"
+cp "$ROOT/core/composition/execution.deal" "$OUTPUT_DIR/composition/core/composition/lowering-execution.generated.deal"
 python3 "$ROOT/tools/composition-schema.py" "$ROOT/ui/fragment-contract.json" "$OUTPUT_DIR/composition/core/composition/validation.generated.deal"
-printf '%s' '{"languageVersion":"1.4","backend":"jvm","moduleRoots":["core","ui"]}' > "$OUTPUT_DIR/composition/deal.json"
-java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/composition/core/composition/execution.deal" --backend jvm --output "$OUTPUT_DIR/composition/execution-java"
-javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$OUTPUT_DIR/composition/execution-java/CompositionExecution.java"
-java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/composition/core/composition/compose.deal" --backend jvm --output "$OUTPUT_DIR/composition/policy-java"
-javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$OUTPUT_DIR/composition/policy-java/CompositionCompose.java"
-java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/composition/core/composition/fragments.deal" --backend jvm --output "$OUTPUT_DIR/composition/java"
-javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$OUTPUT_DIR/composition/java/CompositionFragments.java" "$ROOT/tools/CompositionBridge.java"
+printf '%s' '{"languageVersion":"1.4","backend":"jvm","moduleRoots":["core","ui"],"externals":{"embedding/syntax":{"declaration":"core/composition/lowering-syntax.d.deal"}}}' > "$OUTPUT_DIR/composition/deal.json"
+for entry in execution compose fragments view-binding lowering; do
+    java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/composition/core/composition/$entry.deal" --backend jvm --output "$OUTPUT_DIR/composition/$entry-java"
+    source="$OUTPUT_DIR/composition/$entry-java/Composition$(case "$entry" in execution) echo Execution;; compose) echo Compose;; fragments) echo Fragments;; view-binding) echo View_binding;; lowering) echo Lowering;; esac).java"
+    # Package each independent generated JVM program with its own private host-ABI scope.
+    # This changes only Java linkage, never authored DEAL or emitted behavior.
+        python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text("package dev.deal.embedding.composition."+sys.argv[2].replace("-","_")+"; "+p.read_text())' "$source" "$entry"
+    javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$source"
+done
+javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$ROOT/tools/EmbeddingSyntax.java" "$ROOT/tools/CompositionBridge.java"
 "$KOTLIN_HOME/bin/kotlinc" "$OUTPUT_DIR/generated/CapabilityApi.kt" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect \
     -classpath "$ANDROID_JAR:$OUTPUT_DIR/classes:$RUNTIME_CP" -d "$OUTPUT_DIR/classes" $(find "$ROOT/android/src" -name '*.kt' | sort)
 mkdir -p "$OUTPUT_DIR/generation/src" "$OUTPUT_DIR/guidance-tools"
