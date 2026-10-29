@@ -1,0 +1,12 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+export view Allocation(state: app.State): View {
+    ui.SecondaryAction(text: state.recalculateLabel, enabled: state.enabled, onClick: action app.Allocate {})
+    ForEach(state.rows, row: app.Row, key: row.id) {
+        ui.IntField(label: row.name, value: row.quantity, minimum: state.minimum, maximum: state.requested, enabled: state.enabled, onChange: action app.Quantity {id: row.id, value: payload})
+    }
+    ui.Comparison(status: state.status) {
+        ui.Money(label: state.totalLabel, minorUnits: state.total)
+        ui.Metric(label: state.quantityLabel, value: state.countText)
+    }
+}

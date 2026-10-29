@@ -1,0 +1,24 @@
+export class Option { m_id: string; m_label: string; m_eligible: boolean; m_cost: number; }
+export class State { m_rows: Option[]; m_selected: Option; m_present: boolean; }
+export class Select { m_id: string; }
+export function initialState(): State {
+    return {m_rows:[],m_selected:{m_id:"",m_label:"",m_eligible:false,m_cost:0},m_present:false};
+}
+export function prepare(rows: Option[], present: boolean): State {
+    let selected: Option = {m_id:"",m_label:"",m_eligible:false,m_cost:0};
+    for (let row: Option of rows) {
+        if (row.m_eligible && (!selected.m_eligible || row.m_cost < selected.m_cost)) { selected = row; }
+    }
+    return {m_rows:rows,m_selected:selected,m_present:present && selected.m_eligible};
+}
+export function valid(rows: Option[], selected: Option, sourcePresent: boolean): boolean {
+    let found: boolean = false;
+    for (let row: Option of rows) { found = found || row.m_id === selected.m_id; }
+    return sourcePresent && selected.m_eligible && found;
+}
+export function select(state: State, action: Select): State {
+    let selected: Option = state.m_selected;
+    for (let row: Option of state.m_rows) { if (row.m_id === action.m_id) { selected = row; } }
+    return {m_rows:state.m_rows,m_selected:selected,m_present:valid(state.m_rows,selected,state.m_present)};
+}
+export function main(): null { return null; }

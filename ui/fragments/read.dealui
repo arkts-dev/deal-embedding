@@ -1,0 +1,4 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+// Read ports have no independent presentation; consuming result/choice fragments render them.
+export view Read(state: app.State): View {}

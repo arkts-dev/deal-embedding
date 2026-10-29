@@ -1,0 +1,7 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+export view Choice(state: app.State): View {
+    ForEach(state.rows, row: app.Option, key: row.id) {
+        ui.Option(title: row.label, value: row.id, enabled: state.enabled, onSelect: action app.Select {id: payload})
+    }
+}

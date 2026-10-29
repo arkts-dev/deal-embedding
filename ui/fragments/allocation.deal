@@ -1,0 +1,11 @@
+import * as search from "./support/allocation";
+export class Row { cost: number; quotas: boolean[]; }
+export class State { rows: Row[]; quantities: number[]; found: boolean; }
+export function initialState(): State { let rows: Row[] = []; let quantities: number[] = []; return {rows:rows,quantities:quantities,found:false}; }
+export function allocate(rows: Row[], total: number, budget: number, quotas: number[]): State {
+    let input: search.Row[] = [];
+    for (let row: Row of rows) { let value: search.Row = {cost:row.cost,quotas:row.quotas}; input[input.length] = value; }
+    let result: search.Result = search.allocate(input,total,budget,quotas);
+    return {rows:rows,quantities:result.quantities,found:result.found};
+}
+export function main(): null { return null; }

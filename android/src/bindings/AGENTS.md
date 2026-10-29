@@ -4,7 +4,7 @@ Drain large generation bridge strings through lossless chunked transfer: evaluat
 
 Serialize generation catalogues canonically: stable object keys and module/function order, preserving positional parameter arrays and all contract facts. Catalogue revisions and model prefixes must consume the same bytes, never a different provider schema.
 
-Derive application declarations and sandbox configuration from provider contracts. Convert wire records to DEAL tables and back according to their schemas. External parameter names are wire metadata; emit safe positional parameter identifiers in DEAL declarations. Escape generated DEAL strings using DEAL rules, not JSON escaping.
+Derive application declarations and sandbox configuration from provider contracts. Convert wire records to DEAL tables and back according to their schemas. Strip compiler class tags recursively at native JSON export through the shared protocol plain-data adapter; never weaken closed-schema admission to tolerate leaked runtime metadata. External parameter names are wire metadata; emit safe positional parameter identifiers in DEAL declarations. Escape generated DEAL strings using DEAL rules, not JSON escaping.
 
 `ExperienceGenerator` services core discovery, choice, model and checker calls and owns checked staging cleanup. Keep application capability execution in experience sessions. Expose provenance and typed generation rejection from the trusted core result; never infer authorship or failure classification from source text or user-visible exception strings.
 

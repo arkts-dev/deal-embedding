@@ -1,26 +1,25 @@
 package dev.deal.embedding.capabilities
 
+import dev.deal.embedding.*
 import android.content.Context
 import android.os.*
 import org.json.*
 import java.util.UUID
 import java.util.concurrent.Executors
 
-interface CapabilitySession : AutoCloseable {
+internal interface CapabilitySession : AutoCloseable {
     val identity: String
     fun receive(request: JSONObject, now: Long)
     fun drain(now: Long): List<JSONObject>
 }
 
-interface CapabilityHost {
+internal interface CapabilityHost {
     fun openSession(log: dev.deal.embedding.EmbeddingLog): CapabilitySession
 }
 
 /** Discovery and grants are shared; each isolate owns an independent request/reply session. */
-class CapabilityRegistry(private val context: Context, private val discovery: CapabilityDiscovery, local: List<NativeCapabilities>) : CapabilityHost, AutoCloseable {
+internal class CapabilityRegistry(private val context: Context, private val discovery: CapabilityDiscovery, local: List<NativeCapabilities>) : CapabilityHost, AutoCloseable {
     private val log = dev.deal.embedding.EmbeddingLog(context)
-    private val invocation = ThreadLocal<String>()
-    fun invokingExperience(): String? = invocation.get()
     private data class Provider(val contract: CapabilityContract, val local: NativeCapabilities? = null, val endpoint: CapabilityDiscovery.Endpoint? = null)
     private val locals = local.associateBy { it.contract.module }
     private var providers = locals.mapValues { Provider(it.value.contract, it.value) }
@@ -112,15 +111,13 @@ class CapabilityRegistry(private val context: Context, private val discovery: Ca
             if (!allowed(provider.contract.module)) { fail(id, "DENIED", "Capability access not granted"); return@synchronized }
             if (pending.size >= 8) { fail(id, "LIMIT", "Too many pending requests"); return@synchronized }
             if (provider.local != null) {
-                invocation.set(log.experienceIdentity)
                 try {
-                    val value=provider.local.invoke(function.name,args)
+                    val value=provider.local.invoke(function.name,args,InvocationContext(log.experienceIdentity))
                     function.result.validate(value)
                     require(JSONArray().put(value).toString().toByteArray().size<=16*1024){"Host response too large"}
                     success(id,value)
                 }
                 catch (error: Exception) { fail(id, "HOST_ERROR", error.message ?: "Host operation failed") }
-                finally { invocation.remove() }
                 return@synchronized
             }
             val endpoint = provider.endpoint!!

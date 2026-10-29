@@ -1,0 +1,13 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+// @ui-root
+export view Suggestion(state: app.State): View {
+    ui.Card() {
+        ui.Caption(value: "Suggestion")
+        ui.Heading(value: state.title)
+        ui.Row() {
+            ui.PrimaryAction(text: "Open", enabled: !state.busy, onClick: action app.Open {})
+            ui.SecondaryAction(text: "Dismiss", enabled: !state.busy, onClick: action app.Dismiss {})
+        }
+    }
+}

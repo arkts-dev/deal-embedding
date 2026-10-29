@@ -1,0 +1,132 @@
+import * as formula from "./formula";
+import * as validation from "./validation";
+import * as shapes from "./validation.generated";
+import * as json from "std/json";
+import * as strings from "std/string";
+
+// Private portable composition entry; native adapters only transport its data.
+export function parseFormulaJson(source: string): string { return formula.parseJson(source); }
+export function validateJson(input: string): null { return validation.validateJson(input); }
+function contains(values: string[], value: string): boolean {
+    for (let item: string of values) { if (item === value) { return true; } }
+    return false;
+}
+function identifier(value: string): boolean {
+    let index: number = 0;
+    for (let ch: string of value) {
+        let alphabet: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        if (index > 0) { alphabet = alphabet + "_0123456789"; }
+        if (!strings.contains(alphabet,ch)) { return false; }
+        index = index + 1;
+    }
+    return index > 0 && value !== "row" && value !== "item" && value !== "reply";
+}
+function include(id: string, ids: string[], dependencies: table, closure: string[]): null {
+    if (!contains(ids,id)) { throw {code:"INVALID_CONFIG",message:"Unknown command target"}; }
+    let targets: string[] = dependencies[id];
+    for (let target: string of targets) { include(target,ids,dependencies,closure); }
+    if (!contains(closure,id)) { closure[closure.length] = id; }
+    return null;
+}
+function resources(id: string, dependencies: table, kinds: table): string[] {
+    let result: string[] = []; let targets: string[] = dependencies[id];
+    for (let target: string of targets) {
+        for (let resource: string of resources(target,dependencies,kinds)) {
+            if (!contains(result,resource)) { result[result.length] = resource; }
+        }
+    }
+    let kind: string = kinds[id];
+    if (kind === "read" || kind === "quotes" || kind === "choice" || kind === "allocation" || kind === "alternatives") { result[result.length] = id; }
+    return result;
+}
+function visit(id: string, ids: string[], dependencies: table, ordered: string[], visiting: string[]): null {
+    if (contains(ordered,id)) { return null; }
+    if (contains(visiting,id)) { throw {code:"INVALID_CONFIG",message:"Fragment dependency cycle"}; }
+    if (!contains(ids,id)) { throw {code:"INVALID_CONFIG",message:"Missing fragment dependency"}; }
+    let next: string[] = [];
+    for (let value: string of visiting) { next[next.length] = value; }
+    next[next.length] = id;
+    let targets: string[] = dependencies[id];
+    for (let target: string of targets) { visit(target,ids,dependencies,ordered,next); }
+    ordered[ordered.length] = id;
+    return null;
+}
+export function dependenciesJson(input: string): string {
+    let plan: table = json.parse(input);
+    shapes.validate(plan);
+    let fragments: table[] = plan.fragments; let ids: string[] = []; let dependencies: table = {}; let kinds: table = {};
+    for (let fragment: table of fragments) {
+        let id: string = fragment.id;
+        if (!identifier(id) || contains(ids,id)) { throw {code:"INVALID_CONFIG",message:"Invalid or duplicate fragment identity"}; }
+        ids[ids.length] = id; let kind: string = fragment.kind; kinds[id] = kind;
+        if (kind === "input") { let config: table = fragment.config; validation.input(config); }
+        let targets: string[] = [];
+        for (let expression: string of shapes.fragmentFormulas(fragment)) {
+            for (let path: string of formula.references(formula.parse(expression))) {
+                let parts: string[] = strings.split(path,"."); let owner: string = parts[0];
+                if (owner !== "row" && owner !== "item" && owner !== "reply" && !contains(targets,owner)) { targets[targets.length] = owner; }
+            }
+        }
+        dependencies[id] = targets;
+    }
+    let title: string = plan.title;
+    if (strings.trim(title) === "" || ids.length === 0) { throw {code:"INVALID_CONFIG",message:"Title and fragments required"}; }
+    let display: string[] = plan.display; let shown: string[] = [];
+    for (let id: string of display) {
+        if (!contains(ids,id) || contains(shown,id)) { throw {code:"INVALID_CONFIG",message:"Unknown or duplicate display instance"}; }
+        shown[shown.length] = id;
+    }
+    for (let id: string of ids) {
+        let kind: string = kinds[id];
+        if (kind !== "read" && kind !== "alternatives" && !contains(shown,id)) { throw {code:"INVALID_CONFIG",message:"Visible fragment omitted from display"}; }
+    }
+    let ordered: string[] = []; let visiting: string[] = [];
+    for (let id: string of ids) { visit(id,ids,dependencies,ordered,visiting); }
+    let commands: table[] = plan.commands; let commandIds: string[] = []; let owned: string[] = []; let compiled: table[] = [];
+    for (let command: table of commands) {
+        let id: string = command.id;
+        if (!identifier(id) || contains(ids,id) || contains(commandIds,id)) { throw {code:"INVALID_CONFIG",message:"Invalid or duplicate command identity"}; }
+        commandIds[commandIds.length] = id;
+        let targets: string[] = command.targets; let unique: string[] = []; let closure: string[] = [];
+        if (targets.length === 0) { throw {code:"INVALID_CONFIG",message:"Command requires distinct targets"}; }
+        for (let target: string of targets) {
+            if (contains(unique,target)) { throw {code:"INVALID_CONFIG",message:"Command requires distinct targets"}; }
+            unique[unique.length] = target; include(target,ids,dependencies,closure);
+        }
+        let changed: boolean = true;
+        while (changed) {
+            let size: number = closure.length;
+            for (let candidate: string of ordered) {
+                let kind: string = kinds[candidate];
+                if (!contains(closure,candidate) && kind !== "read" && kind !== "quotes") {
+                    let dependenciesHere: string[] = dependencies[candidate]; let affected: boolean = false; let ready: boolean = true;
+                    for (let dependency: string of dependenciesHere) {
+                        affected = affected || contains(closure,dependency);
+                        for (let resource: string of resources(dependency,dependencies,kinds)) { ready = ready && contains(closure,resource); }
+                    }
+                    if (affected && ready) { include(candidate,ids,dependencies,closure); }
+                }
+            }
+            changed = size !== closure.length;
+        }
+        let external: boolean = false;
+        for (let target: string of closure) {
+            let kind: string = kinds[target];
+            external = external || kind === "read" || kind === "quotes";
+            if (kind === "read" || kind === "quotes" || kind === "choice" || kind === "allocation" || kind === "alternatives") {
+                if (contains(owned,target)) { throw {code:"INVALID_CONFIG",message:"Resource belongs to multiple commands"}; }
+                owned[owned.length] = target;
+            }
+        }
+        if (!external) { throw {code:"INVALID_CONFIG",message:"Command has no external read"}; }
+        compiled[compiled.length] = {id:id,closure:closure};
+    }
+    for (let id: string of ids) {
+        let kind: string = kinds[id];
+        if ((kind === "read" || kind === "quotes" || kind === "choice" || kind === "allocation" || kind === "alternatives") && !contains(owned,id)) {
+            throw {code:"INVALID_CONFIG",message:"Resource is not attached to a command"};
+        }
+    }
+    return json.stringify({dependencies:dependencies,ordered:ordered,commands:compiled});
+}
+export function main(): null { return null; }

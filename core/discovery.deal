@@ -1,0 +1,30 @@
+import * as json from "std/json";
+import * as policy from "./discovery-policy";
+import * as guidance from "./discovery-guidance";
+
+// String entry ABI is private to the framework's trusted-policy adapter.
+export function prompt(captureJson: string): string {
+    let raw: table = json.parse(captureJson);
+    let facts: table[] = raw.facts; let ids: string[] = raw.capabilityIds; let catalogue: string = raw.catalogue;
+    return guidance.prompt({facts:facts,capabilityIds:ids,catalogue:catalogue});
+}
+export function validate(reply: string, captureJson: string): string {
+    let raw: table = json.parse(captureJson);
+    let facts: table[] = raw.facts; let ids: string[] = raw.capabilityIds; let catalogue: string = raw.catalogue;
+    try {
+        let result: policy.Suggestion | null = policy.validate(reply,{facts:facts,capabilityIds:ids,catalogue:catalogue});
+        if (result !== null) {
+            return json.stringify({accepted:true,suggestion:{title:result.title,brief:result.brief,supportingFactIds:result.supportingFactIds,capabilityIds:result.capabilityIds}});
+        }
+        return json.stringify({accepted:true,suggestion:null});
+    } catch (error) {
+        if (error.code !== "INVALID_REPLY" && error.code !== "E8001") { throw error; }
+        return json.stringify({accepted:false,code:"INVALID_REPLY",message:error.message});
+    }
+}
+export function intent(): string { return policy.intent(); }
+export function admit(captured: string, current: string, catalogue: string, freshCatalogue: string, issued: string): string {
+    policy.admit(captured,current,catalogue,freshCatalogue,issued === "true");
+    return "";
+}
+export function main(): null { return null; }

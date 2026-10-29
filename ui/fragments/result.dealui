@@ -1,0 +1,8 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+export view MoneyResult(state: app.State): View {
+    When(state.present) { ui.Money(label: state.label, minorUnits: state.value) }
+}
+export view TextResult(state: app.State): View {
+    When(state.present) { ui.Metric(label: state.label, value: state.value) }
+}

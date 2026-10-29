@@ -1,0 +1,6 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+export view WorkspaceStatus(state: app.State): View {
+    When(state.loading) { ui.Progress(label: state.loadingLabel) }
+    When(state.failed) { ui.Notice(text: state.error, tone: state.errorTone) }
+}

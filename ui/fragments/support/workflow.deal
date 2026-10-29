@@ -1,0 +1,64 @@
+// Structural fragment: the composer binds nominal types, field ports and typed projections.
+// The complete instantiated program is checked by DEAL and Deal UI before materialization.
+export class FragmentState { requestEpoch: number; requestPending: boolean; requestError: string; sessionEpoch: number; sessionClock: number; loading: boolean; error: string; }
+export class FragmentAction {}
+export class FragmentDone { requestEpoch: number; sessionEpoch: number; }
+function copyState(state: FragmentState): FragmentState { return state; }
+function complete(state: FragmentState): FragmentDone { return {requestEpoch:state.requestEpoch,sessionEpoch:state.sessionEpoch}; }
+async function execute(state: FragmentState, action: FragmentAction): FragmentState { return state; }
+function merge(state: FragmentState, action: FragmentDone): FragmentState { return state; }
+function recompute(state: FragmentState): FragmentState { return state; }
+function clearSuccess(state: FragmentState): FragmentState { return state; }
+
+export function start(state: FragmentState): FragmentState {
+    let next: FragmentState = clearSuccess(copyState(state));
+    next.requestPending = true;
+    next.requestError = "";
+    next.requestEpoch = state.requestEpoch + 1;
+    return next;
+}
+export function invalidate(state: FragmentState): FragmentState {
+    let next: FragmentState = copyState(state);
+    next.requestEpoch = state.requestEpoch + 1;
+    next.requestPending = false;
+    next.requestError = "";
+    return next;
+}
+export async function run(state: FragmentState, action: FragmentAction): FragmentDone {
+    let next: FragmentState = copyState(state);
+    try {
+        next = await execute(next,action);
+        next.requestPending = false;
+        next.requestError = "";
+        return complete(next);
+    } catch (error) {
+        let failed: FragmentState = copyState(state);
+        failed.requestPending = false;
+        failed.requestError = "Check access and try again";
+        return complete(failed);
+    }
+}
+export function finish(state: FragmentState, action: FragmentDone): FragmentState {
+    if (state.sessionEpoch !== action.sessionEpoch || state.requestEpoch !== action.requestEpoch) { return state; }
+    let next: FragmentState = merge(state,action);
+    return recompute(next);
+}
+function invalidateAll(state: FragmentState): FragmentState { return state; }
+export function clock(state: FragmentState, clockValue: number): FragmentState {
+    let next: FragmentState = copyState(state);
+    let current: number = clockValue;
+    if (current < 0) { current = -current; }
+    if (clockValue < 0 || current < state.sessionClock) {
+        next.sessionEpoch = state.sessionEpoch + 1;
+        next = invalidateAll(next);
+    }
+    next.sessionClock = current;
+    return next;
+}
+export function summarize(state: FragmentState, pending: boolean, failure: string): FragmentState {
+    let next: FragmentState = copyState(state);
+    next.loading = next.loading || pending;
+    if (failure !== "") { next.error = failure; }
+    return next;
+}
+export function main(): null { return null; }

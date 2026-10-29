@@ -5,8 +5,14 @@ import org.json.*
 import java.util.concurrent.Executors
 
 /** Rendering/lifecycle adapter to the compiled DEAL consumer. It never drives sessions. */
-class ApplicationProtocol(private val context:Context, mechanisms:Embedding):AutoCloseable {
+class ApplicationProtocol internal constructor(private val context:Context, mechanisms:Embedding, private val discoveryGateway: GenerationGatewayConfig? = null):AutoCloseable {
     private val controller=ProtocolController(context,mechanisms,"protocol-application","application.js")
+    private var discoveryOwner: dev.deal.embedding.discovery.Discovery? = null
+    @Volatile private var closed = false
+    val discovery: dev.deal.embedding.discovery.Discovery get() = synchronized(this) {
+        check(!closed) { "Protocol closed" }
+        discoveryOwner ?: dev.deal.embedding.discovery.Discovery(context,this,discoveryGateway).also { discoveryOwner=it }
+    }
     private val observers=Executors.newCachedThreadPool()
     private fun args(vararg values:Any?)=JSONArray(values.toList())
     private fun sync(name:String,vararg values:Any?)=controller.synchronous(name,args(*values))
@@ -62,7 +68,7 @@ class ApplicationProtocol(private val context:Context, mechanisms:Embedding):Aut
     fun close(session:Session){call("close",session.id)}
     fun saved()=(sync("saved") as JSONArray).let{a->(0 until a.length()).map{experience(a.getJSONObject(it))}}
     fun forget(experience:Experience){call("forget",experience.id)}
-    fun refresh()=(call("refresh") as JSONArray).let{a->(0 until a.length()).map{v->a.getJSONObject(v).let{c->val fs=c.getJSONArray("functions");SharedCapabilityContract(c.getString("module"),c.getString("description"),c.getInt("version"),(0 until fs.length()).map{i->val f=fs.getJSONObject(i);val ps=f.getJSONArray("parameters");SharedCapabilityFunction(f.getString("name"),f.getString("description"),(0 until ps.length()).map{j->val p=ps.getJSONObject(j);Parameter(p.getString("name"),WireType.parse(p.getJSONObject("type")))},WireType.parse(f.getJSONObject("result")))})}}}
+    fun refresh()=(call("refresh") as JSONArray).let { a -> (0 until a.length()).map { CapabilityContract.parse(a.getJSONObject(it).toString()) } }
     fun grant(module:String){sync("grant",module)}
     fun revoke(module:String){sync("revoke",module)}
     fun requestTrace(request:GenerationRequest)=sync("requestTrace",request.id) as String
@@ -73,11 +79,16 @@ class ApplicationProtocol(private val context:Context, mechanisms:Embedding):Aut
     fun capturesContent()=controller.capturing()
     fun capture(enabled:Boolean){sync("capture",enabled)}
     fun clearObservation(){call("clearObservation")}
-    fun shutdown()=teardown(
+    internal fun shutdown() {
+        val discovery = synchronized(this) { closed=true; discoveryOwner }
+        teardown(
+        {discovery?.close()},
+
         *subscriptions.toList().map{subscription->{subscription.close()}}.toTypedArray(),
         {observers.shutdownNow()},
         {controller.close()},
         {check(observers.awaitTermination(10,java.util.concurrent.TimeUnit.SECONDS)){"Observer executor did not terminate"}}
     )
+    }
     override fun close()=shutdown()
 }

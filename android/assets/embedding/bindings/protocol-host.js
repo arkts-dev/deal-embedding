@@ -29,6 +29,7 @@ globalThis.protocolHost = function(id, declarations, rt) {
     if(value && typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([k])=>!k.startsWith('$')).map(([k,v])=>[k,plain(v)]));
     return value;
   }
+  globalThis.protocolPlain=plain;
   const raw={};
   for(const [name,spec]of Object.entries(declarations)) {
     if(spec.$k==='class') {

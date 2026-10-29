@@ -7,14 +7,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Source completions return a serialized native assistant tool message. Core owns the restricted
  * staged workspace and tool feedback; previous is a host-serialized pair, not model output. Catalogue choice calls retain their independently specified JSON contract.
  */
-interface ModelClient {
+internal interface ModelClient {
     fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog): String
 }
 
 class GenerationCancellation {
     private val cancelled = AtomicBoolean(false)
     private val callbacks = mutableSetOf<() -> Unit>()
-    @Synchronized fun cancel() {
+    @Synchronized internal fun cancel() {
         if (cancelled.compareAndSet(false, true)) {
             val active = callbacks.toList(); callbacks.clear()
             active.forEach { runCatching { it() } }

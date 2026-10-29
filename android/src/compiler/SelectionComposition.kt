@@ -10,7 +10,7 @@ internal class SelectionComposition(private val contracts: List<CapabilityContra
     private var serial=0
     private val children=mutableListOf<String>()
     private val aliases=mutableMapOf<String,String>()
-    private val resourceTypes=mutableMapOf<String,CapabilityType>()
+    private val resourceTypes=mutableMapOf<String,WireType>()
     private val invalid=mutableListOf<String>()
     private fun fail(s:String):Nothing=throw BehaviorCandidate.Rejected(s)
     private fun closed(o:JSONObject,vararg k:String){if(o.keys().asSequence().toSet()!=k.toSet())fail("Expected ${k.joinToString()}")}
@@ -31,13 +31,13 @@ internal class SelectionComposition(private val contracts: List<CapabilityContra
     private fun set(f:String,n:String)=JSONObject().put("kind","set").put("bind",f).put("node",n)
     private fun function(b:JSONObject):CapabilityFunction {closed(b,"module","function");return contracts.singleOrNull{it.module==b.getString("module")}?.functions?.singleOrNull{it.name==b.getString("function")}?:fail("Undisclosed binding")}
     private fun call(n:String,b:JSONObject,args:List<String>,target:String,value:String)=JSONObject().put("kind","call").put("id",n).put("module",b.getString("module")).put("function",b.getString("function")).put("args",JSONArray(args)).put("bind",target).put("node",value).put("when","")
-    private fun local(t:CapabilityType,n:String):String=when(t.kind){
+    private fun local(t:WireType,n:String):String=when(t.kind){
         "array"->local(t.element!!,n+"Row")+"[]"
-        "record"->{if(t.optionalFields.isNotEmpty())fail("Prototype does not yet support optional resource fields");record(n,t.fields.mapValues{(k,v)->local(v,n+k.replaceFirstChar{it.uppercase()})});n}
+        "record"->{if(t.optionalFields.isNotEmpty())fail("Prototype does not yet support optional resource fields");record(n,t.fieldTypes.mapValues{(k,v)->local(v,n+k.replaceFirstChar{it.uppercase()})});n}
         else->t.kind
     }
-    private fun empty(t:CapabilityType):Any=when(t.kind){"array"->JSONArray();"record"->JSONObject(t.fields.mapValues{empty(it.value)});"string"->"";"number"->0;"boolean"->false;else->JSONObject.NULL}
-    private fun project(t:CapabilityType,n:String,ref:String):String=when(t.kind){"array"->node("project",ref,project(t.element!!,n+"Row","\$row"));"record"->obj(n,t.fields.mapValues{(k,v)->project(v,n+k.replaceFirstChar{it.uppercase()},"$ref.$k")});else->ref}
+    private fun empty(t:WireType):Any=when(t.kind){"array"->JSONArray();"record"->JSONObject(t.fieldTypes.mapValues{empty(it.value)});"string"->"";"number"->0;"boolean"->false;else->JSONObject.NULL}
+    private fun project(t:WireType,n:String,ref:String):String=when(t.kind){"array"->node("project",ref,project(t.element!!,n+"Row","\$row"));"record"->obj(n,t.fieldTypes.mapValues{(k,v)->project(v,n+k.replaceFirstChar{it.uppercase()},"$ref.$k")});else->ref}
     private fun resolve(ref:String):String {
         if(!ref.startsWith("$"))fail("Explicit reference required")
         val first=ref.removePrefix("$").substringBefore('.')
@@ -66,7 +66,7 @@ internal class SelectionComposition(private val contracts: List<CapabilityContra
                 val source=resolve(v.getString("basket"))
                 when(v.getString("encoding")){
                     "idQuantity"->{if(param.type.kind!="string")fail("Basket text requires string argument");node("basket",source,params=JSONObject().put("id","id").put("quantity","quantity"))}
-                    "records"->{val t=param.type.element?:fail("Basket records require array argument");if(t.kind!="record"||t.fields.keys!=setOf(v.getString("idField"),v.getString("quantityField")))fail("Basket record fields");val n=id();local(t,n);val rows=node("filter",source,node("gt","\$row.quantity",lit(0)));node("project",rows,obj(n,mapOf(v.getString("idField") to "\$row.id",v.getString("quantityField") to "\$row.quantity")))}
+                    "records"->{val t=param.type.element?:fail("Basket records require array argument");if(t.kind!="record"||t.fieldTypes.keys!=setOf(v.getString("idField"),v.getString("quantityField")))fail("Basket record fields");val n=id();local(t,n);val rows=node("filter",source,node("gt","\$row.quantity",lit(0)));node("project",rows,obj(n,mapOf(v.getString("idField") to "\$row.id",v.getString("quantityField") to "\$row.quantity")))}
                     else->fail("Unknown basket encoding")
                 }
             }else expression(v)

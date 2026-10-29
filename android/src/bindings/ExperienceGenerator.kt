@@ -17,11 +17,11 @@ internal class CheckedCandidate internal constructor(private val context:Context
     override fun close() { if (!consumed) StagingReclamation.remove(context,output.parentFile) }
 }
 // Object keys and unordered module/function inventories are stable; positional arrays stay ordered.
-internal fun canonicalCatalog(config: EmbeddingConfig): String {
+internal fun canonicalCatalog(config: RuntimeConfig): String {
     fun encode(value: Any?): String = when(value) {
         is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") { val child = value.get(it)
-            val canonical = if (it == "optionalFields" && child is JSONArray && (0 until child.length()).all { index -> child.get(index) is String }) {
-                JSONArray((0 until child.length()).map { index -> child.getString(index) }.sorted())
+            val canonical = if (it == "fields" && child is JSONArray) {
+                JSONArray((0 until child.length()).map { index -> child.getJSONObject(index) }.sortedBy { field -> field.getString("name") })
             } else child
             JSONObject.quote(it) + ":" + encode(canonical) }
         is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { encode(value.get(it)) }
@@ -35,10 +35,10 @@ internal fun canonicalCatalog(config: EmbeddingConfig): String {
     } }
     return encode(JSONArray(modules))
 }
-internal fun catalogRevision(config: EmbeddingConfig): String = MessageDigest.getInstance("SHA-256").digest(canonicalCatalog(config).toByteArray()).joinToString("") { "%02x".format(it) }
+internal fun catalogRevision(config: RuntimeConfig): String = MessageDigest.getInstance("SHA-256").digest(canonicalCatalog(config).toByteArray()).joinToString("") { "%02x".format(it) }
 
 /** Runs compiled trusted DEAL. No native retry loop, and no capability invocation during inference. */
-internal class ExperienceGenerator(private val context: Context, private val config: EmbeddingConfig, private val engine: JavaScriptSandbox, private val capabilityHost: dev.deal.embedding.capabilities.CapabilityHost) {
+internal class ExperienceGenerator(private val context: Context, private val config: RuntimeConfig, private val engine: JavaScriptSandbox, private val capabilityHost: dev.deal.embedding.capabilities.CapabilityHost) {
     fun generate(intent: String, disclosedContext: String, model: ModelClient, cancellation: GenerationCancellation, progress: (String) -> Unit, log: EmbeddingLog = EmbeddingLog(context), contextId: String = UUID.randomUUID().toString(), contextSchema: JSONObject = WireType("record").json()): CheckedCandidate {
         require(intent.isNotBlank())
         val telemetry=GenerationTelemetry(log)
@@ -52,7 +52,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
         var accepted:CheckedCandidate?=null
         fun eval(s: String) = program.evaluate(s)
         try {
-            val input = JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map { it.protocolJson() }))
+            val input = JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map { it.json() }))
             val configure = "protocolContexts[${JSONObject.quote(contextId)}]={value:${JSONObject.quote(disclosedContext)},schema:$contextSchema};"
             val bundle = SandboxBundle.build(context, listOf("generation-contracts.js", "protocol-contracts.js", "protocol-host.js", "generation-session.js"), configure,
                 "runGeneration(factories, $input)", assetRoot = config.generationAssets)
@@ -128,7 +128,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             else -> error("Unknown protocol mechanism")
                         }
                         "embedding/policy-data" -> when (request.getString("function")) {
-                            "catalogJson" -> protocolCatalog(args.getJSONArray(0)).toString()
+                            "catalogJson" -> args.getJSONArray(0).toString()
                             "contextEntries" -> { val v=JSONObject(args.getString(0));JSONObject().put("entries",JSONArray(v.keys().asSequence().filter{v.opt(it) is String}.map{JSONObject().put("key",it).put("value",v.getString(it))}.toList())).toString() }
                             "member" -> args.getJSONObject(0).getJSONObject(args.getString(1))
                             "stringMember" -> args.getJSONObject(0).getString(args.getString(1))

@@ -1,0 +1,15 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+
+export view NumberInput(state: app.State): View {
+    ui.IntField(label: state.label, value: state.value, minimum: state.minimum, maximum: state.maximum, format: state.format, enabled: state.enabled, onChange: action app.Edit {value: payload})
+}
+export view TimeInput(state: app.State): View {
+    ui.TimeField(label: state.label, value: state.value, enabled: state.enabled, onChange: action app.Edit {value: payload})
+}
+export view TextInput(state: app.State): View {
+    ui.TextField(label: state.label, value: state.value, enabled: state.enabled, onChange: action app.Edit {value: payload})
+}
+export view BooleanInput(state: app.State): View {
+    ui.Toggle(text: state.label, checked: state.value, onChange: action app.Edit {value: payload})
+}

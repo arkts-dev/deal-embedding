@@ -1,0 +1,76 @@
+import * as b from "../../ui/fragments/support/builder";
+import * as instances from "../../ui/fragments/support/instances";
+import * as allocation from "../../ui/fragments/support/allocation-instance";
+import * as alternatives from "../../ui/fragments/support/alternatives-instance";
+import * as quotes from "../../ui/fragments/support/quotes-instance";
+import * as json from "std/json";
+import * as tables from "std/table";
+function contains(values: string[], value: string): boolean { for (let entry: string of values) { if (entry === value) { return true; } } return false; }
+function instantiate(builder: b.Builder, plan: table, ordered: string[]): null {
+    let definitions: table[] = plan.fragments; let specifications: table = {};
+    for (let definition: table of definitions) { let id: string = definition.id; specifications[id] = definition; }
+    for (let id: string of ordered) { let definition: table = specifications[id]; let views: string[] = instance(builder,id,definition); builder.views[id] = views; }
+    return null;
+}
+function instance(builder: b.Builder, id: string, definition: table): string[] {
+        let kind: string = definition.kind; let config: table = definition.config;
+        if (kind === "allocation") { return allocation.compose(builder,id,config); }
+        if (kind === "alternatives") { return alternatives.compose(builder,id,config); }
+        if (kind === "quotes") { return quotes.compose(builder,id,config); }
+        return localInstance(builder,id,kind,config);
+}
+function localInstance(builder: b.Builder, id: string, kind: string, config: table): string[] {
+        let views: string[] = [];
+        if (kind === "input") { views = instances.input(builder,id,config); }
+        if (kind === "read") { views = instances.read(builder,id,config); }
+        if (kind === "result") { views = instances.result(builder,id,config); }
+        if (kind === "comparison") { views = instances.comparison(builder,id,config); }
+        if (kind === "choice") { views = instances.choice(builder,id,config); }
+        return views;
+}
+function commands(builder: b.Builder, plan: table, graph: table, ordered: string[]): table {
+    let commands: table[] = plan.commands; let closures: table[] = graph.commands; let commandViews: string[] = []; let conflicts: table = {};
+    for (let command: table of commands) {
+        let id: string = command.id; let closure: string[] = [];
+        for (let entry: table of closures) { let target: string = entry.id; if (target === id) { closure = entry.closure; } }
+        let sequence: table[] = [];
+        for (let instance: string of ordered) { if (contains(closure,instance)) {
+            for (let key: string of tables.keys(builder.steps)) { if (key === instance) { let steps: table[] = builder.steps[instance]; for (let step: table of steps) { sequence[sequence.length] = step; } } }
+        } }
+        b.action(builder,id,[],sequence,[]);
+        for (let instance: string of closure) {
+            let pending: string[] = [];
+            for (let key: string of tables.keys(conflicts)) { if (key === instance) { pending = conflicts[instance]; } }
+            pending[pending.length] = "$state.workflow"+id+"Pending"; conflicts[instance] = pending;
+        }
+        let enabled: string = b.derive(builder,id+"Enabled","boolean","true",b.unary(builder,"not","$state.workflow"+id+"Pending")); let label: string = command.label;
+        commandViews[commandViews.length] = b.view(builder,"PrimaryAction",[{name:"text",node:b.text(builder,label)},{name:"enabled",node:enabled}],[],[b.event("onClick",id,[])],"","","");
+    }
+    return {views:commandViews,conflicts:conflicts};
+}
+function editability(builder: b.Builder, conflicts: table): table {
+    let editable: table = {};
+    for (let instance: string of tables.keys(conflicts)) {
+        let pending: string[] = conflicts[instance]; let any: string = b.boolean(builder,false);
+        for (let ref: string of pending) { any = b.binary(builder,"or",any,ref); }
+        editable[instance] = b.derive(builder,instance+"Editable","boolean","true",b.unary(builder,"not",any));
+    }
+    return editable;
+}
+function root(builder: b.Builder, plan: table, commandViews: string[]): null {
+    let failed: string = b.derive(builder,"failed","boolean","false",b.binary(builder,"ne","$state.error",b.text(builder,"")));
+    let children: string[] = b.authored(builder,"WorkspaceStatus",{loading:"$state.loading",failed:failed,error:"$state.error",loadingLabel:b.text(builder,"Loading…"),errorTone:b.text(builder,"error")},{}); let display: string[] = plan.display;
+    for (let id: string of display) { let views: string[] = builder.views[id]; for (let view: string of views) { children[children.length] = view; } }
+    for (let view: string of commandViews) { children[children.length] = view; }
+    let root: string = b.view(builder,"Column",[],children,[],"","",""); builder.plan.root = root;
+    return null;
+}
+export function expandJson(input: string, catalogue: string, dependencies: string): string {
+    let plan: table = json.parse(input); let envelope: table = json.parse(catalogue); let contracts: table[] = envelope.contracts;
+    let graph: table = json.parse(dependencies); let ordered: string[] = graph.ordered;
+    let builder: b.Builder = b.create(contracts); instantiate(builder,plan,ordered);
+    let command: table = commands(builder,plan,graph,ordered); let conflicts: table = command.conflicts; let views: string[] = command.views;
+    let editable: table = editability(builder,conflicts); root(builder,plan,views);
+    return json.stringify({plan:builder.plan,authoredViews:builder.authoredViews,instanceViews:builder.views,editable:editable});
+}
+export function main(): null { return null; }

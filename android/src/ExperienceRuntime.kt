@@ -8,7 +8,7 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-data class EmbeddingConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val policyAssets: String = "", val retainState: Boolean = false, val candidateTest: ((CandidateTestSession) -> String)? = null) {
+internal data class RuntimeConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val policyAssets: String = "", val retainState: Boolean = false, val candidateTest: ((CandidateTestSession) -> String)? = null) {
 }
 internal data class ExperienceSource(val deal: String, val ui: String)
 internal data class SavedWorkspace(val id: String, val title: String, val origin: WorkspaceOrigin, val attempts: Int)
@@ -20,7 +20,7 @@ internal class LiveWorkspace internal constructor(val id: String, val title: Str
  * Serialized by embedding mechanisms. Owns compilation, atomic mounting, live workspaces and the shared engine.
  * Several workspaces stay mounted at once; each keeps its own isolate and its own capability session.
  */
-internal class ExperienceRuntime(private val context: Context, private val capabilities: CapabilityHost, private val config: EmbeddingConfig) : AutoCloseable {
+internal class ExperienceRuntime(private val context: Context, private val capabilities: CapabilityHost, private val config: RuntimeConfig) : AutoCloseable {
     private var engine: JavaScriptSandbox? = null
     private val workspaces = linkedMapOf<String, LiveWorkspace>()
     private val storage = ExperienceStorage(context, config.storageName)

@@ -1,0 +1,18 @@
+export class State {
+    m_difference: number;
+    m_magnitude: number;
+    m_status: string;
+    m_present: boolean;
+}
+export function initialState(): State {
+    return {m_difference:0,m_magnitude:0,m_status:"",m_present:false};
+}
+export function compare(limit: number, actual: number, present: boolean): State {
+    let difference: number = actual - limit;
+    let magnitude: number = difference;
+    let status: string = "Equal";
+    if (difference > 0) { status = "Over budget"; }
+    if (difference < 0) { status = "Under budget"; magnitude = -difference; }
+    return {m_difference:difference,m_magnitude:magnitude,m_status:status,m_present:present};
+}
+export function main(): null { return null; }

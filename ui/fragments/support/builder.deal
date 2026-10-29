@@ -1,0 +1,103 @@
+import * as json from "std/json";
+import * as strings from "std/string";
+import * as tables from "std/table";
+export class Builder { plan: table; serial: number; ports: table; steps: table; views: table; contracts: table[]; authoredViews: table[]; }
+export function create(contracts: table[]): Builder {
+    let records: table[] = []; let state: table[] = []; let nodes: table[] = []; let derived: table[] = []; let controls: table[] = []; let actions: table[] = []; let views: table[] = []; let authoredViews: table[] = [];
+    return {plan:{records:records,state:state,nodes:nodes,derived:derived,controls:controls,actions:actions,views:views,root:"root"},serial:0,ports:{},steps:{},views:{},contracts:contracts,authoredViews:authoredViews};
+}
+export function fail(message: string): null { throw {code:"INVALID_CONFIG",message:message}; }
+export function add(b: Builder, key: string, value: table): null { let entries: table[] = b.plan[key]; entries[entries.length] = value; return null; }
+export function node(b: Builder, op: string, args: string[], params: table): string {
+    let id: string = "expression" + decimal(b.serial); b.serial = b.serial + 1;
+    add(b,"nodes",{id:id,op:op,args:args,params:params}); return id;
+}
+export function decimal(value: number): string {
+    let encoded: string = json.stringify({value:value}); let result: string = strings.substring(encoded,9,strings.length(encoded)-1);
+    if (strings.endsWith(result,".0")) { return strings.substring(result,0,strings.length(result)-2); } return result;
+}
+export function unwrap(value: table): string { let encoded: string = json.stringify(value); return strings.substring(encoded,9,strings.length(encoded)-1); }
+export function literal(b: Builder, kind: string, value: string): string { return node(b,"literal",[],{type:kind,value:value}); }
+export function text(b: Builder, value: string): string { return literal(b,"string",unwrap({value:value})); }
+export function number(b: Builder, value: number): string { return literal(b,"number",unwrap({value:value})); }
+export function boolean(b: Builder, value: boolean): string { return literal(b,"boolean",unwrap({value:value})); }
+export function binary(b: Builder, op: string, left: string, right: string): string { return node(b,op,[left,right],{}); }
+export function unary(b: Builder, op: string, value: string): string { return node(b,op,[value],{}); }
+export function choose(b: Builder, condition: string, yes: string, no: string): string { return node(b,"choose",[condition,yes,no],{}); }
+export function all(b: Builder, values: string[]): string { let result: string = boolean(b,true); for (let value: string of values) { result = binary(b,"and",result,value); } return result; }
+export function state(b: Builder, id: string, type: string, value: string): string { add(b,"state",{name:id,type:type,initial:value}); return "$state."+id; }
+export function derive(b: Builder, id: string, type: string, value: string, expression: string): string { let ref: string = state(b,id,type,value); add(b,"derived",{field:id,node:expression}); return ref; }
+export function record(b: Builder, id: string, fields: table[]): null { add(b,"records",{name:id,fields:fields}); return null; }
+export function construct(b: Builder, type: string, fields: table[]): string { return node(b,"record",[],{type:type,fields:fields}); }
+export function set(field: string, expression: string): table { return {kind:"set",bind:field,node:expression}; }
+export function action(b: Builder, id: string, updates: table[], steps: table[], fields: table[]): null { add(b,"actions",{id:id,fields:fields,updates:updates,steps:steps}); return null; }
+export function event(name: string, action: string, payload: table[]): table { return {name:name,action:action,payload:payload}; }
+export function view(b: Builder, component: string, props: table[], children: string[], events: table[], each: string, key: string, condition: string): string {
+    let id: string = "view"+decimal(b.serial); b.serial = b.serial+1;
+    add(b,"views",{id:id,component:component,props:props,children:children,events:events,each:each,key:key,when:condition}); return id;
+}
+export function wire(kind: string): table { let fields: table[] = []; return {kind:kind,fields:fields,element:null}; }
+export function field(type: table, name: string): table {
+    let fields: table[] = type.fields;
+    for (let value: table of fields) { let id: string = value.name; if (id === name) { return value; } }
+    fail("Unknown disclosed field "+name); return {};
+}
+export function type(b: Builder, value: table, id: string): string {
+    let kind: string = value.kind;
+    if (kind === "array") { let element: table = value.element; return type(b,element,id+"Row")+"[]"; }
+    if (kind === "record") {
+        let fields: table[] = value.fields; let result: table[] = [];
+        for (let field: table of fields) {
+            let name: string = field.name; let child: table = field.type; let optional: boolean = field.optional;
+            let target: string = type(b,child,id+"_"+name);
+            if (optional) { let option: string = id+"_"+name+"Option"; record(b,option,[{name:"present",type:"boolean"},{name:"value",type:target}]); target = option; }
+            result[result.length] = {name:name,type:target};
+        }
+        record(b,id,result); return id;
+    }
+    return kind;
+}
+export function empty(value: table): string {
+    let kind: string = value.kind;
+    if (kind === "array") { return "[]"; }
+    if (kind === "record") {
+        let fields: table[] = value.fields; let result: string = "{";
+        for (let field: table of fields) { let name: string = field.name; let child: table = field.type; let optional: boolean = field.optional; let initial: string = empty(child);
+            if (result !== "{") { result = result+","; } result = result+unwrap({value:name})+":";
+            if (optional) { result = result+"{\"present\":false,\"value\":"+initial+"}"; } else { result = result+initial; }
+        }
+        return result+"}";
+    }
+    if (kind === "number") { return "0"; } if (kind === "string") { return "\"\""; } if (kind === "boolean") { return "false"; } return "null";
+}
+export function publish(b: Builder, id: string, name: string, ref: string, type: table, present: string): null { b.ports[id+"."+name] = {ref:ref,type:type,present:present}; return null; }
+export function port(b: Builder, path: string): table {
+    let parts: string[] = strings.split(path,"."); if (parts.length < 2) { fail("Use instance.port"); }
+    let identity: string = parts[0]+"."+parts[1]; let found: boolean = false;
+    for (let key: string of tables.keys(b.ports)) { if (key === identity) { found = true; } }
+    if (!found) { fail("Unknown port "+path); }
+    let current: table = b.ports[identity]; let type: table = current.type; let ref: string = current.ref; let present: string = current.present;
+    let index: number = 2;
+    while (index < parts.length) { let name: string = parts[index]; let definition: table = field(type,name); let optional: boolean = definition.optional;
+        let child: table = definition.type; type = child;
+        if (optional) { present = binary(b,"and",present,ref+"."+name+".present"); ref = ref+"."+name+".value"; } else { ref = ref+"."+name; }
+        index = index+1;
+    }
+    return {ref:ref,type:type,present:present};
+}
+export function binding(b: Builder, config: table): table {
+    let module: string = config.module; let functionName: string = config["function"];
+    for (let contract: table of b.contracts) { let id: string = contract.module; if (id === module) { let functions: table[] = contract.functions; for (let fn: table of functions) { let name: string = fn.name; if (name === functionName) { return fn; } } } }
+    fail("Undisclosed capability "+module+"."+functionName); return {};
+}
+export function call(id: string, binding: table, args: string[], target: string, projection: string, condition: string): table {
+    let module: string = binding.module; let functionName: string = binding["function"];
+    let result: table = {kind:"call",id:id,module:module,args:args,bind:target,node:projection,when:condition};
+    result["function"] = functionName; return result;
+}
+export function authored(b: Builder, kind: string, bindings: table, actions: table): string[] {
+    let id: string = "authored"+decimal(b.serial); b.serial = b.serial+1;
+    b.authoredViews[b.authoredViews.length] = {id:id,kind:kind,bindings:bindings,actions:actions};
+    return [id];
+}
+export function main(): null { return null; }

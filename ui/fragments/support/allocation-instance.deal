@@ -1,0 +1,57 @@
+import * as b from "./builder";
+import * as f from "./formulas";
+function storage(builder: b.Builder, id: string, config: table): table {
+    let source: string = f.expression(config,"source"); let totalText: string = f.expression(config,"total"); let budgetText: string = f.expression(config,"budget"); let surchargeText: string = f.expression(config,"surcharge");
+    let quotas: table[] = config.quotas; let local: string = id+"Row";
+    let fields: table[] = [{name:"id",type:"string"},{name:"name",type:"string"},{name:"cost",type:"number"},{name:"quantity",type:"number"}];
+    let index: number = 0; for (let quota: table of quotas) { fields[fields.length] = {name:"quota"+b.decimal(index),type:"boolean"}; index = index+1; }
+    b.record(builder,local,fields);
+    let rows: string = b.state(builder,id+"Rows",local+"[]","[]"); let sourceReady: string = f.present(builder,source);
+    let projection: table[] = [{field:"id",node:f.parse(builder,f.expression(config,"identity"),["row"])},{field:"name",node:f.parse(builder,f.expression(config,"label"),["row"])},{field:"cost",node:f.parse(builder,f.expression(config,"cost"),["row"])},{field:"quantity",node:b.number(builder,0)}];
+    index = 0;
+    for (let quota: table of quotas) { projection[projection.length] = {field:"quota"+b.decimal(index),node:f.parse(builder,f.expression(quota,"predicate"),["row"])}; index = index+1; }
+    let filtered: string = b.node(builder,"filter",[f.parse(builder,source,[]),f.parse(builder,f.expression(config,"eligible"),["row"])],{});
+    let projected: string = b.node(builder,"project",[filtered,b.construct(builder,local,projection)],{});
+    let requested: string = f.parse(builder,totalText,[]); let budget: string = f.parse(builder,budgetText,[]); let fee: string = f.parse(builder,surchargeText,[]);
+    let quotaParams: table[] = []; index = 0;
+    for (let quota: table of quotas) { quotaParams[quotaParams.length] = {field:"quota"+b.decimal(index),minimum:f.parse(builder,f.expression(quota,"minimum"),[])}; index = index+1; }
+    let allocate: string = b.node(builder,"allocate",[rows,requested,b.binary(builder,"subtract",budget,fee)],{quantity:"quantity",cost:"cost",quotas:quotaParams});
+    builder.steps[id] = [b.set(id+"Rows",projected),b.set(id+"Rows",allocate)];
+    return {rows:rows,sourceReady:sourceReady,requested:requested,budget:budget,fee:fee,allocate:allocate};
+}
+function computed(builder: b.Builder, id: string, config: table, context: table): table {
+    let rows: string = context.rows; let sourceReady: string = context.sourceReady; let requested: string = context.requested; let budget: string = context.budget; let fee: string = context.fee;
+    let source: string = f.expression(config,"source"); let totalText: string = f.expression(config,"total"); let budgetText: string = f.expression(config,"budget"); let surchargeText: string = f.expression(config,"surcharge"); let quotas: table[] = config.quotas; let index: number = 0;
+    let count: string = b.derive(builder,id+"Count","number","0",b.node(builder,"sum",[rows,"$row.quantity"],{}));
+    let cost: string = b.derive(builder,id+"Total","number","0",b.binary(builder,"add",b.node(builder,"sum",[rows,b.binary(builder,"multiply","$row.quantity","$row.cost")],{}),fee));
+    let required: string[] = [sourceReady,f.present(builder,totalText),f.present(builder,budgetText),f.present(builder,surchargeText)];
+    for (let quota: table of quotas) { required[required.length] = f.present(builder,f.expression(quota,"minimum")); }
+    let ready: string = b.derive(builder,id+"Present","boolean","false",b.all(builder,required));
+    let conditions: string[] = [ready,b.binary(builder,"eq",count,requested),b.binary(builder,"le",cost,budget)]; index = 0;
+    for (let quota: table of quotas) { let sum: string = b.node(builder,"sum",[rows,b.choose(builder,"$row.quota"+b.decimal(index),"$row.quantity",b.number(builder,0))],{}); conditions[conditions.length] = b.binary(builder,"ge",sum,f.parse(builder,f.expression(quota,"minimum"),[])); index = index+1; }
+    let valid: string = b.derive(builder,id+"Valid","boolean","false",b.all(builder,conditions));
+    let status: string = b.derive(builder,id+"Status","string","\"\"",b.choose(builder,sourceReady,b.choose(builder,ready,b.choose(builder,valid,b.text(builder,"Ready"),b.text(builder,"Not feasible")),b.text(builder,"Not feasible: no eligible option")),b.text(builder,"Refresh required")));
+    let countText: string = b.derive(builder,id+"CountText","string","\"\"",b.node(builder,"concat",[b.unary(builder,"integer",count),b.text(builder," of "),b.unary(builder,"integer",requested)],{}));
+    return {ready:ready,valid:valid,cost:cost,status:status,countText:countText};
+}
+function actions(builder: b.Builder, id: string, context: table): null {
+    let rows: string = context.rows; let requested: string = context.requested; let allocate: string = context.allocate;
+    let quantityValid: string = b.all(builder,[b.binary(builder,"eq","$action.value",b.unary(builder,"floor","$action.value")),b.binary(builder,"ge","$action.value",b.number(builder,0)),b.binary(builder,"le","$action.value",requested)]);
+    let updated: string = b.node(builder,"update",[rows,b.binary(builder,"eq","$row.id","$action.id")],{fields:[{field:"quantity",node:"$action.value"}]});
+    b.action(builder,id+"Quantity",[{field:id+"Rows",node:b.choose(builder,quantityValid,updated,rows)}],[],[{name:"id",type:"string"},{name:"value",type:"number"}]);
+    b.action(builder,id+"Allocate",[{field:id+"Rows",node:allocate}],[],[]);
+    return null;
+}
+function ports(builder: b.Builder, id: string, context: table, calculated: table): null {
+    let rows: string = context.rows; let sourceReady: string = context.sourceReady; let cost: string = calculated.cost; let ready: string = calculated.ready; let valid: string = calculated.valid;
+    let rowFields: table[] = [{name:"id",type:b.wire("string"),optional:false},{name:"name",type:b.wire("string"),optional:false},{name:"cost",type:b.wire("number"),optional:false},{name:"quantity",type:b.wire("number"),optional:false}];
+    let rowType: table = {kind:"record",fields:rowFields,element:null}; let arrayFields: table[] = []; let arrayType: table = {kind:"array",fields:arrayFields,element:rowType};
+    b.publish(builder,id,"rows",rows,arrayType,sourceReady); b.publish(builder,id,"total",cost,b.wire("number"),ready); b.publish(builder,id,"valid",valid,b.wire("boolean"),b.boolean(builder,true)); b.publish(builder,id,"present",ready,b.wire("boolean"),b.boolean(builder,true));
+    return null;
+}
+export function compose(builder: b.Builder, id: string, config: table): string[] {
+    let context: table = storage(builder,id,config); let calculated: table = computed(builder,id,config,context); actions(builder,id,context); ports(builder,id,context,calculated);
+    let rows: string = context.rows; let requested: string = context.requested; let status: string = calculated.status; let cost: string = calculated.cost; let countText: string = calculated.countText;
+    return b.authored(builder,"Allocation",{recalculateLabel:b.text(builder,"Recalculate allocation"),enabled:b.boolean(builder,true),rows:rows,minimum:b.number(builder,0),requested:requested,status:status,totalLabel:b.text(builder,"Total"),total:cost,quantityLabel:b.text(builder,"Quantity"),countText:countText},{Allocate:id+"Allocate",Quantity:id+"Quantity"});
+}
+export function main(): null { return null; }

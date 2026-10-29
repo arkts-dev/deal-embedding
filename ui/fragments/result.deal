@@ -1,0 +1,22 @@
+import * as json from "std/json";
+import * as strings from "std/string";
+import * as values from "ui/values";
+
+export class NumberState { m_value: number; m_text: string; m_present: boolean; }
+export class TextState { m_value: string; m_present: boolean; }
+export function initialNumber(): NumberState { return {m_value:0,m_text:"",m_present:false}; }
+export function initialText(): TextState { return {m_value:"",m_present:false}; }
+export function number(value: number, format: string, present: boolean): NumberState {
+    let text: string = "";
+    if (format === "time") { text = values.clockMinutes(value); }
+    if (format === "integer") { text = values.decimal(value); }
+    if (format === "number") {
+        if (value - value !== 0) { throw {code:"INVALID_NUMBER",message:"Expected a finite value"}; }
+        let data: table = {}; data["value"] = value;
+        let encoded: string = json.stringify(data);
+        text = strings.substring(encoded,9,strings.length(encoded) - 1);
+    }
+    return {m_value:value,m_text:text,m_present:present};
+}
+export function text(value: string, present: boolean): TextState { return {m_value:value,m_present:present}; }
+export function main(): null { return null; }

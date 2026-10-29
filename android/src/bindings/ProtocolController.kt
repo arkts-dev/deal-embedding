@@ -42,7 +42,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
     init {
         try {
             val saved=embedding.saved().map{e->JSONObject().put("experience",experience(e)).put("source",source(embedding.source(e)))}
-            val bootstrap=JSONObject().put("seed",UUID.randomUUID().toString()).put("saved",JSONArray(saved)).put("contracts",JSONArray(embedding.refresh().map{it.protocolJson()})).put("health",health())
+            val bootstrap=JSONObject().put("seed",UUID.randomUUID().toString()).put("saved",JSONArray(saved)).put("contracts",JSONArray(embedding.refresh().map{it.json()})).put("health",health())
             program.evaluate(SandboxBundle.build(context,listOf("protocol-contracts.js","protocol-host.js","public-protocol.js"),"","protocolInitialize(factories,${JSONObject.quote(consumer)},$bootstrap)",assetRoot=assets))
             embedding.registry.permissions { module -> program.evaluate("JSON.stringify(publicProtocol.permitted(${JSONObject.quote(module)}))").let{if(it=="null")null else JSONArray("[$it]").getString(0)} }
             driving.scheduleWithFixedDelay({try{advance()}catch(error:Throwable){for(future in futures.values)future.completeExceptionally(error)}},0,5,TimeUnit.MILLISECONDS)
@@ -93,7 +93,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
         if(replies.length()>0)program.evaluate("dealCapabilities.deliver($replies)")
         for(i in 0 until replies.length()){val r=replies.getJSONObject(i);r.optJSONArray("invalidSessions")?.let{program.evaluate("publicProtocol.liveSessions($it); ''")}}
         program.evaluate("publicProtocol.observed(${health()}); ''")
-        for((key,future)in futures){if(future.isDone)continue;val result=JSONObject(program.evaluate("JSON.stringify(publicResults.get(${JSONObject.quote(key)}))"));if(result.optBoolean("done")){if(result.has("error")){val e=result.getJSONObject("error");future.completeExceptionally(FailureEvidence.decode(e))}else future.complete(result.opt("value")?:JSONObject.NULL);program.evaluate("publicResults.delete(${JSONObject.quote(key)}); ''")}}
+        for((key,future)in futures){if(future.isDone)continue;val result=JSONObject(program.evaluate("JSON.stringify(protocolPlain(publicResults.get(${JSONObject.quote(key)})))"));if(result.optBoolean("done")){if(result.has("error")){val e=result.getJSONObject("error");future.completeExceptionally(FailureEvidence.decode(e))}else future.complete(result.opt("value")?:JSONObject.NULL);program.evaluate("publicResults.delete(${JSONObject.quote(key)}); ''")}}
     }
     @Synchronized internal fun detach(key:String){
         if(ended){futures.remove(key)?.completeExceptionally(ProtocolFailure("CLOSED","Controller closed"));return}
@@ -117,7 +117,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
         check(!ended)
         val declared=program.evaluate("String(publicConsumer[${JSONObject.quote(name)}].\$sig.startsWith('async'))")
         require(declared=="false"){"Async export cannot be invoked synchronously"}
-        val result=JSONObject(program.evaluate("(() => {try {return JSON.stringify({ok:true,value:protocolInvoke(${JSONObject.quote(name)},$args)});}catch(error){return JSON.stringify({ok:false,code:error.code||'EMBEDDING_FAILED',message:error.message||'Embedding failed'});}})()"))
+        val result=JSONObject(program.evaluate("(() => {try {return JSON.stringify({ok:true,value:protocolPlain(protocolInvoke(${JSONObject.quote(name)},$args))});}catch(error){return JSON.stringify({ok:false,code:error.code||'EMBEDDING_FAILED',message:error.message||'Embedding failed'});}})()"))
         if(!result.getBoolean("ok"))throw ProtocolFailure(result.getString("code"),result.getString("message"))
         if(name=="capture")embedding.capture(args.getBoolean(0))
         return result.opt("value") ?: JSONObject.NULL
@@ -137,7 +137,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
         "dispatch"->{embedding.dispatch(Session(args.getJSONObject(0).getString("id")),args.getInt(1),if(args.isNull(2))null else args.getString(2));JSONObject.NULL}
         "close"->{embedding.close(Session(args.getJSONObject(0).getString("id")));JSONObject.NULL}
         "forget"->{embedding.forget(ref(args.getJSONObject(0)));JSONObject.NULL}
-        "refresh"->JSONArray(embedding.refresh().map{it.protocolJson()})
+        "refresh"->JSONArray(embedding.refresh().map{it.json()})
         "events"->embedding.events(args.getString(0),args.getString(1),args.getInt(2)).let{JSONObject().put("events",JSONArray(it.events)).put("cursor",it.cursor).put("incomplete",it.incomplete)}
         "artifact"->embedding.artifact(args.getString(0)).let{JSONObject().put("status",it.status).put("text",it.text)}
         "clearObservation"->{embedding.clearObservation();JSONObject.NULL}

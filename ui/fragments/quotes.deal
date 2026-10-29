@@ -1,0 +1,12 @@
+// Authored quote iteration. The compiler binds concrete collection/row/result types and typed projections.
+export class QuoteRow {}
+export class QuoteValue {}
+function readQuote(): null { return null; }
+export function collect(source: QuoteRow[]): null {
+    let results: QuoteValue[] = [];
+    for (let item: QuoteRow of source) { readQuote(); }
+    commitQuotes();
+    return null;
+}
+function commitQuotes(): null { return null; }
+export function main(): null { return null; }

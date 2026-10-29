@@ -1,0 +1,29 @@
+import * as b from "./builder";
+import * as f from "./formulas";
+export function compose(builder: b.Builder, id: string, config: table): string[] {
+    let source: string = f.expression(config,"source"); let roles: table[] = config.roles; let component: table = config.components;
+    let local: string = id+"Item"; let componentType: string = id+"Component";
+    b.record(builder,componentType,[{name:"id",type:"string"},{name:"quantity",type:"number"}]);
+    let fields: table[] = [{name:"id",type:"string"},{name:"label",type:"string"},{name:"capacity",type:"number"},{name:"quantity",type:"number"},{name:"components",type:componentType+"[]"}];
+    let index: number = 0; for (let role: table of roles) { fields[fields.length] = {name:"role"+b.decimal(index),type:"boolean"}; index = index+1; }
+    b.record(builder,local,fields);
+    let basketType: string = id+"Basket"; b.record(builder,basketType,[{name:"items",type:local+"[]"},{name:"key",type:"string"},{name:"label",type:"string"}]);
+    let rows: string = b.state(builder,id+"Rows",local+"[]","[]"); let baskets: string = b.state(builder,id+"Baskets",basketType+"[]","[]");
+    let componentSource: string = f.expression(component,"source"); let components: string = b.node(builder,"array",[],{element:componentType});
+    if (componentSource !== "") { components = b.node(builder,"project",[f.parse(builder,componentSource,["row"]),b.construct(builder,componentType,[{field:"id",node:f.parse(builder,f.expression(component,"identity"),["row"])},{field:"quantity",node:f.parse(builder,f.expression(component,"quantity"),["row"])}])],{}); }
+    let values: table[] = [{field:"id",node:f.parse(builder,f.expression(config,"identity"),["row"])},{field:"label",node:f.parse(builder,f.expression(config,"label"),["row"])},{field:"capacity",node:f.parse(builder,f.expression(config,"stock"),["row"])},{field:"quantity",node:b.number(builder,0)},{field:"components",node:components}];
+    let params: table[] = []; index = 0;
+    for (let role: table of roles) {
+        let field: string = "role"+b.decimal(index); values[values.length] = {field:field,node:f.parse(builder,f.expression(role,"predicate"),["row"])};
+        params[params.length] = {field:field,quantity:f.parse(builder,f.expression(role,"quantity"),[])}; index = index+1;
+    }
+    builder.steps[id] = [b.set(id+"Rows",b.node(builder,"project",[f.parse(builder,source,[]),b.construct(builder,local,values)],{})),b.set(id+"Baskets",b.node(builder,"alternatives",[rows],{type:basketType,roles:params}))];
+    let componentFields: table[] = [{name:"id",type:b.wire("string"),optional:false},{name:"quantity",type:b.wire("number"),optional:false}];
+    let ct: table = {kind:"record",fields:componentFields,element:null}; let empty: table[] = [];
+    let itemFields: table[] = [{name:"id",type:b.wire("string"),optional:false},{name:"label",type:b.wire("string"),optional:false},{name:"capacity",type:b.wire("number"),optional:false},{name:"quantity",type:b.wire("number"),optional:false},{name:"components",type:{kind:"array",fields:empty,element:ct},optional:false}];
+    let item: table = {kind:"record",fields:itemFields,element:null};
+    let basketFields: table[] = [{name:"items",type:{kind:"array",fields:empty,element:item},optional:false},{name:"key",type:b.wire("string"),optional:false},{name:"label",type:b.wire("string"),optional:false}];
+    let bt: table = {kind:"record",fields:basketFields,element:null}; let array: table = {kind:"array",fields:empty,element:bt};
+    b.publish(builder,id,"baskets",baskets,array,f.present(builder,source)); let views: string[] = []; return views;
+}
+export function main(): null { return null; }

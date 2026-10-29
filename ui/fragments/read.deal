@@ -1,0 +1,13 @@
+// Structural slots are parsed nodes bound by the composer; the instantiated program is fully checked.
+export class ProviderReply {}
+function decodeReply(): null { return null; }
+function projectReply(): null { return null; }
+export async function read(emptyReply: ProviderReply, available: boolean): null {
+    let reply: ProviderReply = emptyReply;
+    if (available) {
+        decodeReply();
+        projectReply();
+    }
+    return null;
+}
+export function main(): null { return null; }

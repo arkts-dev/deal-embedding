@@ -9,6 +9,12 @@ public final class ToolkitHarness {
         Path packFile=Path.of(args[0]), input=Path.of(args[1]), project=Path.of(args[2]), distribution=Path.of(args[3]);
         Files.createDirectories(project.resolve("src/ui"));
         Files.copy(distribution.resolve("ui/values.deal"),project.resolve("src/ui/values.deal"));
+        try (var files = Files.walk(distribution.resolve("fragments"))) {
+            for (Path file : files.toList()) {
+                Path target = project.resolve("src/fragments").resolve(distribution.resolve("fragments").relativize(file));
+                if (Files.isDirectory(file)) Files.createDirectories(target); else Files.copy(file,target);
+            }
+        }
         var pack=UiParser.parsePack(packFile,Files.readString(packFile));
         String source=Files.readString(input.resolve("experience.deal"));
         String ui=Files.readString(input.resolve("experience.dealui"));

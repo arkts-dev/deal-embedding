@@ -1,0 +1,112 @@
+import * as math from "std/math";
+
+export class Component { id: string; quantity: number; }
+export class Row { id: string; capacity: number; components: Component[]; roles: boolean[]; }
+export class Basket { quantities: number[]; }
+function assign(rows: Row[], units: number[], role: number, remaining: number, requirements: number[]): boolean {
+    if (role >= requirements.length) { return true; }
+    if (remaining <= 0) {
+        let nextRole: number = role + 1;
+        if (nextRole >= requirements.length) { return true; }
+        return assign(rows,units,nextRole,requirements[nextRole],requirements);
+    }
+    let index: number = 0;
+    while (index < rows.length) {
+        let row: Row = rows[index];
+        if (row.roles[role] && units[index] > 0) {
+            let next: number[] = [];
+            for (let unit: number of units) { next[next.length] = unit; }
+            next[index] = next[index] - 1;
+            if (assign(rows,next,role,remaining-1,requirements)) { return true; }
+        }
+        index = index + 1;
+    }
+    return false;
+}
+function search(rows: Row[], index: number, quantities: number[], maximum: number, requirements: number[]): Basket[] {
+    let output: Basket[] = [];
+    if (index < rows.length) {
+        let row: Row = rows[index];
+        let count: number = row.capacity;
+        if (count > maximum) { count = maximum; }
+        while (count >= 0) {
+            let next: number[] = [];
+            for (let quantity: number of quantities) { next[next.length] = quantity; }
+            next[next.length] = count;
+            let tails: Basket[] = search(rows,index+1,next,maximum-count,requirements);
+            for (let tail: Basket of tails) { output[output.length] = tail; }
+            count = count - 1;
+        }
+        return output;
+    }
+    let units: number[] = []; let demand: number[] = [];
+    for (let row: Row of rows) { units[units.length] = 0; demand[demand.length] = 0; }
+    let any: boolean = false;
+    let i: number = 0;
+    while (i < rows.length) {
+        let row: Row = rows[i]; let count: number = quantities[i];
+        demand[i] = demand[i] + count;
+        if (count > 0) {
+            any = true;
+            if (row.components.length === 0) { units[i] = units[i] + count; }
+            else {
+                for (let component: Component of row.components) {
+                    let j: number = 0;
+                    while (j < rows.length) {
+                        let known: Row = rows[j];
+                        if (known.id === component.id) { demand[j] = demand[j] + count*component.quantity; units[j] = units[j] + count*component.quantity; }
+                        j = j + 1;
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < rows.length) { let row: Row = rows[i]; if (demand[i] > row.capacity) { return output; } i = i + 1; }
+    if (any && assign(rows,units,0,requirements[0],requirements)) {
+        let removeIndex: number = 0;
+        while (removeIndex < rows.length) {
+            if (quantities[removeIndex] > 0) {
+                let reduced: number[] = []; for (let unit: number of units) { reduced[reduced.length] = unit; }
+                let removed: Row = rows[removeIndex];
+                if (removed.components.length === 0) { reduced[removeIndex] = reduced[removeIndex] - 1; }
+                else {
+                    for (let component: Component of removed.components) {
+                        let j: number = 0;
+                        while (j < rows.length) { let known: Row = rows[j]; if (known.id === component.id) { reduced[j] = reduced[j] - component.quantity; } j = j + 1; }
+                    }
+                }
+                if (assign(rows,reduced,0,requirements[0],requirements)) { return output; }
+            }
+            removeIndex = removeIndex + 1;
+        }
+        output[0] = {quantities:quantities};
+    }
+    return output;
+}
+export function enumerate(rows: Row[], requirements: number[]): Basket[] {
+    if (requirements.length === 0) { throw {code:"INVALID_ALTERNATIVES",message:"At least one role required"}; }
+    for (let row: Row of rows) {
+        if (row.id === "" || row.capacity < 0 || math.floor(row.capacity) !== row.capacity || row.capacity > 2147483647 || row.capacity-row.capacity !== 0 || row.roles.length !== requirements.length) {
+            throw {code:"INVALID_ALTERNATIVES",message:"Invalid catalogue identity or stock"};
+        }
+        let duplicates: number = 0;
+        for (let other: Row of rows) { if (other.id === row.id) { duplicates = duplicates + 1; } }
+        if (duplicates !== 1) { throw {code:"INVALID_ALTERNATIVES",message:"Duplicate catalogue identity"}; }
+        for (let component: Component of row.components) {
+            let found: boolean = false;
+            for (let known: Row of rows) { if (known.id === component.id && known.components.length === 0) { found = true; } }
+            if (!found || component.quantity < 1 || math.floor(component.quantity) !== component.quantity || component.quantity > 2147483647 || component.quantity-component.quantity !== 0) {
+                throw {code:"INVALID_ALTERNATIVES",message:"Unknown or nested component or invalid quantity"};
+            }
+        }
+    }
+    let maximum: number = 0;
+    for (let quantity: number of requirements) {
+        if (quantity < 0 || math.floor(quantity) !== quantity || quantity > 2147483647 || quantity-quantity !== 0) { throw {code:"INVALID_ALTERNATIVES",message:"Invalid role quantity"}; }
+        maximum = maximum + quantity;
+    }
+    let empty: number[] = [];
+    return search(rows,0,empty,maximum,requirements);
+}

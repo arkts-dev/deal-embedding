@@ -1,0 +1,37 @@
+import * as builder from "./builder";
+import * as grammar from "./formula";
+import * as json from "std/json";
+import * as strings from "std/string";
+export function lower(b: builder.Builder, expression: table, locals: string[]): string {
+    let kind: string = expression.kind;
+    if (kind === "literal") {
+        let encoded: string = json.stringify(expression);
+        let at: number = 0;
+        while (at < strings.length(encoded) && !strings.startsWith(strings.substring(encoded,at,strings.length(encoded)),"\"value\":")) { at = at+1; }
+        if (at >= strings.length(encoded)) { builder.fail("Malformed formula literal"); }
+        let source: string = strings.substring(encoded,at+8,strings.length(encoded)-1);
+        let type: string = "number";
+        if (strings.startsWith(source,"\"")) { type = "string"; }
+        if (source === "true" || source === "false") { type = "boolean"; }
+        return builder.literal(b,type,source);
+    }
+    if (kind === "reference") {
+        let path: string = expression.path; let parts: string[] = strings.split(path,".");
+        for (let local: string of locals) { if (parts[0] === local) { return "$"+path; } }
+        if (parts[0] === "row") { return "$"+path; }
+        let port: table = builder.port(b,path); let ref: string = port.ref; return ref;
+    }
+    let name: string = expression.name; let arguments: table[] = expression.arguments; let args: string[] = [];
+    for (let argument: table of arguments) { args[args.length] = lower(b,argument,locals); }
+    return builder.node(b,name,args,{});
+}
+export function parse(b: builder.Builder, source: string, locals: string[]): string { return lower(b,grammar.parse(source),locals); }
+export function present(b: builder.Builder, source: string): string {
+    let refs: string[] = grammar.references(grammar.parse(source)); let values: string[] = [];
+    for (let path: string of refs) { let parts: string[] = strings.split(path,".");
+        if (parts[0] !== "row" && parts[0] !== "item" && parts[0] !== "reply") { let port: table = builder.port(b,path); let value: string = port.present; values[values.length] = value; }
+    }
+    return builder.all(b,values);
+}
+export function expression(config: table, key: string): string { let value: table = config[key]; let result: string = value.expr; return result; }
+export function main(): null { return null; }

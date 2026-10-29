@@ -1,0 +1,69 @@
+import * as b from "./builder";
+import * as f from "./formulas";
+export function input(builder: b.Builder, id: string, config: table): string[] {
+    let format: string = config.format; let kind: string = "number"; let view: string = "NumberInput";
+    if (format === "text") { kind = "string"; view = "TextInput"; }
+    if (format === "boolean") { kind = "boolean"; view = "BooleanInput"; }
+    if (format === "time") { view = "TimeInput"; }
+    let encoded: string = b.unwrap({value:0});
+    if (kind === "number") { let value: number = config.value; encoded = b.unwrap({value:value}); }
+    if (kind === "string") { let value: string = config.value; encoded = b.unwrap({value:value}); }
+    if (kind === "boolean") { let value: boolean = config.value; encoded = b.unwrap({value:value}); }
+    let ref: string = b.state(builder,id+"Value",kind,encoded); let yes: string = b.boolean(builder,true);
+    b.publish(builder,id,"value",ref,b.wire(kind),yes);
+    let minimum: number = config.minimum; let maximum: number = config.maximum;
+    let change: string = b.node(builder,"inputEdit",[ref,"$action.value"],{format:format,minimum:minimum,maximum:maximum});
+    let actionType: string = kind; if (format === "boolean") { actionType = "string"; }
+    b.action(builder,id+"Edit",[{field:id+"Value",node:change}],[],[{name:"value",type:actionType}]);
+    let label: string = config.label; let displayFormat: string = "integer"; if (format === "money") { displayFormat = "euro-cents"; }
+    return b.authored(builder,view,{label:b.text(builder,label),value:ref,enabled:yes,minimum:b.number(builder,minimum),maximum:b.number(builder,maximum),format:b.text(builder,displayFormat)},{Edit:id+"Edit"});
+}
+export function read(builder: b.Builder, id: string, config: table): string[] {
+    let binding: table = config.binding; let fn: table = b.binding(builder,binding);
+    let parameters: table[] = fn.parameters; let arguments: table[] = config.arguments;
+    if (arguments.length !== parameters.length) { b.fail("Capability arity mismatch"); }
+    let args: string[] = []; let available: string[] = [];
+    for (let argument: table of arguments) { let source: string = argument.expr; args[args.length] = f.parse(builder,source,[]); available[available.length] = f.present(builder,source); }
+    let result: table = fn.result; let local: string = b.type(builder,result,id+"Result");
+    let value: string = b.state(builder,id+"Result",local,b.empty(result)); let present: string = b.state(builder,id+"Present","boolean","false");
+    builder.steps[id] = [b.call(id+"Reply",binding,args,id+"Result","$"+id+"Reply",b.all(builder,available)),b.set(id+"Present","$"+id+"ReplyPresent")];
+    b.publish(builder,id,"result",value,result,present); b.publish(builder,id,"present",present,b.wire("boolean"),b.boolean(builder,true));
+    let views: string[] = []; return views;
+}
+export function result(builder: b.Builder, id: string, config: table): string[] {
+    let source: string = f.expression(config,"value"); let format: string = config.format; let type: string = "number"; let initial: string = "0";
+    if (format === "text") { type = "string"; initial = "\"\""; }
+    let value: string = b.derive(builder,id+"Value",type,initial,f.parse(builder,source,[]));
+    let valid: string = b.derive(builder,id+"Present","boolean","false",f.present(builder,source)); let yes: string = b.boolean(builder,true);
+    b.publish(builder,id,"value",value,b.wire(type),valid); b.publish(builder,id,"present",valid,b.wire("boolean"),yes);
+    let label: string = config.label;
+    if (format === "money") { return b.authored(builder,"MoneyResult",{label:b.text(builder,label),value:value,present:valid},{}); }
+    let display: string = value;
+    if (format !== "text") { display = b.derive(builder,id+"Text","string","\"\"",b.node(builder,"resultText",[value,valid],{format:format})); }
+    return b.authored(builder,"TextResult",{label:b.text(builder,label),value:display,present:valid},{});
+}
+export function comparison(builder: b.Builder, id: string, config: table): string[] {
+    let limit: string = f.expression(config,"limit"); let actual: string = f.expression(config,"actual");
+    let compared: string = b.node(builder,"fragmentComparison",[f.parse(builder,limit,[]),f.parse(builder,actual,[]),b.all(builder,[f.present(builder,limit),f.present(builder,actual)])],{});
+    let delta: string = b.derive(builder,id+"Difference","number","0",b.node(builder,"comparisonValue",[compared],{field:"difference"}));
+    let magnitude: string = b.derive(builder,id+"Magnitude","number","0",b.node(builder,"comparisonValue",[compared],{field:"magnitude"}));
+    let status: string = b.derive(builder,id+"Status","string","\"\"",b.node(builder,"comparisonValue",[compared],{field:"status"}));
+    let valid: string = b.derive(builder,id+"Present","boolean","false",b.node(builder,"comparisonValue",[compared],{field:"present"}));
+    b.publish(builder,id,"difference",delta,b.wire("number"),valid); b.publish(builder,id,"present",valid,b.wire("boolean"),b.boolean(builder,true));
+    let label: string = config.label;
+    return b.authored(builder,"Comparison",{status:status,present:valid,label:b.text(builder,label),magnitude:magnitude},{});
+}
+export function choice(builder: b.Builder, id: string, config: table): string[] {
+    let source: string = f.expression(config,"source"); let local: string = id+"Option";
+    let fields: table[] = [{name:"id",type:b.wire("string"),optional:false},{name:"label",type:b.wire("string"),optional:false},{name:"eligible",type:b.wire("boolean"),optional:false},{name:"cost",type:b.wire("number"),optional:false}];
+    let type: table = {kind:"record",fields:fields,element:null}; b.type(builder,type,local);
+    let rows: string = b.state(builder,id+"Rows",local+"[]","[]"); let selected: string = b.state(builder,id+"Selected",local,b.empty(type));
+    let projection: string = b.construct(builder,local,[{field:"id",node:f.parse(builder,f.expression(config,"identity"),["row"])},{field:"label",node:f.parse(builder,f.expression(config,"label"),["row"])},{field:"eligible",node:f.parse(builder,f.expression(config,"eligible"),["row"])},{field:"cost",node:f.parse(builder,f.expression(config,"cost"),["row"])}]);
+    let projected: string = b.node(builder,"project",[f.parse(builder,source,[]),projection],{});
+    builder.steps[id] = [b.set(id+"Rows",projected),b.set(id+"Selected",b.node(builder,"choicePick",[rows],{}))];
+    let valid: string = b.derive(builder,id+"Present","boolean","false",b.node(builder,"choiceValid",[rows,selected,f.present(builder,source)],{}));
+    b.publish(builder,id,"selected",selected,type,valid); b.publish(builder,id,"present",valid,b.wire("boolean"),b.boolean(builder,true));
+    b.action(builder,id+"Select",[{field:id+"Selected",node:b.node(builder,"choiceSelect",[rows,selected,"$action.id"],{})}],[],[{name:"id",type:"string"}]);
+    return b.authored(builder,"Choice",{rows:rows,enabled:b.boolean(builder,true)},{Select:id+"Select"});
+}
+export function main(): null { return null; }

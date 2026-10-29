@@ -1,0 +1,19 @@
+import * as shapes from "./validation.generated";
+import * as math from "std/math";
+
+// Closed shapes are schema-derived; semantic graph checks belong to composition.
+export function validateJson(input: string): null { return shapes.validateJson(input); }
+export function input(config: table): null {
+    let format: string = config.format;
+    if (format === "text") { let value: string = config.value; return null; }
+    if (format === "boolean") { let value: boolean = config.value; return null; }
+    let value: number = config.value; let minimum: number = config.minimum; let maximum: number = config.maximum;
+    if (value-value !== 0 || minimum-minimum !== 0 || maximum-maximum !== 0 || minimum > maximum || value < minimum || value > maximum) {
+        throw {code:"INVALID_CONFIG",message:"Invalid numeric input bounds"};
+    }
+    if (math.floor(value) !== value || math.floor(minimum) !== minimum || math.floor(maximum) !== maximum || minimum < -2147483648 || maximum > 2147483647) {
+        throw {code:"INVALID_CONFIG",message:"Whole-unit input bounds required"};
+    }
+    if (format === "time" && (minimum < 0 || maximum > 1439)) { throw {code:"INVALID_CONFIG",message:"Time bounds must be minute-of-day"}; }
+    return null;
+}

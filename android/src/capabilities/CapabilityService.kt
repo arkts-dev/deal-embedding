@@ -1,5 +1,6 @@
 package dev.deal.embedding.capabilities
 
+import dev.deal.embedding.*
 import android.app.Service
 import android.content.Intent
 import android.os.*
@@ -10,7 +11,6 @@ abstract class CapabilityService : Service() {
     protected abstract val capabilities: NativeCapabilities
     protected abstract fun authorize(uid: Int): Boolean
     protected abstract fun consent(): Boolean
-    protected open val delayMillis: Long = 0
     private val handler = Handler(Looper.getMainLooper())
     private data class Work(val uid: Int, val callback: ICapabilityResult, val death: IBinder.DeathRecipient, val runnable: Runnable)
     private val pending = mutableMapOf<String, Work>()
@@ -45,10 +45,10 @@ abstract class CapabilityService : Service() {
             } }
             callback.asBinder().linkToDeath(death, 0)
             pending[id] = Work(uid, callback, death, runnable)
-            handler.postDelayed(runnable, delayMillis)
+            handler.post(runnable)
         }
         override fun cancel(id: String) = synchronized(this@CapabilityService) { val uid = caller(); if (pending[id]?.uid == uid) remove(id); Unit }
     }
-    override fun onBind(intent: Intent): IBinder = binder
+    final override fun onBind(intent: Intent): IBinder = binder
     override fun onDestroy() { synchronized(this) { pending.keys.toList().forEach { remove(it) } }; super.onDestroy() }
 }

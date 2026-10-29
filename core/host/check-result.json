@@ -1,1 +1,1 @@
-{"kind":"record","fields":{"accepted":{"kind":"boolean"},"candidateId":{"kind":"string"},"diagnostics":{"kind":"string"}}}
+{"kind":"record","fields":[{"name":"accepted","type":{"kind":"boolean"},"optional":false},{"name":"candidateId","type":{"kind":"string"},"optional":false},{"name":"diagnostics","type":{"kind":"string"},"optional":false}]}

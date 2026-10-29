@@ -7,8 +7,27 @@ import java.io.File
 import java.util.UUID
 
 /** Android bootstrap for the protocol. No generated experience receives this authority surface. */
-class Embedding(private val context: Context, val registry: CapabilityRegistry, private val model: ModelClient, bootstrap: EmbeddingConfig) {
-    constructor(context: Context, registry: CapabilityRegistry, gateway: GenerationGatewayConfig, bootstrap: EmbeddingConfig) : this(context, registry, GatewayModelClient(gateway), bootstrap)
+class Embedding internal constructor(private val context: Context, internal val registry: CapabilityRegistry, private val model: ModelClient, bootstrap: RuntimeConfig) {
+    companion object {
+        fun open(context: Context, config: EmbeddingConfig, capabilities: List<NativeCapabilities> = emptyList(), trustProvider: (Int) -> Boolean = { false }): ApplicationProtocol {
+            val application = context.applicationContext
+            val registry = CapabilityRegistry(application, CapabilityDiscovery(application,trustProvider),capabilities)
+            val model = config.inference?.let { provider -> object : ModelClient {
+                override fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog) =
+                    provider.complete(InferenceRequest(input,previous,diagnostics),cancellation)
+            } } ?: GatewayModelClient(config.generation)
+            var mechanisms: Embedding? = null
+            try {
+                val owner = Embedding(application,registry,model,RuntimeConfig("experience",emptyList(),config.storageName,
+                    policyAssets=config.policy?.assetNamespace.orEmpty(),retainState=config.retainState))
+                mechanisms = owner
+                return ApplicationProtocol(application,owner,config.discovery)
+            } catch (error: Throwable) {
+                runCatching { mechanisms?.shutdown() ?: registry.close() }.onFailure(error::addSuppressed)
+                throw error
+            }
+        }
+    }
     private val config=bootstrap.copy(contracts=bootstrap.contracts.map{CapabilityContract.parse(it.json().toString())})
     private data class RequestState(val title:String,val intent:String,val context:GenerationContext,val contracts:List<CapabilityContract>,val cancellation:GenerationCancellation,val log:EmbeddingLog,var used:Boolean=false)
     private val contexts=mutableMapOf<String,Pair<WireType,String>>()
@@ -58,7 +77,7 @@ class Embedding(private val context: Context, val registry: CapabilityRegistry, 
     @Synchronized internal fun protocolRequest(title:String,intent:String,schema:WireType,json:String,contracts:JSONArray,trace:String):GenerationRequest {
         val facts=snapshot(schema,json);val request=request(title,intent,facts)
         val state=requests.getValue(request.id)
-        requests[request.id]=state.copy(contracts=(0 until contracts.length()).map{CapabilityContract.parse(legacyContract(contracts.getJSONObject(it)).toString())},log=EmbeddingLog.traced(context,trace))
+        requests[request.id]=state.copy(contracts=(0 until contracts.length()).map{CapabilityContract.parse(contracts.getJSONObject(it).toString())},log=EmbeddingLog.traced(context,trace))
         return request
     }
     fun generate(request:GenerationRequest):Experience {

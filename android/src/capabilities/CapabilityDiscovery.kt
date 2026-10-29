@@ -1,5 +1,6 @@
 package dev.deal.embedding.capabilities
 
+import dev.deal.embedding.*
 import android.content.*
 import android.content.pm.PackageManager
 import android.os.*
@@ -7,7 +8,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /** Android discovery by protocol action, never by provider package/method name. Call off main. */
-class CapabilityDiscovery(private val context: Context, private val trusted: (Int) -> Boolean) : AutoCloseable {
+internal class CapabilityDiscovery(private val context: Context, private val trusted: (Int) -> Boolean) : AutoCloseable {
     private val log = dev.deal.embedding.EmbeddingLog(context)
     data class Endpoint(val component: ComponentName, val uid: Int, val contract: CapabilityContract, val remote: ICapabilityService)
     private val connections = mutableMapOf<ComponentName, ServiceConnection>()

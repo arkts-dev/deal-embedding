@@ -5,7 +5,7 @@ import org.json.*
 import java.io.File
 
 /** Checks and lowers source against host-supplied declarations and the renderer pack. */
-internal class ExperienceCompiler(private val context: Context, private val config: EmbeddingConfig, private val log: EmbeddingLog = EmbeddingLog(context)) {
+internal class ExperienceCompiler(private val context: Context, private val config: RuntimeConfig, private val log: EmbeddingLog = EmbeddingLog(context)) {
     private val storage = ExperienceStorage(context, config.storageName)
     fun compile(dealSource: String, uiSource: String): File {
         StagingReclamation.retry(context)
@@ -15,6 +15,7 @@ internal class ExperienceCompiler(private val context: Context, private val conf
         try {
             val sources = File(project, "src").apply { mkdirs() }
             File(sources,"ui").apply { mkdirs() }.resolve("values.deal").writeText(File(distribution,"ui/values.deal").readText())
+            File(distribution,"fragments").copyRecursively(File(sources,"fragments"),overwrite=true)
             val app = File(sources, "${config.sourceName}.deal").apply { writeText(dealSource) }
             val view = File(sources, "${config.sourceName}.dealui").apply { writeText(uiSource) }
             val packSource = context.assets.open("embedding/platform.dealui-pack").bufferedReader().use { it.readText() }

@@ -1,0 +1,12 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+export view Quotes(state: app.State): View {
+    ui.SessionClock(onTick: action app.Tick {epoch: payload})
+    ui.Notice(text: state.status)
+    ForEach(state.current, row: app.Quote, key: row.key) {
+        ui.Item(title: row.label) {
+            ui.Money(label: state.hireLabel, minorUnits: row.cost)
+            ui.Money(label: state.depositLabel, minorUnits: row.deposit)
+        }
+    }
+}

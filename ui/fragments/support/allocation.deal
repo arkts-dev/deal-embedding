@@ -1,0 +1,65 @@
+import * as math from "std/math";
+import * as tables from "std/table";
+import * as values from "ui/values";
+
+export class Row { cost: number; quotas: boolean[]; }
+export class Result { found: boolean; quantities: number[]; }
+function search(rows: Row[], index: number, remaining: number, budget: number, quotas: number[], failed: table): Result {
+    let empty: number[] = [];
+    for (let quota: number of quotas) { if (quota > remaining) { return {found:false,quantities:empty}; } }
+    let key: string = values.decimal(index) + ":" + values.decimal(remaining) + ":" + values.decimal(budget);
+    let quotaIndex: number = 0;
+    while (quotaIndex < quotas.length) {
+        let quota: number = quotas[quotaIndex];
+        key = key + ":" + values.decimal(quota);
+        if (quota > 0) {
+            let supply: boolean = false;
+            let scan: number = index;
+            while (scan < rows.length) { let row: Row = rows[scan]; if (row.quotas[quotaIndex]) { supply = true; } scan = scan + 1; }
+            if (!supply) { return {found:false,quantities:empty}; }
+        }
+        quotaIndex = quotaIndex + 1;
+    }
+    for (let known: string of tables.keys(failed)) { if (known === key) { return {found:false,quantities:empty}; } }
+    if (budget < 0) { return {found:false,quantities:empty}; }
+    if (index >= rows.length) {
+        let complete: boolean = remaining === 0;
+        for (let quota: number of quotas) { complete = complete && quota <= 0; }
+        return {found:complete,quantities:empty};
+    }
+    let row: Row = rows[index];
+    let count: number = remaining;
+    while (count >= 0) {
+        let nextQuotas: number[] = [];
+        quotaIndex = 0;
+        while (quotaIndex < quotas.length) {
+            let quota: number = quotas[quotaIndex];
+            if (row.quotas[quotaIndex]) { quota = quota - count; }
+            if (quota < 0) { quota = 0; }
+            nextQuotas[nextQuotas.length] = quota;
+            quotaIndex = quotaIndex + 1;
+        }
+        let tail: Result = search(rows,index+1,remaining-count,budget-count*row.cost,nextQuotas,failed);
+        if (tail.found) {
+            let quantities: number[] = [count];
+            for (let quantity: number of tail.quantities) { quantities[quantities.length] = quantity; }
+            return {found:true,quantities:quantities};
+        }
+        count = count - 1;
+    }
+    failed[key] = true;
+    return {found:false,quantities:empty};
+}
+export function allocate(rows: Row[], total: number, budget: number, quotas: number[]): Result {
+    if (total < 0 || math.floor(total) !== total || total-total !== 0 || budget-budget !== 0) {
+        throw {code:"INVALID_ALLOCATION",message:"Invalid allocation inputs"};
+    }
+    for (let quota: number of quotas) {
+        if (quota < 0 || math.floor(quota) !== quota || quota-quota !== 0) { throw {code:"INVALID_ALLOCATION",message:"Invalid quota"}; }
+    }
+    for (let row: Row of rows) {
+        if (row.cost < 0 || row.cost-row.cost !== 0 || row.quotas.length !== quotas.length) { throw {code:"INVALID_ALLOCATION",message:"Invalid allocation row"}; }
+    }
+    let failed: table = {};
+    return search(rows,0,total,budget,quotas,failed);
+}

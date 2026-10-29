@@ -1,0 +1,192 @@
+import * as json from "std/json";
+import * as strings from "std/string";
+
+// Pure configuration syntax. The resulting tree is data, never executable source.
+class Token { text: string; kind: string; offset: number; }
+class Parser { source: string; offset: number; token: Token; }
+function fail(): null { throw {code:"INVALID_FORMULA",message:"Expected a pure formula with declared references"}; }
+function charAt(source: string, index: number): string {
+    if (index >= strings.length(source)) { return ""; }
+    return strings.substring(source,index,index+1);
+}
+function digit(ch: string): boolean { return ch !== "" && strings.contains("0123456789",ch); }
+function letter(ch: string): boolean { return ch !== "" && strings.contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_",ch); }
+function namePart(ch: string): boolean { return letter(ch) || digit(ch); }
+function next(parser: Parser): Token {
+    let source: string = parser.source;
+    let size: number = strings.length(source);
+    while (parser.offset < size && strings.trim(charAt(source,parser.offset)) === "") { parser.offset = parser.offset + 1; }
+    let start: number = parser.offset;
+    let ch: string = charAt(source,start);
+    if (start === size) { return {text:"",kind:"end",offset:start}; }
+    if (ch === "\"") {
+        parser.offset = parser.offset + 1;
+        let escaped: boolean = false;
+        while (parser.offset < size) {
+            let current: string = charAt(source,parser.offset);
+            parser.offset = parser.offset + 1;
+            if (!escaped && current === "\"") {
+                let text: string = strings.substring(source,start,parser.offset);
+                // The JSON decoder owns escape, surrogate and control validation.
+                let decoded: table = json.parse("{\"value\":" + text + "}");
+                let value: string = decoded.value;
+                return {text:value,kind:"string",offset:start};
+            }
+            if (!escaped && current === "\\") { escaped = true; } else { escaped = false; }
+        }
+        fail();
+    }
+    if (digit(ch) || ch === "." && digit(charAt(source,start+1))) {
+        while (digit(charAt(source,parser.offset))) { parser.offset = parser.offset + 1; }
+        if (charAt(source,parser.offset) === ".") {
+            parser.offset = parser.offset + 1;
+            while (digit(charAt(source,parser.offset))) { parser.offset = parser.offset + 1; }
+        }
+        let exponent: string = charAt(source,parser.offset);
+        if (exponent === "e" || exponent === "E") {
+            parser.offset = parser.offset + 1;
+            let sign: string = charAt(source,parser.offset);
+            if (sign === "+" || sign === "-") { parser.offset = parser.offset + 1; }
+            if (!digit(charAt(source,parser.offset))) { fail(); }
+            while (digit(charAt(source,parser.offset))) { parser.offset = parser.offset + 1; }
+        }
+        return {text:strings.substring(source,start,parser.offset),kind:"number",offset:start};
+    }
+    if (letter(ch)) {
+        parser.offset = parser.offset + 1;
+        while (namePart(charAt(source,parser.offset))) { parser.offset = parser.offset + 1; }
+        while (charAt(source,parser.offset) === ".") {
+            parser.offset = parser.offset + 1;
+            if (!letter(charAt(source,parser.offset))) { fail(); }
+            parser.offset = parser.offset + 1;
+            while (namePart(charAt(source,parser.offset))) { parser.offset = parser.offset + 1; }
+        }
+        return {text:strings.substring(source,start,parser.offset),kind:"name",offset:start};
+    }
+    let symbols: string[] = ["===","!==","<=",">=","&&","||","+","-","*","/","!","<",">","(",")",","];
+    for (let symbol: string of symbols) {
+        if (strings.startsWith(strings.substring(source,start,size),symbol)) {
+            parser.offset = parser.offset + strings.length(symbol);
+            return {text:symbol,kind:"symbol",offset:start};
+        }
+    }
+    fail();
+    return {text:"",kind:"end",offset:start};
+}
+function advance(parser: Parser): null { parser.token = next(parser); return null; }
+function consume(parser: Parser, text: string): null {
+    if (parser.token.kind !== "symbol" || parser.token.text !== text) { fail(); }
+    advance(parser); return null;
+}
+function precedence(symbol: string): number {
+    if (symbol === "||") { return 1; }
+    if (symbol === "&&") { return 2; }
+    if (symbol === "===" || symbol === "!==") { return 3; }
+    if (symbol === "<" || symbol === "<=" || symbol === ">" || symbol === ">=") { return 4; }
+    if (symbol === "+" || symbol === "-") { return 5; }
+    if (symbol === "*" || symbol === "/") { return 6; }
+    return 0;
+}
+function operator(symbol: string): string {
+    if (symbol === "||") { return "or"; }
+    if (symbol === "&&") { return "and"; }
+    if (symbol === "===") { return "eq"; }
+    if (symbol === "!==") { return "ne"; }
+    if (symbol === "<") { return "lt"; }
+    if (symbol === "<=") { return "le"; }
+    if (symbol === ">") { return "gt"; }
+    if (symbol === ">=") { return "ge"; }
+    if (symbol === "+") { return "add"; }
+    if (symbol === "-") { return "subtract"; }
+    if (symbol === "*") { return "multiply"; }
+    return "divide";
+}
+function arity(name: string): number {
+    if (name === "concat") { return -1; }
+    if (name === "floor" || name === "ceil" || name === "abs" || name === "clock" || name === "integer" || name === "length") { return 1; }
+    if (name === "sum" || name === "filter" || name === "any" || name === "all" || name === "project") { return 2; }
+    if (name === "choose") { return 3; }
+    fail(); return 0;
+}
+function operation(name: string, arguments: table[]): table { return {kind:"operation",name:name,arguments:arguments}; }
+function numeric(text: string): table {
+    // Normalize the grammar's .5 / 1. / leading-zero forms for strict JSON decoding.
+    let source: string = text;
+    if (strings.startsWith(source,".")) { source = "0" + source; }
+    let exponent: number = strings.length(source);
+    let index: number = 0;
+    while (index < strings.length(source)) {
+        let ch: string = charAt(source,index);
+        if (ch === "e" || ch === "E") { exponent = index; }
+        index = index + 1;
+    }
+    let mantissa: string = strings.substring(source,0,exponent);
+    if (strings.endsWith(mantissa,".")) { mantissa = mantissa + "0"; }
+    while (strings.length(mantissa) > 1 && strings.startsWith(mantissa,"0") && digit(charAt(mantissa,1))) {
+        mantissa = strings.substring(mantissa,1,strings.length(mantissa));
+    }
+    let decoded: table = json.parse("{\"value\":" + mantissa + strings.substring(source,exponent,strings.length(source)) + "}");
+    let value: number = decoded.value;
+    if (value - value !== 0) { fail(); }
+    return {kind:"literal",value:value};
+}
+function primary(parser: Parser): table {
+    let token: Token = parser.token;
+    if (token.kind === "symbol" && token.text === "(") { advance(parser); let result: table = binary(parser,1); consume(parser,")"); return result; }
+    if (token.kind === "number") { advance(parser); return numeric(token.text); }
+    if (token.kind === "string") { advance(parser); return {kind:"literal",value:token.text}; }
+    if (token.kind === "name") {
+        advance(parser);
+        if (token.text === "true" || token.text === "false") { return {kind:"literal",value:token.text === "true"}; }
+        if (parser.token.kind !== "symbol" || parser.token.text !== "(") { return {kind:"reference",path:token.text}; }
+        let count: number = arity(token.text);
+        advance(parser);
+        let arguments: table[] = [];
+        if (parser.token.text !== ")") {
+            arguments[arguments.length] = binary(parser,1);
+            while (parser.token.text === ",") { advance(parser); arguments[arguments.length] = binary(parser,1); }
+        }
+        consume(parser,")");
+        if (count >= 0 && arguments.length !== count) { fail(); }
+        return operation(token.text,arguments);
+    }
+    fail(); return {};
+}
+function unary(parser: Parser): table {
+    let symbol: string = parser.token.text;
+    if (parser.token.kind !== "symbol") { return primary(parser); }
+    if (symbol === "!") { advance(parser); return operation("not",[unary(parser)]); }
+    if (symbol === "+" || symbol === "-") {
+        advance(parser); let zero: table = {kind:"literal",value:0};
+        return operation(operator(symbol),[zero,unary(parser)]);
+    }
+    return primary(parser);
+}
+function binary(parser: Parser, minimum: number): table {
+    let left: table = unary(parser);
+    while (parser.token.kind === "symbol" && precedence(parser.token.text) >= minimum) {
+        let symbol: string = parser.token.text;
+        let level: number = precedence(symbol);
+        advance(parser);
+        left = operation(operator(symbol),[left,binary(parser,level+1)]);
+    }
+    return left;
+}
+export function parse(source: string): table {
+    let parser: Parser = {source:source,offset:0,token:{text:"",kind:"end",offset:0}};
+    advance(parser);
+    let result: table = binary(parser,1);
+    if (parser.token.kind !== "end") { fail(); }
+    return result;
+}
+export function references(expression: table): string[] {
+    let kind: string = expression.kind; let result: string[] = [];
+    if (kind === "reference") { let path: string = expression.path; result[result.length] = path; }
+    if (kind === "operation") {
+        let arguments: table[] = expression.arguments;
+        for (let argument: table of arguments) { for (let path: string of references(argument)) { result[result.length] = path; } }
+    }
+    return result;
+}
+export function parseJson(source: string): string { return json.stringify(parse(source)); }
+export function main(): null { return null; }

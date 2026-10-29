@@ -1,0 +1,18 @@
+import * as host from "embedding/assistance";
+
+export class State { title: string; busy: boolean; }
+export class Open {}
+export class Dismiss {}
+export class Done {}
+export function initialState(): State { return {title:"",busy:false}; }
+// @ui-update
+export function opening(state: State, action: Open): State { return {title:state.title,busy:true}; }
+// @ui-effect
+export async function open(state: State, action: Open): Done { await host.open(); return {}; }
+// @ui-update
+export function dismissing(state: State, action: Dismiss): State { return {title:state.title,busy:true}; }
+// @ui-effect
+export async function dismiss(state: State, action: Dismiss): Done { await host.dismiss(); return {}; }
+// @ui-update
+export function complete(state: State, action: Done): State { return {title:state.title,busy:false}; }
+export function main(): null { return null; }

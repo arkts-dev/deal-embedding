@@ -1,0 +1,72 @@
+import * as b from "./builder";
+import * as f from "./formulas";
+import * as grammar from "./formula";
+import * as strings from "std/string";
+function replyExpression(builder: b.Builder, expression: table, reply: string): string {
+    let kind: string = expression.kind;
+    if (kind === "reference") {
+        let path: string = expression.path;
+        if (strings.startsWith(path,"reply.")) { return "$"+reply+strings.substring(path,5,strings.length(path)); }
+        let port: table = b.port(builder,path); let ref: string = port.ref; return ref;
+    }
+    if (kind === "literal") { return f.lower(builder,expression,[]); }
+    let arguments: table[] = expression.arguments; let args: string[] = [];
+    for (let argument: table of arguments) { args[args.length] = replyExpression(builder,argument,reply); }
+    let name: string = expression.name; return b.node(builder,name,args,{});
+}
+function replyFormula(builder: b.Builder, config: table, key: string, reply: string): string { return replyExpression(builder,grammar.parse(f.expression(config,key)),reply); }
+function arguments(builder: b.Builder, id: string, config: table): string[] {
+    let binding: table = config.binding; let fn: table = b.binding(builder,binding); let parameters: table[] = fn.parameters;
+    let args: string[] = []; let arguments: table[] = config.arguments; let index: number = 0;
+    if (arguments.length !== parameters.length) { b.fail("Quote arity mismatch"); }
+    for (let argument: table of arguments) {
+        let kind: string = argument.kind;
+        if (kind === "value") { args[args.length] = f.parse(builder,f.expression(argument,"value"),["item"]); }
+        else {
+            let encoding: string = argument.encoding; let parameter: table = parameters[index]; let type: table = parameter.type; let typeKind: string = type.kind;
+            if (encoding === "idQuantity") {
+                if (typeKind !== "string") { b.fail("Basket text requires string parameter"); }
+                args[args.length] = b.node(builder,"basket",["$item.items"],{id:"id",quantity:"quantity"});
+            } else {
+                if (typeKind !== "array") { b.fail("Basket records require array parameter"); }
+                let row: table = type.element; let fields: table[] = row.fields; let idField: string = argument.idField; let quantityField: string = argument.quantityField;
+                if (fields.length !== 2) { b.fail("Basket record parameter fields"); } b.field(row,idField); b.field(row,quantityField);
+                let name: string = id+"Argument"+b.decimal(index); b.type(builder,row,name);
+                args[args.length] = b.node(builder,"project",["$item.items",b.construct(builder,name,[{field:idField,node:"$row.id"},{field:quantityField,node:"$row.quantity"}])],{});
+            }
+        }
+        index = index+1;
+    }
+    return args;
+}
+function quoteType(): table {
+    let fields: table[] = [{name:"key",type:b.wire("string"),optional:false},{name:"label",type:b.wire("string"),optional:false},{name:"cost",type:b.wire("number"),optional:false},{name:"deposit",type:b.wire("number"),optional:false},{name:"available",type:b.wire("boolean"),optional:false},{name:"expiresAt",type:b.wire("number"),optional:false}];
+    return {kind:"record",fields:fields,element:null};
+}
+function workflow(builder: b.Builder, id: string, config: table): null {
+    let source: string = f.expression(config,"source"); let binding: table = config.binding; let local: string = id+"Quote"; let args: string[] = arguments(builder,id,config);
+    let reply: string = id+"Reply"; let zero: string = b.number(builder,0); let ttl: string = replyFormula(builder,config,"ttlMillis",reply); let expiry: string = b.binary(builder,"add",b.node(builder,"now",[],{}),ttl);
+    let available: string = b.all(builder,[replyFormula(builder,config,"available",reply),b.binary(builder,"gt",ttl,zero),b.binary(builder,"eq",b.binary(builder,"subtract",ttl,ttl),zero),b.binary(builder,"eq",b.binary(builder,"subtract",expiry,expiry),zero)]);
+    let projection: string = b.construct(builder,local,[{field:"key",node:"$item.key"},{field:"label",node:"$item.label"},{field:"cost",node:replyFormula(builder,config,"cost",reply)},{field:"deposit",node:replyFormula(builder,config,"deposit",reply)},{field:"available",node:available},{field:"expiresAt",node:expiry}]);
+    let each: table = b.call(reply,binding,args,id+"Results",projection,f.present(builder,source)); each.kind = "eachCall"; each.each = f.parse(builder,source,[]);
+    builder.steps[id] = [each,b.set(id+"Now",b.node(builder,"now",[],{})),b.set(id+"Present",f.present(builder,source)),b.set(id+"Fresh",b.boolean(builder,true))];
+    return null;
+}
+function presentation(builder: b.Builder, id: string, config: table): string[] {
+    let local: string = id+"Quote"; let results: string = "$state."+id+"Results"; let loaded: string = "$state."+id+"Present"; let fresh: string = "$state."+id+"Fresh"; let now: string = "$state."+id+"Now"; let zero: string = b.number(builder,0);
+    let budget: string = f.parse(builder,f.expression(config,"budget"),[]);
+    let valid: string = b.all(builder,[loaded,fresh,"$row.available",b.binary(builder,"gt","$row.expiresAt",now)]);
+    let current: string = b.derive(builder,id+"Current",local+"[]","[]",b.node(builder,"filter",[results,valid],{}));
+    let status: string = b.derive(builder,id+"Status","string","\"\"",b.choose(builder,b.all(builder,[loaded,fresh]),b.choose(builder,b.binary(builder,"gt",b.unary(builder,"length",current),zero),b.choose(builder,b.node(builder,"any",[current,b.binary(builder,"le","$row.cost",budget)],{}),b.text(builder,"Within budget"),b.text(builder,"Over budget")),b.text(builder,"No usable quote")),b.text(builder,"Refresh required")));
+    let absolute: string = b.unary(builder,"abs","$action.epoch");
+    b.action(builder,id+"Tick",[{field:id+"Now",node:absolute},{field:id+"Fresh",node:b.all(builder,[fresh,b.binary(builder,"ge","$action.epoch",zero),b.binary(builder,"ge",absolute,now)])}],[],[{name:"epoch",type:"number"}]);
+    let empty: table[] = []; let array: table = {kind:"array",fields:empty,element:quoteType()}; b.publish(builder,id,"results",results,array,loaded);
+    b.derive(builder,id+"Within",local+"[]","[]",b.node(builder,"filter",[current,b.binary(builder,"le","$row.cost",budget)],{}));
+    return b.authored(builder,"Quotes",{status:status,current:current,hireLabel:b.text(builder,"Hire"),depositLabel:b.text(builder,"Refundable deposit")},{Tick:id+"Tick"});
+}
+export function compose(builder: b.Builder, id: string, config: table): string[] {
+    let local: string = id+"Quote"; b.type(builder,quoteType(),local);
+    b.state(builder,id+"Results",local+"[]","[]"); b.state(builder,id+"Present","boolean","false"); b.state(builder,id+"Fresh","boolean","false"); b.state(builder,id+"Now","number","0");
+    workflow(builder,id,config); return presentation(builder,id,config);
+}
+export function main(): null { return null; }

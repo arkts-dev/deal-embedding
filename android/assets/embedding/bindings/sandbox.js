@@ -81,10 +81,11 @@ globalThis.dealLoad = function(factories, entryId) {
       if (type.kind === 'array') return value.map(item => encode(type.element, item));
       if (type.kind === 'record') {
         const fields = Object.create(null);
-        if (!(value instanceof Map) || [...value.keys()].some(key=>!Object.hasOwn(type.fields,key))) throw Error('Invalid record argument');
-        for (const name of Object.keys(type.fields)) {
-          if (!value.has(name)) {if((type.optionalFields||[]).includes(name))continue;throw Error('Missing record argument field');}
-          fields[name] = encode(type.fields[name], value.get(name));
+        if (!(value instanceof Map) || [...value.keys()].some(key=>!type.fields.some(field=>field.name===key))) throw Error('Invalid record argument');
+        for (const field of type.fields) {
+          const name=field.name;
+          if (!value.has(name)) {if(field.optional)continue;throw Error('Missing record argument field');}
+          fields[name] = encode(field.type, value.get(name));
         }
         return fields;
       }
@@ -104,7 +105,7 @@ globalThis.dealLoad = function(factories, entryId) {
       if (type.kind === 'array') return value.map(item => convert(type.element, item));
       if (type.kind === 'record') {
         const fields = Object.create(null);
-        for (const name of Object.keys(type.fields)) if(Object.hasOwn(value,name))fields[name] = convert(type.fields[name], value[name]);
+        for (const field of type.fields) if(Object.hasOwn(value,field.name))fields[field.name] = convert(field.type, value[field.name]);
         return load('deal/runtime.js').makeTable(fields);
       }
       return value;

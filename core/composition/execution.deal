@@ -1,0 +1,96 @@
+import * as json from "std/json";
+import * as strings from "std/string";
+import * as tables from "std/table";
+function contains(values: string[], value: string): boolean { for (let entry: string of values) { if (entry === value) { return true; } } return false; }
+function append(values: string[], additions: string[]): null { for (let value: string of additions) { if (!contains(values,value)) { values[values.length] = value; } } return null; }
+function refs(node: table): string[] {
+    let result: string[] = []; let args: string[] = node.args; append(result,args); let params: table = node.params; let op: string = node.op;
+    if (op === "record" || op === "update") { let fields: table[] = params.fields; for (let field: table of fields) { let value: string = field.node; append(result,[value]); } }
+    if (op === "allocate") { let quotas: table[] = params.quotas; for (let quota: table of quotas) { let minimum: string = quota.minimum; append(result,[minimum]); } }
+    if (op === "alternatives") { let roles: table[] = params.roles; for (let role: table of roles) { let quantity: string = role.quantity; append(result,[quantity]); } }
+    if (op === "selections") { let constraints: table[] = params.constraints; for (let constraint: table of constraints) { let minimum: string = constraint.minimum; let maximum: string = constraint.maximum; append(result,[minimum,maximum]); } }
+    if (op === "covers") { let groups: table[] = params.groups; for (let group: table of groups) { let minimum: string = group.minimum; let predicate: string = group.predicate; append(result,[minimum,predicate]); } }
+    return result;
+}
+function dependencies(id: string, nodes: table, derived: table, active: string[], transitive: boolean): string[] {
+    let result: string[] = [];
+    if (strings.startsWith(id,"$state.")) {
+        let parts: string[] = strings.split(id,"."); let field: string = parts[1]; result[result.length] = field;
+        if (transitive) { for (let key: string of tables.keys(derived)) { if (key === field) { let expression: string = derived[field]; append(result,dependencies(expression,nodes,derived,active,true)); } } }
+        return result;
+    }
+    if (strings.startsWith(id,"$") || id === "") { return result; }
+    if (contains(active,id)) { throw {code:"INVALID_CONFIG",message:"Expression or derived cycle"}; }
+    let next: string[] = []; append(next,active); append(next,[id]);
+    let node: table = nodes[id]; for (let ref: string of refs(node)) { append(result,dependencies(ref,nodes,derived,next,transitive)); }
+    return result;
+}
+function intersects(left: string[], right: string[]): boolean { for (let entry: string of left) { if (contains(right,entry)) { return true; } } return false; }
+function workflow(action: table): boolean { let steps: table[] = action.steps; for (let step: table of steps) { let kind: string = step.kind; if (kind === "call" || kind === "eachCall") { return true; } } return false; }
+function reads(action: table, nodes: table, derived: table, providersOnly: boolean): string[] {
+    let result: string[] = []; let steps: table[] = action.steps;
+    for (let step: table of steps) {
+        let kind: string = step.kind; let expressions: string[] = [];
+        if (kind === "call" || kind === "eachCall") {
+            let args: string[] = step.args; append(expressions,args); let condition: string = step["when"]; append(expressions,[condition]);
+            if (!providersOnly) { let projection: string = step.node; append(expressions,[projection]); if (kind === "eachCall") { let each: string = step.each; append(expressions,[each]); } }
+        } else { if (!providersOnly) { let expression: string = step.node; append(expressions,[expression]); } }
+        for (let expression: string of expressions) { append(result,dependencies(expression,nodes,derived,[],true)); }
+    }
+    return result;
+}
+function writes(action: table): string[] { let result: string[] = []; let steps: table[] = action.steps; for (let step: table of steps) { let field: string = step.bind; if (field !== "") { append(result,[field]); } } return result; }
+function ordered(derived: table[], nodes: table, definitions: table): table[] {
+    let result: table[] = []; let done: string[] = []; let targets: string[] = [];
+    for (let entry: table of derived) { let field: string = entry.field; if (contains(targets,field)) { throw {code:"INVALID_CONFIG",message:"Duplicate derived field"}; } targets[targets.length] = field; }
+    while (result.length < derived.length) {
+        let added: boolean = false;
+        for (let entry: table of derived) { let field: string = entry.field; if (!added && !contains(done,field)) {
+            let expression: string = entry.node; let ready: boolean = true;
+            for (let dependency: string of dependencies(expression,nodes,definitions,[],false)) { if (contains(targets,dependency) && !contains(done,dependency)) { ready = false; } }
+            if (ready) { result[result.length] = entry; done[done.length] = field; added = true; }
+        } }
+        if (!added) { throw {code:"INVALID_CONFIG",message:"Derived cycle"}; }
+    }
+    return result;
+}
+export function executionJson(input: string): string {
+    let plan: table = json.parse(input); let nodesList: table[] = plan.nodes; let nodes: table = {}; let derivedList: table[] = plan.derived; let derived: table = {};
+    for (let node: table of nodesList) { let id: string = node.id; nodes[id] = node; }
+    for (let entry: table of derivedList) { let field: string = entry.field; let expression: string = entry.node; derived[field] = expression; }
+    let actions: table[] = plan.actions; let workflows: table[] = []; let ownership: table = {}; let byId: table = {};
+    for (let action: table of actions) { if (workflow(action)) {
+        let id: string = action.id; let written: string[] = writes(action); let read: string[] = reads(action,nodes,derived,false); let provider: string[] = reads(action,nodes,derived,true);
+        for (let field: string of written) {
+            for (let known: string of tables.keys(ownership)) { if (known === field) { throw {code:"INVALID_CONFIG",message:"State field has multiple workflow owners"}; } }
+            ownership[field] = id;
+        }
+        let value: table = {id:id,writes:written,reads:read,providers:provider}; workflows[workflows.length] = value; byId[id] = value;
+    } }
+    let invalidations: table = {}; let controls: table[] = plan.controls;
+    for (let action: table of actions) {
+        let id: string = action.id; let changed: string[] = []; let updates: table[] = action.updates;
+        for (let update: table of updates) { let field: string = update.field; append(changed,[field]); }
+        for (let entry: table of workflows) { let target: string = entry.id; if (target === id) { let written: string[] = entry.writes; append(changed,written); } }
+        invalidations[id] = invalidate(changed,id,workflows);
+    }
+    for (let control: table of controls) { let field: string = control.field; let changed: string[] = [field]; let invalid: string[] = control.invalidate; append(changed,invalid); invalidations["Set"+field] = invalidate(changed,"",workflows); }
+    return json.stringify({ordered:ordered(derivedList,nodes,derived),workflows:byId,invalidations:invalidations});
+}
+function invalidate(changed: string[], except: string, workflows: table[]): table[] {
+    let affected: string[] = []; append(affected,changed); let invalidated: string[] = []; let updated: boolean = true;
+    while (updated) {
+        updated = false;
+        for (let entry: table of workflows) { let id: string = entry.id; let read: string[] = entry.reads; let written: string[] = entry.writes;
+            if (id !== except && (intersects(affected,read) || intersects(affected,written)) && !contains(invalidated,id)) { invalidated[invalidated.length] = id; append(affected,written); updated = true; }
+        }
+    }
+    let result: table[] = [];
+    for (let entry: table of workflows) { let id: string = entry.id; if (contains(invalidated,id)) {
+        let written: string[] = entry.writes; let provider: string[] = entry.providers; let external: string[] = [];
+        for (let field: string of provider) { if (!contains(written,field)) { external[external.length] = field; } }
+        result[result.length] = {id:id,clear:intersects(affected,external)};
+    } }
+    return result;
+}
+export function main(): null { return null; }

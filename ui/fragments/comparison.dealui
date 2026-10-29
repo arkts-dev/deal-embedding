@@ -1,0 +1,9 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+export view Comparison(state: app.State): View {
+    When(state.present) {
+        ui.Comparison(status: state.status) {
+            ui.Money(label: state.label, minorUnits: state.magnitude)
+        }
+    }
+}

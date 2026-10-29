@@ -1,0 +1,4 @@
+import * as app from "./experience";
+import * as ui from "./platform.dealui-pack";
+// Candidate baskets are presented by the quote fragment, never as authoritative prices.
+export view Alternatives(state: app.State): View {}

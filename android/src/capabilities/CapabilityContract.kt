@@ -1,99 +1,21 @@
 package dev.deal.embedding.capabilities
 
-import org.json.*
+import dev.deal.embedding.*
+import org.json.JSONArray
 
-/** Integral native metadata must not silently truncate DEAL numbers. */
-internal fun JSONObject.requiredInteger(name: String): Int {
-    val raw = get(name)
-    require(raw is Number) { "Expected numeric $name" }
-    val value = raw.toDouble()
-    require(value.isFinite() && value == kotlin.math.floor(value) && value >= Int.MIN_VALUE && value <= Int.MAX_VALUE) { "Expected integral $name" }
-    return value.toInt()
-}
-
-/** Bounded, versioned wire types. Records become DEAL tables, never host objects. */
-data class CapabilityType(
-    val kind: String,
-    val fields: Map<String, CapabilityType> = emptyMap(),
-    val element: CapabilityType? = null,
-    val maximum: Int = 128,
-    val minimumNumber: Double = -Double.MAX_VALUE,
-    val maximumNumber: Double = Double.MAX_VALUE,
-    val optionalFields: Set<String> = emptySet(),
-) {
-    init {
-        require(kind in setOf("number", "string", "boolean", "null", "record", "array"))
-        require(maximum in 0..8192 && minimumNumber.isFinite() && maximumNumber.isFinite() && minimumNumber <= maximumNumber)
-        require((kind == "array") == (element != null))
-        require(kind == "record" || fields.isEmpty())
-        require(optionalFields.all { it in fields })
-        require(fields.size <= 32 && fields.keys.all { identifier(it) })
+/** Contract registration; execution is framework-internal. */
+class NativeCapabilities private constructor(contract: CapabilityContract, handlers: Map<String, (JSONArray, InvocationContext) -> Any>, marker: Boolean) {
+    private val frozen = contract.also { it.validateSchema() }.let { CapabilityContract.parse(it.json().toString()) }
+    val contract: CapabilityContract get() = CapabilityContract.parse(frozen.json().toString())
+    private val handlers = handlers.toMap()
+    constructor(contract: CapabilityContract, handlers: Map<String, (JSONArray) -> Any>) : this(contract,handlers.mapValues { (_, handler) -> { args, _ -> handler(args) } },true)
+    init { contract.validateSchema(); require(handlers.keys == contract.functions.map { it.name }.toSet()) }
+    internal companion object {
+        fun contextual(contract: CapabilityContract, handlers: Map<String, (JSONArray, InvocationContext) -> Any>) = NativeCapabilities(contract,handlers,true)
     }
-    fun validate(value: Any?, depth: Int = 0) {
-        require(depth <= 8)
-        when (kind) {
-            "null" -> require(value == null || value === JSONObject.NULL)
-            "number" -> require(value is Number && value.toDouble().isFinite() && value.toDouble() in minimumNumber..maximumNumber)
-            "string" -> require(value is String && value.length <= maximum)
-            "boolean" -> require(value is Boolean)
-            "record" -> {
-                require(value is JSONObject && value.keys().asSequence().all { it in fields })
-                fields.forEach { (name, type) -> if(value.has(name))type.validate(value.get(name), depth + 1) else require(name in optionalFields) }
-            }
-            "array" -> { require(value is JSONArray && value.length() <= maximum); for (i in 0 until value.length()) element!!.validate(value.get(i), depth + 1) }
-        }
-    }
-    fun json(): JSONObject = JSONObject().put("kind", kind).put("maximum", maximum).put("minimumNumber", minimumNumber).put("maximumNumber", maximumNumber).also { output ->
-        if (element != null) output.put("element", element.json())
-        if (kind=="record") output.put("fields", JSONObject().also { f -> fields.forEach { (name, type) -> f.put(name, type.json()) } })
-        if(optionalFields.isNotEmpty())output.put("optionalFields",JSONArray(optionalFields.toList()))
-    }
-    companion object {
-        val NumberType = CapabilityType("number")
-        val NullType = CapabilityType("null")
-        fun identifier(value: String) = value.matches(Regex("[A-Za-z][A-Za-z0-9_]{0,63}"))
-        fun parse(json: JSONObject, depth: Int = 0): CapabilityType {
-            require(depth <= 8 && json.length() <= 7)
-            val fields = json.optJSONObject("fields")
-            return CapabilityType(json.getString("kind"), fields?.keys()?.asSequence()?.associateWith { parse(fields.getJSONObject(it), depth + 1) } ?: emptyMap(),
-                json.optJSONObject("element")?.let { parse(it, depth + 1) }, json.requiredInteger("maximum"), json.getDouble("minimumNumber"), json.getDouble("maximumNumber"),json.optJSONArray("optionalFields")?.let{a->(0 until a.length()).map{a.getString(it)}.toSet()} ?: emptySet())
-        }
-    }
-}
-data class CapabilityParameter(val name: String, val type: CapabilityType)
-data class CapabilityFunction(val name: String, val description: String, val parameters: List<CapabilityParameter>, val result: CapabilityType) {
-    init { require(CapabilityType.identifier(name) && description.length in 1..512 && parameters.size <= 8 && parameters.map { it.name }.distinct().size == parameters.size && parameters.all { CapabilityType.identifier(it.name) }) }
-    fun validateArguments(args: JSONArray) { require(args.length() == parameters.size); parameters.forEachIndexed { index, p -> p.type.validate(args.get(index)) } }
-    fun json() = JSONObject().put("name", name).put("description", description).put("parameters", JSONArray(parameters.map { JSONObject().put("name", it.name).put("type", it.type.json()) })).put("result", result.json())
-}
-data class CapabilityContract(val module: String, val description: String, val functions: List<CapabilityFunction>, val version: Int = 1) {
-    init {
-        require(version == 1 && module.matches(Regex("host/[a-z][a-z0-9-]{0,63}")) && description.length in 1..512)
-        require(functions.size in 1..32 && functions.map { it.name }.distinct().size == functions.size)
-    }
-    fun json() = JSONObject().put("version", version).put("module", module).put("description", description).put("functions", JSONArray(functions.map { it.json() }))
-    companion object {
-        fun parse(text: String): CapabilityContract {
-            require(text.toByteArray().size <= 16 * 1024)
-            val json = JSONObject(text); require(json.length() == 4)
-            val functions = json.getJSONArray("functions")
-            require(functions.length() in 1..32)
-            return CapabilityContract(json.getString("module"), json.getString("description"), (0 until functions.length()).map { i ->
-                val f = functions.getJSONObject(i); val parameters = f.getJSONArray("parameters")
-                require(parameters.length() <= 8)
-                CapabilityFunction(f.getString("name"), f.getString("description"), (0 until parameters.length()).map { j ->
-                    val p = parameters.getJSONObject(j); CapabilityParameter(p.getString("name"), CapabilityType.parse(p.getJSONObject("type")))
-                }, CapabilityType.parse(f.getJSONObject("result")))
-            }, json.requiredInteger("version"))
-        }
-    }
-}
-/** Trusted native code registers handlers against the same contract used for checking and binding. */
-class NativeCapabilities(val contract: CapabilityContract, val handlers: Map<String, (JSONArray) -> Any>) {
-    init { require(handlers.keys == contract.functions.map { it.name }.toSet()) }
-    fun invoke(name: String, args: JSONArray): Any {
-        val function = contract.functions.single { it.name == name }
+    internal fun invoke(name: String, args: JSONArray, invocation: InvocationContext = InvocationContext(null)): Any {
+        val function = frozen.functions.single { it.name == name }
         function.validateArguments(args)
-        return handlers.getValue(name)(args).also { function.result.validate(it) }
+        return handlers.getValue(name)(args,invocation).also { function.result.validate(it) }
     }
 }

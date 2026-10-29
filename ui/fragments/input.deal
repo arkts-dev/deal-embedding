@@ -1,0 +1,23 @@
+import * as math from "std/math";
+
+export class NumberState { m_value: number; }
+export class TextState { m_value: string; }
+export class BooleanState { m_value: boolean; }
+export class NumberEdit { m_value: number; }
+export class TextEdit { m_value: string; }
+export class BooleanEdit { m_value: string; }
+
+export function initialNumber(value: number): NumberState { return {m_value:value}; }
+export function initialText(value: string): TextState { return {m_value:value}; }
+export function initialBoolean(value: boolean): BooleanState { return {m_value:value}; }
+
+export function editNumber(state: NumberState, action: NumberEdit, minimum: number, maximum: number): NumberState {
+    let value: number = action.m_value;
+    if (value - value !== 0 || math.floor(value) !== value || value < minimum || value > maximum) {
+        return {m_value:state.m_value};
+    }
+    return {m_value:value};
+}
+export function editText(state: TextState, action: TextEdit): TextState { return {m_value:action.m_value}; }
+export function editBoolean(state: BooleanState, action: BooleanEdit): BooleanState { return {m_value:!state.m_value}; }
+export function main(): null { return null; }

@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit
  * Never shares these bindings with generated experience isolates. Driving and async transport are
  * framework-owned; hosts supply facts/transport, not an evaluation loop.
  */
-class TrustedProgram(context: Context, assets: String, entry: String, mechanisms: List<NativeCapabilities>, private val model: ModelClient) : AutoCloseable {
+internal class TrustedProgram(context: Context, assets: String, entry: String, mechanisms: List<NativeCapabilities>, private val model: ModelClient) : AutoCloseable {
     private val cancellation = GenerationCancellation()
     private val log = EmbeddingLog(context)
     /** Observation scope only; never an execution or authority handle. */
