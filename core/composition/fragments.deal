@@ -71,6 +71,6 @@ export function expandJson(input: string, catalogue: string, dependencies: strin
     let builder: b.Builder = b.create(contracts); instantiate(builder,plan,ordered);
     let command: Record<string, unknown> = commands(builder,plan,graph,ordered); let conflicts: Record<string, unknown> = (command.conflicts as Record<string, unknown>); let views: string[] = decoded.strings(command.views);
     let editable: Record<string, unknown> = editability(builder,conflicts); root(builder,plan,graph,views);
-    return (json.stringify({plan:builder.plan,authoredViews:builder.authoredViews,instanceViews:builder.views,editable:editable}) as string);
+    return (json.stringify({plan:builder.plan(),authoredViews:builder.authoredViews,instanceViews:builder.views,editable:editable}) as string);
 }
 export function main(): null { return null; }

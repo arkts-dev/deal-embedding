@@ -18,9 +18,9 @@ function checkRecord(model: m.Model, type: string, active: string[]): null {
 }
 function records(model: m.Model, plan: Record<string, unknown>): null {
     let records: Record<string, unknown>[] = decoded.records(plan.records);
-    for (let record of records) { let name: string = (record.name as string); let key: string = m.symbol(name); if (m.present(model.records,key)) { m.reject("Duplicate record "+name); } let fs: Record<string, unknown>[] = []; model.records[key] = fs; }
-    for (let record of records) { let name: string = (record.name as string); let key: string = m.symbol(name); let fields: Record<string, unknown>[] = decoded.records(record.fields); let fs: Record<string, unknown>[] = []; for (let field of fields) { let name: string = (field.name as string); let type: string = (field.type as string); fs[fs.length] = {name:name,type:m.type(model,type)}; } delete model.records[key]; m.declare(model,key,fs); }
-    for (let name of tables.keys(model.records)) { checkRecord(model,name,[]); } return null;
+    for (let record of records) { let name: string = (record.name as string); let key: string = m.symbol(name); if (model.hasRecord(key)) { m.reject("Duplicate record "+name); } let fs: Record<string, unknown>[] = []; model.setRecord(key,fs); }
+    for (let record of records) { let name: string = (record.name as string); let key: string = m.symbol(name); let fields: Record<string, unknown>[] = decoded.records(record.fields); let fs: Record<string, unknown>[] = []; for (let field of fields) { let name: string = (field.name as string); let type: string = (field.type as string); fs[fs.length] = {name:name,type:m.type(model,type)}; } model.removeRecord(key); m.declare(model,key,fs); }
+    for (let name of model.recordIds()) { checkRecord(model,name,[]); } return null;
 }
 function custom(model: m.Model, plan: Record<string, unknown>): null {
     if (!model.allowCustom) { return null; }
@@ -31,7 +31,7 @@ function custom(model: m.Model, plan: Record<string, unknown>): null {
         if (m.present(model.custom,id)) { m.reject("Duplicate custom section"); }
         let body: string = (section.body as string); syntax.validateCustom(body); let parameters: Record<string, unknown>[] = decoded.records(section.parameters); let names: string[] = []; let args: string = "";
         for (let parameter of parameters) { m.closed(parameter,["name","type"]); let name: string = (parameter.name as string); let type: string = (parameter.type as string); if (m.contains(names,name)) { m.reject("Duplicate custom parameter"); } names[names.length] = name; if (args !== "") { args = args+","; } args = args+m.name(name)+": "+m.type(model,type); }
-        let result: string = (section.result as string); model.helpers = model.helpers+"function custom_"+id+"("+args+"): "+m.type(model,result)+" {\n"+body+"\n}\n"; model.custom[id] = section;
+        let result: string = (section.result as string); model.addHelper("function custom_"+id+"("+args+"): "+m.type(model,result)+" {\n"+body+"\n}\n"); model.custom[id] = section;
     } return null;
 }
 function provider(c: actions.Context, action: Record<string, unknown>, step: Record<string, unknown>, stateFields: Record<string, unknown>[]): null {
@@ -61,15 +61,14 @@ function prepare(model: m.Model, plan: Record<string, unknown>, execution: Recor
             for (let name of names) { if (m.contains(reserved,name)) { m.reject("Reserved workflow field "+name); } reserved[reserved.length] = name; stateFields[stateFields.length] = {name:name,type:types[index]}; index = index+1; }
         }
     }
-    m.declare(model,"State",stateFields); let nodes: Record<string, unknown>[] = decoded.records(plan.nodes);
-    for (let node of nodes) { let id: string = (node.id as string); model.nodes[id] = node; }
-    validation.bindings(model,plan); for (let id of tables.keys(model.nodes)) { validation.checkNode(model,id,[]); } return c;
+    m.declare(model,"State",stateFields);
+    validation.bindings(model,plan); for (let id of model.nodeIds) { validation.checkNode(model,id,[]); } return c;
 }
 function summary(c: actions.Context): string {
     let model: m.Model = c.model; let result: string = "";
     if (c.workflows.length > 0) {
         result = "next.m_loading = false; next.m_error = \"\";\n";
-        for (let action of c.workflows) { let id: string = (action.id as string); let names: Record<string, unknown> = actions.names(id); names["summarize"] = "workflow_"+m.symbol(id)+"_summarize"; model.helpers = model.helpers+syntax.functionSource(c.workflowSource,"summarize",names); result = result+"next = workflow_"+m.symbol(id)+"_summarize(next,next."+m.symbol(actions.busy(id))+",next."+m.symbol(actions.failure(id))+");\n"; }
+        for (let action of c.workflows) { let id: string = (action.id as string); let names: Record<string, unknown> = actions.names(id); names["summarize"] = "workflow_"+m.symbol(id)+"_summarize"; model.addHelper(syntax.functionSource(c.workflowSource,"summarize",names)); result = result+"next = workflow_"+m.symbol(id)+"_summarize(next,next."+m.symbol(actions.busy(id))+",next."+m.symbol(actions.failure(id))+");\n"; }
     }
     return result;
 }
@@ -81,7 +80,7 @@ function recompute(c: actions.Context): string {
 }
 function inputInitial(model: m.Model, action: Record<string, unknown>, initial: Record<string, unknown>): string {
     let updates: Record<string, unknown>[] = decoded.records(action.updates); let found: boolean = false;
-    for (let update of updates) { let id: string = (update.node as string); if (m.present(model.nodes,id)) { let node: Record<string, unknown> = (model.nodes[id] as Record<string, unknown>); let op: string = (node.op as string); if (op === "inputEdit") { found = true; } } }
+    for (let update of updates) { let id: string = (update.node as string); if (model.hasNode(id)) { let node: Record<string, unknown> = model.node(id); let op: string = (node.op as string); if (op === "inputEdit") { found = true; } } }
     if (!found) { return ""; } if (updates.length !== 1) { m.reject("Input transition requires one update"); }
     let update: Record<string, unknown> = updates[0]; let field: string = (update.field as string); let type: string = m.field(model,"State",field); let kind: string = "Text";
     if (type === "number") { kind = "Number"; } if (type === "boolean") { kind = "Boolean"; }
@@ -118,14 +117,14 @@ function emit(c: actions.Context, plan: Record<string, unknown>): string {
     let root: string = (plan.root as string); let rendered: string = views.render(model,viewMap,actionTypes,root,{state:m.value("State","state")},[]);
     let controlsUi: string = ""; for (let control of controls) { controlsUi = controlsUi+controlUi(control); }
     let nodes: Record<string, unknown>[] = decoded.records(plan.nodes);
-    let deal: string = imports(c,nodes)+"import * as math from \"std/math\";\nimport * as time from \"std/time\";\nimport * as tables from \"std/table\";\nimport * as json from \"std/json\";\nimport * as strings from \"std/string\";\nimport * as values from \"ui/values\";\n"+model.declarations+model.helpers+recomputed+code+"export function main(): null { return null; }\n";
+    let deal: string = imports(c,nodes)+"import * as math from \"std/math\";\nimport * as time from \"std/time\";\nimport * as tables from \"std/table\";\nimport * as json from \"std/json\";\nimport * as strings from \"std/string\";\nimport * as values from \"ui/values\";\n"+model.declarations()+model.helpers()+recomputed+code+"export function main(): null { return null; }\n";
     let status: string = ""; if (!model.fragments) { status = "When(state.m_loading) { ui.Progress(label: \"Loading…\") }\nWhen(state.m_error !== \"\") { ui.Notice(text:state.m_error,tone:\"error\") }\n"; }
     let ui: string = "import * as app from \"./experience\";\nimport * as ui from \"./platform.dealui-pack\";\n// @ui-root\nexport view Workspace(state: app.State): View { ui.Column() {\n"+controlsUi+status+rendered+"} }\n";
     return (json.stringify({deal:deal,dealui:ui}) as string);
 }
 export function lowerJson(input: string, catalogue: string, assets: string, fragments: boolean, allowCustom: boolean, experimental: boolean): string {
     let plan: Record<string, unknown> = json.parse(input); let catalogueData: Record<string, unknown> = json.parse(catalogue); let contracts: Record<string, unknown>[] = decoded.records(catalogueData.contracts); let source: Record<string, unknown> = json.parse(assets);
-    let model: m.Model = m.create(contracts,allowCustom,experimental); model.fragments = fragments;
+    let model: m.Model = m.create(contracts,allowCustom,experimental,decoded.records(plan.nodes)); model.fragments = fragments;
     validation.shapes(model,plan); records(model,plan); custom(model,plan);
     let executionText: string = executionPolicy.executionJson(input); let execution: Record<string, unknown> = json.parse(executionText);
     return emit(prepare(model,plan,execution,source),plan);

@@ -35,8 +35,16 @@ public final class CompositionBridge {
         return (String) Owner.EXECUTION.fn.invoke(new Object[]{input});
     }
     public static synchronized String expand(String input,String contracts) {
-        String expanded = (String) Owner.EXPAND.fn.invoke(new Object[]{input,contracts,dependencies(input)});
-        return (String) Owner.VIEWS.fn.invoke(new Object[]{expanded});
+        return expand(input, contracts, (phase, elapsed) -> {});
+    }
+    public static synchronized String expand(String input,String contracts, java.util.function.BiConsumer<String,Long> timing) {
+        long start = System.nanoTime();
+        String graph = dependencies(input); timing.accept("dependencies", System.nanoTime()-start);
+        start = System.nanoTime();
+        String expanded = (String) Owner.EXPAND.fn.invoke(new Object[]{input,contracts,graph});
+        timing.accept("expand", System.nanoTime()-start); start = System.nanoTime();
+        String result = (String) Owner.VIEWS.fn.invoke(new Object[]{expanded});
+        timing.accept("view-binding", System.nanoTime()-start); return result;
     }
     public static synchronized String lower(String input, String contracts, boolean fragments, boolean custom, boolean experimental) {
         String assets = "{\"workflow\":" + quote(AuthoredFragments.WORKFLOW) + ",\"read\":" + quote(AuthoredFragments.READ) + ",\"quotes\":" + quote(AuthoredFragments.QUOTES) + "}";

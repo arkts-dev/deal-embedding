@@ -11,8 +11,8 @@ function copyActive(active: string[], id: string): string[] { let result: string
 export function expr(model: m.Model, id: string, env: Record<string, unknown>, out: Output, active: string[]): m.Value {
     if (strings.startsWith(id,"$")) { return m.ref(model,id,env); }
     if (m.contains(active,id)) { m.reject("Expression cycle at "+id); }
-    if (!m.present(model.nodes,id)) { m.reject("Unknown expression "+id); }
-    let node: Record<string, unknown> = (model.nodes[id] as Record<string, unknown>); let op: string = (node.op as string); let args: string[] = decoded.strings(node.args); let p: Record<string, unknown> = (node.params as Record<string, unknown>); let chain: string[] = copyActive(active,id);
+    if (!model.hasNode(id)) { m.reject("Unknown expression "+id); }
+    let node: Record<string, unknown> = model.node(id); let op: string = (node.op as string); let args: string[] = decoded.strings(node.args); let p: Record<string, unknown> = (node.params as Record<string, unknown>); let chain: string[] = copyActive(active,id);
     if (op === "literal") { let type: string = (p.type as string); let value: string = (p.value as string); let target: string = m.type(model,type); return emit(model,out,target,m.initial(model,target,m.data(value))); }
     if (op === "now") { return {type:"number",code:"time.nowMillis()"}; }
     if (op === "record") { let type: string = (p.type as string); let target: string = m.type(model,type); let bindings: Record<string, unknown> = m.bindings(p,"fields"); let replacements: Record<string, unknown> = {}; let keys: string[] = []; for (let entry of m.fields(model,target)) { let field: string = (entry.name as string); let type: string = (entry.type as string); keys[keys.length] = field; let expression: string = (bindings[field] as string); replacements[field] = m.require(expr(model,expression,env,out,chain),type).code; } m.closed(bindings,keys); return emit(model,out,target,m.copy(model,target,"",replacements)); }

@@ -60,17 +60,26 @@ internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : Aut
 }
 
 internal object SandboxBundle {
+    // Only immutable APK text is shared. Factories execute afresh in each isolate;
+    // generated output, protocol state and authority are never cached here.
+    private val texts = java.util.WeakHashMap<android.content.res.AssetManager, MutableMap<String, String>>()
+    private val modules = java.util.WeakHashMap<android.content.res.AssetManager, MutableMap<String, String>>()
+    @Synchronized private fun text(context: Context, path: String): String =
+        texts.getOrPut(context.assets) { mutableMapOf() }.getOrPut(path) {
+            context.assets.open(path).bufferedReader().use { it.readText() }
+        }
     private fun StringBuilder.asset(context: Context, path: String) {
-        append(context.assets.open(path).bufferedReader().use { it.readText() }).append('\n')
+        append(text(context, path)).append('\n')
     }
     private fun StringBuilder.factory(key: String, source: String) {
         append("factories[").append(JSONObject.quote(key)).append("] = function(require,module,exports,process,console) {\n")
         append(source).append("\n};\n")
     }
-    fun factories(context: Context, root: String): String = buildString {
-        fun add(path: String, relative: String) { for(name in context.assets.list(path).orEmpty()) { val key=if(relative.isEmpty())name else "$relative/$name";if(name.endsWith(".js"))factory(key,context.assets.open("$path/$name").bufferedReader().use{it.readText()})else add("$path/$name",key) } }
-        add(root, "")
-    }
+    @Synchronized fun factories(context: Context, root: String): String =
+        modules.getOrPut(context.assets) { mutableMapOf() }.getOrPut(root) { buildString {
+            fun add(path: String, relative: String) { for(name in context.assets.list(path).orEmpty()) { val key=if(relative.isEmpty())name else "$relative/$name";if(name.endsWith(".js"))factory(key,text(context,"$path/$name"))else add("$path/$name",key) } }
+            add(root, "")
+        } }
     fun build(context: Context, bindings: List<String>, configure: String, invocation: String, output: File? = null, assetRoot: String? = null): String = buildString {
         require((output == null) != (assetRoot == null))
         asset(context, "embedding/bindings/sandbox.js")
@@ -81,14 +90,7 @@ internal object SandboxBundle {
                 factory(it.relativeTo(output).invariantSeparatorsPath, it.readText())
             }
         } else {
-            fun add(path: String, relative: String) {
-                for (name in context.assets.list(path) ?: emptyArray()) {
-                    val asset = "$path/$name"; val key = if (relative.isEmpty()) name else "$relative/$name"
-                    if (name.endsWith(".js")) factory(key, context.assets.open(asset).bufferedReader().use { it.readText() })
-                    else add(asset, key)
-                }
-            }
-            add(assetRoot!!, "")
+            append(factories(context, assetRoot!!))
         }
         append("return ").append(invocation).append("; })();")
     }

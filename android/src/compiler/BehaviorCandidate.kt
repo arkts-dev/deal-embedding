@@ -8,15 +8,19 @@ internal class BehaviorCandidate(
     private val contracts: List<CapabilityContract>,
     private val allowCustom: Boolean = false,
     private val selectionPrototype: Boolean = false,
+    private val timing: (String, Long) -> Unit = { _, _ -> },
 ) {
     class Rejected(message: String) : IllegalArgumentException(message)
 
     fun assemble(input: JSONObject): JSONObject {
         val fragments = input.has("fragments")
         try {
-            val plan = if (fragments) FragmentComposition(contracts).expand(input) else input
+            val plan = if (fragments) FragmentComposition(contracts, timing).expand(input) else input
             val catalogue = JSONObject().put("contracts", JSONArray(contracts.map { it.json() }))
-            return JSONObject(CompositionBridge.lower(plan.toString(), catalogue.toString(), fragments, allowCustom, selectionPrototype))
+            val started = System.nanoTime()
+            val source = CompositionBridge.lower(plan.toString(), catalogue.toString(), fragments, allowCustom, selectionPrototype)
+            timing("lower", System.nanoTime()-started)
+            return JSONObject(source)
         } catch (error: deal.codegen.jvm.JvmRuntime.DealError) {
             if (error.code !in setOf("INVALID_CONFIG", "INVALID_FORMULA", "INVALID_JSON", "E8001", "E8009")) throw error
             throw Rejected(error.msg)

@@ -54,10 +54,10 @@ internal class ExperienceGenerator(private val context: Context, private val con
         try {
             val input = JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map { it.json() }))
             val configure = "protocolContexts[${JSONObject.quote(contextId)}]={value:${JSONObject.quote(disclosedContext)},schema:$contextSchema};"
-            val bundle = SandboxBundle.build(context, listOf("generation-contracts.js", "protocol-contracts.js", "protocol-host.js", "generation-session.js"), configure,
-                "runGeneration(factories, $input)", assetRoot = config.generationAssets)
+            val bundle = log.stage("generation-bundle") { SandboxBundle.build(context, listOf("generation-contracts.js", "protocol-contracts.js", "protocol-host.js", "generation-session.js"), configure,
+                "runGeneration(factories, $input)", assetRoot = config.generationAssets) }
             val extra = if(config.policyAssets.isNotEmpty()) SandboxBundle.factories(context,config.policyAssets) else "factories['app-policy.js']=function(require,module,exports){module.exports={offer:{\$f:async()=>protocolRecord('@\$external/catalogue-policy/CatalogueOffer',{available:false,questions:[],stateJson:''})}};};"
-            eval(bundle.replace("return runGeneration(factories,", extra+"\nreturn runGeneration(factories,"))
+            log.stage("generation-initialize") { eval(bundle.replace("return runGeneration(factories,", extra+"\nreturn runGeneration(factories,")) }
             var attempts = 0
             while (true) {
                 cancellation.check()
@@ -105,7 +105,11 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             try {
                                 val plan = JSONObject(args.getString(0))
                                 val custom = plan.has("custom")
-                                val source = BehaviorCandidate(config.contracts, custom).assemble(plan)
+                                val source = log.stage("composition-assemble") {
+                                    BehaviorCandidate(config.contracts, custom, timing = { phase, nanos ->
+                                        log.event("composition-$phase", "completed", durationMs = nanos / 1_000_000)
+                                    }).assemble(plan)
+                                }
                                 val inventory=plan.optJSONArray("fragments") ?: plan.optJSONArray("behaviors") ?: if(plan.has("kind"))JSONArray().put(plan)else plan.getJSONArray("nodes")
                                 val operations=(0 until inventory.length()).map{inventory.getJSONObject(it).getString(if(plan.has("fragments")||plan.has("behaviors")||plan.has("kind"))"kind" else "op")}
                                 val operationCounts=JSONObject();operations.groupingBy{it}.eachCount().forEach{(op,count)->operationCounts.put(op,count)}

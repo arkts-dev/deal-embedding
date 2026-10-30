@@ -2,13 +2,14 @@ import * as decoded from "../../../core/decoded";
 import * as json from "std/json";
 import * as strings from "std/string";
 import * as tables from "std/table";
-export class Builder { plan: Record<string, unknown>; serial: number; ports: Record<string, unknown>; steps: Record<string, unknown>; views: Record<string, unknown>; contracts: Record<string, unknown>[]; authoredViews: Record<string, unknown>[]; }
+export class Builder { plan: () => Record<string, unknown>; append: (key: string, value: Record<string, unknown>) => void; setRoot: (id: string) => void; serial: number; ports: Record<string, unknown>; steps: Record<string, unknown>; views: Record<string, unknown>; contracts: Record<string, unknown>[]; authoredViews: Record<string, unknown>[]; }
 export function create(contracts: Record<string, unknown>[]): Builder {
     let records: Record<string, unknown>[] = []; let state: Record<string, unknown>[] = []; let nodes: Record<string, unknown>[] = []; let derived: Record<string, unknown>[] = []; let controls: Record<string, unknown>[] = []; let actions: Record<string, unknown>[] = []; let views: Record<string, unknown>[] = []; let authoredViews: Record<string, unknown>[] = [];
-    return {plan:{records:records,state:state,nodes:nodes,derived:derived,controls:controls,actions:actions,views:views,root:"root"},serial:0,ports:{},steps:{},views:{},contracts:contracts,authoredViews:authoredViews};
+    let plan: Record<string, unknown> = {records:records,state:state,nodes:nodes,derived:derived,controls:controls,actions:actions,views:views,root:"root"};
+    return {plan:function(): Record<string, unknown> { return plan; },append:function(key: string, value: Record<string, unknown>): void { let entries: Record<string, unknown>[] = decoded.records(plan[key]); entries[entries.length] = value; },setRoot:function(id: string): void { plan.root = id; },serial:0,ports:{},steps:{},views:{},contracts:contracts,authoredViews:authoredViews};
 }
 export function fail(message: string): null { throw {code:"INVALID_CONFIG",message:message}; }
-export function add(b: Builder, key: string, value: Record<string, unknown>): null { let entries: Record<string, unknown>[] = decoded.records(b.plan[key]); entries[entries.length] = value; return null; }
+export function add(b: Builder, key: string, value: Record<string, unknown>): null { b.append(key,value); return null; }
 export function node(b: Builder, op: string, args: string[], params: Record<string, unknown>): string {
     let id: string = "expression" + decimal(b.serial); b.serial = b.serial + 1;
     add(b,"nodes",{id:id,op:op,args:args,params:params}); return id;

@@ -73,7 +73,7 @@ export function screen(builder: b.Builder, plan: Record<string, unknown>, graph:
         let views: string[] = decoded.strings(builder.views[id]);
         if (views.length > 0) { children[children.length] = group(builder,"ContentGroup",views); }
     }
-    builder.plan.root = group(builder,"Screen",children);
+    builder.setRoot(group(builder,"Screen",children));
     return null;
 }
 export function main(): null { return null; }
