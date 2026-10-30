@@ -1,6 +1,6 @@
 # Portable UI
 
-Own pack/guidance/examples here; package exact platform.dealui-pack bytes at established paths, never duplicate catalogues. Preserve existing props/defaults/capability identities. Use Deal UI required-prop/typed-child/event contracts, backend-neutral additions and renderer coverage. No Kotlin composition checker or silent semantic fallback.
+Own pack/guidance/examples here; package exact platform.dealui-pack bytes at established paths, never duplicate catalogues. Preserve existing props/defaults/capability identities. Use Deal UI required-prop/typed-child/event contracts, backend-neutral additions and renderer coverage. No Kotlin composition checker or silent semantic fallback. Screen/InputGroup/MetricGroup/ActionGroup/ContentGroup provide checked semantic roles; core recipes own hierarchy and dependency-bound action placement. theme.json owns shared geometry and native typography/color roles; generated projections must consume it, never duplicate token values.
 
 DEAL owns quantities, validation, differences, suitability/status; native code formats/arranges. Money uses integral minor units/ISO currency; Comparison displays explicit conclusions. Keep task-facing labels, engineering in Inspect. Examples are fixtures, not hidden workflows or accepted-source rewrites. Prefer checked ui/values and fresh-outer State helpers over repeated digit/scalar logic. Use existing effects/updates for loading/error/retry. Keep immutable row/capture/reorder/removal/stale-action examples; views follow checked grammar, never arbitrary calls.
 

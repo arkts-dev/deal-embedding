@@ -45,7 +45,8 @@ for entry in execution compose fragments view-binding lowering; do
     javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$source"
 done
 javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$ROOT/tools/EmbeddingSyntax.java" "$ROOT/tools/CompositionBridge.java"
-"$KOTLIN_HOME/bin/kotlinc" "$OUTPUT_DIR/generated/CapabilityApi.kt" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect \
+python3 "$ROOT/tools/theme-build.py" "$ROOT/ui/theme.json" "$OUTPUT_DIR/generated/PackTheme.kt"
+"$KOTLIN_HOME/bin/kotlinc" "$OUTPUT_DIR/generated/PackTheme.kt" "$OUTPUT_DIR/generated/CapabilityApi.kt" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect \
     -classpath "$ANDROID_JAR:$OUTPUT_DIR/classes:$RUNTIME_CP" -d "$OUTPUT_DIR/classes" $(find "$ROOT/android/src" -name '*.kt' | sort)
 mkdir -p "$OUTPUT_DIR/generation/src" "$OUTPUT_DIR/guidance-tools"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/guidance-tools" "$ROOT/tools/GenerationGuidance.java"

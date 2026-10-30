@@ -71,3 +71,10 @@ export class MetricProps { label: string; value: string; unit: string = ""; }
 export component Metric(props: MetricProps): View { capability "renderer.value.metric"; }
 export class ComparisonProps { status: string; }
 export component Comparison(props: ComparisonProps): View { children required Money | Metric; capability "renderer.value.comparison"; }
+
+// Screen recipes own placement; these semantic groups supply renderer-neutral roles.
+export component Screen(props: EmptyProps): View { children required Hero | MetricGroup | Section | ContentGroup | Progress | Notice; capability "renderer.layout.screen"; }
+export component InputGroup(props: EmptyProps): View { children required IntField | TimeField | TextField | Toggle; capability "renderer.layout.inputs"; }
+export component MetricGroup(props: EmptyProps): View { children required Money | Metric | Comparison; capability "renderer.layout.metrics"; }
+export component ActionGroup(props: EmptyProps): View { children required PrimaryAction | SecondaryAction; capability "renderer.layout.actions"; }
+export component ContentGroup(props: EmptyProps): View { children required; capability "renderer.layout.content"; }

@@ -37,10 +37,20 @@ function nodes(c: Context, values: Record<string, unknown>[], bindings: Record<s
     } return result;
 }
 function replace(ids: string[], replacements: Record<string, unknown>): string[] { let result: string[] = []; for (let id of ids) { if (present(replacements,id)) { let values: string[] = decoded.strings(replacements[id]); for (let value of values) { result[result.length] = value; } } else { result[result.length] = id; } } return result; }
+function descendants(ids: string[], byId: Record<string, unknown>, result: string[]): null {
+    for (let id of ids) {
+        if (!contains(result,id)) {
+            result[result.length] = id;
+            let view: Record<string, unknown> = byId[id] as Record<string, unknown>;
+            descendants(decoded.strings(view.children),byId,result);
+        }
+    }
+    return null;
+}
 function editable(plan: Record<string, unknown>, expanded: Record<string, unknown>, replacements: Record<string, unknown>): null {
     let views: Record<string, unknown>[] = decoded.records(plan.views); let byId: Record<string, unknown> = {}; for (let view of views) { let id: string = (view.id as string); byId[id] = view; }
     let editable: Record<string, unknown> = (expanded.editable as Record<string, unknown>); let instanceViews: Record<string, unknown> = (expanded.instanceViews as Record<string, unknown>);
-    for (let instance of tables.keys(editable)) { let enabled: string = (editable[instance] as string); let source: string[] = decoded.strings(instanceViews[instance]); let ids: string[] = replace(source,replacements);
+    for (let instance of tables.keys(editable)) { let enabled: string = (editable[instance] as string); let source: string[] = decoded.strings(instanceViews[instance]); let ids: string[] = []; descendants(replace(source,replacements),byId,ids);
         for (let id of ids) { let view: Record<string, unknown> = (byId[id] as Record<string, unknown>); let component: string = (view.component as string); if (contains(["IntField","TimeField","TextField","Option","SecondaryAction"],component)) { let props: Record<string, unknown>[] = decoded.records(view.props); let found: boolean = false; for (let prop of props) { let name: string = (prop.name as string); if (name === "enabled") { if (found) { fail("Duplicate enabled property"); } prop.node = enabled; found = true; } } if (!found) { props[props.length] = {name:"enabled",node:enabled}; } view.props = props; } }
     } return null;
 }

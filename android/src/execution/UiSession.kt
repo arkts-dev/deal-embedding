@@ -24,7 +24,6 @@ internal class UiSession(private val context: Context, private val broker: Capab
     fun mount(output: File, restored: String? = null): JSONObject {
         check(!closed && capabilitySession == null) { "UI session is closed or already mounted" }
         val bundle = DealSessionBindings.bundle(context, config, output, restored)
-        check(bundle.toByteArray().size <= 2 * 1024 * 1024) { "UI bundle too large" }
         capabilitySession = broker.openSession(log)
         log.event("session", "opened", candidate, workspace)
         try { return JSONObject(evaluate(bundle)).also { recordSnapshot(it) } }

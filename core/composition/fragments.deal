@@ -1,4 +1,5 @@
 import * as decoded from "../decoded";
+import * as recipes from "./recipes";
 import * as b from "../../ui/fragments/support/builder";
 import * as instances from "../../ui/fragments/support/instances";
 import * as allocation from "../../ui/fragments/support/allocation-instance";
@@ -58,12 +59,10 @@ function editability(builder: b.Builder, conflicts: Record<string, unknown>): Re
     }
     return editable;
 }
-function root(builder: b.Builder, plan: Record<string, unknown>, commandViews: string[]): null {
+function root(builder: b.Builder, plan: Record<string, unknown>, graph: Record<string, unknown>, commandViews: string[]): null {
     let failed: string = b.derive(builder,"failed","boolean","false",b.binary(builder,"ne","$state.error",b.text(builder,"")));
-    let children: string[] = b.authored(builder,"WorkspaceStatus",{loading:"$state.loading",failed:failed,error:"$state.error",loadingLabel:b.text(builder,"Loading…"),errorTone:b.text(builder,"error")},{}); let display: string[] = decoded.strings(plan.display);
-    for (let id of display) { let views: string[] = decoded.strings(builder.views[id]); for (let view of views) { children[children.length] = view; } }
-    for (let view of commandViews) { children[children.length] = view; }
-    let root: string = b.view(builder,"Column",[],children,[],"","",""); builder.plan.root = root;
+    let children: string[] = b.authored(builder,"WorkspaceStatus",{loading:"$state.loading",failed:failed,error:"$state.error",loadingLabel:b.text(builder,"Loading…"),errorTone:b.text(builder,"error")},{});
+    recipes.screen(builder,plan,graph,commandViews,children);
     return null;
 }
 export function expandJson(input: string, catalogue: string, dependencies: string): string {
@@ -71,7 +70,7 @@ export function expandJson(input: string, catalogue: string, dependencies: strin
     let graph: Record<string, unknown> = json.parse(dependencies); let ordered: string[] = decoded.strings(graph.ordered);
     let builder: b.Builder = b.create(contracts); instantiate(builder,plan,ordered);
     let command: Record<string, unknown> = commands(builder,plan,graph,ordered); let conflicts: Record<string, unknown> = (command.conflicts as Record<string, unknown>); let views: string[] = decoded.strings(command.views);
-    let editable: Record<string, unknown> = editability(builder,conflicts); root(builder,plan,views);
+    let editable: Record<string, unknown> = editability(builder,conflicts); root(builder,plan,graph,views);
     return (json.stringify({plan:builder.plan,authoredViews:builder.authoredViews,instanceViews:builder.views,editable:editable}) as string);
 }
 export function main(): null { return null; }

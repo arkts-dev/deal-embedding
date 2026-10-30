@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "geometry": {
+    "screenGap": 24,
+    "groupGap": 12,
+    "tightGap": 4,
+    "surfaceInset": 16,
+    "surfaceRadius": 20,
+    "controlHeight": 48,
+    "inputMinimumWidth": 280,
+    "metricMinimumWidth": 160,
+    "comparisonMinimumWidth": 320
+  },
+  "roles": {
+    "hero": "headlineMedium",
+    "heading": "titleMedium",
+    "value": "headlineSmall",
+    "label": "labelLarge",
+    "body": "bodyLarge",
+    "caption": "bodySmall",
+    "surface": "surfaceContainer",
+    "accent": "primary",
+    "muted": "onSurfaceVariant"
+  }
+}

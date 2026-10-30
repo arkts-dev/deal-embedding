@@ -1,0 +1,79 @@
+import * as decoded from "../decoded";
+import * as b from "../../ui/fragments/support/builder";
+
+// Presentation recipes consume checked kinds/dependencies, never labels or task answers.
+export class Slot { name: string; accepts: string[]; required: boolean; maximum: number; }
+export class Block { id: string; kind: string; views: string[]; }
+function contains(values: string[], value: string): boolean { for (let item of values) { if (item === value) { return true; } } return false; }
+export function place(slots: Slot[], blocks: Block[]): Record<string, unknown> {
+    let placed: Record<string, unknown> = {}; let taken: string[] = [];
+    for (let slot of slots) {
+        let ids: string[] = [];
+        for (let block of blocks) {
+            if (contains(slot.accepts,block.kind)) {
+                if (contains(taken,block.id)) { b.fail("Recipe places a block more than once"); }
+                if (ids.length >= slot.maximum) { b.fail("Recipe slot capacity exceeded: "+slot.name); }
+                ids[ids.length] = block.id; taken[taken.length] = block.id;
+            }
+        }
+        if (slot.required && ids.length === 0) { b.fail("Required recipe slot is empty: "+slot.name); }
+        placed[slot.name] = ids;
+    }
+    if (taken.length !== blocks.length) { b.fail("Recipe does not accept a displayed block kind"); }
+    return placed;
+}
+function group(builder: b.Builder, component: string, children: string[]): string {
+    if (children.length === 0) { b.fail("Empty recipe group"); }
+    return b.view(builder,component,[],children,[],"","","");
+}
+function section(builder: b.Builder, title: string, children: string[]): string {
+    return b.view(builder,"Section",[{name:"title",node:b.text(builder,title)}],children,[],"","","");
+}
+function append(target: string[], values: string[]): null { for (let value of values) { target[target.length] = value; } return null; }
+export function screen(builder: b.Builder, plan: Record<string, unknown>, graph: Record<string, unknown>, commands: string[], status: string[]): null {
+    let definitions: Record<string, unknown>[] = decoded.records(plan.fragments); let display: string[] = decoded.strings(plan.display);
+    let header: string = b.view(builder,"Hero",[{name:"value",node:b.text(builder,plan.title as string)}],[],[],"","","");
+    let blocks: Block[] = [{id:"$header",kind:"hero",views:[header]}];
+    for (let id of display) {
+        for (let definition of definitions) {
+            let identity: string = definition.id as string;
+            if (identity === id) { let kind: string = definition.kind as string; blocks[blocks.length] = {id:id,kind:kind,views:decoded.strings(builder.views[id])}; }
+        }
+    }
+    let slots: Slot[] = [
+        {name:"header",accepts:["hero"],required:true,maximum:1},
+        {name:"outcome",accepts:["comparison","result"],required:false,maximum:blocks.length},
+        {name:"inputs",accepts:["input"],required:false,maximum:blocks.length},
+        {name:"content",accepts:["choice","allocation","quotes"],required:false,maximum:blocks.length},
+        {name:"resources",accepts:["read","alternatives"],required:false,maximum:blocks.length}
+    ];
+    let placement: Record<string, unknown> = place(slots,blocks);
+    let children: string[] = [header];
+    let outcome: string[] = [];
+    for (let id of decoded.strings(placement.outcome)) { append(outcome,decoded.strings(builder.views[id])); }
+    if (outcome.length > 0) { children[children.length] = group(builder,"MetricGroup",outcome); }
+    let inputs: string[] = decoded.strings(placement.inputs); let assigned: string[] = [];
+    let workflows: Record<string, unknown>[] = decoded.records(graph.commands); let index: number = 0;
+    if (commands.length !== workflows.length) { b.fail("Recipe command placement mismatch"); }
+    // Put each command beside the controls that affect it, not in a screen-bottom dump.
+    for (let workflow of workflows) {
+        let closure: string[] = decoded.strings(workflow.closure); let controls: string[] = [];
+        for (let id of inputs) { if (contains(closure,id) && !contains(assigned,id)) { append(controls,decoded.strings(builder.views[id])); assigned[assigned.length] = id; } }
+        let body: string[] = [];
+        if (controls.length > 0) { body[body.length] = group(builder,"InputGroup",controls); }
+        body[body.length] = group(builder,"ActionGroup",[commands[index]]);
+        let title: string = "Actions"; if (controls.length > 0) { title = "Inputs"; }
+        children[children.length] = section(builder,title,body); index = index+1;
+    }
+    let remaining: string[] = [];
+    for (let id of inputs) { if (!contains(assigned,id)) { append(remaining,decoded.strings(builder.views[id])); } }
+    if (remaining.length > 0) { children[children.length] = section(builder,"Inputs",[group(builder,"InputGroup",remaining)]); }
+    append(children,status);
+    for (let id of decoded.strings(placement.content)) {
+        let views: string[] = decoded.strings(builder.views[id]);
+        if (views.length > 0) { children[children.length] = group(builder,"ContentGroup",views); }
+    }
+    builder.plan.root = group(builder,"Screen",children);
+    return null;
+}
+export function main(): null { return null; }

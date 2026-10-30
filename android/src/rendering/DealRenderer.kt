@@ -48,7 +48,10 @@ internal enum class RenderComponent(val component: String, val capability: Strin
     Caption("Caption", "renderer.text.caption"), PrimaryAction("PrimaryAction", "renderer.action.primary"),
     SecondaryAction("SecondaryAction", "renderer.action.secondary"),
     Money("Money", "renderer.value.money"), Metric("Metric", "renderer.value.metric"),
-    Comparison("Comparison", "renderer.value.comparison");
+    Comparison("Comparison", "renderer.value.comparison"),
+    Screen("Screen", "renderer.layout.screen"), InputGroup("InputGroup", "renderer.layout.inputs"),
+    MetricGroup("MetricGroup", "renderer.layout.metrics"), ActionGroup("ActionGroup", "renderer.layout.actions"),
+    ContentGroup("ContentGroup", "renderer.layout.content");
 
     companion object {
         fun verify(pack: deal.ui.UiModel.PackModule) {
@@ -70,6 +73,7 @@ internal fun formatMoney(minorUnits: Int, currency: String, locale: java.util.Lo
 }
 
 private val LocalComparisonValue = compositionLocalOf { false }
+private val LocalFramed = compositionLocalOf { false }
 
 @Composable private fun LabeledValue(label: String, value: String) {
     val comparison = LocalComparisonValue.current
@@ -141,6 +145,11 @@ private val LocalComparisonValue = compositionLocalOf { false }
     val component = if (name == "root" || name == "__root") RenderComponent.Column else RenderComponent.entries.single { it.component == name }
     when (component) {
         RenderComponent.Column -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) { children() }
+        RenderComponent.Screen -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.screenGap)) { children() }
+        RenderComponent.InputGroup -> AdaptiveRow(PackTheme.inputMinimumWidth.value.toInt()) { children() }
+        RenderComponent.MetricGroup -> AdaptiveRow(PackTheme.metricMinimumWidth.value.toInt()) { children() }
+        RenderComponent.ActionGroup -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
+        RenderComponent.ContentGroup -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
         RenderComponent.Row -> AdaptiveRow(number("minimumChildWidth", 240)) { children() }
         RenderComponent.Heading -> Text(text("value"), style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
@@ -148,21 +157,33 @@ private val LocalComparisonValue = compositionLocalOf { false }
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         RenderComponent.Money -> LabeledValue(text("label"), formatMoney(number("minorUnits"), prop("currency")?.getString("stringValue") ?: "EUR"))
         RenderComponent.Metric -> LabeledValue(text("label"), listOf(text("value"), text("unit")).filter { it.isNotEmpty() }.joinToString(" "))
-        RenderComponent.Comparison -> Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text("status"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary, modifier = Modifier.semantics { heading() })
-                CompositionLocalProvider(LocalComparisonValue provides true) {
-                    AdaptiveRow(320) { children() }
+        RenderComponent.Comparison -> {
+            val framed = LocalFramed.current
+            Surface(shape = RoundedCornerShape(PackTheme.surfaceRadius), color = if (framed) androidx.compose.ui.graphics.Color.Transparent else PackTheme.surface,
+                modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(if (framed) 0.dp else PackTheme.surfaceInset), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) {
+                    Text(text("status"), style = PackTheme.value, fontWeight = FontWeight.SemiBold,
+                        color = PackTheme.accent, modifier = Modifier.semantics { heading() })
+                    CompositionLocalProvider(LocalComparisonValue provides true, LocalFramed provides true) {
+                        AdaptiveRow(PackTheme.comparisonMinimumWidth.value.toInt()) { children() }
+                    }
                 }
             }
         }
-        RenderComponent.Card -> Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { children() }
+        RenderComponent.Card -> {
+            if (LocalFramed.current) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
+            } else {
+                Surface(shape = RoundedCornerShape(PackTheme.surfaceRadius), color = PackTheme.surface) {
+                    CompositionLocalProvider(LocalFramed provides true) {
+                        Column(Modifier.fillMaxWidth().padding(PackTheme.surfaceInset), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
+                    }
+                }
+            }
         }
-        RenderComponent.Text -> Text(text("value"), style = MaterialTheme.typography.bodyLarge)
-        RenderComponent.Hero -> Text(text("value"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        RenderComponent.Text -> Text(text("value"), style = PackTheme.body)
+        RenderComponent.Hero -> Text(text("value"), style = PackTheme.hero, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.semantics { heading() })
         RenderComponent.Button, RenderComponent.PrimaryAction, RenderComponent.SecondaryAction -> {
             val actionModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics {
                 contentDescription = text("accessibilityLabel").ifEmpty { text("text") }
@@ -184,16 +205,16 @@ private val LocalComparisonValue = compositionLocalOf { false }
         RenderComponent.Time -> { val minute = number("value"); Text("%02d:%02d".format(minute / 60, minute % 60), style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary) }
         RenderComponent.Spinner -> CircularProgressIndicator()
         RenderComponent.Section -> {
-            var open by remember { mutableStateOf(true) }
-            Column(Modifier.fillMaxWidth().animateContentSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(text("title"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        if (text("summary").isNotEmpty()) Text(text("summary"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val framed = LocalFramed.current
+            Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(PackTheme.surfaceRadius),
+                color = if (framed) androidx.compose.ui.graphics.Color.Transparent else PackTheme.surface) {
+                CompositionLocalProvider(LocalFramed provides true) {
+                    Column(Modifier.fillMaxWidth().padding(if (framed) 0.dp else PackTheme.surfaceInset), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) {
+                        if (text("title").isNotEmpty()) Text(text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+                        if (text("summary").isNotEmpty()) Text(text("summary"), style = PackTheme.caption, color = PackTheme.muted)
+                        children()
                     }
-                    IconButton(onClick = { open = !open }) { Icon(if (open) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, if (open) "Collapse" else "Expand") }
                 }
-                if (open) children()
             }
         }
         RenderComponent.Option -> {
