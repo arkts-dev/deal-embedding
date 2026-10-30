@@ -1,3 +1,4 @@
+import * as decoded from "../decoded";
 import * as json from "std/json";
 import * as strings from "std/string";
 
@@ -28,8 +29,8 @@ function next(parser: Parser): Token {
             if (!escaped && current === "\"") {
                 let text: string = strings.substring(source,start,parser.offset);
                 // The JSON decoder owns escape, surrogate and control validation.
-                let decoded: table = json.parse("{\"value\":" + text + "}");
-                let value: string = decoded.value;
+                let decoded: Record<string, unknown> = json.parse("{\"value\":" + text + "}");
+                let value: string = (decoded.value as string);
                 return {text:value,kind:"string",offset:start};
             }
             if (!escaped && current === "\\") { escaped = true; } else { escaped = false; }
@@ -64,7 +65,7 @@ function next(parser: Parser): Token {
         return {text:strings.substring(source,start,parser.offset),kind:"name",offset:start};
     }
     let symbols: string[] = ["===","!==","<=",">=","&&","||","+","-","*","/","!","<",">","(",")",","];
-    for (let symbol: string of symbols) {
+    for (let symbol of symbols) {
         if (strings.startsWith(strings.substring(source,start,size),symbol)) {
             parser.offset = parser.offset + strings.length(symbol);
             return {text:symbol,kind:"symbol",offset:start};
@@ -108,8 +109,8 @@ function arity(name: string): number {
     if (name === "choose") { return 3; }
     fail(); return 0;
 }
-function operation(name: string, arguments: table[]): table { return {kind:"operation",name:name,arguments:arguments}; }
-function numeric(text: string): table {
+function operation(name: string, callArguments: Record<string, unknown>[]): Record<string, unknown> { return {kind:"operation",name:name,arguments:callArguments}; }
+function numeric(text: string): Record<string, unknown> {
     // Normalize the grammar's .5 / 1. / leading-zero forms for strict JSON decoding.
     let source: string = text;
     if (strings.startsWith(source,".")) { source = "0" + source; }
@@ -125,14 +126,14 @@ function numeric(text: string): table {
     while (strings.length(mantissa) > 1 && strings.startsWith(mantissa,"0") && digit(charAt(mantissa,1))) {
         mantissa = strings.substring(mantissa,1,strings.length(mantissa));
     }
-    let decoded: table = json.parse("{\"value\":" + mantissa + strings.substring(source,exponent,strings.length(source)) + "}");
-    let value: number = decoded.value;
+    let decoded: Record<string, unknown> = json.parse("{\"value\":" + mantissa + strings.substring(source,exponent,strings.length(source)) + "}");
+    let value: number = (decoded.value as number);
     if (value - value !== 0) { fail(); }
     return {kind:"literal",value:value};
 }
-function primary(parser: Parser): table {
+function primary(parser: Parser): Record<string, unknown> {
     let token: Token = parser.token;
-    if (token.kind === "symbol" && token.text === "(") { advance(parser); let result: table = binary(parser,1); consume(parser,")"); return result; }
+    if (token.kind === "symbol" && token.text === "(") { advance(parser); let result: Record<string, unknown> = binary(parser,1); consume(parser,")"); return result; }
     if (token.kind === "number") { advance(parser); return numeric(token.text); }
     if (token.kind === "string") { advance(parser); return {kind:"literal",value:token.text}; }
     if (token.kind === "name") {
@@ -141,29 +142,29 @@ function primary(parser: Parser): table {
         if (parser.token.kind !== "symbol" || parser.token.text !== "(") { return {kind:"reference",path:token.text}; }
         let count: number = arity(token.text);
         advance(parser);
-        let arguments: table[] = [];
+        let callArguments: Record<string, unknown>[] = [];
         if (parser.token.text !== ")") {
-            arguments[arguments.length] = binary(parser,1);
-            while (parser.token.text === ",") { advance(parser); arguments[arguments.length] = binary(parser,1); }
+            callArguments[callArguments.length] = binary(parser,1);
+            while (parser.token.text === ",") { advance(parser); callArguments[callArguments.length] = binary(parser,1); }
         }
         consume(parser,")");
-        if (count >= 0 && arguments.length !== count) { fail(); }
-        return operation(token.text,arguments);
+        if (count >= 0 && callArguments.length !== count) { fail(); }
+        return operation(token.text,callArguments);
     }
     fail(); return {};
 }
-function unary(parser: Parser): table {
+function unary(parser: Parser): Record<string, unknown> {
     let symbol: string = parser.token.text;
     if (parser.token.kind !== "symbol") { return primary(parser); }
     if (symbol === "!") { advance(parser); return operation("not",[unary(parser)]); }
     if (symbol === "+" || symbol === "-") {
-        advance(parser); let zero: table = {kind:"literal",value:0};
+        advance(parser); let zero: Record<string, unknown> = {kind:"literal",value:0};
         return operation(operator(symbol),[zero,unary(parser)]);
     }
     return primary(parser);
 }
-function binary(parser: Parser, minimum: number): table {
-    let left: table = unary(parser);
+function binary(parser: Parser, minimum: number): Record<string, unknown> {
+    let left: Record<string, unknown> = unary(parser);
     while (parser.token.kind === "symbol" && precedence(parser.token.text) >= minimum) {
         let symbol: string = parser.token.text;
         let level: number = precedence(symbol);
@@ -172,21 +173,21 @@ function binary(parser: Parser, minimum: number): table {
     }
     return left;
 }
-export function parse(source: string): table {
+export function parse(source: string): Record<string, unknown> {
     let parser: Parser = {source:source,offset:0,token:{text:"",kind:"end",offset:0}};
     advance(parser);
-    let result: table = binary(parser,1);
+    let result: Record<string, unknown> = binary(parser,1);
     if (parser.token.kind !== "end") { fail(); }
     return result;
 }
-export function references(expression: table): string[] {
-    let kind: string = expression.kind; let result: string[] = [];
-    if (kind === "reference") { let path: string = expression.path; result[result.length] = path; }
+export function references(expression: Record<string, unknown>): string[] {
+    let kind: string = (expression.kind as string); let result: string[] = [];
+    if (kind === "reference") { let path: string = (expression.path as string); result[result.length] = path; }
     if (kind === "operation") {
-        let arguments: table[] = expression.arguments;
-        for (let argument: table of arguments) { for (let path: string of references(argument)) { result[result.length] = path; } }
+        let callArguments: Record<string, unknown>[] = decoded.records(expression.arguments);
+        for (let argument of callArguments) { for (let path of references(argument)) { result[result.length] = path; } }
     }
     return result;
 }
-export function parseJson(source: string): string { return json.stringify(parse(source)); }
+export function parseJson(source: string): string { return (json.stringify(parse(source)) as string); }
 export function main(): null { return null; }

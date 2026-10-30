@@ -1,1 +1,1 @@
-export async function check(deal: string, dealui: string): table;
+export function check(deal: string, dealui: string): Promise<Record<string, unknown>> ;

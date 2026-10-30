@@ -4,7 +4,7 @@ export class QuoteValue {}
 function readQuote(): null { return null; }
 export function collect(source: QuoteRow[]): null {
     let results: QuoteValue[] = [];
-    for (let item: QuoteRow of source) { readQuote(); }
+    for (let item of source) { readQuote(); }
     commitQuotes();
     return null;
 }

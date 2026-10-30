@@ -12,28 +12,28 @@ export function contexts():string {
     let second:embedding.WireType=embedding.contextSchema(context);
     insist(second.fields[0].type.maximum===16,"Frozen schema/copy");
     insist(embedding.contextJson(context)==="{\"name\":\"Ada\"}","Frozen value");
-    let rejected:boolean=false;try{embedding.contextJson({id:"forged"});}catch(e){rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Forged context");
-    rejected=false;try{embedding.snapshot(second,"{\"name\":\"Ada\",\"extra\":1}");}catch(e){rejected=true;}insist(rejected,"Closed record");
+    let rejected:boolean=false;try{embedding.contextJson({id:"forged"});}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Forged context");
+    rejected=false;try{embedding.snapshot(second,"{\"name\":\"Ada\",\"extra\":1}");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=true;}insist(rejected,"Closed record");
     let bad:embedding.WireField={name:"bad",type:{kind:"",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional:true};let badFields:embedding.WireField[]=[bad];
-    rejected=false;try{embedding.snapshot({kind:"record",fields:badFields,element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"{}");}catch(e){rejected=true;}insist(rejected,"Invalid absent schema");
-    rejected=false;try{embedding.snapshot({kind:"string",maximum:1,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"\"😀\"");}catch(e){rejected=true;}insist(rejected,"UTF16 bound");
+    rejected=false;try{embedding.snapshot({kind:"record",fields:badFields,element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"{}");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=true;}insist(rejected,"Invalid absent schema");
+    rejected=false;try{embedding.snapshot({kind:"string",maximum:1,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"\"😀\"");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=true;}insist(rejected,"UTF16 bound");
     let pending:embedding.GenerationRequest=embedding.request("Proof","An authored test workflow",context);
     insist(embedding.requestTrace(pending)!=="","Request trace");
     embedding.cancel(pending);return pending.id;
 }
-export async function fractionalEvents():embedding.EventPage {return await embedding.events("","",1.5);}
-export async function cancelled(id:string):string {let rejected:boolean=false;try{await embedding.generate({id:id});}catch(e){rejected=e.code==="CANCELLED";}insist(rejected,"Precancel");return "cancelled";}
-export async function generated():embedding.Experience {
+export async function fractionalEvents(): Promise<embedding.EventPage> {return await embedding.events("","",1.5);}
+export async function cancelled(id:string): Promise<string> {let rejected:boolean=false;try{await embedding.generate({id:id});}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.code==="CANCELLED";}insist(rejected,"Precancel");return "cancelled";}
+export async function generated(): Promise<embedding.Experience> {
     let context:embedding.GenerationContext=embedding.snapshot({kind:"record",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"{}");let pending:embedding.GenerationRequest=embedding.request("Generated proof","An authored test workflow",context);
     let prepared:embedding.Experience=await embedding.generate(pending);insist(prepared.origin==="generated","Generated origin");return prepared;
 }
 export function waitingRequest():string {
     let context:embedding.GenerationContext=embedding.snapshot({kind:"record",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"{}");let pending:embedding.GenerationRequest=embedding.request("Cancellation proof","Wait for explicit cancellation",context);return pending.id;
 }
-export async function generateWaiting(id:string):embedding.Experience {return await embedding.generate({id:id});}
+export async function generateWaiting(id:string): Promise<embedding.Experience> {return await embedding.generate({id:id});}
 export function cancelWaiting(id:string):null {embedding.cancel({id:id});return null;}
-export async function load(title:string, deal:string, dealui:string):embedding.Experience {return await embedding.load(title,{deal:deal,dealui:dealui});}
-export async function lifecycle(deal:string,dealui:string):string {
+export async function load(title:string, deal:string, dealui:string): Promise<embedding.Experience> {return await embedding.load(title,{deal:deal,dealui:dealui});}
+export async function lifecycle(deal:string,dealui:string): Promise<string> {
     let before:number=embedding.saved().length;
     let prepared:embedding.Experience=await embedding.load("Lifecycle proof",{deal:deal,dealui:dealui});
     insist(embedding.saved().length===before,"Preparation must not save");
@@ -42,18 +42,18 @@ export async function lifecycle(deal:string,dealui:string):string {
     let live:embedding.Session=await embedding.run(fake);let again:embedding.Session=await embedding.run(prepared);insist(live.id===again.id,"One live session");
     let update:embedding.SessionUpdate=await embedding.next(live,"");let snapshot:embedding.UiSnapshot=update.snapshot;insist(snapshot.fault==="","Initial snapshot");
     embedding.published(live,snapshot.version);
-    let fractional:boolean=false;try{embedding.published(live,0.5);}catch(e){fractional=e.code==="INVALID_ARGUMENT";}insist(fractional,"Fractional publication");
-    fractional=false;try{await embedding.dispatch(live,0.5,null);}catch(e){fractional=e.code==="INVALID_ARGUMENT";}insist(fractional,"Fractional slot");
-    let rejected:boolean=false;try{embedding.published(live,snapshot.version+1);}catch(e){rejected=true;}insist(rejected,"Unproduced version");
+    let fractional:boolean=false;try{embedding.published(live,0.5);}catch (eUnknown) { let e: Error = eUnknown as Error;fractional=e.code==="INVALID_ARGUMENT";}insist(fractional,"Fractional publication");
+    fractional=false;try{await embedding.dispatch(live,0.5,null);}catch (eUnknown) { let e: Error = eUnknown as Error;fractional=e.code==="INVALID_ARGUMENT";}insist(fractional,"Fractional slot");
+    let rejected:boolean=false;try{embedding.published(live,snapshot.version+1);}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=true;}insist(rejected,"Unproduced version");
     await embedding.dispatch(live,0,null);update=await embedding.next(live,update.cursor);snapshot=update.snapshot;embedding.published(live,snapshot.version);
     insist(embedding.sessionTrace(live)!=="","Session trace");
-    let found:boolean=false;for(let e:embedding.Experience of embedding.saved()){if(e.id===prepared.id){found=e.title==="Lifecycle proof"&&e.origin==="supplied"&&e.attempts===0;}}insist(found,"Metadata cannot mint provenance");
-    await embedding.close(live);rejected=false;try{await embedding.next(live,"");}catch(e){rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Closed session");
+    let found:boolean=false;for (let e of embedding.saved()){if(e.id===prepared.id){found=e.title==="Lifecycle proof"&&e.origin==="supplied"&&e.attempts===0;}}insist(found,"Metadata cannot mint provenance");
+    await embedding.close(live);rejected=false;try{await embedding.next(live,"");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Closed session");
     let cold:embedding.Session=await embedding.run(prepared);insist(cold.id!==live.id,"Cold new session");await embedding.close(cold);
     await embedding.forget(prepared);insist(embedding.saved().length===before,"Forget");
-    let unused:embedding.Experience=await embedding.load("Unused",{deal:deal,dealui:dealui});embedding.release(unused);rejected=false;try{embedding.source(unused);}catch(e){rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Release");return "load/run/same-live/next/dispatch/published/close/cold/forget/release";
+    let unused:embedding.Experience=await embedding.load("Unused",{deal:deal,dealui:dealui});embedding.release(unused);rejected=false;try{embedding.source(unused);}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Release");return "load/run/same-live/next/dispatch/published/close/cold/forget/release";
 }
-export async function equipment(intent:string,json:string):embedding.Experience {
+export async function equipment(intent:string,json:string): Promise<embedding.Experience> {
     let requirement:embedding.WireField={name:"requirement",type:{kind:"string",maximum:128,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional: false};
     let specification:embedding.WireField={name:"specification",type:{kind:"string",maximum:128,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional: false};
     let quantity:embedding.WireField={name:"quantity",type:{kind:"number",minimumNumber:1,maximumNumber:128,fields: [], element: null, maximum: 128},optional: false};
@@ -66,36 +66,36 @@ export async function equipment(intent:string,json:string):embedding.Experience 
     let request:embedding.GenerationRequest=embedding.request("Equipment protocol proof",intent,context);
     return await embedding.generate(request);
 }
-export async function run(id:string):embedding.Session {return await embedding.run({id:id,title:"",origin:"",attempts:0});}
-export async function next(id:string,cursor:string):embedding.SessionUpdate {return await embedding.next({id:id},cursor);}
-export async function dispatch(id:string,slot:number):null {return await embedding.dispatch({id:id},slot,null);}
-export async function dispatchPayload(id:string,slot:number,payload:string):null {return await embedding.dispatch({id:id},slot,payload);}
+export async function run(id:string): Promise<embedding.Session> {return await embedding.run({id:id,title:"",origin:"",attempts:0});}
+export async function next(id:string,cursor:string): Promise<embedding.SessionUpdate> {return await embedding.next({id:id},cursor);}
+export async function dispatch(id:string,slot:number): Promise<null> {return await embedding.dispatch({id:id},slot,null);}
+export async function dispatchPayload(id:string,slot:number,payload:string): Promise<null> {return await embedding.dispatch({id:id},slot,payload);}
 export function construction():string {
     let schema: embedding.WireType = {kind:"number",fields:[],element:null,maximum:128,minimumNumber:-10,maximumNumber:10};
     let context: embedding.GenerationContext = embedding.snapshot(schema,"1.5");
     insist(embedding.contextJson(context)==="1.5","Fractional number crosses public protocol");
     return "construction";
 }
-export async function invalidCursor(id:string,cursor:string):string {let caught:boolean=false;try{await embedding.next({id:id},cursor);}catch(error){caught=error.code==="INVALID_CURSOR";}insist(caught,"Invalid cursor must raise DEAL Error");return "invalid cursor";}
-export function invalidGrant():string {let caught:boolean=false;try{embedding.grant("missing/module");}catch(error){caught=error.code==="INVALID_ARGUMENT";}insist(caught,"Grant failure must raise in originating DEAL call");return "grant error";}
+export async function invalidCursor(id:string,cursor:string): Promise<string> {let caught:boolean=false;try{await embedding.next({id:id},cursor);}catch (errorUnknown) { let error: Error = errorUnknown as Error;caught=error.code==="INVALID_CURSOR";}insist(caught,"Invalid cursor must raise DEAL Error");return "invalid cursor";}
+export function invalidGrant():string {let caught:boolean=false;try{embedding.grant("missing/module");}catch (errorUnknown) { let error: Error = errorUnknown as Error;caught=error.code==="INVALID_ARGUMENT";}insist(caught,"Grant failure must raise in originating DEAL call");return "grant error";}
 export function grant(module:string):null {return embedding.grant(module);}
 export function revoke(module:string):null {return embedding.revoke(module);}
-export async function close(id:string):null {return await embedding.close({id:id});}
-export async function forget(id:string):null {return await embedding.forget({id:id,title:"",origin:"",attempts:0});}
+export async function close(id:string): Promise<null> {return await embedding.close({id:id});}
+export async function forget(id:string): Promise<null> {return await embedding.forget({id:id,title:"",origin:"",attempts:0});}
 export function saved():embedding.Experience[] {return embedding.saved();}
-export async function prepareCapabilities():number {let contracts:embedding.CapabilityContract[]=await embedding.refresh();for(let c:embedding.CapabilityContract of contracts){embedding.grant(c.module);embedding.revoke(c.module);embedding.grant(c.module);}return contracts.length;}
-export async function observation():string {
+export async function prepareCapabilities(): Promise<number> {let contracts:embedding.CapabilityContract[]=await embedding.refresh();for (let c of contracts){embedding.grant(c.module);embedding.revoke(c.module);embedding.grant(c.module);}return contracts.length;}
+export async function observation(): Promise<string> {
     embedding.capture(false);let health:embedding.ObservationHealth=embedding.health();
     let page:embedding.EventPage=await embedding.events("","",1);if(page.cursor!==""){page=await embedding.events("",page.cursor,1);}
     embedding.capture(true);embedding.capture(false);
     let missing:embedding.Artifact=await embedding.artifact("00000000-0000-0000-0000-000000000000");insist(missing.status==="unavailable","Missing artifact");
     await embedding.clearObservation();return "capture/health/events/continuation/artifact/clear";
 }
-export async function resumeSaved():number {let count:number=0;for(let e:embedding.Experience of embedding.saved()){let s:embedding.Session=await embedding.run(e);let update:embedding.SessionUpdate=await embedding.next(s,"");let snapshot:embedding.UiSnapshot=update.snapshot;insist(snapshot.fault==="","Reconstituted saved source");await embedding.close(s);await embedding.forget(e);count=count+1;}return count;}
+export async function resumeSaved(): Promise<number> {let count:number=0;for (let e of embedding.saved()){let s:embedding.Session=await embedding.run(e);let update:embedding.SessionUpdate=await embedding.next(s,"");let snapshot:embedding.UiSnapshot=update.snapshot;insist(snapshot.fault==="","Reconstituted saved source");await embedding.close(s);await embedding.forget(e);count=count+1;}return count;}
 export function exactSource(id:string):embedding.Source {return embedding.source({id:id,title: "", origin: "", attempts: 0});}
 export function release(id:string):null {return embedding.release({id:id,title:"",origin:"",attempts:0});}
-export async function artifact(id:string):embedding.Artifact {return await embedding.artifact(id);}
+export async function artifact(id:string): Promise<embedding.Artifact> {return await embedding.artifact(id);}
 export function capture(enabled:boolean):null {return embedding.capture(enabled);}
-export async function events(trace:string,cursor:string,limit:number):embedding.EventPage {return await embedding.events(trace,cursor,limit);}
-export async function shutdown():null {return await embedding.shutdown();}
+export async function events(trace:string,cursor:string,limit:number): Promise<embedding.EventPage> {return await embedding.events(trace,cursor,limit);}
+export async function shutdown(): Promise<null> {return await embedding.shutdown();}
 export function main():null {return null;}

@@ -1,3 +1,4 @@
+import * as decoded from "../decoded";
 import * as b from "../../ui/fragments/support/builder";
 import * as instances from "../../ui/fragments/support/instances";
 import * as allocation from "../../ui/fragments/support/allocation-instance";
@@ -5,21 +6,21 @@ import * as alternatives from "../../ui/fragments/support/alternatives-instance"
 import * as quotes from "../../ui/fragments/support/quotes-instance";
 import * as json from "std/json";
 import * as tables from "std/table";
-function contains(values: string[], value: string): boolean { for (let entry: string of values) { if (entry === value) { return true; } } return false; }
-function instantiate(builder: b.Builder, plan: table, ordered: string[]): null {
-    let definitions: table[] = plan.fragments; let specifications: table = {};
-    for (let definition: table of definitions) { let id: string = definition.id; specifications[id] = definition; }
-    for (let id: string of ordered) { let definition: table = specifications[id]; let views: string[] = instance(builder,id,definition); builder.views[id] = views; }
+function contains(values: string[], value: string): boolean { for (let entry of values) { if (entry === value) { return true; } } return false; }
+function instantiate(builder: b.Builder, plan: Record<string, unknown>, ordered: string[]): null {
+    let definitions: Record<string, unknown>[] = decoded.records(plan.fragments); let specifications: Record<string, unknown> = {};
+    for (let definition of definitions) { let id: string = (definition.id as string); specifications[id] = definition; }
+    for (let id of ordered) { let definition: Record<string, unknown> = (specifications[id] as Record<string, unknown>); let views: string[] = instance(builder,id,definition); builder.views[id] = views; }
     return null;
 }
-function instance(builder: b.Builder, id: string, definition: table): string[] {
-        let kind: string = definition.kind; let config: table = definition.config;
+function instance(builder: b.Builder, id: string, definition: Record<string, unknown>): string[] {
+        let kind: string = (definition.kind as string); let config: Record<string, unknown> = (definition.config as Record<string, unknown>);
         if (kind === "allocation") { return allocation.compose(builder,id,config); }
         if (kind === "alternatives") { return alternatives.compose(builder,id,config); }
         if (kind === "quotes") { return quotes.compose(builder,id,config); }
         return localInstance(builder,id,kind,config);
 }
-function localInstance(builder: b.Builder, id: string, kind: string, config: table): string[] {
+function localInstance(builder: b.Builder, id: string, kind: string, config: Record<string, unknown>): string[] {
         let views: string[] = [];
         if (kind === "input") { views = instances.input(builder,id,config); }
         if (kind === "read") { views = instances.read(builder,id,config); }
@@ -28,49 +29,49 @@ function localInstance(builder: b.Builder, id: string, kind: string, config: tab
         if (kind === "choice") { views = instances.choice(builder,id,config); }
         return views;
 }
-function commands(builder: b.Builder, plan: table, graph: table, ordered: string[]): table {
-    let commands: table[] = plan.commands; let closures: table[] = graph.commands; let commandViews: string[] = []; let conflicts: table = {};
-    for (let command: table of commands) {
-        let id: string = command.id; let closure: string[] = [];
-        for (let entry: table of closures) { let target: string = entry.id; if (target === id) { closure = entry.closure; } }
-        let sequence: table[] = [];
-        for (let instance: string of ordered) { if (contains(closure,instance)) {
-            for (let key: string of tables.keys(builder.steps)) { if (key === instance) { let steps: table[] = builder.steps[instance]; for (let step: table of steps) { sequence[sequence.length] = step; } } }
+function commands(builder: b.Builder, plan: Record<string, unknown>, graph: Record<string, unknown>, ordered: string[]): Record<string, unknown> {
+    let commands: Record<string, unknown>[] = decoded.records(plan.commands); let closures: Record<string, unknown>[] = decoded.records(graph.commands); let commandViews: string[] = []; let conflicts: Record<string, unknown> = {};
+    for (let command of commands) {
+        let id: string = (command.id as string); let closure: string[] = [];
+        for (let entry of closures) { let target: string = (entry.id as string); if (target === id) { closure = decoded.strings(entry.closure); } }
+        let sequence: Record<string, unknown>[] = [];
+        for (let instance of ordered) { if (contains(closure,instance)) {
+            for (let key of tables.keys(builder.steps)) { if (key === instance) { let steps: Record<string, unknown>[] = decoded.records(builder.steps[instance]); for (let step of steps) { sequence[sequence.length] = step; } } }
         } }
         b.action(builder,id,[],sequence,[]);
-        for (let instance: string of closure) {
+        for (let instance of closure) {
             let pending: string[] = [];
-            for (let key: string of tables.keys(conflicts)) { if (key === instance) { pending = conflicts[instance]; } }
+            for (let key of tables.keys(conflicts)) { if (key === instance) { pending = decoded.strings(conflicts[instance]); } }
             pending[pending.length] = "$state.workflow"+id+"Pending"; conflicts[instance] = pending;
         }
-        let enabled: string = b.derive(builder,id+"Enabled","boolean","true",b.unary(builder,"not","$state.workflow"+id+"Pending")); let label: string = command.label;
+        let enabled: string = b.derive(builder,id+"Enabled","boolean","true",b.unary(builder,"not","$state.workflow"+id+"Pending")); let label: string = (command.label as string);
         commandViews[commandViews.length] = b.view(builder,"PrimaryAction",[{name:"text",node:b.text(builder,label)},{name:"enabled",node:enabled}],[],[b.event("onClick",id,[])],"","","");
     }
     return {views:commandViews,conflicts:conflicts};
 }
-function editability(builder: b.Builder, conflicts: table): table {
-    let editable: table = {};
-    for (let instance: string of tables.keys(conflicts)) {
-        let pending: string[] = conflicts[instance]; let any: string = b.boolean(builder,false);
-        for (let ref: string of pending) { any = b.binary(builder,"or",any,ref); }
+function editability(builder: b.Builder, conflicts: Record<string, unknown>): Record<string, unknown> {
+    let editable: Record<string, unknown> = {};
+    for (let instance of tables.keys(conflicts)) {
+        let pending: string[] = decoded.strings(conflicts[instance]); let any: string = b.boolean(builder,false);
+        for (let ref of pending) { any = b.binary(builder,"or",any,ref); }
         editable[instance] = b.derive(builder,instance+"Editable","boolean","true",b.unary(builder,"not",any));
     }
     return editable;
 }
-function root(builder: b.Builder, plan: table, commandViews: string[]): null {
+function root(builder: b.Builder, plan: Record<string, unknown>, commandViews: string[]): null {
     let failed: string = b.derive(builder,"failed","boolean","false",b.binary(builder,"ne","$state.error",b.text(builder,"")));
-    let children: string[] = b.authored(builder,"WorkspaceStatus",{loading:"$state.loading",failed:failed,error:"$state.error",loadingLabel:b.text(builder,"Loading…"),errorTone:b.text(builder,"error")},{}); let display: string[] = plan.display;
-    for (let id: string of display) { let views: string[] = builder.views[id]; for (let view: string of views) { children[children.length] = view; } }
-    for (let view: string of commandViews) { children[children.length] = view; }
+    let children: string[] = b.authored(builder,"WorkspaceStatus",{loading:"$state.loading",failed:failed,error:"$state.error",loadingLabel:b.text(builder,"Loading…"),errorTone:b.text(builder,"error")},{}); let display: string[] = decoded.strings(plan.display);
+    for (let id of display) { let views: string[] = decoded.strings(builder.views[id]); for (let view of views) { children[children.length] = view; } }
+    for (let view of commandViews) { children[children.length] = view; }
     let root: string = b.view(builder,"Column",[],children,[],"","",""); builder.plan.root = root;
     return null;
 }
 export function expandJson(input: string, catalogue: string, dependencies: string): string {
-    let plan: table = json.parse(input); let envelope: table = json.parse(catalogue); let contracts: table[] = envelope.contracts;
-    let graph: table = json.parse(dependencies); let ordered: string[] = graph.ordered;
+    let plan: Record<string, unknown> = json.parse(input); let envelope: Record<string, unknown> = json.parse(catalogue); let contracts: Record<string, unknown>[] = decoded.records(envelope.contracts);
+    let graph: Record<string, unknown> = json.parse(dependencies); let ordered: string[] = decoded.strings(graph.ordered);
     let builder: b.Builder = b.create(contracts); instantiate(builder,plan,ordered);
-    let command: table = commands(builder,plan,graph,ordered); let conflicts: table = command.conflicts; let views: string[] = command.views;
-    let editable: table = editability(builder,conflicts); root(builder,plan,views);
-    return json.stringify({plan:builder.plan,authoredViews:builder.authoredViews,instanceViews:builder.views,editable:editable});
+    let command: Record<string, unknown> = commands(builder,plan,graph,ordered); let conflicts: Record<string, unknown> = (command.conflicts as Record<string, unknown>); let views: string[] = decoded.strings(command.views);
+    let editable: Record<string, unknown> = editability(builder,conflicts); root(builder,plan,views);
+    return (json.stringify({plan:builder.plan,authoredViews:builder.authoredViews,instanceViews:builder.views,editable:editable}) as string);
 }
 export function main(): null { return null; }

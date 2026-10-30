@@ -5,7 +5,7 @@ export class FragmentAction {}
 export class FragmentDone { requestEpoch: number; sessionEpoch: number; }
 function copyState(state: FragmentState): FragmentState { return state; }
 function complete(state: FragmentState): FragmentDone { return {requestEpoch:state.requestEpoch,sessionEpoch:state.sessionEpoch}; }
-async function execute(state: FragmentState, action: FragmentAction): FragmentState { return state; }
+async function execute(state: FragmentState, action: FragmentAction): Promise<FragmentState> { return state; }
 function merge(state: FragmentState, action: FragmentDone): FragmentState { return state; }
 function recompute(state: FragmentState): FragmentState { return state; }
 function clearSuccess(state: FragmentState): FragmentState { return state; }
@@ -24,7 +24,7 @@ export function invalidate(state: FragmentState): FragmentState {
     next.requestError = "";
     return next;
 }
-export async function run(state: FragmentState, action: FragmentAction): FragmentDone {
+export async function run(state: FragmentState, action: FragmentAction): Promise<FragmentDone> {
     let next: FragmentState = copyState(state);
     try {
         next = await execute(next,action);

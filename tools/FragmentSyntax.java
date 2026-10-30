@@ -48,13 +48,14 @@ public final class FragmentSyntax {
             case NamedType t->name(t.name());
             case QualifiedType t->name(t.moduleName())+"."+name(t.typeName());
             case ArrayType t->type(t.elementType())+"[]";
-            case NullableType t->type(t.innerType())+"?";
-            case FunctionType t->(t.isAsync()?"async ":"")+"("+t.params().stream().map(p->name(p.name())+":"+type(p.type())).collect(Collectors.joining(","))+") => "+type(t.returnType());
+            case NullableType t->"("+type(t.innerType())+(t.undefinedMember()?" | undefined)":" | null)");
+            case FunctionType t->"("+t.params().stream().map(p->name(p.name())+":"+type(p.type())).collect(Collectors.joining(","))+") => "+result(t.returnType(),t.isAsync());
         };}
+        String result(TypeNode type, boolean async){return async?"Promise<"+type(type)+">":type(type);}
         String parameters(List<Parameter> params){return params.stream().map(p->name(p.name())+":"+type(p.type())).collect(Collectors.joining(","));}
         String statement(StatementNode node){return switch(node){
             case ExportDeclaration e->"export "+statement(e.declaration());
-            case FunctionDeclaration f->(f.isAsync()?"async ":"")+"function "+name(f.name())+"("+parameters(f.params())+"):"+type(f.returnType())+block(f.body())+"\n";
+            case FunctionDeclaration f->(f.isAsync()?"async ":"")+"function "+name(f.name())+"("+parameters(f.params())+"):"+result(f.returnType(),f.isAsync())+block(f.body())+"\n";
             case Block b->block(b);
             case VariableDeclaration v->"let "+name(v.name())+v.typeAnnotation().map(t->":"+type(t)).orElse("")+"="+expression(v.initializer())+";\n";
             case ReturnStatement r->"return"+r.expr().map(e->" "+expression(e)).orElse("")+";\n";
@@ -62,7 +63,7 @@ public final class FragmentSyntax {
                 ?statements.get(i.name()).stream().map(s->new Printer(Map.of(),Map.of()).statement(s)).collect(Collectors.joining()):expression(e.expr())+";\n";
             case IfStatement i->"if ("+expression(i.condition())+")"+block(i.thenBlock())+i.elseBranch().map(e->"else "+switch(e){case Either.Left<IfStatement,Block> l->statement(l.value());case Either.Right<IfStatement,Block> r->block(r.value());}).orElse("");
             case WhileStatement w->"while ("+expression(w.condition())+")"+block(w.body());
-            case ForOfStatement f->"for (let "+name(f.varName())+":"+type(f.varType())+" of "+expression(f.iterable())+")"+block(f.body());
+            case ForOfStatement f->"for (let "+name(f.varName())+" of "+expression(f.iterable())+")"+block(f.body());
             case TryStatement t->"try "+block(t.tryBlock())+"catch ("+name(t.catchVar())+")"+block(t.catchBlock());
             case ThrowStatement t->"throw "+expression(t.expr())+";\n";
             case BreakStatement b->"break;\n";
@@ -83,12 +84,13 @@ public final class FragmentSyntax {
             case CallExpr c->expression(c.callee())+"("+c.args().stream().map(this::expression).collect(Collectors.joining(","))+")";
             case AwaitExpression a->"await "+expression(a.callee());
             case BinaryExpr b->"("+expression(b.left())+" "+switch(b.op()){case ADD->"+";case SUB->"-";case MUL->"*";case DIV->"/";case POW->"**";case EQ->"===";case NEQ->"!==";case LT->"<";case LTE->"<=";case GT->">";case GTE->">=";case AND->"&&";case OR->"||";}+" "+expression(b.right())+")";
-            case UnaryExpr u->"("+switch(u.op()){case NOT->"!";case NEG->"-";}+expression(u.expr())+")";
+            case UnaryExpr u->"("+switch(u.op()){case NOT->"!";case NEG->"-";case TYPEOF->"typeof ";}+expression(u.expr())+")";
             case AssignmentExpr a->expression(a.target())+" = "+expression(a.value());
             case ObjectLiteralExpr o->o.properties().stream().map(p->name(p.name())+":"+expression(p.value())).collect(Collectors.joining(",","{","}"));
             case ArrayLiteralExpr a->a.elements().stream().map(this::expression).collect(Collectors.joining(",","[","]"));
-            case HasExpr h->"("+expression(h.object())+" has "+name(h.field())+")";
-            case FunctionExpr f->(f.isAsync()?"async ":"")+"function("+parameters(f.params())+"):"+type(f.returnType())+block(f.body());
+            case HasExpr h->"Object.hasOwn("+expression(h.object())+","+quote(h.field())+")";
+            case AssertionExpr a->"("+expression(a.value())+" as "+type(a.target())+")";
+            case FunctionExpr f->(f.isAsync()?"async ":"")+"function("+parameters(f.params())+"):"+result(f.returnType(),f.isAsync())+block(f.body());
             default->throw new IllegalArgumentException("Unsupported structural expression " + node.getClass().getSimpleName());
         };}
     }

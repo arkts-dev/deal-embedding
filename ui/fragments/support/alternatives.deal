@@ -15,7 +15,7 @@ function assign(rows: Row[], units: number[], role: number, remaining: number, r
         let row: Row = rows[index];
         if (row.roles[role] && units[index] > 0) {
             let next: number[] = [];
-            for (let unit: number of units) { next[next.length] = unit; }
+            for (let unit of units) { next[next.length] = unit; }
             next[index] = next[index] - 1;
             if (assign(rows,next,role,remaining-1,requirements)) { return true; }
         }
@@ -31,16 +31,16 @@ function search(rows: Row[], index: number, quantities: number[], maximum: numbe
         if (count > maximum) { count = maximum; }
         while (count >= 0) {
             let next: number[] = [];
-            for (let quantity: number of quantities) { next[next.length] = quantity; }
+            for (let quantity of quantities) { next[next.length] = quantity; }
             next[next.length] = count;
             let tails: Basket[] = search(rows,index+1,next,maximum-count,requirements);
-            for (let tail: Basket of tails) { output[output.length] = tail; }
+            for (let tail of tails) { output[output.length] = tail; }
             count = count - 1;
         }
         return output;
     }
     let units: number[] = []; let demand: number[] = [];
-    for (let row: Row of rows) { units[units.length] = 0; demand[demand.length] = 0; }
+    for (let row of rows) { units[units.length] = 0; demand[demand.length] = 0; }
     let any: boolean = false;
     let i: number = 0;
     while (i < rows.length) {
@@ -50,7 +50,7 @@ function search(rows: Row[], index: number, quantities: number[], maximum: numbe
             any = true;
             if (row.components.length === 0) { units[i] = units[i] + count; }
             else {
-                for (let component: Component of row.components) {
+                for (let component of row.components) {
                     let j: number = 0;
                     while (j < rows.length) {
                         let known: Row = rows[j];
@@ -68,11 +68,11 @@ function search(rows: Row[], index: number, quantities: number[], maximum: numbe
         let removeIndex: number = 0;
         while (removeIndex < rows.length) {
             if (quantities[removeIndex] > 0) {
-                let reduced: number[] = []; for (let unit: number of units) { reduced[reduced.length] = unit; }
+                let reduced: number[] = []; for (let unit of units) { reduced[reduced.length] = unit; }
                 let removed: Row = rows[removeIndex];
                 if (removed.components.length === 0) { reduced[removeIndex] = reduced[removeIndex] - 1; }
                 else {
-                    for (let component: Component of removed.components) {
+                    for (let component of removed.components) {
                         let j: number = 0;
                         while (j < rows.length) { let known: Row = rows[j]; if (known.id === component.id) { reduced[j] = reduced[j] - component.quantity; } j = j + 1; }
                     }
@@ -87,23 +87,23 @@ function search(rows: Row[], index: number, quantities: number[], maximum: numbe
 }
 export function enumerate(rows: Row[], requirements: number[]): Basket[] {
     if (requirements.length === 0) { throw {code:"INVALID_ALTERNATIVES",message:"At least one role required"}; }
-    for (let row: Row of rows) {
+    for (let row of rows) {
         if (row.id === "" || row.capacity < 0 || math.floor(row.capacity) !== row.capacity || row.capacity > 2147483647 || row.capacity-row.capacity !== 0 || row.roles.length !== requirements.length) {
             throw {code:"INVALID_ALTERNATIVES",message:"Invalid catalogue identity or stock"};
         }
         let duplicates: number = 0;
-        for (let other: Row of rows) { if (other.id === row.id) { duplicates = duplicates + 1; } }
+        for (let other of rows) { if (other.id === row.id) { duplicates = duplicates + 1; } }
         if (duplicates !== 1) { throw {code:"INVALID_ALTERNATIVES",message:"Duplicate catalogue identity"}; }
-        for (let component: Component of row.components) {
+        for (let component of row.components) {
             let found: boolean = false;
-            for (let known: Row of rows) { if (known.id === component.id && known.components.length === 0) { found = true; } }
+            for (let known of rows) { if (known.id === component.id && known.components.length === 0) { found = true; } }
             if (!found || component.quantity < 1 || math.floor(component.quantity) !== component.quantity || component.quantity > 2147483647 || component.quantity-component.quantity !== 0) {
                 throw {code:"INVALID_ALTERNATIVES",message:"Unknown or nested component or invalid quantity"};
             }
         }
     }
     let maximum: number = 0;
-    for (let quantity: number of requirements) {
+    for (let quantity of requirements) {
         if (quantity < 0 || math.floor(quantity) !== quantity || quantity > 2147483647 || quantity-quantity !== 0) { throw {code:"INVALID_ALTERNATIVES",message:"Invalid role quantity"}; }
         maximum = maximum + quantity;
     }

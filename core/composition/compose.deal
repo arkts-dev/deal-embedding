@@ -1,3 +1,4 @@
+import * as decoded from "../decoded";
 import * as formula from "./formula";
 import * as validation from "./validation";
 import * as shapes from "./validation.generated";
@@ -8,12 +9,12 @@ import * as strings from "std/string";
 export function parseFormulaJson(source: string): string { return formula.parseJson(source); }
 export function validateJson(input: string): null { return validation.validateJson(input); }
 function contains(values: string[], value: string): boolean {
-    for (let item: string of values) { if (item === value) { return true; } }
+    for (let item of values) { if (item === value) { return true; } }
     return false;
 }
 function identifier(value: string): boolean {
     let index: number = 0;
-    for (let ch: string of value) {
+    for (let ch of value) {
         let alphabet: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
         if (index > 0) { alphabet = alphabet + "_0123456789"; }
         if (!strings.contains(alphabet,ch)) { return false; }
@@ -21,92 +22,92 @@ function identifier(value: string): boolean {
     }
     return index > 0 && value !== "row" && value !== "item" && value !== "reply";
 }
-function include(id: string, ids: string[], dependencies: table, closure: string[]): null {
+function include(id: string, ids: string[], dependencies: Record<string, unknown>, closure: string[]): null {
     if (!contains(ids,id)) { throw {code:"INVALID_CONFIG",message:"Unknown command target"}; }
-    let targets: string[] = dependencies[id];
-    for (let target: string of targets) { include(target,ids,dependencies,closure); }
+    let targets: string[] = decoded.strings(dependencies[id]);
+    for (let target of targets) { include(target,ids,dependencies,closure); }
     if (!contains(closure,id)) { closure[closure.length] = id; }
     return null;
 }
-function resources(id: string, dependencies: table, kinds: table): string[] {
-    let result: string[] = []; let targets: string[] = dependencies[id];
-    for (let target: string of targets) {
-        for (let resource: string of resources(target,dependencies,kinds)) {
+function resources(id: string, dependencies: Record<string, unknown>, kinds: Record<string, unknown>): string[] {
+    let result: string[] = []; let targets: string[] = decoded.strings(dependencies[id]);
+    for (let target of targets) {
+        for (let resource of resources(target,dependencies,kinds)) {
             if (!contains(result,resource)) { result[result.length] = resource; }
         }
     }
-    let kind: string = kinds[id];
+    let kind: string = (kinds[id] as string);
     if (kind === "read" || kind === "quotes" || kind === "choice" || kind === "allocation" || kind === "alternatives") { result[result.length] = id; }
     return result;
 }
-function visit(id: string, ids: string[], dependencies: table, ordered: string[], visiting: string[]): null {
+function visit(id: string, ids: string[], dependencies: Record<string, unknown>, ordered: string[], visiting: string[]): null {
     if (contains(ordered,id)) { return null; }
     if (contains(visiting,id)) { throw {code:"INVALID_CONFIG",message:"Fragment dependency cycle"}; }
     if (!contains(ids,id)) { throw {code:"INVALID_CONFIG",message:"Missing fragment dependency"}; }
     let next: string[] = [];
-    for (let value: string of visiting) { next[next.length] = value; }
+    for (let value of visiting) { next[next.length] = value; }
     next[next.length] = id;
-    let targets: string[] = dependencies[id];
-    for (let target: string of targets) { visit(target,ids,dependencies,ordered,next); }
+    let targets: string[] = decoded.strings(dependencies[id]);
+    for (let target of targets) { visit(target,ids,dependencies,ordered,next); }
     ordered[ordered.length] = id;
     return null;
 }
 export function dependenciesJson(input: string): string {
-    let plan: table = json.parse(input);
-    for (let key: string of ["fragments","commands","display"]) {
-        try { if (key === "display") { let values: string[] = plan[key]; } else { let values: table[] = plan[key]; } }
-        catch (error) { if (error.code !== "E8001" && error.code !== "E8009") { throw error; } throw {code:"INVALID_CONFIG",message:"Root '"+key+"' must be an actual JSON array (never a quoted/encoded document); submit all root fields title, fragments, commands, display."}; }
+    let plan: Record<string, unknown> = json.parse(input);
+    for (let key of ["fragments","commands","display"]) {
+        try { if (key === "display") { let values: string[] = decoded.strings(plan[key]); } else { let values: Record<string, unknown>[] = decoded.records(plan[key]); } }
+        catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "E8001" && error.code !== "E8009") { throw error; } throw {code:"INVALID_CONFIG",message:"Root '"+key+"' must be an actual JSON array (never a quoted/encoded document); submit all root fields title, fragments, commands, display."}; }
     }
     shapes.validate(plan);
-    let fragments: table[] = plan.fragments; let ids: string[] = []; let dependencies: table = {}; let kinds: table = {};
-    for (let fragment: table of fragments) {
-        let id: string = fragment.id;
+    let fragments: Record<string, unknown>[] = decoded.records(plan.fragments); let ids: string[] = []; let dependencies: Record<string, unknown> = {}; let kinds: Record<string, unknown> = {};
+    for (let fragment of fragments) {
+        let id: string = (fragment.id as string);
         if (!identifier(id) || contains(ids,id)) { throw {code:"INVALID_CONFIG",message:"Invalid or duplicate fragment identity"}; }
-        ids[ids.length] = id; let kind: string = fragment.kind; kinds[id] = kind;
-        if (kind === "input") { let config: table = fragment.config; validation.input(config); }
+        ids[ids.length] = id; let kind: string = (fragment.kind as string); kinds[id] = kind;
+        if (kind === "input") { let config: Record<string, unknown> = (fragment.config as Record<string, unknown>); validation.input(config); }
         let targets: string[] = [];
-        for (let expression: string of shapes.fragmentFormulas(fragment)) {
-            for (let path: string of formula.references(formula.parse(expression))) {
+        for (let expression of shapes.fragmentFormulas(fragment)) {
+            for (let path of formula.references(formula.parse(expression))) {
                 let parts: string[] = strings.split(path,"."); let owner: string = parts[0];
                 if (owner !== "row" && owner !== "item" && owner !== "reply" && !contains(targets,owner)) { targets[targets.length] = owner; }
             }
         }
         dependencies[id] = targets;
     }
-    let title: string = plan.title;
+    let title: string = (plan.title as string);
     if (strings.trim(title) === "" || ids.length === 0) { throw {code:"INVALID_CONFIG",message:"Title and fragments required"}; }
-    let display: string[] = plan.display; let shown: string[] = [];
-    for (let id: string of display) {
+    let display: string[] = decoded.strings(plan.display); let shown: string[] = [];
+    for (let id of display) {
         if (!contains(ids,id) || contains(shown,id)) { throw {code:"INVALID_CONFIG",message:"Unknown or duplicate display instance"}; }
         shown[shown.length] = id;
     }
-    for (let id: string of ids) {
-        let kind: string = kinds[id];
+    for (let id of ids) {
+        let kind: string = (kinds[id] as string);
         if (kind !== "read" && kind !== "alternatives" && !contains(shown,id)) { throw {code:"INVALID_CONFIG",message:"Visible fragment omitted from display"}; }
     }
     let ordered: string[] = []; let visiting: string[] = [];
-    for (let id: string of ids) { visit(id,ids,dependencies,ordered,visiting); }
-    let commands: table[] = plan.commands; let commandIds: string[] = []; let owned: string[] = []; let compiled: table[] = [];
-    for (let command: table of commands) {
-        let id: string = command.id;
+    for (let id of ids) { visit(id,ids,dependencies,ordered,visiting); }
+    let commands: Record<string, unknown>[] = decoded.records(plan.commands); let commandIds: string[] = []; let owned: string[] = []; let compiled: Record<string, unknown>[] = [];
+    for (let command of commands) {
+        let id: string = (command.id as string);
         if (!identifier(id) || contains(ids,id) || contains(commandIds,id)) { throw {code:"INVALID_CONFIG",message:"Invalid or duplicate command identity"}; }
         commandIds[commandIds.length] = id;
-        let targets: string[] = command.targets; let unique: string[] = []; let closure: string[] = [];
+        let targets: string[] = decoded.strings(command.targets); let unique: string[] = []; let closure: string[] = [];
         if (targets.length === 0) { throw {code:"INVALID_CONFIG",message:"Command requires distinct targets"}; }
-        for (let target: string of targets) {
+        for (let target of targets) {
             if (contains(unique,target)) { throw {code:"INVALID_CONFIG",message:"Command requires distinct targets"}; }
             unique[unique.length] = target; include(target,ids,dependencies,closure);
         }
         let changed: boolean = true;
         while (changed) {
             let size: number = closure.length;
-            for (let candidate: string of ordered) {
-                let kind: string = kinds[candidate];
+            for (let candidate of ordered) {
+                let kind: string = (kinds[candidate] as string);
                 if (!contains(closure,candidate) && kind !== "read" && kind !== "quotes") {
-                    let dependenciesHere: string[] = dependencies[candidate]; let affected: boolean = false; let ready: boolean = true;
-                    for (let dependency: string of dependenciesHere) {
+                    let dependenciesHere: string[] = decoded.strings(dependencies[candidate]); let affected: boolean = false; let ready: boolean = true;
+                    for (let dependency of dependenciesHere) {
                         affected = affected || contains(closure,dependency);
-                        for (let resource: string of resources(dependency,dependencies,kinds)) { ready = ready && contains(closure,resource); }
+                        for (let resource of resources(dependency,dependencies,kinds)) { ready = ready && contains(closure,resource); }
                     }
                     if (affected && ready) { include(candidate,ids,dependencies,closure); }
                 }
@@ -114,8 +115,8 @@ export function dependenciesJson(input: string): string {
             changed = size !== closure.length;
         }
         let external: boolean = false;
-        for (let target: string of closure) {
-            let kind: string = kinds[target];
+        for (let target of closure) {
+            let kind: string = (kinds[target] as string);
             external = external || kind === "read" || kind === "quotes";
             if (kind === "read" || kind === "quotes" || kind === "choice" || kind === "allocation" || kind === "alternatives") {
                 if (contains(owned,target)) { throw {code:"INVALID_CONFIG",message:"Resource belongs to multiple commands"}; }
@@ -125,12 +126,12 @@ export function dependenciesJson(input: string): string {
         if (!external) { throw {code:"INVALID_CONFIG",message:"Command has no external read"}; }
         compiled[compiled.length] = {id:id,closure:closure};
     }
-    for (let id: string of ids) {
-        let kind: string = kinds[id];
+    for (let id of ids) {
+        let kind: string = (kinds[id] as string);
         if ((kind === "read" || kind === "quotes" || kind === "choice" || kind === "allocation" || kind === "alternatives") && !contains(owned,id)) {
             throw {code:"INVALID_CONFIG",message:"Resource is not attached to a command"};
         }
     }
-    return json.stringify({dependencies:dependencies,ordered:ordered,commands:compiled});
+    return (json.stringify({dependencies:dependencies,ordered:ordered,commands:compiled}) as string);
 }
 export function main(): null { return null; }

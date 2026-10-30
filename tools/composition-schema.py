@@ -29,19 +29,19 @@ def generate(raw):
         lines.append('let accepted: boolean = false;')
         for branch in value['anyOf']:
             target = generate(branch)
-            lines.append('try { ' + target + '(parent,key,expressions); accepted = true; } catch (error) { if (error.code !== "INVALID_CONFIG" && error.code !== "E8001") { throw error; } }')
+            lines.append('try { ' + target + '(parent,key,expressions); accepted = true; } catch (unknownError) { let error: Error = unknownError as Error; if (error.code !== "INVALID_CONFIG" && error.code !== "E8001") { throw error; } }')
             lines.append('if (accepted) { return null; }')
         lines.append('reject();')
     else:
         kind = value['type']
         if kind == 'object':
-            lines.append('let value: table = parent[key];')
+            lines.append('let value: Record<string, unknown> = parent[key] as Record<string, unknown>;')
             properties = value['properties']
             keys = list(properties)
             if value.get('additionalProperties') is not False:
                 raise ValueError('Composition objects must be closed')
             allowed = ' || '.join('field === ' + quote(k) for k in keys) or 'false'
-            lines.append('for (let field: string of tables.keys(value)) { if (!(' + allowed + ')) { reject(); } }')
+            lines.append('for (let field of tables.keys(value)) { if (!(' + allowed + ')) { reject(); } }')
             required = set(value.get('required', []))
             for field, child in properties.items():
                 target = generate(child)
@@ -50,42 +50,44 @@ def generate(raw):
         elif kind == 'array':
             item = resolve(value['items'])
             item_kind = item.get('type', 'object')
-            carrier = {'object': 'table', 'string': 'string', 'number': 'number', 'boolean': 'boolean'}[item_kind]
-            lines.append('let value: ' + carrier + '[] = parent[key];')
+            carrier = {'object': 'Record<string, unknown>', 'string': 'string', 'number': 'number', 'boolean': 'boolean'}[item_kind]
+            decoder = {'object': 'records', 'string': 'strings', 'number': 'numbers', 'boolean': 'booleans'}[item_kind]
+            lines.append('let value: ' + carrier + '[] = decoded.' + decoder + '(parent[key]);')
             target = generate(item)
-            lines.append('for (let item: ' + carrier + ' of value) { let wrapper: table = {value:item}; ' + target + '(wrapper,"value",expressions); }')
+            lines.append('for (let item of value) { let wrapper: Record<string, unknown> = {value:item}; ' + target + '(wrapper,"value",expressions); }')
         else:
             if kind not in ('number', 'string', 'boolean'):
                 raise ValueError('Unsupported schema kind: ' + kind)
-            lines.append('let value: ' + kind + ' = parent[key];')
+            lines.append('let value: ' + kind + ' = parent[key] as ' + kind + ';')
             if kind == 'number':
                 lines.append('if (value - value !== 0) { reject(); }')
             if 'enum' in value:
                 allowed = ' || '.join('value === ' + quote(v) for v in value['enum'])
                 lines.append('if (!(' + allowed + ')) { reject(); }')
     if value == schema['$defs']['formula']:
-        lines.append('let expression: string = value.expr; expressions[expressions.length] = expression;')
-    functions[index] = 'function ' + name + '(parent: table, key: string, expressions: string[]): null {\n    ' + '\n    '.join(lines) + '\n    return null;\n}\n'
+        lines.append('let expression: string = value.expr as string; expressions[expressions.length] = expression;')
+    functions[index] = 'function ' + name + '(parent: Record<string, unknown>, key: string, expressions: string[]): null {\n    ' + '\n    '.join(lines) + '\n    return null;\n}\n'
     return name
 
 root = generate(schema)
 fragment = generate(schema['properties']['fragments']['items'])
 output.parent.mkdir(parents=True, exist_ok=True)
-output.write_text('''import * as json from "std/json";
+output.write_text('''import * as decoded from "../decoded";
+import * as json from "std/json";
 import * as tables from "std/table";
 // Generated from ui/fragment-contract.json; do not maintain another shape inventory.
 function reject(): null { throw {code:"INVALID_CONFIG",message:"Invalid maintained fragment configuration"}; }
 function contains(values: string[], value: string): boolean {
-    for (let item: string of values) { if (item === value) { return true; } }
+    for (let item of values) { if (item === value) { return true; } }
     return false;
 }
 ''' + '\n'.join(functions) + '''
-export function validate(input: table): null {
-    let wrapper: table = {value:input}; let expressions: string[] = [];
+export function validate(input: Record<string, unknown>): null {
+    let wrapper: Record<string, unknown> = {value:input}; let expressions: string[] = [];
     ''' + root + '''(wrapper,"value",expressions); return null;
 }
-export function fragmentFormulas(input: table): string[] {
-    let wrapper: table = {value:input}; let expressions: string[] = [];
+export function fragmentFormulas(input: Record<string, unknown>): string[] {
+    let wrapper: Record<string, unknown> = {value:input}; let expressions: string[] = [];
     ''' + fragment + '''(wrapper,"value",expressions); return expressions;
 }
 export function validateJson(input: string): null { return validate(json.parse(input)); }

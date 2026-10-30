@@ -1,3 +1,4 @@
+import * as decoded from "./decoded";
 import * as strings from "std/string";
 import * as data from "embedding/policy-data";
 import * as assets from "./generation-guidance.generated";
@@ -5,19 +6,13 @@ import * as guidance from "./generation-guidance";
 import * as literals from "./source-literals";
 
 // Advisory source feedback only. Complete compiler/behavioral admission remains mandatory.
-export async function patchInstruction(previous: string, diagnostics: string): string {
+export async function patchInstruction(previous: string, diagnostics: string): Promise<string> {
     return "\n\nREPAIR GUIDANCE\nEdit only the smallest rejected source region and directly required dependencies. Preserve all unrelated source and behavior. Call edit_sources with unique, disjoint exact edits; the host binds them to the current revision. Do not supply a digest or source envelope.\n" + await details(previous, diagnostics);
 }
-async function details(previous: string, diagnostics: string): string {
+async function details(previous: string, diagnostics: string): Promise<string> {
     let out: string = "Fix the reported cause without redesigning the workflow. The bounded source windows below are context, not edit authority.\n";
-    if (strings.contains(diagnostics, "E1034")) {
-        out = out + "A wire table may have a keyword key such as from. Read it with a string index and an explicit target type: let periodStart: string = record[\"from\"];. Keyword member access record.from is invalid. Preserve actual provider keys; check all keyword member accesses.\n";
-    }
     if (strings.contains(diagnostics, "E1037")) {
         out = out + "DEAL has no ternary conditional expression. Replace condition ? a : b with an initialized local followed by if/else assignments. Check both files for all ternary operators; do not confuse nullable type T | null with an expression.\n";
-    }
-    if (strings.contains(diagnostics, "E1013")) {
-        out = out + "Every local variable requires an initializer, even when assigned in later branches: let label: string = \"\"; never let label: string;. Initialize to an honest pending value, then assign in branches. Check all declarations in both files.\n";
     }
     if (strings.contains(diagnostics, "UI2050") || strings.contains(diagnostics, "UI2051")) {
         out = out + "The state/action and borrowed collections are immutable. Compute locals and return a complete fresh State literal. A shallow-copy helper can still alias borrowed values. Build changed arrays with explicit loops.\n";
@@ -31,34 +26,34 @@ async function details(previous: string, diagnostics: string): string {
     let nearby: string = await sourceWindow(previous, diagnostics);
     return out + nearby;
 }
-async function sourceWindow(previous: string, diagnostics: string): string {
-    let envelope: table = {}; let wrapped: table = {};
+async function sourceWindow(previous: string, diagnostics: string): Promise<string> {
+    let envelope: Record<string, unknown> = {}; let wrapped: Record<string, unknown> = {};
     try { envelope = await data.parse(previous); wrapped = await data.parse("{\"report\":" + diagnostics + "}"); }
-    catch (error) { if (error.code !== "INVALID_JSON") { throw error; } return ""; }
+    catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "INVALID_JSON") { throw error; } return ""; }
     try {
-        let errors: table[] = [];
-        try { let items: table[] = wrapped.report; errors = items; }
-        catch (shape) { let report: table = wrapped.report; let items: table[] = report.diagnostics; errors = items; }
+        let errors: Record<string, unknown>[] = [];
+        try { let items: Record<string, unknown>[] = decoded.records(wrapped.report); errors = items; }
+        catch (shapeUnknown) { let shape: Error = shapeUnknown as Error; let report: Record<string, unknown> = (wrapped.report as Record<string, unknown>); let items: Record<string, unknown>[] = decoded.records(report.diagnostics); errors = items; }
         let out: string = "";
         let seenAdvice: string[] = [];
-        for (let error: table of errors) {
+        for (let error of errors) {
                 let file: string = ""; let line: number = 0;
-                try { file = error.file; line = error.line; }
-                catch (shape) { let range: table = error.range; file = range.file; line = range.startLine; }
+                try { file = (error.file as string); line = (error.line as number); }
+                catch (shapeUnknown) { let shape: Error = shapeUnknown as Error; let range: Record<string, unknown> = (error.range as Record<string, unknown>); file = (range.file as string); line = (range.startLine as number); }
                 let source: string = "";
-                if (strings.endsWith(file, ".dealui")) { source = envelope.dealui; }
-                else { if (strings.endsWith(file, ".deal")) { source = envelope.deal; } }
+                if (strings.endsWith(file, ".dealui")) { source = (envelope.dealui as string); }
+                else { if (strings.endsWith(file, ".deal")) { source = (envelope.deal as string); } }
                 if (source !== "" && line > 0) {
                     let lines: string[] = strings.split(source, "\n");
                     if (line <= lines.length) {
                         let reported: string = lines[line - 1];
-                        let code: string = error.code;
+                        let code: string = (error.code as string);
                         let patchFile: string = "deal";
                         if (strings.endsWith(file, ".dealui")) { patchFile = "dealui"; }
                         out = out + "\nDiagnostic file: " + file + "; patch file: " + patchFile + "; line: " + literals.decimal(line) + "; code: " + code + "\n";
                         let adviceKey: string = patchFile + ":" + code;
                         let alreadyAdvised: boolean = false;
-                        for (let seen: string of seenAdvice) { if (seen === adviceKey) { alreadyAdvised = true; } }
+                        for (let seen of seenAdvice) { if (seen === adviceKey) { alreadyAdvised = true; } }
                         if (!alreadyAdvised || code === "E1007") {
                         seenAdvice[seenAdvice.length] = adviceKey;
                         if (strings.endsWith(file, ".dealui") && code === "UI1016") {
@@ -69,10 +64,10 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                         }
                         if (code === "E1007") {
                             let column: number = 1;
-                            try { column = error.column; } catch (shape) { let range: table = error.range; column = range.startColumn; }
+                            try { column = (error.column as number); } catch (shapeUnknown) { let shape: Error = shapeUnknown as Error; let range: Record<string, unknown> = (error.range as Record<string, unknown>); column = (range.startColumn as number); }
                             let tail: string = strings.substring(reported, column - 1, strings.length(reported));
                             let reserved: string[] = assets.reservedWords();
-                            for (let word: string of reserved) {
+                            for (let word of reserved) {
                                 if (strings.startsWith(tail, word)) {
                                     let boundary: boolean = strings.length(tail) === strings.length(word);
                                     if (!boundary) {
@@ -92,15 +87,22 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                         if (strings.endsWith(file, ".deal") && code === "E3017") {
                             out = out + "Array length is read-only. Append with array[array.length] = value; to truncate or replace contents, build a fresh typed array and assign it to the owned local/state field. Never assign array.length.\n";
                         }
-                        if (strings.endsWith(file, ".deal") && code === "E3003") {
-                            out = out + "Table reads require an explicit contextual target type. Read into typed locals before arithmetic/comparison: let cents: number = record.cents;. Use the actual declared contract field/type; do not invent a field or cast.\n";
+                        if (strings.endsWith(file, ".deal") && code === "E1013") {
+                            if (strings.contains(reported, "for") && strings.contains(reported, " of ")) {
+                                out = out + "DEAL for-of infers its binding: for (let item of items). Remove the binding annotation, not the iterable type.\n";
+                            } else {
+                                out = out + "Initialize every local before use; use an honest pending value, then assign in branches. C-style for loops are not supported; use while or inferred for-of.\n";
+                            }
+                        }
+                        if (strings.endsWith(file, ".deal") && code === "E3001" && (strings.contains(reported, " as ") || strings.contains(reported, ".") || strings.contains(reported, "["))) {
+                            out = out + "Record reads and catches yield unknown. Extract the actual contract type with a checked assertion or refinement, e.g. let cents = record.cents as number. Assertions check without coercion. Invariant arrays cannot be retagged: validate/copy decoded unknown elements into a fresh typed array and write it back if mutation must be retained. Preserve provider keys and optional absence (undefined), distinct from null.\n";
                         }
                         }
-                        let pack: table = assets.pack(); let components: table[] = pack.components;
-                        for (let component: table of components) {
-                            let name: string = component.name;
+                        let pack: Record<string, unknown> = assets.pack(); let components: Record<string, unknown>[] = decoded.records(pack.components);
+                        for (let component of components) {
+                            let name: string = (component.name as string);
                             if (strings.contains(reported, "ui." + name + "(")) {
-                                let selected: table[] = [component];
+                                let selected: Record<string, unknown>[] = [component];
                                 out = out + "Exact renderer component contract:\n" + guidance.componentFacts({ components: selected }) + "\n";
                             }
                         }
@@ -108,21 +110,21 @@ async function sourceWindow(previous: string, diagnostics: string): string {
                 }
         }
         return out + clusteredWindows(envelope, errors);
-    } catch (shape) { return ""; }
+    } catch (shapeUnknown) { let shape: Error = shapeUnknown as Error; return ""; }
 }
 // Preview only: all locations remain listed above; omitted lines are still readable.
-function clusteredWindows(envelope: table, errors: table[]): string {
+function clusteredWindows(envelope: Record<string, unknown>, errors: Record<string, unknown>[]): string {
     let out: string = "";
     let emitted: number = 0;
     let omitted: number = 0;
-    for (let patchFile: string of ["deal", "dealui"]) {
-        let source: string = envelope[patchFile];
+    for (let patchFile of ["deal", "dealui"]) {
+        let source: string = (envelope[patchFile] as string);
         let lines: string[] = strings.split(source, "\n");
         let selected: number[] = [];
-        for (let error: table of errors) {
+        for (let error of errors) {
             let file: string = ""; let line: number = 0;
-            try { file = error.file; line = error.line; }
-            catch (shape) { let range: table = error.range; file = range.file; line = range.startLine; }
+            try { file = (error.file as string); line = (error.line as number); }
+            catch (shapeUnknown) { let shape: Error = shapeUnknown as Error; let range: Record<string, unknown> = (error.range as Record<string, unknown>); file = (range.file as string); line = (range.startLine as number); }
             if (strings.endsWith(file, "." + patchFile) && line > 0 && line <= lines.length) {
                 selected[selected.length] = line;
             }
@@ -133,7 +135,7 @@ function clusteredWindows(envelope: table, errors: table[]): string {
             let index: number = 0;
             while (index < lines.length) {
                 let include: boolean = false;
-                for (let line: number of selected) {
+                for (let line of selected) {
                     if (index + 1 >= line - 3 && index + 1 <= line + 3) { include = true; }
                 }
                 if (include) {

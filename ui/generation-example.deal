@@ -13,7 +13,7 @@ export function begin(state: State, action: Load): State {
     return result;
 }
 // @ui-effect
-export async function read(state: State, action: Load): Done {
+export async function read(state: State, action: Load): Promise<Done> {
     try { let value: number = await sample.value(); return { value: value, ready: true ,message: ""}; }
     catch (error) { return { message: "Check access and try again", value: state.value ,ready: false}; }
 }

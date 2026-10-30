@@ -1,0 +1,37 @@
+// Validate decoded elements into fresh invariant arrays; preserve already typed arrays.
+export function records(value: unknown): Record<string, unknown>[] {
+    let typed: Record<string, unknown>[] | null = null;
+    try { typed = value as Record<string, unknown>[]; } catch (error) { }
+    if (typed !== null) { return typed; }
+    let source: unknown[] = value as unknown[];
+    let result: Record<string, unknown>[] = [];
+    for (let item of source) { result[result.length] = item as Record<string, unknown>; }
+    return result;
+}
+export function strings(value: unknown): string[] {
+    let typed: string[] | null = null;
+    try { typed = value as string[]; } catch (error) { }
+    if (typed !== null) { return typed; }
+    let source: unknown[] = value as unknown[];
+    let result: string[] = [];
+    for (let item of source) { result[result.length] = item as string; }
+    return result;
+}
+export function numbers(value: unknown): number[] {
+    let typed: number[] | null = null;
+    try { typed = value as number[]; } catch (error) { }
+    if (typed !== null) { return typed; }
+    let source: unknown[] = value as unknown[];
+    let result: number[] = [];
+    for (let item of source) { result[result.length] = item as number; }
+    return result;
+}
+export function booleans(value: unknown): boolean[] {
+    let typed: boolean[] | null = null;
+    try { typed = value as boolean[]; } catch (error) { }
+    if (typed !== null) { return typed; }
+    let source: unknown[] = value as unknown[];
+    let result: boolean[] = [];
+    for (let item of source) { result[result.length] = item as boolean; }
+    return result;
+}

@@ -5,14 +5,14 @@ globalThis.protocolHost = function(id, declarations, rt) {
     if (value === null || descriptor[0] === '?' && value === null) return null;
     if (descriptor[0] === '?') return record(descriptor.slice(1),value);
     if (descriptor[0] === '[') return value.map(v=>record(descriptor.slice(1,-1),v));
-    if(descriptor==='table') {
+    if(descriptor==='record') {
       function table(v){if(Array.isArray(v))return v.map(table);if(v&&typeof v==='object')return rt.makeTable(Object.fromEntries(Object.entries(v).map(([k,x])=>[k,table(x)])));return v;}
       return table(value);
     }
     if (descriptor[0] !== '@') return value;
     if(descriptor.includes('/ui/')) {
       const name=descriptor.split('/').pop();
-      const fields=Object.fromEntries(Object.entries(value).filter(([key])=>!key.startsWith('$')).map(([key,v])=>[key,key==='children'?v.map(n=>record(descriptor,n)):key==='props'?v.map(p=>record(descriptor.replace('/ViewNode','/Prop'),p)):key==='actionBindings'?record('table',v):v]));
+      const fields=Object.fromEntries(Object.entries(value).filter(([key])=>!key.startsWith('$')).map(([key,v])=>[key,key==='children'?v.map(n=>record(descriptor,n)):key==='props'?v.map(p=>record(descriptor.replace('/ViewNode','/Prop'),p)):key==='actionBindings'?record('record',v):v]));
       try { return protocolUi[name+'$new'](fields); }
       catch(error) { throw rt.errorValue(error.code||'BAD_RESPONSE','Invalid '+name+' transport: '+(error.message||'construction failed')); }
     }

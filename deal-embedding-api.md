@@ -26,33 +26,33 @@ export function snapshot(schema: WireType, valueJson: string): GenerationContext
 export function contextSchema(context: GenerationContext): WireType;
 export function contextJson(context: GenerationContext): string;
 export function request(title: string, intent: string, context: GenerationContext): GenerationRequest;
-export async function generate(request: GenerationRequest): Experience;
+export function generate(request: GenerationRequest): Promise<Experience>;
 export function cancel(request: GenerationRequest): null;
-export async function load(title: string, source: Source): Experience;
+export function load(title: string, source: Source): Promise<Experience>;
 export function source(experience: Experience): Source;
 export function release(experience: Experience): null;
 export class SessionUpdate {
     snapshot: UiSnapshot ;
     cursor: string ;
 }
-export async function run(experience: Experience): Session;
-export async function next(session: Session, cursor: string): SessionUpdate;
-export async function dispatch(session: Session, actionSlot: number, payload: string | null): null;
+export function run(experience: Experience): Promise<Session>;
+export function next(session: Session, cursor: string): Promise<SessionUpdate>;
+export function dispatch(session: Session, actionSlot: number, payload: string | null): Promise<null>;
 export function published(session: Session, version: number): null;
-export async function close(session: Session): null;
+export function close(session: Session): Promise<null>;
 export function saved(): Experience[];
-export async function forget(experience: Experience): null;
-export async function refresh(): CapabilityContract[];
+export function forget(experience: Experience): Promise<null>;
+export function refresh(): Promise<CapabilityContract[]>;
 export function grant(module: string): null;
 export function revoke(module: string): null;
 export function requestTrace(request: GenerationRequest): string;
 export function sessionTrace(session: Session): string;
-export async function events(trace: string, cursor: string, limit: number): EventPage;
-export async function artifact(id: string): Artifact;
+export function events(trace: string, cursor: string, limit: number): Promise<EventPage>;
+export function artifact(id: string): Promise<Artifact>;
 export function health(): ObservationHealth;
 export function capture(enabled: boolean): null;
-export async function clearObservation(): null;
-export async function shutdown(): null;
+export function clearObservation(): Promise<null>;
+export function shutdown(): Promise<null>;
 ```
 
  ### App-linked catalogue-policy.d.deal
@@ -64,9 +64,9 @@ export class ChoiceQuestion { name: string ; instructions: string ; options: Cho
 export class OptionProbability { option: string ; probability: number ; }
 export class ChoiceAnswer { question: string ; choice: string ; probabilities: OptionProbability[] ; confidence: number | null ; }
 export class CatalogueOffer { available: boolean ; questions: ChoiceQuestion[] ; stateJson: string ; }
-export async function offer(intent: string, context: embedding.GenerationContext, capabilities: embedding.CapabilityContract[]): CatalogueOffer;
+export function offer(intent: string, context: embedding.GenerationContext, capabilities: embedding.CapabilityContract[]): Promise<CatalogueOffer>;
 export class CatalogueLowering { source: embedding.Source | null ; reason: string ; }
-export async function lower(stateJson: string, answers: ChoiceAnswer[]): CatalogueLowering;
+export function lower(stateJson: string, answers: ChoiceAnswer[]): Promise<CatalogueLowering>;
 ```
 
 ### Contract rules
@@ -80,7 +80,7 @@ export async function lower(stateJson: string, answers: ChoiceAnswer[]): Catalog
 * Progress: Embedding drives effects, replies and deadlines independently of application calls. dispatch returns null after action processing, not effect completion.
 * Updates: Only next delivers snapshots. An empty cursor returns current state; subsequent calls return changes or wait. Opaque, session-scoped cursors include faults. Updates may coalesce without read/wait races. Invalid cursors raise DEAL Error. close and shutdown stop drivers and reject waits.
 * Publication: published records renderer acceptance, not screen presentation; it never gates progress.
-* Policy: Embedding validates coverage, issued options and typed answers; the app validates domain relationships. available:false or invalid/unsupported choices trigger source generation. Invalid catalogue source stops without repair. Confidence and probabilities confer neither correctness nor authority; provider and transport failures remain failures.
+* Policy: Embedding validates coverage, issued options and typed answers; app DEAL validates domain relations. Fully specified zero-question offers lower directly; inferred offers enter composition without another selector. Unavailable/unsupported offers and rejected deterministic source fall through to generation. Confidence confers no correctness/authority; transport failures retain classification.
 * Observation: For events, empty trace means all; empty cursor starts paging. Artifacts are captured, truncated or unavailable. Capture is bounded and nonretroactive; observation failures preserve application results.
 * Failures: Raise DEAL Error. Cancellation stops waiting and acceptance, not necessarily remote computation or cost.
 * Bootstrap: Native bindings create instances and supply mechanisms; declarations do not. Embedding owns driving and renderer wiring; apps own rendering and lifecycle, not pumping or scheduling.

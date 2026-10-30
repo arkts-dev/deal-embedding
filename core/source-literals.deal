@@ -4,7 +4,7 @@ import * as math from "std/math";
 // Source literals use DEAL escaping, not JSON escaping (notably no escaped slash).
 export function quote(value: string): string {
     let out: string = "\"";
-    for (let ch: string of value) {
+    for (let ch of value) {
         let escaped: string = ch;
         if (ch === "\\") { escaped = "\\\\"; }
         if (ch === "\"") { escaped = "\\\""; }

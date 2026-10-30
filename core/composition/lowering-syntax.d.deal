@@ -1,4 +1,4 @@
-export function functionSource(source: string, name: string, names: table): string;
-export function bodySource(source: string, name: string, names: table, expressions: table, statements: table): string;
+export function functionSource(source: string, name: string, names: Record<string, unknown>): string;
+export function bodySource(source: string, name: string, names: Record<string, unknown>, expressions: Record<string, unknown>, statements: Record<string, unknown>): string;
 export function validateCustom(source: string): null;
-export function viewTree(kind: string): table[];
+export function viewTree(kind: string): Record<string, unknown>[];

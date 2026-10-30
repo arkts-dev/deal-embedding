@@ -2,7 +2,7 @@
 export class ProviderReply {}
 function decodeReply(): null { return null; }
 function projectReply(): null { return null; }
-export async function read(emptyReply: ProviderReply, available: boolean): null {
+export async function read(emptyReply: ProviderReply, available: boolean): Promise<null> {
     let reply: ProviderReply = emptyReply;
     if (available) {
         decodeReply();

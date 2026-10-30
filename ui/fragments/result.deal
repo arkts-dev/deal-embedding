@@ -12,8 +12,8 @@ export function number(value: number, format: string, present: boolean): NumberS
     if (format === "integer") { text = values.decimal(value); }
     if (format === "number") {
         if (value - value !== 0) { throw {code:"INVALID_NUMBER",message:"Expected a finite value"}; }
-        let data: table = {}; data["value"] = value;
-        let encoded: string = json.stringify(data);
+        let data: Record<string, unknown> = {}; data["value"] = value;
+        let encoded: string = (json.stringify(data) as string);
         text = strings.substring(encoded,9,strings.length(encoded) - 1);
     }
     return {m_value:value,m_text:text,m_present:present};

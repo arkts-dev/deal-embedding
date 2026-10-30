@@ -1,15 +1,15 @@
 import * as embedding from "./embedding";
 
-export async function catalogJson(capabilities: embedding.CapabilityContract[]): string;
-export async function contextEntries(input: string): string;
-export async function member(input: table, key: string): table;
-export async function stringMember(input: table, key: string): string;
-// JSON shape normalization only: decode objects as tables and arrays as typed ABI arrays.
-// This avoids std/json's marked-table array representation on the current JS backend.
-export async function parse(input: string): table;
+export function catalogJson(capabilities: embedding.CapabilityContract[]): Promise<string> ;
+export function contextEntries(input: string): Promise<string> ;
+export function member(input: Record<string, unknown>, key: string): Promise<Record<string, unknown>> ;
+export function stringMember(input: Record<string, unknown>, key: string): Promise<string> ;
+// Host JSON transport; records preserve presence, arrays retain unknown descriptors.
+// Portable decoding validates elements into fresh typed arrays.
+export function parse(input: string): Promise<Record<string, unknown>> ;
 // Unicode string primitive; no catalogue or source policy in the host.
-export async function lowercase(input: string): string;
+export function lowercase(input: string): Promise<string> ;
 // Wire bounds count UTF-16 code units (including each surrogate), not Unicode scalars.
-export async function utf16Length(input: string): number;
+export function utf16Length(input: string): Promise<number> ;
 // Digest mechanism; repair base identity and edit decisions stay in core.
-export async function sha256(input: string): string;
+export function sha256(input: string): Promise<string> ;

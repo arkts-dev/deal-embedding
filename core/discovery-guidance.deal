@@ -3,7 +3,7 @@ import * as policy from "./discovery-policy";
 
 export function prompt(input: policy.Capture): string {
     let offered: string = "";
-    for (let id: string of input.capabilityIds) { if (offered !== "") { offered = offered + ", "; } offered = offered + id; }
+    for (let id of input.capabilityIds) { if (offered !== "") { offered = offered + ", "; } offered = offered + id; }
     if (offered === "") { offered = "(none)"; }
     return "Decide whether to interrupt the user with ONE useful interactive aid. This is not a request to help with every event.\n" +
         "Output null unless the facts explicitly establish unfinished work AND enough specific inputs for a useful calculation, item checklist, comparison or supported control. Titles and callable functions do not establish a need. Completed work, vague notes, missing essential evidence and ordinary appointments require null. Never substitute generic preparation, reminders or a request for missing inputs.\n" +
@@ -20,7 +20,7 @@ export function prompt(input: policy.Capture): string {
         "Facts: [{\"id\":\"a\",\"text\":\"Need to split 84 EUR among 3 people; split not calculated.\"}]\n" +
         "Output: {\"title\":\"Split expense\",\"brief\":\"Provide editable amount initialized to 84 EUR and people count initialized to 3, automatically calculating each person's share. Clearly label edits as local assumptions; do not send money.\",\"supportingFactIds\":[\"a\"],\"capabilityIds\":[]}\n" +
         "Authority example (only when that function is listed): a task requires the actual reading from host/sensor.read and its description includes a sample conversion formula. Specify an explicit Load action calling host/sensor.read, then calculate from the returned reading. Do not substitute the sample formula, a constant or guessed reading. This example is not an available capability.\n" +
-        "ALLOWED capabilityIds VALUES (use only these strings, or omit the entry for a local tool): " + offered + "\nFACTS:\n" + json.stringify({facts:input.facts}) + "\nEXECUTABLE CAPABILITIES:\n" + input.catalogue + "\n" +
+        "ALLOWED capabilityIds VALUES (use only these strings, or omit the entry for a local tool): " + offered + "\nFACTS:\n" + (json.stringify({facts:input.facts}) as string) + "\nEXECUTABLE CAPABILITIES:\n" + input.catalogue + "\n" +
         "Apply the decision rule to these facts. An unfinished explicit comparison with both supplied amounts IS sufficient: propose editable amounts and a recomputing difference. No external capability is needed for local arithmetic. A routine appointment without unfinished work is NOT sufficient, even when calendar functions exist.\n" +
         "If there is no concrete unfinished need, output null. Otherwise the brief MUST specify the editable inputs, their supplied initial values and recomputing/checkable outcome. When external IDs/prices/stock are unknown, include the listed catalogue read that obtains them and a user-triggered Load action before comparison/quote. Do not ask the user for provider IDs. When no listed function is genuinely required, use an empty capabilityIds array.\n" +
         "Preserve required provider reads even when their implementation is described in the catalogue. Do not turn provider descriptions into local formulas. Requested totals, category minimums and feasibility constraints are outcomes to satisfy after loading actual options, not merely counters the user must fix; preserve explicit manual-selection requests instead of inventing automatic choices.\n" +

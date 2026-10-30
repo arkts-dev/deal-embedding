@@ -4,9 +4,9 @@ import * as values from "ui/values";
 
 export class Row { cost: number; quotas: boolean[]; }
 export class Result { found: boolean; quantities: number[]; }
-function search(rows: Row[], index: number, remaining: number, budget: number, quotas: number[], failed: table): Result {
+function search(rows: Row[], index: number, remaining: number, budget: number, quotas: number[], failed: Record<string, unknown>): Result {
     let empty: number[] = [];
-    for (let quota: number of quotas) { if (quota > remaining) { return {found:false,quantities:empty}; } }
+    for (let quota of quotas) { if (quota > remaining) { return {found:false,quantities:empty}; } }
     let key: string = values.decimal(index) + ":" + values.decimal(remaining) + ":" + values.decimal(budget);
     let quotaIndex: number = 0;
     while (quotaIndex < quotas.length) {
@@ -20,11 +20,11 @@ function search(rows: Row[], index: number, remaining: number, budget: number, q
         }
         quotaIndex = quotaIndex + 1;
     }
-    for (let known: string of tables.keys(failed)) { if (known === key) { return {found:false,quantities:empty}; } }
+    for (let known of tables.keys(failed)) { if (known === key) { return {found:false,quantities:empty}; } }
     if (budget < 0) { return {found:false,quantities:empty}; }
     if (index >= rows.length) {
         let complete: boolean = remaining === 0;
-        for (let quota: number of quotas) { complete = complete && quota <= 0; }
+        for (let quota of quotas) { complete = complete && quota <= 0; }
         return {found:complete,quantities:empty};
     }
     let row: Row = rows[index];
@@ -42,7 +42,7 @@ function search(rows: Row[], index: number, remaining: number, budget: number, q
         let tail: Result = search(rows,index+1,remaining-count,budget-count*row.cost,nextQuotas,failed);
         if (tail.found) {
             let quantities: number[] = [count];
-            for (let quantity: number of tail.quantities) { quantities[quantities.length] = quantity; }
+            for (let quantity of tail.quantities) { quantities[quantities.length] = quantity; }
             return {found:true,quantities:quantities};
         }
         count = count - 1;
@@ -54,12 +54,12 @@ export function allocate(rows: Row[], total: number, budget: number, quotas: num
     if (total < 0 || math.floor(total) !== total || total-total !== 0 || budget-budget !== 0) {
         throw {code:"INVALID_ALLOCATION",message:"Invalid allocation inputs"};
     }
-    for (let quota: number of quotas) {
+    for (let quota of quotas) {
         if (quota < 0 || math.floor(quota) !== quota || quota-quota !== 0) { throw {code:"INVALID_ALLOCATION",message:"Invalid quota"}; }
     }
-    for (let row: Row of rows) {
+    for (let row of rows) {
         if (row.cost < 0 || row.cost-row.cost !== 0 || row.quotas.length !== quotas.length) { throw {code:"INVALID_ALLOCATION",message:"Invalid allocation row"}; }
     }
-    let failed: table = {};
+    let failed: Record<string, unknown> = {};
     return search(rows,0,total,budget,quotas,failed);
 }

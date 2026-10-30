@@ -9,7 +9,7 @@ public final class GenerationBindings {
     private static String quote(String value) { return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""; }
     private static String type(TypeNode type, String tableSchema) {
         if (type instanceof NamedType named) {
-            if (named.name().equals("table")) {
+            if (named.name().equals("Record<string, unknown>")) {
                 if (tableSchema == null) throw new IllegalArgumentException("Table result requires an explicit wire schema");
                 return tableSchema;
             }

@@ -1,3 +1,4 @@
+import * as decoded from "./decoded";
 import * as assets from "./generation-guidance.generated";
 
 // Portable composition prose is packaged from ui/; contract facts remain build-derived.
@@ -11,47 +12,47 @@ export function workflow(): string {
         "Compare requested packages and components from actual returned data. Show hire cost and any returned deposit separately. Keep one useful primary action and concise results. Use typed maintained operations for initial construction, then edit_sources for exact targeted source repairs. submit_custom is explicitly measured custom behavior; full-source write_file is available only after explicit source_fallback. Never put raw source into maintained data fields.\n" +
         "NATIVE SUBMISSION: return one submit_compact call with all four root fields title, fragments, commands, display. fragments, commands and display are actual JSON arrays, never quoted JSON documents. Use actual fragment IDs and published ports in formulas. Collection fields retain every disclosed nesting level; never flatten record fields. Include every visible input/result in display. String formula literals require their own double quotes inside expr.\n";
 }
-export function componentFacts(pack: table): string {
-    let out: string = ""; let components: table[] = pack.components;
-    for (let component: table of components) {
-        let name: string = component.name; let fields: table[] = component.fields; let contracts: table[] = component.contracts;
-        let arguments: string = ""; let requiredProps: string = "";
-        for (let field: table of fields) {
-            let fieldName: string = field.name; let type: string = field.type;
-            let defaultKind: string = field.defaultKind; let defaultText: string = field.defaultText; let required: boolean = field.required;
+export function componentFacts(pack: Record<string, unknown>): string {
+    let out: string = ""; let components: Record<string, unknown>[] = decoded.records(pack.components);
+    for (let component of components) {
+        let name: string = (component.name as string); let fields: Record<string, unknown>[] = decoded.records(component.fields); let contracts: Record<string, unknown>[] = decoded.records(component.contracts);
+        let callArguments: string = ""; let requiredProps: string = "";
+        for (let field of fields) {
+            let fieldName: string = (field.name as string); let type: string = (field.type as string);
+            let defaultKind: string = (field.defaultKind as string); let defaultText: string = (field.defaultText as string); let required: boolean = (field.required as boolean);
             if (required) { if (requiredProps !== "") { requiredProps = requiredProps + ", "; } requiredProps = requiredProps + fieldName; }
             let action: boolean = type === "Action";
-            for (let contract: table of contracts) {
-                let kind: string = contract.kind;
-                if (kind === "event") { let prop: string = contract.prop; if (prop === fieldName) { action = true; } }
+            for (let contract of contracts) {
+                let kind: string = (contract.kind as string);
+                if (kind === "event") { let prop: string = (contract.prop as string); if (prop === fieldName) { action = true; } }
             }
-            if (arguments !== "") { arguments = arguments + ", "; }
-            arguments = arguments + fieldName + ": " + type;
-            if (!required) { arguments = arguments + " (optional";
-                if (defaultKind === "string") { arguments = arguments + ", default string '" + defaultText + "'"; }
-                if (defaultKind === "number" || defaultKind === "boolean") { arguments = arguments + ", default " + defaultText; }
-                arguments = arguments + ")";
+            if (callArguments !== "") { callArguments = callArguments + ", "; }
+            callArguments = callArguments + fieldName + ": " + type;
+            if (!required) { callArguments = callArguments + " (optional";
+                if (defaultKind === "string") { callArguments = callArguments + ", default string '" + defaultText + "'"; }
+                if (defaultKind === "number" || defaultKind === "boolean") { callArguments = callArguments + ", default " + defaultText; }
+                callArguments = callArguments + ")";
             }
-            if (action) { arguments = arguments + " [use events, not props]"; }
+            if (action) { callArguments = callArguments + " [use events, not props]"; }
         }
         let behaviour: string = ""; let children: boolean = false;
         if (requiredProps !== "") { behaviour = "required props: " + requiredProps; }
-        for (let contract: table of contracts) {
-            let kind: string = contract.kind; let text: string = "";
+        for (let contract of contracts) {
+            let kind: string = (contract.kind as string); let text: string = "";
             if (kind === "event") {
-                let prop: string = contract.prop; let payload: string = contract.payload;
+                let prop: string = (contract.prop as string); let payload: string = (contract.payload as string);
                 text = "raises " + prop;
                 if (payload !== "") { text = text + " carrying a " + payload + " payload"; }
             }
             if (kind === "children") {
-                children = true; let required: boolean = contract.required; let childTypes: string = contract.types;
+                children = true; let required: boolean = (contract.required as boolean); let childTypes: string = (contract.types as string);
                 text = "accepts children"; if (required) { text = "requires children"; }
                 if (childTypes !== "") { text = text + " of types " + childTypes; }
             }
             if (text !== "") { if (behaviour !== "") { behaviour = behaviour + "; "; } behaviour = behaviour + text; }
         }
         if (out !== "") { out = out + "\n"; }
-        out = out + "- " + name + ": " + arguments;
+        out = out + "- " + name + ": " + callArguments;
         if (children) { out = out + "; children are view IDs"; }
         if (behaviour !== "") { out = out + "  [" + behaviour + "]"; }
     }
@@ -60,5 +61,5 @@ export function componentFacts(pack: table): string {
 export function guidance(): string {
     return assets.behavior();
 }
-export function sourceGuidance(): string { return "DEAL 1.4 SOURCE RULES\n" + assets.language() + "\n\nRENDERER\n" + assets.renderer(); }
+export function sourceGuidance(): string { return "DEAL 1.5 SOURCE RULES\n" + assets.language() + "\n\nRENDERER\n" + assets.renderer(); }
 export function main(): null { return null; }

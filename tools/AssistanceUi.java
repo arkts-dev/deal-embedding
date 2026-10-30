@@ -15,7 +15,7 @@ public final class AssistanceUi {
         var result = UiSourceGenerator.generate(ui, view, app, deal, Map.of("./platform.dealui-pack", UiParser.parsePack(pack,packSource)), distribution);
         Files.writeString(app, UiSourceGenerator.compilerSource(deal) + result.augmentation());
         Files.writeString(src.resolve("experience_entry.deal"),result.source());
-        Files.writeString(output.resolve("assistance.d.deal"),"export async function open(): null;\nexport async function dismiss(): null;\n");
-        Files.writeString(output.resolve("deal.json"),"{\"languageVersion\":\"1.4\",\"backend\":\"js\",\"moduleRoots\":[\"src\",\""+output.toAbsolutePath().relativize(distribution.toAbsolutePath()).toString().replace("\\","/")+"\"],\"externals\":{\"embedding/assistance\":{\"declaration\":\"assistance.d.deal\"}}}");
+        Files.writeString(output.resolve("assistance.d.deal"),"export function open(): Promise<null>;\nexport function dismiss(): Promise<null>;\n");
+        Files.writeString(output.resolve("deal.json"),"{\"languageVersion\":\"1.5\",\"backend\":\"js\",\"moduleRoots\":[\"src\",\""+output.toAbsolutePath().relativize(distribution.toAbsolutePath()).toString().replace("\\","/")+"\"],\"externals\":{\"embedding/assistance\":{\"declaration\":\"assistance.d.deal\"}}}");
     }
 }

@@ -1,3 +1,4 @@
+import * as decoded from "./decoded";
 import * as math from "std/math";
 import * as data from "embedding/policy-data";
 import * as tables from "std/table";
@@ -12,30 +13,30 @@ import * as composer from "embedding/composer";
 import * as guidance from "./generation-guidance";
 
 // Reads are advisory only; numbered text never changes exact-edit authority.
-function readSource(args: table, deal: string, ui: string): table {
-    let file: string = args.file; let keys: string[] = tables.keys(args);
+function readSource(args: Record<string, unknown>, deal: string, ui: string): Record<string, unknown> {
+    let file: string = (args.file as string); let keys: string[] = tables.keys(args);
     if (file !== "deal" && file !== "dealui") { return { accepted: false, diagnostics: "TOOL_SHAPE: read_file permits only deal or dealui" }; }
     let source: string = deal; if (file === "dealui") { source = ui; }
     let lines: string[] = strings.split(source, "\n"); let total: number = lines.length;
     if (source === "") { total = 0; }
     if (keys.length === 1) { return { accepted: true, file: file, source: source, total_lines: total }; }
     if (keys.length !== 3) { return { accepted: false, diagnostics: "TOOL_SHAPE: supply file and both nullable line bounds" }; }
-    for (let key: string of keys) { if (key !== "file" && key !== "start_line" && key !== "end_line") { return { accepted: false, diagnostics: "TOOL_SHAPE: unknown read_file argument" }; } }
-    let start: number | null = args.start_line; let end: number | null = args.end_line;
+    for (let key of keys) { if (key !== "file" && key !== "start_line" && key !== "end_line") { return { accepted: false, diagnostics: "TOOL_SHAPE: unknown read_file argument" }; } }
+    let start: number | null = (args.start_line as number | null); let end: number | null = (args.end_line as number | null);
     if (start === null && end === null) { return { accepted: true, file: file, source: source, total_lines: total }; }
     if (start === null) { return { accepted: false, diagnostics: "READ_RANGE: supply both bounds or null for both" }; }
     if (end === null) { return { accepted: false, diagnostics: "READ_RANGE: supply both bounds or null for both" }; }
-    let first: number = args.start_line; let last: number = args.end_line;
+    let first: number = (args.start_line as number); let last: number = (args.end_line as number);
     if (math.floor(first) !== first || math.floor(last) !== last || first < 1 || last < first || last > total) { return { accepted: false, total_lines: total, diagnostics: "READ_RANGE: require 1 <= start_line <= end_line <= total_lines" }; }
-    let selected: table[] = [];
+    let selected: Record<string, unknown>[] = [];
     { let index: number = first - 1; while (index < last) {  let text: string = lines[index]; selected[selected.length] = { number: index + 1, text: text };  index = index + 1; } }
     return { accepted: true, file: file, start_line: first, end_line: last, total_lines: total, lines: selected };
 }
 
 // Portable restricted workspace. Provider adapters transport native calls, never execute them.
-export async function run(input: string, diagnostic: string): table {
+export async function run(input: string, diagnostic: string): Promise<Record<string, unknown>> {
     let deal: string = ""; let ui: string = ""; let previous: string = "";
-    let history: table[] = []; let attempts: number = 0; let compact: boolean = true;
+    let history: Record<string, unknown>[] = []; let attempts: number = 0; let compact: boolean = true;
     let route: string = "maintained-only"; let fallbacks: number = 0; let repairs: number = 0;
     while (true) {
         attempts = attempts + 1;
@@ -44,65 +45,65 @@ export async function run(input: string, diagnostic: string): table {
         let instruction: string = "Use submit_compact with title, fragments, commands and display. Select independently named maintained fragments with semantic configuration, pure formulas and disclosed bindings. Commands name target instances; the embedding derives dependency execution. Do not author a state/action/node graph for supported behaviors. Only genuinely uncovered behavior may use submit_custom with an explicit reason and typed function boundaries; full source_fallback is the last resort. Do not omit task behavior to fit. No other operation is available before materialization.";
         if (!compact) { instruction = guidance.sourceGuidance() + "\nCreate both missing files using paired write_file calls. Once files exist use one operation per turn; repair with exact edit_sources, never overwrite. read_file supports inclusive ranges; both null reads full source. check_sources checks the complete pair."; }
         if (!initialWrites) { instruction = guidance.sourceGuidance() + "\nThe canonical source pair already exists. Use exact edit_sources, read_file or check_sources only. No plan regeneration or source overwrite. Read relevant ranges; numbers are metadata, not search text." + await feedback.patchInstruction(previous, diagnostic); }
-        let prompt: string = input + "\nSOURCE OPERATION\n" + operation + "\n" + instruction + "\nNATIVE TOOL TURN\n" + json.stringify({ messages: history, initialWrites: initialWrites, compact: compact && initialWrites });
+        let prompt: string = input + "\nSOURCE OPERATION\n" + operation + "\n" + instruction + "\nNATIVE TOOL TURN\n" + (json.stringify({ messages: history, initialWrites: initialWrites, compact: compact && initialWrites }) as string);
         let raw: string = "";
         try { raw = await model.complete(prompt, previous, diagnostic); }
-        catch (error) {
+        catch (errorUnknown) { let error: Error = errorUnknown as Error;
             if (error.code !== "MODEL_RECOVERABLE") { throw error; }
             await observer.record("recovery", "model", error.message); continue;
         }
-        let message: table = {}; let calls: table[] = [];
+        let message: Record<string, unknown> = {}; let calls: Record<string, unknown>[] = [];
         try {
-            message = await data.parse(raw); calls = message.tool_calls;
-            let role: string = message.role; let text: string = message.content;
+            message = await data.parse(raw); calls = decoded.records(message.tool_calls);
+            let role: string = (message.role as string); let text: string = (message.content as string);
             if (role !== "assistant" || calls.length === 0 || text !== "") { throw { code: "INVALID_TOOL", message: "Use native tools without exterior text" }; }
             let ids: string[] = []; let files: string[] = [];
             if (calls.length > 1 && !initialWrites) { throw { code: "INVALID_TOOL", message: "Batching is only available before either file exists" }; }
-            for (let call: table of calls) {
-                let id: string = call.id; let kind: string = call.type; let functionData: table = call["function"];
-                let name: string = functionData.name; let args: string = functionData.arguments;
+            for (let call of calls) {
+                let id: string = (call.id as string); let kind: string = (call.type as string); let functionData: Record<string, unknown> = (call["function"] as Record<string, unknown>);
+                let name: string = (functionData.name as string); let args: string = (functionData.arguments as string);
                 if (id === "" || kind !== "function" || (calls.length > 1 && name !== "write_file")) { throw { code: "INVALID_TOOL", message: "Use one operation per turn except independent initial writes" }; }
-                for (let prior: string of ids) { if (prior === id) { throw { code: "INVALID_TOOL", message: "Duplicate tool identity" }; } }
+                for (let prior of ids) { if (prior === id) { throw { code: "INVALID_TOOL", message: "Duplicate tool identity" }; } }
                 if (compact && (name === "write_file" || calls.length > 1)) { throw { code: "INVALID_TOOL", message: "Initial compact submission is one atomic call; use source_fallback explicitly before writes" }; }
                 if (calls.length > 1) {
-                    let write: table = await data.parse(args); let file: string = write.file; let source: string = write.source; let keys: string[] = tables.keys(write);
+                    let write: Record<string, unknown> = await data.parse(args); let file: string = (write.file as string); let source: string = (write.source as string); let keys: string[] = tables.keys(write);
                     if (keys.length !== 2 || (file !== "deal" && file !== "dealui") || strings.trim(source) === "") { throw { code: "INVALID_TOOL", message: "Invalid initial write" }; }
-                    for (let prior: string of files) { if (prior === file) { throw { code: "INVALID_TOOL", message: "Initial writes must target different files" }; } }
+                    for (let prior of files) { if (prior === file) { throw { code: "INVALID_TOOL", message: "Initial writes must target different files" }; } }
                     files[files.length] = file;
                 }
                 ids[ids.length] = id;
             }
-        } catch (error) {
+        } catch (errorUnknown) { let error: Error = errorUnknown as Error;
             if (error.code !== "INVALID_JSON" && error.code !== "INVALID_TOOL" && error.code !== "E8001") { throw error; }
-            let invalidHistory: table[] = []; history = invalidHistory;
+            let invalidHistory: Record<string, unknown>[] = []; history = invalidHistory;
             history[history.length] = { role: "user", content: "Invalid tool response. Use the currently issued native tools, no textual envelope. The canonical workspace is unchanged." };
             await observer.record("recovery", "tool", "INVALID_TOOL"); continue;
         }
         // Canonical source + current diagnostic are the repair authority. Retain the
         // current native assistant/tool exchange, not an ever-growing duplicate of edits.
         // Full prior exchanges remain in unified model/tool evidence, never regenerated.
-        let currentHistory: table[] = []; history = currentHistory;
+        let currentHistory: Record<string, unknown>[] = []; history = currentHistory;
         history[history.length] = message;
-        for (let call: table of calls) {
-            let id: string = call.id; let functionData: table = call["function"]; let name: string = functionData.name; let arguments: string = functionData.arguments;
-            let result: table = { accepted: false, diagnostics: "INVALID_TOOL" }; let changed: boolean = false; let check: boolean = false;
-            let args: table = {};
-            try { args = await data.parse(arguments); }
-            catch (error) { if (error.code !== "INVALID_JSON") { throw error; } }
+        for (let call of calls) {
+            let id: string = (call.id as string); let functionData: Record<string, unknown> = (call["function"] as Record<string, unknown>); let name: string = (functionData.name as string); let callArguments: string = (functionData.arguments as string);
+            let result: Record<string, unknown> = { accepted: false, diagnostics: "INVALID_TOOL" }; let changed: boolean = false; let check: boolean = false;
+            let args: Record<string, unknown> = {};
+            try { args = await data.parse(callArguments); }
+            catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "INVALID_JSON") { throw error; } }
             if (name === "submit_compact" || name === "submit_custom") {
                 if (!initialWrites || !compact) { result = { accepted: false, diagnostics: "FILES_EXIST: repair canonical source with exact edits" }; }
                 else {
                     let custom: boolean = name === "submit_custom";
                     let hasCustom: boolean = false;
-                    for (let key: string of tables.keys(args)) { if (key === "custom") { hasCustom = true; } }
+                    for (let key of tables.keys(args)) { if (key === "custom") { hasCustom = true; } }
                     let assembledJson: string = "{\"accepted\":false,\"diagnostics\":\"TOOL_SHAPE: maintained submission cannot contain custom source\"}";
-                    if (hasCustom === custom) { assembledJson = await composer.assemble(json.stringify(args)); }
-                    let assembled: table = await data.parse(assembledJson); let accepted: boolean = assembled.accepted;
+                    if (hasCustom === custom) { assembledJson = await composer.assemble((json.stringify(args) as string)); }
+                    let assembled: Record<string, unknown> = await data.parse(assembledJson); let accepted: boolean = (assembled.accepted as boolean);
                     if (accepted) {
-                        let pair: table = assembled.source; let builtDeal: string = pair.deal; let builtUi: string = pair.dealui;
+                        let pair: Record<string, unknown> = (assembled.source as Record<string, unknown>); let builtDeal: string = (pair.deal as string); let builtUi: string = (pair.dealui as string);
                         deal = builtDeal; ui = builtUi; changed = true;
                         if (custom) { route = "custom-section"; fallbacks = fallbacks + 1; }
-                        await observer.record("composition", "materialized", json.stringify({route:route,fallbacks:fallbacks}));
+                        await observer.record("composition", "materialized", (json.stringify({route:route,fallbacks:fallbacks}) as string));
                         // Return exact materialized bytes if checking rejects: the model never repairs an imagined expansion.
                         result = { accepted: true, source: pair };
                     } else { result = assembled; }
@@ -110,56 +111,56 @@ export async function run(input: string, diagnostic: string): table {
             } else if (name === "source_fallback") {
                 if (!initialWrites || !compact) { result = { accepted: false, diagnostics: "FILES_EXIST" }; }
                 else {
-                    let reason: string = args.reason;
+                    let reason: string = (args.reason as string);
                     if (strings.trim(reason) !== "") { compact = false; route = "full-source"; fallbacks = fallbacks + 1; await observer.record("composition", "fallback", reason); result = { accepted: true, diagnostics: "Explicit full-source fallback; use write_file for both missing files" }; }
                 }
             } else if (name === "write_file") {
                 if (compact) { result = { accepted: false, diagnostics: "COMPACT_REQUIRED: use submit_compact or explicit source_fallback first" }; }
                 else { try {
-                    let keys: string[] = tables.keys(args); let file: string = args.file; let source: string = args.source;
+                    let keys: string[] = tables.keys(args); let file: string = (args.file as string); let source: string = (args.source as string);
                     if (keys.length !== 2 || strings.trim(source) === "" || (file !== "deal" && file !== "dealui")) { throw { code: "TOOL_SHAPE", message: "Invalid file/source" }; }
                     if ((file === "deal" && deal !== "") || (file === "dealui" && ui !== "")) { result = { accepted: false, diagnostics: "FILE_EXISTS: use exact edits, never overwrite" }; }
                     else {
                         if (file === "deal") { deal = source; } else { ui = source; }
                         result = { accepted: true, diagnostics: "File staged; create the other file before checking" }; changed = true;
                     }
-                } catch (error) { result = { accepted: false, diagnostics: "TOOL_SHAPE: write_file requires one missing file and nonempty source" }; } }
+                } catch (errorUnknown) { let error: Error = errorUnknown as Error; result = { accepted: false, diagnostics: "TOOL_SHAPE: write_file requires one missing file and nonempty source" }; } }
             } else if (name === "edit_sources") {
                 if (deal === "" || ui === "") { result = { accepted: false, diagnostics: "INCOMPLETE_PAIR: write both files first" }; }
                 else {
-                    let base: string = json.stringify({ deal: deal, dealui: ui });
+                    let base: string = (json.stringify({ deal: deal, dealui: ui }) as string);
                     let digest: string = await data.sha256(repair.digestInput(deal, ui));
-                    let emptyEdits: table[] = []; let patch: table = { baseDigest: digest, edits: emptyEdits };
-                    try { let edits: table[] = args.edits; let keys: string[] = tables.keys(args); if (keys.length === 1) { patch.edits = edits; } } catch (error) { }
+                    let emptyEdits: Record<string, unknown>[] = []; let patch: Record<string, unknown> = { baseDigest: digest, edits: emptyEdits };
+                    try { let edits: Record<string, unknown>[] = decoded.records(args.edits); let keys: string[] = tables.keys(args); if (keys.length === 1) { patch.edits = edits; } } catch (errorUnknown) { let error: Error = errorUnknown as Error; }
                     await observer.record("patch", "started", "");
-                    result = await repair.apply(base, json.stringify(patch));
-                    await observer.record("patch", "completed", json.stringify(result));
-                    let accepted: boolean = result.accepted;
+                    result = await repair.apply(base, (json.stringify(patch) as string));
+                    await observer.record("patch", "completed", (json.stringify(result) as string));
+                    let accepted: boolean = (result.accepted as boolean);
                     if (accepted) {
                         repairs = repairs + 1;
-                        await observer.record("composition", "source-repair", json.stringify({route:route,repairs:repairs}));
-                        let source: string = result.source; let pair: table = await data.parse(source); deal = pair.deal; ui = pair.dealui; changed = true;
+                        await observer.record("composition", "source-repair", (json.stringify({route:route,repairs:repairs}) as string));
+                        let source: string = (result.source as string); let pair: Record<string, unknown> = await data.parse(source); deal = (pair.deal as string); ui = (pair.dealui as string); changed = true;
                     }
                 }
             } else if (name === "read_file") {
                 try { result = readSource(args, deal, ui); }
-                catch (error) {
+                catch (errorUnknown) { let error: Error = errorUnknown as Error;
                     if (error.code !== "E8001") { throw error; }
                     result = { accepted: false, diagnostics: "TOOL_SHAPE: read_file requires a valid file and integral nullable line bounds" };
                 }
             } else if (name === "check_sources") { let keys: string[] = tables.keys(args); check = keys.length === 0; }
             if (changed || check) {
                 if (deal !== "" && ui !== "") {
-                    previous = json.stringify({ deal: deal, dealui: ui });
-                    let checked: table = await checker.check(previous); let accepted: boolean = checked.accepted;
-                    let candidate: string = checked.candidateId;
-                    if (accepted) { await observer.record("composition","checked",json.stringify({route:route,fallbacks:fallbacks,repairs:repairs})); return { candidateId: candidate, attempts: attempts, usedFallback: true }; }
-                    diagnostic = checked.diagnostics;
+                    previous = (json.stringify({ deal: deal, dealui: ui }) as string);
+                    let checked: Record<string, unknown> = await checker.check(previous); let accepted: boolean = (checked.accepted as boolean);
+                    let candidate: string = (checked.candidateId as string);
+                    if (accepted) { await observer.record("composition","checked",(json.stringify({route:route,fallbacks:fallbacks,repairs:repairs}) as string)); return { candidateId: candidate, attempts: attempts, usedFallback: true }; }
+                    diagnostic = (checked.diagnostics as string);
                     let advice: string = await feedback.patchInstruction(previous, diagnostic);
                     result = { accepted: true, checked: false, diagnostics: diagnostic, guidance: advice };
                 } else if (check) { result = { accepted: false, diagnostics: "INCOMPLETE_PAIR: write both files first" }; }
             }
-            history[history.length] = { role: "tool", tool_call_id: id, content: json.stringify(result) };
+            history[history.length] = { role: "tool", tool_call_id: id, content: (json.stringify(result) as string) };
         }
     }
     throw { code: "UNREACHABLE", message: "Source agent exited unexpectedly" };

@@ -1,1 +1,1 @@
-export async function catalog(): string;
+export function catalog(): Promise<string> ;

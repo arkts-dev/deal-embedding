@@ -1,4 +1,5 @@
 import deal.ast.TokenType;
+import deal.parser.Parser;
 import deal.lexer.Lexer;
 import deal.ui.UiModel;
 import deal.ui.UiParser;
@@ -32,20 +33,23 @@ public final class GenerationGuidance {
             .map(type -> type.name().toLowerCase(Locale.ROOT))
             .filter(word -> {
                 var result = new Lexer(word, "keywords.deal").tokenize();
+                var binding = new Lexer("function probe():null { let " + word + " = 0; return null; }", "keywords.deal").tokenize();
                 return result.diagnostics().isEmpty() && result.tokens().size() == 2
                     && result.tokens().get(0).type() != TokenType.IDENTIFIER
-                    && result.tokens().get(0).type() != TokenType.EOF;
+                    && result.tokens().get(0).type() != TokenType.EOF
+                    && (!binding.diagnostics().isEmpty()
+                        || !new Parser(binding.tokens(), "keywords.deal").parse().diagnostics().isEmpty());
             }).sorted().toList();
         Path output = Path.of(args[3]);
         Files.createDirectories(output.getParent());
         Files.writeString(output, "/** Generated asset text and pack facts. Do not edit. */\n"
-            + "function empty(): table[] { return []; }\n"
+            + "function empty(): Record<string, unknown>[] { return []; }\n"
             + "export function behavior(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("behavior-guidance.md")).trim()) + "; }\n"
             + "export function language(): string { return " + literal(Files.readString(Path.of(args[2]).resolve("language.md")).trim()) + "; }\n"
             + "export function reservedWords(): string[] { return [" + String.join(",", reserved.stream().map(GenerationGuidance::literal).toList()) + "]; }\n"
             + "export function renderer(): string { return " + literal(Files.readString(Path.of(args[1])).trim()) + "; }\n"
             + "export function composition(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("composition.md")).trim()) + "; }\n"
-            + "export function pack(): table { return { components: [" + String.join(",", components) + "] }; }\n"
+            + "export function pack(): Record<string, unknown> { return { components: [" + String.join(",", components) + "] }; }\n"
             + "export function exampleDeal(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("generation-example.deal"))) + "; }\n"
             + "export function exampleUi(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("generation-example.dealui"))) + "; }\n"
             + "export function comparisonDeal(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("comparison.deal"))) + "; }\n"

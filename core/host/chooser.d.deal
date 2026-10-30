@@ -1,4 +1,4 @@
 // Raw choice inference transport. Eligibility, validation and synthesis belong to core.
 // The serialized selection contains selected adapters, arguments, answers and disclosed context.
 // Raw inference response; native code does not issue or validate choices.
-export async function choose(input: string): string;
+export function choose(input: string): Promise<string> ;
