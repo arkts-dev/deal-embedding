@@ -18,7 +18,7 @@ export function compose(builder: b.Builder, id: string, config: Record<string, u
         let field: string = "role"+b.decimal(index); values[values.length] = {field:field,node:f.parse(builder,f.expression(role,"predicate"),["row"])};
         params[params.length] = {field:field,quantity:f.parse(builder,f.expression(role,"quantity"),[])}; index = index+1;
     }
-    builder.steps[id] = [b.set(id+"Rows",b.node(builder,"project",[f.parse(builder,source,[]),b.construct(builder,local,values)],{})),b.set(id+"Baskets",b.node(builder,"alternatives",[rows],{type:basketType,roles:params}))];
+    builder.putSteps(id,[b.set(id+"Rows",b.node(builder,"project",[f.parse(builder,source,[]),b.construct(builder,local,values)],{})),b.set(id+"Baskets",b.node(builder,"alternatives",[rows],{type:basketType,roles:params}))]);
     let componentFields: Record<string, unknown>[] = [{name:"id",type:b.wire("string"),optional:false},{name:"quantity",type:b.wire("number"),optional:false}];
     let ct: Record<string, unknown> = {kind:"record",fields:componentFields,element:null}; let empty: Record<string, unknown>[] = [];
     let itemFields: Record<string, unknown>[] = [{name:"id",type:b.wire("string"),optional:false},{name:"label",type:b.wire("string"),optional:false},{name:"capacity",type:b.wire("number"),optional:false},{name:"quantity",type:b.wire("number"),optional:false},{name:"components",type:{kind:"array",fields:empty,element:ct},optional:false}];

@@ -12,8 +12,13 @@ open class ProtocolFailure(val code:String, message:String):IllegalStateExceptio
  * The evaluation pump never waits for a mechanism to finish, so controls remain serviceable.
  */
 class ProtocolController(private val context:Context, private val embedding:Embedding, assets:String="protocol-consumer", consumer:String="consumer.js"):AutoCloseable {
-    private val engine=SandboxEngine.acquire(context)
-    private val program=SandboxProgram(engine,1024*1024)
+    internal val startupTimings = JSONObject()
+    private fun <T> startup(name:String, block:()->T):T {
+        val start=System.nanoTime();val cpu=android.os.Debug.threadCpuTimeNanos()
+        return try { block() } finally { startupTimings.put(name,JSONObject().put("elapsedMs",(System.nanoTime()-start)/1e6).put("cpuMs",(android.os.Debug.threadCpuTimeNanos()-cpu)/1e6)) }
+    }
+    private val engine=startup("sandbox-connect"){SandboxEngine.acquire(context)}
+    private val program=startup("isolate-create"){SandboxProgram(engine,1024*1024)}
     private val workers=Executors.newCachedThreadPool()
     private val serial=Executors.newSingleThreadExecutor()
     private val driving=Executors.newSingleThreadScheduledExecutor()
@@ -41,9 +46,10 @@ class ProtocolController(private val context:Context, private val embedding:Embe
     }
     init {
         try {
-            val saved=embedding.saved().map{e->JSONObject().put("experience",experience(e)).put("source",source(embedding.source(e)))}
-            val bootstrap=JSONObject().put("seed",UUID.randomUUID().toString()).put("saved",JSONArray(saved)).put("contracts",JSONArray(embedding.refresh().map{it.json()})).put("health",health())
-            program.evaluate(SandboxBundle.build(context,listOf("protocol-contracts.js","protocol-host.js","public-protocol.js"),"","protocolInitialize(factories,${JSONObject.quote(consumer)},$bootstrap)",assetRoot=assets))
+            val saved=startup("saved-load"){embedding.saved().map{e->JSONObject().put("experience",experience(e)).put("source",source(embedding.source(e)))}}
+            val bootstrap=JSONObject().put("seed",UUID.randomUUID().toString()).put("saved",JSONArray(saved)).put("contracts",JSONArray(startup("capability-discovery"){embedding.refresh().map{it.json()}})).put("health",health())
+            val bundle=startup("bundle-build"){SandboxBundle.build(context,listOf("protocol-contracts.js","protocol-host.js","public-protocol.js"),"","protocolInitialize(factories,${JSONObject.quote(consumer)},$bootstrap)",assetRoot=assets)}
+            startup("bundle-evaluate"){program.evaluate(bundle)}
             embedding.registry.permissions { module -> program.evaluate("JSON.stringify(publicProtocol.permitted(${JSONObject.quote(module)}))").let{if(it=="null")null else JSONArray("[$it]").getString(0)} }
             driving.scheduleWithFixedDelay({try{advance()}catch(error:Throwable){for(future in futures.values)future.completeExceptionally(error)}},0,5,TimeUnit.MILLISECONDS)
         }catch(e:Throwable){program.close();SandboxEngine.release(engine);workers.shutdownNow();serial.shutdownNow();driving.shutdownNow();throw e}

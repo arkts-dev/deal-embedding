@@ -2,11 +2,25 @@ import * as decoded from "../../../core/decoded";
 import * as json from "std/json";
 import * as strings from "std/string";
 import * as tables from "std/table";
-export class Builder { plan: () => Record<string, unknown>; append: (key: string, value: Record<string, unknown>) => void; setRoot: (id: string) => void; serial: number; ports: Record<string, unknown>; steps: Record<string, unknown>; views: Record<string, unknown>; contracts: Record<string, unknown>[]; authoredViews: Record<string, unknown>[]; }
+export class Builder { plan: () => Record<string, unknown>; append: (key: string, value: Record<string, unknown>) => void; setRoot: (id: string) => void; serial: number; putPort: (key: string, value: Record<string, unknown>) => void; hasPort: (key: string) => boolean; getPort: (key: string) => Record<string, unknown>; putSteps: (id: string, values: Record<string, unknown>[]) => void; getSteps: (id: string) => Record<string, unknown>[]; putViews: (id: string, values: string[]) => void; getViews: (id: string) => string[]; instanceViews: () => Record<string, unknown>; contract: (module: string, name: string) => Record<string, unknown>; addAuthored: (value: Record<string, unknown>) => void; authoredViews: () => Record<string, unknown>[]; }
 export function create(contracts: Record<string, unknown>[]): Builder {
     let records: Record<string, unknown>[] = []; let state: Record<string, unknown>[] = []; let nodes: Record<string, unknown>[] = []; let derived: Record<string, unknown>[] = []; let controls: Record<string, unknown>[] = []; let actions: Record<string, unknown>[] = []; let views: Record<string, unknown>[] = []; let authoredViews: Record<string, unknown>[] = [];
     let plan: Record<string, unknown> = {records:records,state:state,nodes:nodes,derived:derived,controls:controls,actions:actions,views:views,root:"root"};
-    return {plan:function(): Record<string, unknown> { return plan; },append:function(key: string, value: Record<string, unknown>): void { let entries: Record<string, unknown>[] = decoded.records(plan[key]); entries[entries.length] = value; },setRoot:function(id: string): void { plan.root = id; },serial:0,ports:{},steps:{},views:{},contracts:contracts,authoredViews:authoredViews};
+    let ports: Record<string, unknown> = {}; let steps: Record<string, unknown> = {}; let instanceViews: Record<string, unknown> = {};
+    return {plan:function(): Record<string, unknown> { return plan; },append:function(key: string, value: Record<string, unknown>): void {
+        if (key === "records") { records[records.length] = value; }
+        else if (key === "state") { state[state.length] = value; }
+        else if (key === "nodes") { nodes[nodes.length] = value; }
+        else if (key === "derived") { derived[derived.length] = value; }
+        else if (key === "controls") { controls[controls.length] = value; }
+        else if (key === "actions") { actions[actions.length] = value; }
+        else if (key === "views") { views[views.length] = value; }
+        else { fail("Unknown plan collection "+key); }
+    },setRoot:function(id: string): void { plan.root = id; },serial:0,
+    putPort:function(key: string, value: Record<string, unknown>): void { ports[key] = value; },hasPort:function(key: string): boolean { return Object.hasOwn(ports,key); },getPort:function(key: string): Record<string, unknown> { return ports[key] as Record<string, unknown>; },
+    putSteps:function(id: string, values: Record<string, unknown>[]): void { steps[id] = values; },getSteps:function(id: string): Record<string, unknown>[] { if (!Object.hasOwn(steps,id)) { let empty: Record<string, unknown>[] = []; return empty; } return decoded.records(steps[id]); },
+    putViews:function(id: string, values: string[]): void { instanceViews[id] = values; },getViews:function(id: string): string[] { return decoded.strings(instanceViews[id]); },instanceViews:function(): Record<string, unknown> { return instanceViews; },
+    contract:function(module: string, name: string): Record<string, unknown> { return findBinding(contracts,module,name); },addAuthored:function(value: Record<string, unknown>): void { authoredViews[authoredViews.length] = value; },authoredViews:function(): Record<string, unknown>[] { return authoredViews; }};
 }
 export function fail(message: string): null { throw {code:"INVALID_CONFIG",message:message}; }
 export function add(b: Builder, key: string, value: Record<string, unknown>): null { b.append(key,value); return null; }
@@ -72,13 +86,12 @@ export function empty(value: Record<string, unknown>): string {
     }
     if (kind === "number") { return "0"; } if (kind === "string") { return "\"\""; } if (kind === "boolean") { return "false"; } return "null";
 }
-export function publish(b: Builder, id: string, name: string, ref: string, type: Record<string, unknown>, present: string): null { b.ports[id+"."+name] = {ref:ref,type:type,present:present}; return null; }
+export function publish(b: Builder, id: string, name: string, ref: string, type: Record<string, unknown>, present: string): null { b.putPort(id+"."+name,{ref:ref,type:type,present:present}); return null; }
 export function port(b: Builder, path: string): Record<string, unknown> {
     let parts: string[] = strings.split(path,"."); if (parts.length < 2) { fail("Use instance.port"); }
-    let identity: string = parts[0]+"."+parts[1]; let found: boolean = false;
-    for (let key of tables.keys(b.ports)) { if (key === identity) { found = true; } }
-    if (!found) { fail("Unknown port "+path); }
-    let current: Record<string, unknown> = (b.ports[identity] as Record<string, unknown>); let type: Record<string, unknown> = (current.type as Record<string, unknown>); let ref: string = (current.ref as string); let present: string = (current.present as string);
+    let identity: string = parts[0]+"."+parts[1];
+    if (!b.hasPort(identity)) { fail("Unknown port "+path); }
+    let current: Record<string, unknown> = b.getPort(identity); let type: Record<string, unknown> = (current.type as Record<string, unknown>); let ref: string = (current.ref as string); let present: string = (current.present as string);
     let index: number = 2;
     while (index < parts.length) { let name: string = parts[index]; let definition: Record<string, unknown> = field(type,name); let optional: boolean = (definition.optional as boolean);
         let child: Record<string, unknown> = (definition.type as Record<string, unknown>); type = child;
@@ -89,7 +102,10 @@ export function port(b: Builder, path: string): Record<string, unknown> {
 }
 export function binding(b: Builder, config: Record<string, unknown>): Record<string, unknown> {
     let module: string = (config.module as string); let functionName: string = (config["function"] as string);
-    for (let contract of b.contracts) { let id: string = (contract.module as string); if (id === module) { let functions: Record<string, unknown>[] = decoded.records(contract.functions); for (let fn of functions) { let name: string = (fn.name as string); if (name === functionName) { return fn; } } } }
+    return b.contract(module,functionName);
+}
+function findBinding(contracts: Record<string, unknown>[], module: string, functionName: string): Record<string, unknown> {
+    for (let contract of contracts) { let id: string = (contract.module as string); if (id === module) { let functions: Record<string, unknown>[] = decoded.records(contract.functions); for (let fn of functions) { let name: string = (fn.name as string); if (name === functionName) { return fn; } } } }
     fail("Undisclosed capability "+module+"."+functionName); return {};
 }
 export function call(id: string, binding: Record<string, unknown>, args: string[], target: string, projection: string, condition: string): Record<string, unknown> {
@@ -99,7 +115,7 @@ export function call(id: string, binding: Record<string, unknown>, args: string[
 }
 export function authored(b: Builder, kind: string, bindings: Record<string, unknown>, actions: Record<string, unknown>): string[] {
     let id: string = "authored"+decimal(b.serial); b.serial = b.serial+1;
-    b.authoredViews[b.authoredViews.length] = {id:id,kind:kind,bindings:bindings,actions:actions};
+    b.addAuthored({id:id,kind:kind,bindings:bindings,actions:actions});
     return [id];
 }
 export function main(): null { return null; }

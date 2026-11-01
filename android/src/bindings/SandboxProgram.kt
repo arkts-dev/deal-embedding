@@ -26,6 +26,8 @@ internal class ClosedSandboxProgram:IllegalStateException("Sandbox program is cl
 internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : AutoCloseable {
     private val isolate: JavaScriptIsolate
     private var closed = false
+    private var calls=0L; private var elapsedNanos=0L; private var inputBytes=0L; private var outputBytes=0L
+    @Synchronized internal fun metrics()=JSONObject().put("calls",calls).put("elapsedMs",elapsedNanos/1e6).put("inputBytes",inputBytes).put("outputBytes",outputBytes)
     init {
         listOf(JavaScriptSandbox.JS_FEATURE_PROMISE_RETURN, JavaScriptSandbox.JS_FEATURE_ISOLATE_TERMINATION, JavaScriptSandbox.JS_FEATURE_ISOLATE_MAX_HEAP_SIZE).forEach {
             check(engine.isFeatureSupported(it)) { "Missing sandbox feature: $it" }
@@ -34,16 +36,20 @@ internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : Aut
     }
     @Synchronized fun evaluate(source: String): String {
         if(closed)throw ClosedSandboxProgram()
-        try { return isolate.evaluateJavaScriptAsync(source).get() }
+        val started=System.nanoTime();calls++;inputBytes+=source.toByteArray(Charsets.UTF_8).size
+        try { return isolate.evaluateJavaScriptAsync(source).get().also{outputBytes+=it.toByteArray(Charsets.UTF_8).size} }
         catch(error:IllegalStateException){if(error.message?.startsWith("Calling evaluateJavaScriptAsync() when ")==true){closed=true;throw ClosedSandboxProgram()};throw error}
         catch (error: java.util.concurrent.TimeoutException) { close(); throw error }
+        finally { elapsedNanos+=System.nanoTime()-started }
     }
     /** Evaluate once, then drain a lossless string result below the bridge return-size bound.
      * JSON chunk envelopes preserve lone/split UTF-16 surrogates and source bytes on reassembly.
      * Do not re-evaluate destructive operations (e.g. take()) for subsequent pages.
      */
     @Synchronized fun evaluateString(source: String): String {
-        val length = evaluate("globalThis.__embeddingTransfer = String($source); String(__embeddingTransfer.length)").toInt()
+        val header=JSONObject(evaluate("(() => { globalThis.__embeddingTransfer = String($source); if (__embeddingTransfer.length <= 16384) { const text=__embeddingTransfer; delete globalThis.__embeddingTransfer; return JSON.stringify({text}); } return JSON.stringify({length:__embeddingTransfer.length}); })()"))
+        if(header.has("text"))return header.getString("text")
+        val length=header.getInt("length")
         try {
             val result = StringBuilder(length)
             var offset = 0

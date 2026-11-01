@@ -37,7 +37,7 @@ export function screen(builder: b.Builder, plan: Record<string, unknown>, graph:
     for (let id of display) {
         for (let definition of definitions) {
             let identity: string = definition.id as string;
-            if (identity === id) { let kind: string = definition.kind as string; blocks[blocks.length] = {id:id,kind:kind,views:decoded.strings(builder.views[id])}; }
+            if (identity === id) { let kind: string = definition.kind as string; blocks[blocks.length] = {id:id,kind:kind,views:builder.getViews(id)}; }
         }
     }
     let slots: Slot[] = [
@@ -50,7 +50,7 @@ export function screen(builder: b.Builder, plan: Record<string, unknown>, graph:
     let placement: Record<string, unknown> = place(slots,blocks);
     let children: string[] = [header];
     let outcome: string[] = [];
-    for (let id of decoded.strings(placement.outcome)) { append(outcome,decoded.strings(builder.views[id])); }
+    for (let id of decoded.strings(placement.outcome)) { append(outcome,builder.getViews(id)); }
     if (outcome.length > 0) { children[children.length] = group(builder,"MetricGroup",outcome); }
     let inputs: string[] = decoded.strings(placement.inputs); let assigned: string[] = [];
     let workflows: Record<string, unknown>[] = decoded.records(graph.commands); let index: number = 0;
@@ -58,7 +58,7 @@ export function screen(builder: b.Builder, plan: Record<string, unknown>, graph:
     // Put each command beside the controls that affect it, not in a screen-bottom dump.
     for (let workflow of workflows) {
         let closure: string[] = decoded.strings(workflow.closure); let controls: string[] = [];
-        for (let id of inputs) { if (contains(closure,id) && !contains(assigned,id)) { append(controls,decoded.strings(builder.views[id])); assigned[assigned.length] = id; } }
+        for (let id of inputs) { if (contains(closure,id) && !contains(assigned,id)) { append(controls,builder.getViews(id)); assigned[assigned.length] = id; } }
         let body: string[] = [];
         if (controls.length > 0) { body[body.length] = group(builder,"InputGroup",controls); }
         body[body.length] = group(builder,"ActionGroup",[commands[index]]);
@@ -66,11 +66,11 @@ export function screen(builder: b.Builder, plan: Record<string, unknown>, graph:
         children[children.length] = section(builder,title,body); index = index+1;
     }
     let remaining: string[] = [];
-    for (let id of inputs) { if (!contains(assigned,id)) { append(remaining,decoded.strings(builder.views[id])); } }
+    for (let id of inputs) { if (!contains(assigned,id)) { append(remaining,builder.getViews(id)); } }
     if (remaining.length > 0) { children[children.length] = section(builder,"Inputs",[group(builder,"InputGroup",remaining)]); }
     append(children,status);
     for (let id of decoded.strings(placement.content)) {
-        let views: string[] = decoded.strings(builder.views[id]);
+        let views: string[] = builder.getViews(id);
         if (views.length > 0) { children[children.length] = group(builder,"ContentGroup",views); }
     }
     builder.setRoot(group(builder,"Screen",children));

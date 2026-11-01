@@ -85,6 +85,8 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
         }
         @Synchronized fun submit(value: JSONObject, detail: String?, capture: Boolean) {
             if (queued >= queueLimit) { dropped++; return }
+            // Timestamp production/admission, not asynchronous persistence.
+            value.put("time",System.currentTimeMillis().toString()).put("elapsed",SystemClock.elapsedRealtime().toString())
             val bytes = detail?.toByteArray(Charsets.UTF_8)
             value.put("bytes", bytes?.size ?: 0)
             val retained = if (capture) bytes?.copyOfRange(0, minOf(bytes.size, 262144)) else null
@@ -120,7 +122,8 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
                 program = SandboxProgram(engine!!, 512 * 1024)
                 program!!.evaluate(SandboxBundle.build(context, listOf("logging-session.js"), "configureDealCapabilities([]);", "initializeLogger(factories)", assetRoot = "logging"))
             }
-            value.put("sequence", ++sequence).put("time", System.currentTimeMillis().toString()).put("elapsed", SystemClock.elapsedRealtime().toString()).put("capture", capture)
+            value.put("sequence", ++sequence).put("capture", capture)
+            if(!value.has("time"))value.put("time",System.currentTimeMillis().toString()).put("elapsed",SystemClock.elapsedRealtime().toString())
             val artifact = if (bytes != null && capture) UUID.randomUUID().toString() else ""
             value.put("artifact", artifact)
             val normalized = JSONObject(program!!.evaluate("normalizeLog(${value})"))

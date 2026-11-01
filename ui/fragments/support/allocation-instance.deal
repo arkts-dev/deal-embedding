@@ -17,7 +17,7 @@ function storage(builder: b.Builder, id: string, config: Record<string, unknown>
     let quotaParams: Record<string, unknown>[] = []; index = 0;
     for (let quota of quotas) { quotaParams[quotaParams.length] = {field:"quota"+b.decimal(index),minimum:f.parse(builder,f.expression(quota,"minimum"),[])}; index = index+1; }
     let allocate: string = b.node(builder,"allocate",[rows,requested,b.binary(builder,"subtract",budget,fee)],{quantity:"quantity",cost:"cost",quotas:quotaParams});
-    builder.steps[id] = [b.set(id+"Rows",projected),b.set(id+"Rows",allocate)];
+    builder.putSteps(id,[b.set(id+"Rows",projected),b.set(id+"Rows",allocate)]);
     return {rows:rows,sourceReady:sourceReady,requested:requested,budget:budget,fee:fee,allocate:allocate};
 }
 function computed(builder: b.Builder, id: string, config: Record<string, unknown>, context: Record<string, unknown>): Record<string, unknown> {

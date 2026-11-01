@@ -235,6 +235,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
         } finally {
             var cleanup:Throwable?=null
             fun clean(block:()->Unit){try{block()}catch(error:Throwable){if(cleanup==null)cleanup=error else cleanup!!.addSuppressed(error)}}
+            log.event("generation-bridge","completed",target=program.metrics().toString())
             clean{program.close()}
             checked.values.forEach { clean{StagingReclamation.remove(context,it.second.parentFile)} }
             cleanup?.let{error->

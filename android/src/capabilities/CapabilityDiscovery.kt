@@ -20,6 +20,8 @@ internal class CapabilityDiscovery(private val context: Context, private val tru
         log.event("discovery", "started")
         val services = context.packageManager.queryIntentServices(Intent(ACTION), PackageManager.GET_META_DATA)
         require(services.size <= 32)
+        // Start independent provider processes together; keep schema admission ordered below.
+        val pending = mutableListOf<() -> Unit>()
         for (resolved in services) {
             val info = resolved.serviceInfo
             if (!info.exported || !trusted(info.applicationInfo.uid)) continue
@@ -40,8 +42,10 @@ internal class CapabilityDiscovery(private val context: Context, private val tru
                 try { if (!context.bindService(Intent().setComponent(component), connection, Context.BIND_AUTO_CREATE)) latch.countDown() }
                 catch (_: SecurityException) { latch.countDown() }
             }
-            if (!latch.await(5, TimeUnit.SECONDS) || binder == null) { release(component); continue }
-            try {
+            val deadline=SystemClock.elapsedRealtime()+5000
+            pending.add {
+            if (!latch.await(maxOf(0,deadline-SystemClock.elapsedRealtime()), TimeUnit.MILLISECONDS) || binder == null) { release(component) }
+            else try {
                 val remote = ICapabilityService.Stub.asInterface(binder)
                 val contract = log.stage("contract", target = component.flattenToShortString()) {
                     val raw = remote.describe()
@@ -52,7 +56,9 @@ internal class CapabilityDiscovery(private val context: Context, private val tru
                 binder.linkToDeath({ release(component) }, 0)
                 synchronized(this) { if (!closed) endpoints[component] = endpoint }
             } catch (_: Exception) { release(component) }
+            }
         }
+        for (admit in pending) { admit() }
         return synchronized(this) { endpoints.values.toList() }.also { log.event("discovery", "completed", target = "${it.size} providers") }
     }
     private fun release(component: ComponentName) {

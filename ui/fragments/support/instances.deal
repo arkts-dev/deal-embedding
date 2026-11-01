@@ -27,7 +27,7 @@ export function read(builder: b.Builder, id: string, config: Record<string, unkn
     for (let argument of callArguments) { let source: string = (argument.expr as string); args[args.length] = f.parse(builder,source,[]); available[available.length] = f.present(builder,source); }
     let result: Record<string, unknown> = (fn.result as Record<string, unknown>); let local: string = b.type(builder,result,id+"Result");
     let value: string = b.state(builder,id+"Result",local,b.empty(result)); let present: string = b.state(builder,id+"Present","boolean","false");
-    builder.steps[id] = [b.call(id+"Reply",binding,args,id+"Result","$"+id+"Reply",b.all(builder,available)),b.set(id+"Present","$"+id+"ReplyPresent")];
+    builder.putSteps(id,[b.call(id+"Reply",binding,args,id+"Result","$"+id+"Reply",b.all(builder,available)),b.set(id+"Present","$"+id+"ReplyPresent")]);
     b.publish(builder,id,"result",value,result,present); b.publish(builder,id,"present",present,b.wire("boolean"),b.boolean(builder,true));
     let views: string[] = []; return views;
 }
@@ -61,7 +61,7 @@ export function choice(builder: b.Builder, id: string, config: Record<string, un
     let rows: string = b.state(builder,id+"Rows",local+"[]","[]"); let selected: string = b.state(builder,id+"Selected",local,b.empty(type));
     let projection: string = b.construct(builder,local,[{field:"id",node:f.parse(builder,f.expression(config,"identity"),["row"])},{field:"label",node:f.parse(builder,f.expression(config,"label"),["row"])},{field:"eligible",node:f.parse(builder,f.expression(config,"eligible"),["row"])},{field:"cost",node:f.parse(builder,f.expression(config,"cost"),["row"])}]);
     let projected: string = b.node(builder,"project",[f.parse(builder,source,[]),projection],{});
-    builder.steps[id] = [b.set(id+"Rows",projected),b.set(id+"Selected",b.node(builder,"choicePick",[rows],{}))];
+    builder.putSteps(id,[b.set(id+"Rows",projected),b.set(id+"Selected",b.node(builder,"choicePick",[rows],{}))]);
     let valid: string = b.derive(builder,id+"Present","boolean","false",b.node(builder,"choiceValid",[rows,selected,f.present(builder,source)],{}));
     b.publish(builder,id,"selected",selected,type,valid); b.publish(builder,id,"present",valid,b.wire("boolean"),b.boolean(builder,true));
     b.action(builder,id+"Select",[{field:id+"Selected",node:b.node(builder,"choiceSelect",[rows,selected,"$action.id"],{})}],[],[{name:"id",type:"string"}]);
