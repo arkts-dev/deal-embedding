@@ -1,0 +1,158 @@
+import * as json from "std/json";
+import * as strings from "std/string";
+
+// Boundary primitives shared by the reference needs/sketch decoders. These
+// preserve ArkTS value semantics without treating checked DEAL casts as TS casts.
+export function includes(values: string[], wanted: string): boolean {
+    for (let value of values) {
+        if (value === wanted) { return true; }
+    }
+    return false;
+}
+
+export function whitespace(): string {
+    // JSON escapes: DEAL itself has neither Unicode nor carriage-return escapes.
+    return json.parse("{\"text\":\"\\t\\n\\r\\u000b\\u000c " +
+        "\\u00a0\\u1680\\u2000\\u2001\\u2002\\u2003\\u2004\\u2005" +
+        "\\u2006\\u2007\\u2008\\u2009\\u200a\\u2028\\u2029\\u202f" +
+        "\\u205f\\u3000\\ufeff\"}").text as string;
+}
+
+// ECMAScript String.trim, not std/string's narrower ASCII whitespace set.
+export function trim(value: string): string {
+    let spaces: string = whitespace();
+    let start: number = 0;
+    let end: number = strings.length(value);
+    while (start < end && strings.contains(spaces, strings.substring(value, start, start + 1))) {
+        start = start + 1;
+    }
+    while (end > start && strings.contains(spaces, strings.substring(value, end - 1, end))) {
+        end = end - 1;
+    }
+    return strings.substring(value, start, end);
+}
+
+export function stringField(raw: Record<string, unknown>, key: string, fallback: string): string {
+    let value: unknown = raw[key];
+    if (typeof value === "string") { return value; }
+    return fallback;
+}
+
+export function numberField(raw: Record<string, unknown>, key: string, fallback: number): number {
+    let value: unknown = raw[key];
+    if (typeof value === "number") {
+        if (value - value === 0) { return value; }
+    }
+    return fallback;
+}
+
+export function isFalse(value: unknown): boolean {
+    if (typeof value === "boolean") { return !value; }
+    return false;
+}
+
+export function integerText(value: number): string {
+    let result: string = json.stringify(value) as string;
+    // JVM's generic JSON writer may retain .0 on integral doubles.
+    if (strings.endsWith(result, ".0")) {
+        return strings.substring(result, 0, strings.length(result) - 2);
+    }
+    return result;
+}
+
+// JSON arrays retain unknown element descriptors. Never retag, including [].
+export function arrayOrNull(value: unknown): unknown[] | null {
+    let result: unknown[] | null = null;
+    try {
+        result = value as unknown[];
+    } catch (error) {
+        let failure: Error = error as Error;
+        if (failure.code !== "E8001") { throw failure; }
+    }
+    return result;
+}
+
+export function arrayOrEmpty(value: unknown): unknown[] {
+    let result: unknown[] | null = arrayOrNull(value);
+    if (result !== null) { return result; }
+    return [];
+}
+
+export function recordOrNull(value: unknown): Record<string, unknown> | null {
+    let result: Record<string, unknown> | null = null;
+    try {
+        result = value as Record<string, unknown>;
+    } catch (error) {
+        let failure: Error = error as Error;
+        if (failure.code !== "E8001") { throw failure; }
+    }
+    return result;
+}
+
+// ArkTS typeof-object branches accept arrays too. Object.keys on arrays
+// enumerates decimal indexes; copy only when that boundary actually allows it.
+export function objectOrNull(value: unknown): Record<string, unknown> | null {
+    let record: Record<string, unknown> | null = recordOrNull(value);
+    if (record !== null) { return record; }
+    if (value === null || typeof value !== "object") { return null; }
+    let result: Record<string, unknown> = {};
+    let index: number = 0;
+    for (let item of arrayOrEmpty(value)) {
+        result[integerText(index)] = item;
+        index = index + 1;
+    }
+    return result;
+}
+
+// Property reads on nonnull primitives in ArkTS return missing fields. Null
+// entries instead throw; retain rejection rather than inventing an empty item.
+export function fields(value: unknown): Record<string, unknown> {
+    if (value === null || value === undefined) {
+        throw {code: "SKETCH_SHAPE", message: "Cannot read sketch fields from null or undefined"};
+    }
+    let result: Record<string, unknown> | null = objectOrNull(value);
+    if (result !== null) { return result; }
+    return {};
+}
+
+// Extract the first '{' through the last '}', as both reference parsers do.
+// Keep DEAL's stricter duplicate-key and invalid-Unicode rejection.
+export function parseObject(reply: string): Record<string, unknown> | null {
+    let start: number = -1;
+    let end: number = -1;
+    let index: number = 0;
+    for (let character of reply) {
+        if (character === "{" && start < 0) { start = index; }
+        if (character === "}") { end = index; }
+        index = index + 1;
+    }
+    if (start < 0 || end <= start) { return null; }
+    let result: Record<string, unknown> | null = null;
+    try {
+        result = json.parse(strings.substring(reply, start, end + 1));
+    } catch (error) {
+        let failure: Error = error as Error;
+        if (failure.code !== "E8001") { throw failure; }
+    }
+    return result;
+}
+
+// Only ASCII vocabulary is compared after lowercasing. Kelvin sign is the
+// sole non-ASCII scalar whose Unicode lowercase maps directly into ASCII.
+// Other Unicode text is preserved, not transliterated or case-folded.
+export function lowercaseAscii(value: string): string {
+    let capitals: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let lower: string = "abcdefghijklmnopqrstuvwxyz";
+    let result: string = "";
+    for (let character of value) {
+        let converted: string = character;
+        if (character === "K") { converted = "k"; }
+        let index: number = 0;
+        for (let capital of capitals) {
+            if (capital === character) { converted = strings.substring(lower, index, index + 1); }
+            index = index + 1;
+        }
+        result = result + converted;
+    }
+    return result;
+}

@@ -1,0 +1,489 @@
+import * as decode from "./plan-decoding";
+import * as json from "std/json";
+import * as math from "std/math";
+import * as strings from "std/string";
+import * as tables from "std/table";
+
+// VeraCompose.ets parseSketch at 7ee06af. Classes describe normalized values;
+// loose model fields are decoded only at the boundary, never cast to classes.
+export class SketchQuestion {
+    id: string;
+    ask: string;
+    options: string[];
+    fallback: number;
+}
+export class SketchOption {
+    label: string;
+    value: number;
+}
+export class SketchInput {
+    id: string;
+    label: string;
+    kind: string;
+    min: number;
+    max: number;
+    value: number;
+    unit: string;
+    measure: string;
+    options: SketchOption[];
+}
+export class SketchValue {
+    id: string;
+    label: string;
+    means: string;
+    format: string;
+    unit: string;
+    decimals: number;
+    formula: string;
+    // DEAL has no Map<K,V>. The nominal entries retain insertion order and
+    // numeric types, including nonfinite examples, without a dynamic table.
+    given: SampleNumber[];
+    result: number;
+    hidden: boolean;
+}
+export class SampleNumber {
+    name: string;
+    value: number;
+}
+export class SketchConstant {
+    id: string;
+    label: string;
+    value: number;
+    measure: string;
+}
+export class SketchEvent {
+    id: string;
+    when: string;
+    what: string;
+    asked: boolean;
+}
+export class ListField {
+    id: string;
+    label: string;
+    kind: string;
+    measure: string;
+    unit: string;
+    decimals: number;
+    value: number;
+}
+export class SketchList {
+    label: string;
+    fields: ListField[];
+}
+export class Sketch {
+    title: string;
+    eyebrow: string;
+    subtitle: string;
+    inputs: SketchInput[];
+    constants: SketchConstant[];
+    values: SketchValue[];
+    countdown: string;
+    hasCountdown: boolean;
+    countdownLength: string;
+    stopwatch: string;
+    hasStopwatch: boolean;
+    list: SketchList | null;
+    events: SketchEvent[];
+    ready: string[];
+    questions: SketchQuestion[];
+    other: string[];
+}
+
+function measure(raw: Record<string, unknown>, fallback: string): string {
+    let value: string = decode.stringField(raw, "measure", fallback);
+    if (decode.includes(["money", "percent", "count", "seconds", "minutes", "number"], value)) { return value; }
+    return "number";
+}
+
+function decimals(raw: Record<string, unknown>): number {
+    let value: number = decode.numberField(raw, "decimals", -1);
+    if (value >= 0 && value <= 6 && math.floor(value) === value) { return value; }
+    return -1;
+}
+
+function usableId(raw: string, seen: string[]): string {
+    let lower: string = "abcdefghijklmnopqrstuvwxyz";
+    let index: number = 0;
+    for (let character of raw) {
+        let alphabet: string = lower;
+        if (index > 0) { alphabet = alphabet + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; }
+        if (!strings.contains(alphabet, character)) { return ""; }
+        index = index + 1;
+    }
+    if (index === 0) { return ""; }
+    let reserved: string[] = ["state", "value", "elapsedMs", "running", "finished", "effectStatus", "remaining",
+        "elapsed", "duration", "view", "init", "ui", "math", "strings", "sdk", "time", "entries", "entryCount", "entryTotal",
+        "draftText", "draftNumberText", "entry", "out", "rows", "i", "e", "emptyEntries", "total", "next", "startAt",
+        "effectNote", "share", "countdownSeconds", "addEntry", "removeEntry", "ignored", "onEntryAnswer", "answered", "marked",
+        "note", "sub", "undoRemove", "expireUndo", "removedEntries", "removedAt", "gone", "none"];
+    let id: string = raw;
+    let suffix: number = 1;
+    while (decode.includes(reserved, id) || decode.includes(seen, id)) {
+        id = raw + "Item";
+        if (suffix > 1) { id = id + decode.integerText(suffix); }
+        suffix = suffix + 1;
+    }
+    return id;
+}
+
+// Math.round chooses the greater integer at ties; floor(x + .5) is not
+// equivalent for binary64 values just below .5, or very large integers.
+function round(value: number): number {
+    if (value - value !== 0 || value === 0) { return value; }
+    let below: number = math.floor(value);
+    if (value - below < 0.5) { return below; }
+    if (below === -1) { return -0; }
+    return below + 1;
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+    if (value < minimum) { return minimum; }
+    if (value > maximum) { return maximum; }
+    return value;
+}
+
+function clockValue(value: number): number {
+    let result: number = clamp(round(value), 0, 1439);
+    // Math.max(0, -0) in the reference produces positive zero.
+    if (result === 0) { return 0; }
+    return result;
+}
+
+function leadingNumber(label: string): number {
+    let digits: string = "";
+    for (let character of label) {
+        if (strings.contains("0123456789", character)) { digits = digits + character; }
+        else if (digits !== "" || character !== " ") { break; }
+    }
+    // One binary64 decimal conversion, not repeatedly rounded multiply/add.
+    // Strip leading zeros because JSON's numeric grammar rejects them.
+    let start: number = 0;
+    while (start < strings.length(digits) && strings.substring(digits, start, start + 1) === "0") { start = start + 1; }
+    if (start === strings.length(digits)) { return 0; }
+    let number: string = strings.substring(digits, start, strings.length(digits));
+    return json.parse("{\"value\":" + number + "}").value as number;
+}
+
+export function currencySign(unit: string): string {
+    let trimmed: string = decode.trim(unit);
+    let hasLetters: boolean = false;
+    for (let character of trimmed) {
+        if (strings.contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", character)) { hasLetters = true; }
+    }
+    if (!hasLetters) { return trimmed; }
+    let key: string = "";
+    let space: boolean = false;
+    let whitespace: string = decode.whitespace();
+    for (let character of decode.lowercaseAscii(trimmed)) {
+        if (strings.contains(whitespace, character)) {
+            if (!space) { key = key + " "; }
+            space = true;
+        } else {
+            key = key + character;
+            space = false;
+        }
+    }
+    let signs: string[][] = [
+        ["CA$", "canadian dollar", "canadian dollars", "cad"], ["A$", "australian dollar", "australian dollars", "aud"],
+        ["NZ$", "new zealand dollar", "new zealand dollars", "nzd"], ["HK$", "hong kong dollar", "hong kong dollars", "hkd"],
+        ["S$", "singapore dollar", "singapore dollars", "sgd"], ["MX$", "mexican peso", "mexican pesos", "mxn"],
+        ["R$", "real", "reais", "brazilian real", "brl"], ["CN¥", "yuan", "renminbi", "rmb", "cny", "chinese yuan"],
+        ["$", "dollar", "dollars", "usd", "us$", "us dollar", "us dollars", "u.s. dollars"],
+        ["€", "euro", "euros", "eur"], ["£", "pound", "pounds", "gbp", "sterling", "pound sterling", "pounds sterling", "british pounds"],
+        ["¥", "yen", "jpy", "japanese yen"], ["₹", "rupee", "rupees", "inr", "indian rupees"], ["₩", "won", "krw", "korean won"],
+        ["₽", "ruble", "rubles", "rouble", "roubles", "rub"], ["₺", "lira", "turkish lira", "try"], ["₪", "shekel", "shekels", "ils"],
+        ["₫", "dong", "vnd"], ["฿", "baht", "thb"], ["₱", "philippine peso", "philippine pesos", "php"],
+        ["CHF ", "franc", "francs", "swiss franc", "swiss francs", "chf"]
+    ];
+    for (let row of signs) {
+        let index: number = 1;
+        while (index < row.length) {
+            if (row[index] === key) { return row[0]; }
+            index = index + 1;
+        }
+    }
+    return trimmed + " ";
+}
+
+function inputFrom(raw: Record<string, unknown>, seen: string[]): SketchInput | null {
+    let id: string = usableId(decode.stringField(raw, "id", ""), seen);
+    if (id === "") { return null; }
+    let kind: string = decode.stringField(raw, "kind", "count");
+    if (!decode.includes(["amount", "percent", "count", "choice", "toggle", "text", "time"], kind)) { kind = "count"; }
+    let fallbackMeasure: string = "number";
+    if (kind === "percent" || kind === "count") { fallbackMeasure = kind; }
+    let minimum: number = decode.numberField(raw, "min", 0);
+    let input: SketchInput = {
+        id: id, label: decode.stringField(raw, "label", id), kind: kind,
+        min: minimum, max: decode.numberField(raw, "max", 100), value: decode.numberField(raw, "value", minimum),
+        unit: decode.stringField(raw, "unit", ""), measure: measure(raw, fallbackMeasure), options: []
+    };
+    if (input.measure === "money") { input.unit = currencySign(input.unit); }
+    let minutesOfDay: boolean = input.measure === "minutes" && input.min < 1439 && input.max >= 1439 && input.max <= 1440;
+    if (kind === "time" && (input.measure === "seconds" || input.measure === "minutes") && !minutesOfDay) { input.kind = "count"; }
+    if (input.kind === "time") {
+        input.measure = "clock";
+        input.value = clockValue(decode.numberField(raw, "value", 480));
+    }
+    let options: SketchOption[] = [];
+    for (let item of decode.arrayOrEmpty(raw.options)) {
+        let fields: Record<string, unknown> = decode.fields(item);
+        let option: SketchOption = {label: decode.stringField(fields, "label", ""), value: decode.numberField(fields, "value", 0)};
+        if (option.label !== "") { options[options.length] = option; }
+    }
+    input.options = options;
+    if (input.kind === "choice") {
+        if (options.length === 0) { return null; }
+        let seconds: boolean = true;
+        let at: number = -1;
+        let index: number = 0;
+        for (let option of options) {
+            let leading: number = leadingNumber(option.label);
+            if (!(leading > 0 && strings.contains(decode.lowercaseAscii(option.label), "min") && option.value === leading * 60)) {
+                seconds = false;
+            }
+            if (at < 0 && option.value === input.value) { at = index; }
+            index = index + 1;
+        }
+        if (input.measure === "minutes" && seconds) { input.measure = "seconds"; }
+        if (!(math.floor(input.value) === input.value && input.value >= 0 && input.value < options.length)) {
+            input.value = 0;
+            if (at >= 0) { input.value = at; }
+        }
+    }
+    return input;
+}
+
+function newField(id: string, label: string, kind: string, measure: string): ListField {
+    return {id: id, label: label, kind: kind, measure: measure, unit: "", decimals: -1, value: 0};
+}
+
+function fieldFrom(raw: Record<string, unknown>, taken: string[]): ListField | null {
+    let id: string = usableId(decode.stringField(raw, "id", ""), taken);
+    if (id === "") { return null; }
+    let field: ListField = newField(id, decode.stringField(raw, "label", id), decode.stringField(raw, "kind", "text"), measure(raw, "number"));
+    if (!decode.includes(["text", "number", "time", "toggle"], field.kind)) { field.kind = "text"; }
+    field.unit = decode.stringField(raw, "unit", "");
+    if (field.measure === "money") { field.unit = currencySign(field.unit); }
+    field.decimals = decimals(raw);
+    let fallback: number = 0;
+    if (field.kind === "time") { fallback = 480; }
+    field.value = decode.numberField(raw, "value", fallback);
+    if (field.kind === "time") {
+        field.measure = "clock";
+        field.value = clockValue(field.value);
+    }
+    return field;
+}
+
+function ensureLapFields(list: SketchList, stopwatch: string): void {
+    let laps: boolean = false;
+    for (let word of strings.split(decode.lowercaseAscii(list.label + " " + stopwatch), " ")) {
+        if (decode.includes(["lap", "laps", "split", "splits", "round", "rounds"], decode.trim(word))) { laps = true; }
+    }
+    if (!laps) { return; }
+    let fields: ListField[] = list.fields;
+    let hasText: boolean = false;
+    let numbers: number = 0;
+    for (let field of fields) {
+        if (field.kind === "text") { hasText = true; }
+        if (field.kind === "number") { numbers = numbers + 1; }
+    }
+    if (!hasText) {
+        let prefixed: ListField[] = [newField("lap", "Lap", "text", "number")];
+        for (let field of fields) { prefixed[prefixed.length] = field; }
+        fields = prefixed;
+    }
+    // Preserve the reference's original number count and asymmetric capacity:
+    // it may append Total past four fields, but Split only when room remains.
+    if (numbers === 0) { fields[fields.length] = newField("seconds", "Total", "number", "seconds"); }
+    if (numbers < 2 && fields.length < 4) { fields[fields.length] = newField("split", "Split", "number", "seconds"); }
+    list.fields = fields;
+}
+
+function listFrom(raw: Record<string, unknown>, stopwatch: string, hasStopwatch: boolean): SketchList {
+    // An explicitly empty fields array overrides the legacy shape.
+    let supplied: unknown[] | null = decode.arrayOrNull(raw.fields);
+    let given: unknown[] = [];
+    if (supplied !== null) { given = supplied; }
+    else {
+        if (decode.stringField(raw, "text", "") !== "") {
+            given[given.length] = {id: "words", label: decode.stringField(raw, "text", ""), kind: "text"};
+        }
+        if (decode.stringField(raw, "number", "") !== "") {
+            given[given.length] = {id: "amount", label: decode.stringField(raw, "number", ""), kind: "number",
+                measure: decode.stringField(raw, "measure", "number"), unit: decode.stringField(raw, "unit", "")};
+        }
+    }
+    let taken: string[] = ["minute", "status", "number", "string", "boolean"];
+    let fields: ListField[] = [];
+    for (let item of given) {
+        if (fields.length >= 4) { break; }
+        let parsed: ListField | null = fieldFrom(decode.fields(item), taken);
+        if (parsed !== null) {
+            taken[taken.length] = parsed.id;
+            fields[fields.length] = parsed;
+        }
+    }
+    let list: SketchList = {label: decode.stringField(raw, "label", "Entries"), fields: fields};
+    if (hasStopwatch) { ensureLapFields(list, stopwatch); }
+    return list;
+}
+
+function valueFrom(raw: Record<string, unknown>, seen: string[]): SketchValue | null {
+    let id: string = usableId(decode.stringField(raw, "id", ""), seen);
+    if (id === "") { return null; }
+    let label: string = decode.stringField(raw, "label", id);
+    let format: string = decode.stringField(raw, "format", "plain");
+    if (format === "time_of_day") { format = "clock"; }
+    else if (!decode.includes(["money", "percent", "count", "seconds", "minutes", "fraction", "plain"], format)) { format = "plain"; }
+    let unit: string = decode.stringField(raw, "unit", "");
+    if (format === "money") { unit = currencySign(unit); }
+    let given: SampleNumber[] = [];
+    let result: number = 0 / 0;
+    let example: Record<string, unknown> | null = decode.objectOrNull(raw.example);
+    if (example !== null) {
+        let samples: Record<string, unknown> | null = decode.objectOrNull(example.given);
+        if (samples !== null) {
+            let fields: Record<string, unknown> = samples;
+            for (let key of tables.keys(fields)) {
+                let number: unknown = fields[key];
+                if (typeof number === "number") { given[given.length] = {name: key, value: number}; }
+            }
+        }
+        result = decode.numberField(example, "result", 0 / 0);
+    }
+    return {id: id, label: label, means: decode.stringField(raw, "means", label), format: format, unit: unit,
+        decimals: decimals(raw), formula: decode.trim(decode.stringField(raw, "formula", "")), given: given,
+        result: result, hidden: decode.isFalse(raw.shown)};
+}
+
+function questionFrom(raw: Record<string, unknown>, index: number): SketchQuestion | null {
+    let options: string[] = textItems(raw.options);
+    let ask: string = decode.trim(decode.stringField(raw, "ask", ""));
+    if (ask === "" || options.length < 2 || options.length > 4 || index >= 2) { return null; }
+    let fallback: number = 0;
+    let supplied: unknown = raw.default;
+    if (typeof supplied === "number") {
+        fallback = clamp(round(supplied), 0, options.length - 1);
+        if (fallback === 0) { fallback = 0; }
+    }
+    return {id: decode.stringField(raw, "id", "q" + decode.integerText(index)), ask: ask, options: options, fallback: fallback};
+}
+
+function textItems(value: unknown): string[] {
+    let result: string[] = [];
+    for (let item of decode.arrayOrEmpty(value)) {
+        if (typeof item === "string") {
+            let trimmed: string = decode.trim(item);
+            if (trimmed !== "") { result[result.length] = trimmed; }
+        }
+    }
+    return result;
+}
+
+function readyItems(value: unknown): string[] {
+    let result: string[] = [];
+    for (let item of decode.arrayOrEmpty(value)) {
+        let words: string = "";
+        if (typeof item === "string") { words = item; }
+        else {
+            let fields: Record<string, unknown> | null = decode.objectOrNull(item);
+            if (fields !== null) {
+                let first: boolean = true;
+                let record: Record<string, unknown> = fields;
+                for (let key of tables.keys(record)) {
+                    let part: unknown = record[key];
+                    if (typeof part === "string") {
+                        if (!first) { words = words + ". "; }
+                        words = words + part;
+                        first = false;
+                    }
+                }
+            }
+        }
+        words = decode.trim(words);
+        if (words !== "") { result[result.length] = words; }
+    }
+    return result;
+}
+
+function fromDocument(raw: Record<string, unknown>): Sketch {
+    let inputs: SketchInput[] = [];
+    let constants: SketchConstant[] = [];
+    let values: SketchValue[] = [];
+    let events: SketchEvent[] = [];
+    let questions: SketchQuestion[] = [];
+    let other: string[] = [];
+    let seen: string[] = [];
+    for (let item of decode.arrayOrEmpty(raw.inputs)) {
+        let input: SketchInput | null = inputFrom(decode.fields(item), seen);
+        if (input !== null) {
+            inputs[inputs.length] = input;
+            seen[seen.length] = input.id;
+        }
+    }
+    for (let item of decode.arrayOrEmpty(raw.constants)) {
+        let fields: Record<string, unknown> = decode.fields(item);
+        let id: string = usableId(decode.stringField(fields, "id", ""), seen);
+        if (id === "" || typeof fields.value !== "number") { continue; }
+        constants[constants.length] = {id: id, label: decode.stringField(fields, "label", id),
+            value: decode.numberField(fields, "value", 0), measure: measure(fields, "number")};
+        seen[seen.length] = id;
+    }
+    let countdown: Record<string, unknown> | null = decode.objectOrNull(raw.countdown);
+    let stopwatch: Record<string, unknown> | null = decode.objectOrNull(raw.stopwatch);
+    let countdownLabel: string = "";
+    let length: string = "";
+    let stopwatchLabel: string = "";
+    if (countdown !== null) {
+        countdownLabel = decode.stringField(countdown, "label", "Timer");
+        length = decode.stringField(countdown, "length", "");
+    }
+    let hasStopwatch: boolean = false;
+    if (stopwatch !== null) {
+        if (countdown !== null) { other[other.length] = "a stopwatch as well as a countdown"; }
+        else {
+            hasStopwatch = true;
+            stopwatchLabel = decode.stringField(stopwatch, "label", "Stopwatch");
+        }
+    }
+    let list: SketchList | null = null;
+    let listRaw: Record<string, unknown> | null = decode.recordOrNull(raw.list);
+    if (listRaw !== null) { list = listFrom(listRaw, stopwatchLabel, hasStopwatch); }
+    for (let item of decode.arrayOrEmpty(raw.values)) {
+        let value: SketchValue | null = valueFrom(decode.fields(item), seen);
+        if (value !== null) {
+            values[values.length] = value;
+            seen[seen.length] = value.id;
+        }
+    }
+    for (let words of textItems(raw.other)) { other[other.length] = words; }
+    for (let item of decode.arrayOrEmpty(raw.questions)) {
+        let fields: Record<string, unknown> | null = decode.objectOrNull(item);
+        if (fields !== null) {
+            let question: SketchQuestion | null = questionFrom(fields, questions.length);
+            if (question !== null) { questions[questions.length] = question; }
+        }
+    }
+    for (let item of decode.arrayOrEmpty(raw.events)) {
+        let fields: Record<string, unknown> = decode.fields(item);
+        let what: string = decode.stringField(fields, "what", "");
+        if (what !== "") {
+            events[events.length] = {id: decode.stringField(fields, "id", ""), when: decode.stringField(fields, "when", ""),
+                what: what, asked: !decode.isFalse(fields.asked)};
+        }
+    }
+    return {title: decode.stringField(raw, "title", "App"), eyebrow: decode.stringField(raw, "eyebrow", ""),
+        subtitle: decode.stringField(raw, "subtitle", ""), inputs: inputs, constants: constants, values: values,
+        countdown: countdownLabel, hasCountdown: countdown !== null, countdownLength: length, stopwatch: stopwatchLabel,
+        hasStopwatch: hasStopwatch, list: list, events: events, ready: readyItems(raw.ready), questions: questions, other: other};
+}
+
+export function parseSketch(reply: string): Sketch | null {
+    let raw: Record<string, unknown> | null = decode.parseObject(reply);
+    if (raw !== null) { return fromDocument(raw); }
+    return null;
+}
+
+export function main(): null { return null; }
