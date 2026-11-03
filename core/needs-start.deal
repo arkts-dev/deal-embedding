@@ -1,0 +1,90 @@
+import * as sketch from "./sketch";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+import * as json from "std/json";
+import * as math from "std/math";
+
+function digit(character: string): boolean {
+    return character !== "" && strings.contains("0123456789", character);
+}
+
+function rounded(value: number): number {
+    if (value - value !== 0 || value === 0) { return value; }
+    let below: number = math.floor(value);
+    if (value - below < 0.5) { return below; }
+    if (below === -1) { return -0; }
+    return below + 1;
+}
+
+// The reference's unanchored, case-insensitive duration regex, scanned without
+// a regex dependency. Only one optional space/hyphen is admitted, not arbitrary
+// whitespace; a following ASCII word character prevents the unit match.
+export function requestedSeconds(prompt: string): number[] {
+    let found: number[] = [];
+    let text: string = decode.lowercaseAscii(prompt);
+    let length: number = strings.length(text);
+    let start: number = 0;
+    while (start < length) {
+        if (!digit(strings.substring(text, start, start + 1))) { start = start + 1; continue; }
+        let end: number = start;
+        while (end < length && digit(strings.substring(text, end, end + 1))) { end = end + 1; }
+        if (strings.substring(text, end, end + 1) === "." && digit(strings.substring(text, end + 1, end + 2))) {
+            end = end + 1;
+            while (end < length && digit(strings.substring(text, end, end + 1))) { end = end + 1; }
+        }
+        let unitStart: number = end;
+        let separator: string = strings.substring(text, unitStart, unitStart + 1);
+        if (separator === " " || separator === "-") { unitStart = unitStart + 1; }
+        let matched: string = "";
+        for (let unit of ["seconds", "second", "secs", "sec", "minutes", "minute", "mins", "min", "hours", "hour", "hrs", "hr"]) {
+            let next: string = strings.substring(text, unitStart + strings.length(unit), unitStart + strings.length(unit) + 1);
+            if (strings.startsWith(strings.substring(text, unitStart, length), unit) &&
+                (next === "" || !strings.contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", next))) { matched = unit; break; }
+        }
+        if (matched === "") { start = start + 1; continue; }
+        // Strip leading zeros before JSON numeric conversion (parseFloat in
+        // ArkTS accepts them); retain the final zero before a decimal point.
+        let numberStart: number = start;
+        while (numberStart + 1 < end && strings.substring(text, numberStart, numberStart + 1) === "0" &&
+            digit(strings.substring(text, numberStart + 1, numberStart + 2))) { numberStart = numberStart + 1; }
+        let amount: number = json.parse("{\"value\":" + strings.substring(text, numberStart, end) + "}").value as number;
+        let each: number = 1;
+        if (strings.startsWith(matched, "h")) { each = 3600; }
+        else if (strings.startsWith(matched, "m")) { each = 60; }
+        let seconds: number = rounded(amount * each);
+        let duplicate: boolean = false;
+        for (let value of found) { if (value === seconds) { duplicate = true; } }
+        if (seconds > 0 && !duplicate) { found[found.length] = seconds; }
+        start = unitStart + strings.length(matched);
+    }
+    return found;
+}
+
+export function startOnRequested(value: sketch.Sketch, prompt: string, numberText: (value: number) => string): string {
+    let wanted: number[] = requestedSeconds(prompt);
+    if (wanted.length !== 1) { return ""; }
+    let lengths: sketch.SketchInput[] = [];
+    for (let input of value.inputs) {
+        if (input.measure === "seconds" || input.measure === "minutes") { lengths[lengths.length] = input; }
+    }
+    if (lengths.length !== 1) { return ""; }
+    let input: sketch.SketchInput = lengths[0];
+    let unit: number = 1;
+    if (input.measure === "minutes") { unit = 60; }
+    if (input.kind === "choice") {
+        let at: number = -1;
+        let index: number = 0;
+        for (let option of input.options) {
+            if (at < 0 && rounded(option.value * unit) === wanted[0]) { at = index; }
+            index = index + 1;
+        }
+        if (at < 0 || input.value === at) { return ""; }
+        input.value = at;
+        return input.label + " starts on " + input.options[at].label;
+    }
+    let amount: number = wanted[0] / unit;
+    if (input.kind !== "amount" && input.kind !== "count") { return ""; }
+    if (input.value === amount || amount < input.min || amount > input.max) { return ""; }
+    input.value = amount;
+    return input.label + " starts at " + numberText(amount);
+}

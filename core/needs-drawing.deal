@@ -1,0 +1,177 @@
+import * as needs from "./needs-plan";
+import * as sketch from "./sketch";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+
+// NeedsChoose drawOnce/drawPlan and review/redraw, before choice construction.
+// ask owns transport only; the retry sequence and prompt feedback live here.
+export class DrawingTools {
+    ask: (system: string, user: string, partial: (text: string) => void, thinking: boolean) => Promise<string | null>;
+    preview: (value: sketch.Sketch) => void;
+    review: (value: sketch.Sketch) => Promise<string>;
+    // UTF-16 substring mechanism, preserving the reference diagnostic window.
+    head: (text: string, units: number) => string;
+}
+export class Drawing {
+    text: string;
+    plan: needs.NeedsPlan | null;
+    sketch: sketch.Sketch | null;
+    tries: number;
+}
+export class ReviewedDrawing {
+    drawing: Drawing;
+    prompt: string;
+    replanned: boolean;
+    tries: number;
+    note: string;
+}
+
+export function closePartialJson(text: string): string {
+    let start: number = -1;
+    let index: number = 0;
+    let stack: string[] = [];
+    let inString: boolean = false;
+    let escaped: boolean = false;
+    let cut: number = -1;
+    let closers: string = "";
+    for (let character of text) {
+        if (start < 0) {
+            if (character !== "{") { index = index + 1; continue; }
+            start = index;
+        }
+        if (inString) {
+            if (escaped) { escaped = false; }
+            else if (character === "\\") { escaped = true; }
+            else if (character === "\"") { inString = false; }
+        } else if (character === "\"") { inString = true; }
+        else if (character === "{" || character === "[") {
+            let closer: string = "}";
+            if (character === "[") { closer = "]"; }
+            stack[stack.length] = closer;
+        } else if (character === "}" || character === "]") {
+            let shortened: string[] = [];
+            let at: number = 0;
+            while (at + 1 < stack.length) { shortened[shortened.length] = stack[at]; at = at + 1; }
+            stack = shortened;
+            if (stack.length === 0) { return strings.substring(text, start, index + 1); }
+            cut = index + 1;
+            closers = reverseJoin(stack);
+        } else if (character === ",") { cut = index; closers = reverseJoin(stack); }
+        index = index + 1;
+    }
+    if (cut < 0) { return ""; }
+    return strings.substring(text, start, cut) + closers;
+}
+
+function reverseJoin(values: string[]): string {
+    let index: number = values.length;
+    let result: string = "";
+    while (index > 0) { index = index - 1; result = result + values[index]; }
+    return result;
+}
+
+export function sketchSignature(value: sketch.Sketch): string {
+    let result: string = value.title + "|" + value.eyebrow + "|" + value.subtitle;
+    for (let input of value.inputs) { result = result + "|" + input.id + ":" + decode.integerText(input.options.length); }
+    for (let figure of value.values) { result = result + "|" + figure.id; }
+    result = result + "|";
+    if (value.hasCountdown) { result = result + "countdown"; }
+    else if (value.hasStopwatch) { result = result + "stopwatch"; }
+    result = result + "|";
+    let list: sketch.SketchList | null = value.list;
+    if (list !== null) {
+        result = result + "list:";
+        let first: boolean = true;
+        for (let field of list.fields) {
+            if (!first) { result = result + ","; }
+            result = result + field.id + "/" + field.kind;
+            first = false;
+        }
+    }
+    return result;
+}
+
+async function drawOnce(system: string, user: string, tools: DrawingTools, thinking: boolean): Promise<string | null> {
+    let shown: string = "";
+    let show: (text: string) => void = function(text: string): void {
+        let plan: needs.NeedsPlan | null = needs.parseNeedsPlan(text);
+        if (plan !== null) {
+            let parsed: sketch.Sketch | null = needs.sketchFrom(plan);
+            if (parsed !== null) {
+                let signature: string = sketchSignature(parsed);
+                if (signature !== shown) { shown = signature; tools.preview(parsed); }
+            }
+        }
+    };
+    let partial: (text: string) => void = function(text: string): void {
+        let closed: string = closePartialJson(text);
+        if (closed !== "") { show(closed); }
+    };
+    let reply: string | null = await tools.ask(system, user, partial, thinking);
+    if (reply !== null) { show(reply); }
+    return reply;
+}
+
+export async function drawPlan(system: string, prompt: string, note: string, tools: DrawingTools): Promise<Drawing> {
+    let result: Drawing = {text: "", plan: null, sketch: null, tries: 0};
+    let user: string = prompt + note;
+    let attempt: number = 0;
+    while (attempt < 3) {
+        result.tries = attempt + 1;
+        // Operational/cancellation failures propagate; they are not bad JSON.
+        let reply: string | null = await drawOnce(system, user, tools, attempt === 2);
+        let plan: needs.NeedsPlan | null = null;
+        let parsed: sketch.Sketch | null = null;
+        if (reply !== null) { plan = needs.parseNeedsPlan(reply); }
+        if (plan !== null) { parsed = needs.sketchFrom(plan); }
+        if (plan !== null && parsed !== null) {
+            result.text = reply as string;
+            result.plan = plan;
+            result.sketch = parsed;
+            return result;
+        }
+        let wrong: string = "there was no answer";
+        if (reply !== null) { wrong = "it was not one JSON object in the form asked for: " + tools.head(reply, 200); }
+        user = prompt + note + "\n\nThe last answer could not be used: " + wrong + ". Answer with the JSON object only, in the form asked for.";
+        attempt = attempt + 1;
+    }
+    return result;
+}
+
+export function requestNote(widget: boolean, scene: string): string {
+    let result: string = "";
+    if (widget) {
+        result = "\n\nThis app is a small widget inside a chat reply, about 360 by 420 points with no scrolling: plan only the " +
+            "5 things the request names first or most plainly, and leave the rest out.";
+    }
+    if (scene !== "") { result = result + "\n\nPart of this screen is a scene, one need of type scene: " + scene; }
+    return result;
+}
+
+export async function drawReviewed(system: string, prompt: string, widget: boolean, scene: string, tools: DrawingTools): Promise<ReviewedDrawing> {
+    let note: string = requestNote(widget, scene);
+    let drawing: Drawing = await drawPlan(system, prompt, note, tools);
+    let result: ReviewedDrawing = {drawing: drawing, prompt: prompt, replanned: false, tries: drawing.tries, note: ""};
+    if (drawing.plan === null) {
+        result.note = "no usable plan after " + decode.integerText(drawing.tries) + " tries";
+        return result;
+    }
+    let parsed: sketch.Sketch | null = drawing.sketch;
+    let settled: string = "";
+    if (parsed !== null) {
+        if (parsed.questions.length > 0) { settled = await tools.review(parsed); }
+    }
+    if (settled !== "") {
+        result.prompt = prompt + "\n\n" + settled;
+        let redrawn: Drawing = await drawPlan(system, result.prompt, note, tools);
+        result.replanned = true;
+        result.tries = result.tries + redrawn.tries;
+        result.drawing = redrawn;
+        if (redrawn.plan === null) { result.note = "no usable plan drawn again after " + decode.integerText(redrawn.tries) + " tries"; }
+        else {
+            let finalSketch: sketch.Sketch | null = redrawn.sketch;
+            if (finalSketch !== null) { finalSketch.questions = []; }
+        }
+    }
+    return result;
+}

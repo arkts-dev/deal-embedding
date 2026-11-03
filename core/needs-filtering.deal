@@ -1,0 +1,217 @@
+import * as needs from "./needs-plan";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+import * as sketch from "./sketch";
+
+// Unicode mechanisms, not filtering policy. The adapter must implement NFKC
+// followed by Unicode lowercase, and return the UTF-16 code units verbatim.
+// Numeric units let DEAL compare reference bigrams without making invalid
+// strings out of a surrogate half (ArkTS substring permits those).
+export class FilteredPlan {
+    sketch: sketch.Sketch;
+    unscened: number;
+    unasked: string[];
+    cut: string[];
+}
+
+export class TextTools {
+    normalize: (text: string) => string;
+    units: (text: string) => number[];
+    matches: (pattern: string, text: string) => boolean;
+}
+class Word { units: number[]; }
+
+function isBreak(character: string): boolean {
+    return strings.contains(decode.whitespace(), character) ||
+        (character >= "!" && character <= "/") || (character >= ":" && character <= "@") ||
+        (character >= "[" && character <= "`") || (character >= "{" && character <= "~") ||
+        (character >= " " && character <= "¿") || (character >= " " && character <= "⁯") ||
+        (character >= "　" && character <= "〿") || (character >= "！" && character <= "／") ||
+        (character >= "：" && character <= "＠") || (character >= "［" && character <= "｀") ||
+        (character >= "｛" && character <= "･");
+}
+
+function plain(sentence: string, tools: TextTools): string {
+    let result: string = "";
+    let pending: boolean = false;
+    for (let character of tools.normalize(sentence)) {
+        if (isBreak(character)) { pending = result !== ""; }
+        else {
+            if (pending) { result = result + " "; }
+            result = result + character;
+            pending = false;
+        }
+    }
+    return result;
+}
+
+function unspaced(word: string): boolean {
+    for (let character of word) {
+        if ((character >= "㐀" && character <= "鿿") || (character >= "豈" && character <= "﫿") ||
+            (character >= "぀" && character <= "ヿ") || (character >= "฀" && character <= "໿") ||
+            (character >= "က" && character <= "႟") || (character >= "ក" && character <= "៿")) { return true; }
+    }
+    return false;
+}
+
+function prefix(a: number[], b: number[]): boolean {
+    if (a.length > b.length) { return false; }
+    let index: number = 0;
+    for (let unit of a) {
+        if (unit !== b[index]) { return false; }
+        index = index + 1;
+    }
+    return true;
+}
+
+function addWord(words: Word[], units: number[]): void {
+    for (let word of words) {
+        if (units.length === word.units.length && prefix(units, word.units)) { return; }
+    }
+    words[words.length] = {units: units};
+}
+
+function meaningWords(sentence: string, tools: TextTools): Word[] {
+    let result: Word[] = [];
+    let stop: string[] = ["the", "and", "for", "with", "that", "this", "when", "from", "your", "you", "are", "its", "has", "have", "will",
+        "all", "any", "can", "each", "every", "into", "then", "than", "what", "who", "how", "out", "one", "new", "get", "set", "per"];
+    for (let word of strings.split(plain(sentence, tools), " ")) {
+        let units: number[] = tools.units(word);
+        if (unspaced(word)) {
+            if (units.length === 1) { addWord(result, units); }
+            let index: number = 0;
+            while (index + 1 < units.length) {
+                let pair: number[] = [units[index], units[index + 1]];
+                addWord(result, pair);
+                index = index + 1;
+            }
+        } else if (units.length >= 3 && !decode.includes(stop, word)) { addWord(result, units); }
+    }
+    return result;
+}
+
+export function asksFor(request: string, quote: string, tools: TextTools): boolean {
+    let quoted: string = plain(quote, tools);
+    if (quoted === "") { return false; }
+    if (strings.contains(plain(request, tools), quoted)) { return true; }
+    let words: Word[] = meaningWords(quote, tools);
+    if (words.length === 0) { return true; }
+    let have: Word[] = meaningWords(request, tools);
+    let found: number = 0;
+    for (let word of words) {
+        let matched: boolean = false;
+        for (let candidate of have) {
+            let a: number[] = word.units;
+            let b: number[] = candidate.units;
+            if ((a.length === b.length && prefix(a, b)) ||
+                (a.length >= 4 && b.length >= 4 && (prefix(a, b) || prefix(b, a)))) { matched = true; }
+        }
+        if (matched) { found = found + 1; }
+    }
+    return found * 2 >= words.length;
+}
+
+function shortWords(value: string, tools: TextTools): string {
+    let units: number[] = tools.units(value);
+    if (units.length <= 60) { return value; }
+    let result: string = "";
+    let length: number = 0;
+    for (let character of value) {
+        let size: number = tools.units(character).length;
+        if (length + size > 60) {
+            // Reference substring can bisect a surrogate; DEAL strings cannot.
+            throw {code: "E8001", message: "Need notice truncation would split a Unicode scalar"};
+        }
+        result = result + character;
+        length = length + size;
+        if (length === 60) { break; }
+    }
+    return result + "...";
+}
+
+export function dropUnasked(plan: needs.NeedsPlan, request: string, tools: TextTools): string[] {
+    let dropped: string[] = [];
+    let kept: needs.Need[] = [];
+    for (let need of plan.needs) {
+        if ((need.type === "content" || need.type === "action") && need.from !== "" && !asksFor(request, need.from, tools)) {
+            dropped[dropped.length] = shortWords(need.words, tools);
+        } else { kept[kept.length] = need; }
+    }
+    plan.needs = kept;
+    return dropped;
+}
+
+function has(kept: needs.Need[], type: string): boolean {
+    for (let need of kept) { if (need.type === type) { return true; } }
+    return false;
+}
+
+function readsCut(need: needs.Need, cut: needs.Need[], tools: TextTools): boolean {
+    let formula: string = decode.trim(decode.stringField(need.raw, "formula", ""));
+    for (let removed of cut) {
+        if (removed.type !== "figure") { continue; }
+        let id: string = decode.trim(decode.stringField(removed.raw, "id", ""));
+        if (id === "") { continue; }
+        // Deliberately retain the reference's unescaped dynamic pattern.
+        if (formula !== "" && tools.matches("(^|[^A-Za-z0-9_.])" + id + "(?![A-Za-z0-9_])", formula)) { return true; }
+    }
+    return false;
+}
+
+function orphan(need: needs.Need, kept: needs.Need[], cut: needs.Need[], tools: TextTools): boolean {
+    if (need.type === "figure") {
+        for (let quantity of need.reads) {
+            if (strings.startsWith(quantity, "entries.")) {
+                if (!has(kept, "entries")) { return true; }
+            } else if (!has(kept, "countdown") && !has(kept, "stopwatch")) { return true; }
+        }
+        return readsCut(need, cut, tools);
+    }
+    return need.type === "action" && ((need.on === "countdown_end" && !has(kept, "countdown")) ||
+        ((need.on === "entry_added" || need.on === "row_tap") && !has(kept, "entries")));
+}
+
+// composeNeeds preserves reviewed questions when rebuilding after filtering.
+export function filterPlan(plan: needs.NeedsPlan, original: sketch.Sketch, request: string,
+    sceneAllowed: boolean, widget: boolean, tools: TextTools): FilteredPlan {
+    let parsed: sketch.Sketch = original;
+    let unscened: number = 0;
+    if (!sceneAllowed) { unscened = needs.plainScenes(plan); }
+    if (unscened > 0) {
+        let redone: sketch.Sketch | null = needs.sketchFrom(plan);
+        if (redone !== null) { redone.questions = parsed.questions; parsed = redone; }
+    }
+    let unasked: string[] = dropUnasked(plan, request, tools);
+    let cut: string[] = [];
+    if (widget) { cut = capForWidget(plan, 5, tools); }
+    if (unasked.length > 0 || cut.length > 0) {
+        let redone: sketch.Sketch | null = needs.sketchFrom(plan);
+        if (redone !== null) { redone.questions = parsed.questions; parsed = redone; }
+    }
+    return {sketch: parsed, unscened: unscened, unasked: unasked, cut: cut};
+}
+
+export function capForWidget(plan: needs.NeedsPlan, room: number, tools: TextTools): string[] {
+    let cut: needs.Need[] = [];
+    let kept: needs.Need[] = [];
+    let seen: number = 0;
+    for (let need of plan.needs) {
+        if (need.type === "figure" && decode.isFalse(need.raw.shown)) { kept[kept.length] = need; }
+        else if (seen < room) { seen = seen + 1; kept[kept.length] = need; }
+        else { cut[cut.length] = need; }
+    }
+    let again: boolean = true;
+    while (again) {
+        again = false;
+        let next: needs.Need[] = [];
+        for (let need of kept) {
+            if (orphan(need, kept, cut, tools)) { cut[cut.length] = need; again = true; }
+            else { next[next.length] = need; }
+        }
+        kept = next;
+    }
+    plan.needs = kept;
+    let result: string[] = [];
+    for (let need of cut) { result[result.length] = shortWords(need.words, tools); }
+    return result;
+}
