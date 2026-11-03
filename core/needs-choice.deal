@@ -1,0 +1,269 @@
+import * as needs from "./needs-plan";
+import * as sketch from "./sketch";
+import * as decode from "./plan-decoding";
+import * as json from "std/json";
+import * as strings from "std/string";
+
+// NeedsChoose / VeraCompose at 7ee06af. Catalogue descriptions are data, not
+// precomputed options: this module owns eligibility, questions and re-entry.
+export class Criterion {
+    key: string;
+    description: string;
+}
+export class Catalogue {
+    sections: Criterion[];
+    realDataInstructions: string;
+    realDataCriteria: Criterion[];
+}
+export class ChooseRequest {
+    body: string;
+    settled: string[];
+}
+export class ChoiceAnswers {
+    // The reference accepts arrays here too; retain the actual JSON boundary.
+    answers: unknown;
+    settled: string[];
+}
+
+export function timerMayTakeCountdown(plan: needs.NeedsPlan): boolean {
+    let countdown: needs.Need | null = needs.needOf(plan, "countdown");
+    if (countdown === null) { return false; }
+    let length: string = (countdown as needs.Need).length;
+    let fixed: boolean = false;
+    for (let constant of decode.arrayOrEmpty(plan.base.constants)) {
+        let raw: Record<string, unknown> = decode.fields(constant);
+        if (typeof raw.id === "string" && raw.id as string === length) { fixed = true; }
+    }
+    if (!fixed) { return false; }
+    for (let need of plan.needs) {
+        if (need.type === "action" && need.on === "countdown_end") { return false; }
+        if (need.type === "figure") {
+            for (let read of need.reads) { if (strings.startsWith(read, "clock.")) { return false; } }
+        }
+    }
+    return true;
+}
+
+export function listSectionsFor(plan: needs.NeedsPlan): string[] {
+    let read: boolean = false;
+    for (let need of plan.needs) {
+        if (need.type === "action" && (need.on === "entry_added" || need.on === "row_tap")) { return []; }
+        if (need.type === "figure") {
+            for (let source of need.reads) { if (strings.startsWith(source, "entries.")) { read = true; } }
+        }
+    }
+    if (read) { return ["record_log"]; }
+    return ["record_log", "reminders"];
+}
+
+function joined(values: string[], separator: string): string {
+    let result: string = "";
+    let index: number = 0;
+    for (let value of values) {
+        if (index > 0) { result = result + separator; }
+        result = result + value;
+        index = index + 1;
+    }
+    return result;
+}
+
+function describeInput(input: sketch.SketchInput, numberText: (value: number) => string): string {
+    if (input.kind === "choice") {
+        let parts: string[] = [];
+        for (let option of input.options) { parts[parts.length] = option.label + " = " + numberText(option.value); }
+        return "input \"" + input.label + "\": the number of the chosen option (" + joined(parts, ", ") + ")";
+    }
+    if (input.kind === "time") { return "input \"" + input.label + "\" (a time of day)"; }
+    let unit: string = "";
+    if (strings.length(input.unit) > 0) { unit = ", " + input.unit; }
+    return "input \"" + input.label + "\" (" + input.kind + unit + ")";
+}
+
+function describeList(list: sketch.SketchList): string {
+    let fields: string[] = [];
+    for (let field of list.fields) {
+        let word: string = field.kind;
+        if (word === "text") { word = "words"; }
+        else if (word === "number") { word = "a number"; }
+        else if (word === "time") { word = "a time of day"; }
+        else if (word === "toggle") { word = "on/off"; }
+        fields[fields.length] = "\"" + field.label + "\" (" + word + ")";
+    }
+    let adding: string = "each tap on Add adds an entry";
+    if (fields.length > 0) { adding = "the person fills in " + joined(fields, ", ") + " and adds an entry"; }
+    return "a list of " + list.label + ": " + adding + "; each entry shows what was filled in and the time it was added, " +
+        "shows what the phone answered when the phone does something as it is added, and can be removed";
+}
+
+function labelOf(value: sketch.Sketch, id: string): string {
+    for (let input of value.inputs) { if (input.id === id) { return input.label; } }
+    for (let constant of value.constants) { if (constant.id === id) { return constant.label; } }
+    for (let figure of value.values) { if (figure.id === id) { return figure.label; } }
+    return "";
+}
+
+export function describeSketch(value: sketch.Sketch, numberText: (value: number) => string): string {
+    let lines: string[] = [];
+    for (let input of value.inputs) { lines[lines.length] = "- " + describeInput(input, numberText); }
+    for (let constant of value.constants) {
+        let text: string = "0";
+        if (constant.value - constant.value === 0) { text = numberText(constant.value); }
+        lines[lines.length] = "- fixed: " + constant.label + " = " + text;
+    }
+    if (value.hasCountdown) {
+        let length: string = labelOf(value, value.countdownLength);
+        let suffix: string = "";
+        if (strings.length(length) > 0) { suffix = ", as long as \"" + length + "\""; }
+        lines[lines.length] = "- a countdown: " + value.countdown + suffix;
+    }
+    if (value.hasStopwatch) { lines[lines.length] = "- a stopwatch: " + value.stopwatch; }
+    let list: sketch.SketchList | null = value.list;
+    if (list !== null) { lines[lines.length] = "- " + describeList(list); }
+    for (let figure of value.values) { lines[lines.length] = "- shows \"" + figure.label + "\": " + figure.means; }
+    for (let event of value.events) { lines[lines.length] = "- when " + event.when + ": " + event.what; }
+    for (let ready of value.ready) { lines[lines.length] = "- a ready-made section for: " + ready; }
+    return joined(lines, "\n");
+}
+
+export function choice(instructions: string, criteria: Criterion[]): Record<string, unknown> {
+    let options: Record<string, unknown> = {};
+    for (let item of criteria) { options[item.key] = item.description; }
+    return {type: "choice", instructions: instructions, criteria: options};
+}
+
+export function clockOptions(value: sketch.Sketch, catalogue: Catalogue): Criterion[] {
+    if (!value.hasCountdown) { return []; }
+    let result: Criterion[] = [{key: "part", description: "the app builds its own countdown from the numbers on the screen: start, stop and reset, a length that follows what " +
+        "the person sets, and phone actions at its end"}];
+    for (let section of catalogue.sections) { if (section.key === "timer") { result[result.length] = section; } }
+    if (result.length < 2) { return []; }
+    return result;
+}
+
+export function listOptions(value: sketch.Sketch, catalogue: Catalogue): Criterion[] {
+    let list: sketch.SketchList | null = value.list;
+    if (list === null) { return []; }
+    let result: Criterion[] = [{key: "part", description: "the app's own plain list: " + describeList(list as sketch.SketchList) + ". The only figures it gives are how many entries there are " +
+        "and the sum of one number field; it has no total for each person or category, no chart of them and no settling up of who owes whom"}];
+    for (let section of catalogue.sections) {
+        if (!decode.includes(["record_log", "reminders"], section.key)) { continue; }
+        let description: string = section.description;
+        if (section.key === "record_log") {
+            description = description + ". Readers of the catalogue add to it figures for each person or category " +
+                "(totals, an average, a balance), a bar chart of them and who should pay whom";
+        }
+        let item: Criterion = {key: section.key, description: description};
+        result[result.length] = item;
+    }
+    if (result.length < 2) { return []; }
+    return result;
+}
+
+export function listNeeds(value: sketch.Sketch): string {
+    let descriptions: string[] = [];
+    for (let figure of value.values) {
+        let suffix: string = "";
+        if (strings.length(figure.means) > 0) { suffix = " (" + figure.means + ")"; }
+        descriptions[descriptions.length] = figure.label + suffix;
+    }
+    for (let other of value.other) { descriptions[descriptions.length] = other; }
+    for (let ready of value.ready) { descriptions[descriptions.length] = ready; }
+    let first: string[] = [];
+    for (let description of descriptions) { if (first.length < 8) { first[first.length] = description; } }
+    if (first.length === 0) { return ""; }
+    return " The screen also has to show or do: " + joined(first, "; ") + ".";
+}
+
+export function askReady(value: sketch.Sketch, questions: Record<string, unknown>, catalogue: Catalogue): void {
+    if (value.ready.length === 0) { return; }
+    let sections: Criterion[] = [];
+    for (let section of catalogue.sections) {
+        if (decode.includes(["checklist", "key_facts", "trend_chart", "spotlight", "search_list", "data_table", "timeline",
+            "bar_chart", "itinerary", "live_facts"], section.key)) { sections[sections.length] = section; }
+    }
+    sections[sections.length] = {key: "none", description: "none of these: it needs something none of these sections does"};
+    let whose: Criterion[] = [
+        {key: "own", description: "the person's own records: notes, entries, contacts, messages or files they keep, which nobody else could write"},
+        {key: "written", description: "facts, places, steps, figures or suggestions that anyone could look up or write for the request"}
+    ];
+    let index: number = 0;
+    for (let ready of value.ready) {
+        let suffix: string = decode.integerText(index);
+        questions["ready." + suffix] = choice("The request needs \"" + ready + "\". Which of these sections does exactly that?", sections);
+        questions["whose." + suffix] = choice("What does \"" + ready + "\" show?", whose);
+        index = index + 1;
+    }
+    questions.real_data = choice(catalogue.realDataInstructions, catalogue.realDataCriteria);
+}
+
+export function buildChooseRequest(prompt: string, plan: needs.NeedsPlan, value: sketch.Sketch,
+    catalogue: Catalogue, numberText: (value: number) => string): ChooseRequest {
+    let settled: string[] = [];
+    let questions: Record<string, unknown> = {};
+    let count: number = 0;
+    if (value.hasCountdown) {
+        settled[settled.length] = "clock.part";
+        let options: Criterion[] = clockOptions(value, catalogue);
+        if (options.length > 0 && timerMayTakeCountdown(plan)) {
+            questions["clock.part"] = choice("The app needs the countdown \"" + value.countdown + "\". Which of these does exactly that?", options);
+            count = count + 1;
+        }
+    }
+    let list: sketch.SketchList | null = value.list;
+    if (list !== null) {
+        settled[settled.length] = "list.part";
+        let allowed: string[] = listSectionsFor(plan);
+        let narrowed: Criterion[] = [];
+        for (let option of listOptions(value, catalogue)) {
+            if (option.key === "part" || decode.includes(allowed, option.key)) { narrowed[narrowed.length] = option; }
+        }
+        if (narrowed.length > 1) {
+            questions["list.part"] = choice("The person keeps " + list.label + "." + listNeeds(value) + " Which of these does exactly that?", narrowed);
+            count = count + 1;
+        }
+    }
+    if (value.ready.length > 0) {
+        askReady(value, questions, catalogue);
+        count = count + 1;
+        settled[settled.length] = "real_data";
+        let index: number = 0;
+        for (let ready of value.ready) {
+            let suffix: string = decode.integerText(index);
+            settled[settled.length] = "ready." + suffix;
+            settled[settled.length] = "whose." + suffix;
+            index = index + 1;
+        }
+    }
+    if (count === 0) { return {body: "", settled: settled}; }
+    return {body: json.stringify({model: "jev-latest", state: "Request: " + prompt + "\nThe app has:\n" + describeSketch(value, numberText),
+        questions: questions}) as string, settled: settled};
+}
+
+// Keep the received answer records raw: the later composer applies its own
+// thresholds. Missing choices are not grounds to redraw or reject the plan.
+export function readChoices(body: string): unknown {
+    let parsed: Record<string, unknown> | null = null;
+    try { parsed = json.parse(body); }
+    catch (error) {
+        let failure: Error = error as Error;
+        if (failure.code !== "E8001") { throw failure; }
+    }
+    if (parsed === null) { return null; }
+    let found: unknown = (parsed as Record<string, unknown>).answers;
+    if (found !== null && typeof found === "object") { return found; }
+    return null;
+}
+
+export async function choose(request: ChooseRequest, ask: (body: string) => Promise<string>): Promise<ChoiceAnswers> {
+    let answers: unknown = null;
+    let settled: string[] = request.settled;
+    if (strings.length(request.body) > 0) {
+        let body: string = await ask(request.body);
+        if (strings.length(body) === 0) { body = await ask(request.body); }
+        if (strings.length(body) > 0) { answers = readChoices(body); }
+        if (answers === null) { settled = []; }
+    }
+    return {answers: answers, settled: settled};
+}
+
+export function main(): null { return null; }
