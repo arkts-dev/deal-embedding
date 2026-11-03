@@ -1,0 +1,251 @@
+import * as json from "std/json";
+import * as strings from "std/string";
+import * as tables from "std/table";
+
+// Port of NeedsPlan.ets at 7ee06af. Raw fields belong to the composer, not
+// this decoder: preserve their presence and values rather than invent a schema.
+export class Need {
+    type: string;
+    words: string;
+    raw: Record<string, unknown>;
+    on: string;
+    reads: string[];
+    length: string;
+    from: string;
+}
+
+export class NeedsPlan {
+    base: Record<string, unknown>;
+    needs: Need[];
+}
+
+function includes(values: string[], wanted: string): boolean {
+    for (let value of values) {
+        if (value === wanted) { return true; }
+    }
+    return false;
+}
+
+// ArkTS String.trim uses ECMAScript whitespace, not std/string's ASCII set.
+function trim(value: string): string {
+    // These are JSON escapes, not unsupported DEAL Unicode/CR escapes.
+    let whitespace: string = json.parse("{\"text\":\"\\t\\n\\r\\u000b\\u000c " +
+        "\\u00a0\\u1680\\u2000\\u2001\\u2002\\u2003\\u2004\\u2005" +
+        "\\u2006\\u2007\\u2008\\u2009\\u200a\\u2028\\u2029\\u202f" +
+        "\\u205f\\u3000\\ufeff\"}").text as string;
+    let start: number = 0;
+    let end: number = strings.length(value);
+    while (start < end && strings.contains(whitespace, strings.substring(value, start, start + 1))) {
+        start = start + 1;
+    }
+    while (end > start && strings.contains(whitespace, strings.substring(value, end - 1, end))) {
+        end = end - 1;
+    }
+    return strings.substring(value, start, end);
+}
+
+function text(raw: Record<string, unknown>, key: string): string {
+    let value: unknown = raw[key];
+    if (typeof value === "string") { return trim(value); }
+    return "";
+}
+
+// JSON arrays retain unknown element descriptors. No retagging, including [].
+function arrayOrEmpty(value: unknown): unknown[] {
+    let result: unknown[] = [];
+    try {
+        result = value as unknown[];
+    } catch (error) {
+        let failure: Error = error as Error;
+        if (failure.code !== "E8001") { throw failure; }
+    }
+    return result;
+}
+
+// ArkTS's typeof-object branches also accept arrays. Object.keys on them
+// enumerates decimal indexes; copy those into a Record only at that boundary.
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+    let record: Record<string, unknown> | null = null;
+    try {
+        record = value as Record<string, unknown>;
+    } catch (error) {
+        let failure: Error = error as Error;
+        if (failure.code !== "E8001") { throw failure; }
+    }
+    if (record !== null) { return record; }
+    if (value === null || typeof value !== "object") { return null; }
+    let result: Record<string, unknown> = {};
+    let index: number = 0;
+    for (let item of arrayOrEmpty(value)) {
+        let key: string = json.stringify(index) as string;
+        // JVM's generic JSON writer may retain .0 on integral doubles.
+        // Object.keys(array) uses decimal integer keys on every platform.
+        if (strings.endsWith(key, ".0")) {
+            key = strings.substring(key, 0, strings.length(key) - 2);
+        }
+        result[key] = item;
+        index = index + 1;
+    }
+    return result;
+}
+
+function copy(raw: Record<string, unknown>): Record<string, unknown> {
+    let result: Record<string, unknown> = {};
+    for (let key of tables.keys(raw)) { result[key] = raw[key]; }
+    return result;
+}
+
+function quantitiesIn(raw: Record<string, unknown>): string[] {
+    let found: string[] = [];
+    let formula: string = text(raw, "formula");
+    for (let quantity of ["clock.remaining", "clock.elapsed", "clock.duration", "entries.count", "entries.total"]) {
+        if (strings.contains(formula, quantity)) { found[found.length] = quantity; }
+    }
+    return found;
+}
+
+function composerNames(value: string): string {
+    let names: string[] = ["remaining", "elapsed", "duration", "entryCount", "entryTotal"];
+    let index: number = 0;
+    let result: string = value;
+    for (let quantity of ["clock.remaining", "clock.elapsed", "clock.duration", "entries.count", "entries.total"]) {
+        result = strings.replace(result, quantity, names[index]);
+        index = index + 1;
+    }
+    return result;
+}
+
+// Extract the first '{' through the last '}', just as the reference does.
+// DEAL's JSON boundary additionally rejects duplicate object keys and invalid
+// Unicode. It must not be weakened to imitate JSON.parse's lossy acceptance.
+export function parseNeedsPlan(reply: string): NeedsPlan | null {
+    let start: number = -1;
+    let end: number = -1;
+    let index: number = 0;
+    for (let character of reply) {
+        if (character === "{" && start < 0) { start = index; }
+        if (character === "}") { end = index; }
+        index = index + 1;
+    }
+    if (start < 0 || end <= start) { return null; }
+    let raw: Record<string, unknown> = {};
+    try {
+        raw = json.parse(strings.substring(reply, start, end + 1));
+    } catch (error) {
+        let failure: Error = error as Error;
+        if (failure.code !== "E8001") { throw failure; }
+        return null;
+    }
+    let base: Record<string, unknown> = {};
+    for (let key of ["title", "eyebrow", "subtitle", "inputs", "constants", "questions"]) {
+        if (Object.hasOwn(raw, key)) { base[key] = raw[key]; }
+    }
+    let needs: Need[] = [];
+    for (let item of arrayOrEmpty(raw.needs)) {
+        let decoded: Record<string, unknown> | null = objectOrNull(item);
+        if (decoded === null) { continue; }
+        // DEAL narrowing is block-local; an early continue does not refine
+        // the following statements. Assert the already-checked boundary once.
+        let fields: Record<string, unknown> = decoded as Record<string, unknown>;
+        let type: string = text(fields, "type");
+        if (!includes(["figure", "countdown", "stopwatch", "entries", "content", "action", "scene", "other"], type)) {
+            continue;
+        }
+        let need: Need = {type: type, words: "", raw: fields, on: "", reads: [], length: "", from: ""};
+        if (type === "figure") {
+            need.words = text(fields, "label");
+            let means: string = text(fields, "means");
+            if (means !== "") { need.words = need.words + " (" + means + ")"; }
+            need.reads = quantitiesIn(fields);
+        } else if (type === "countdown" || type === "stopwatch" || type === "entries") {
+            need.words = text(fields, "label");
+            need.length = text(fields, "length");
+        } else if (type === "action") {
+            need.words = text(fields, "when") + ": " + text(fields, "what");
+            need.on = text(fields, "on");
+            if (!includes(["countdown_end", "entry_added", "row_tap", "button", "time", "other"], need.on)) {
+                need.on = "other";
+            }
+            need.from = text(fields, "from");
+        } else {
+            need.words = text(fields, "what");
+            if (type === "content" || type === "scene") { need.from = text(fields, "from"); }
+        }
+        needs[needs.length] = need;
+    }
+    return {base: base, needs: needs};
+}
+
+export function needOf(plan: NeedsPlan, type: string): Need | null {
+    for (let need of plan.needs) {
+        if (need.type === type) { return need; }
+    }
+    return null;
+}
+
+function figureFields(raw: Record<string, unknown>): Record<string, unknown> {
+    let result: Record<string, unknown> = copy(raw);
+    result.formula = composerNames(text(raw, "formula"));
+    let example: Record<string, unknown> | null = objectOrNull(raw.example);
+    if (example !== null) {
+        let samples: Record<string, unknown> | null = objectOrNull(example.given);
+        if (samples !== null) {
+            let given: Record<string, unknown> = samples;
+            let renamed: Record<string, unknown> = {};
+            for (let key of tables.keys(given)) { renamed[composerNames(key)] = given[key]; }
+            let replaced: Record<string, unknown> = copy(example);
+            replaced.given = renamed;
+            result.example = replaced;
+        }
+    }
+    return result;
+}
+
+// The exact input of VeraCompose.parseSketch, before its own normalization.
+// Keep this boundary explicit while the composer is ported; do not substitute
+// the old typed-terms/candidate admission machinery for parseSketch.
+export function sketchDocument(plan: NeedsPlan): Record<string, unknown> {
+    let result: Record<string, unknown> = copy(plan.base);
+    let values: Record<string, unknown>[] = [];
+    let events: Record<string, unknown>[] = [];
+    let ready: string[] = [];
+    let other: string[] = [];
+    for (let need of plan.needs) {
+        let raw: Record<string, unknown> = copy(need.raw);
+        if (need.type === "figure") {
+            values[values.length] = figureFields(raw);
+        } else if (need.type === "countdown" || need.type === "stopwatch") {
+            if (!Object.hasOwn(result, need.type)) { result[need.type] = raw; }
+            else { other[other.length] = "a second " + need.type + ": " + need.words; }
+        } else if (need.type === "entries") {
+            if (!Object.hasOwn(result, "list")) { result.list = raw; }
+            else { other[other.length] = "a second list of entries: " + need.words; }
+        } else if (need.type === "content") {
+            ready[ready.length] = need.words;
+        } else if (need.type === "action") {
+            events[events.length] = raw;
+        } else if (need.type === "scene") {
+            other[other.length] = "a scene the app draws itself: " + need.words;
+        } else {
+            other[other.length] = need.words;
+        }
+    }
+    result.values = values;
+    result.events = events;
+    result.ready = ready;
+    result.other = other;
+    return result;
+}
+
+export function plainScenes(plan: NeedsPlan): number {
+    let changed: number = 0;
+    for (let need of plan.needs) {
+        if (need.type === "scene") {
+            need.type = "other";
+            changed = changed + 1;
+        }
+    }
+    return changed;
+}
+
+export function main(): null { return null; }
