@@ -7,6 +7,9 @@ import sys
 schema = json.loads(pathlib.Path(sys.argv[1]).read_text())
 output = pathlib.Path(sys.argv[2])
 functions = []
+# Shared schema nodes must share emitted validators as well. Nested sections otherwise
+# duplicate the maintained inventory and can exceed the JVM class constant pool.
+validators = {}
 
 def quote(value):
     return json.dumps(value, ensure_ascii=False)
@@ -21,7 +24,11 @@ def resolve(value):
 
 def generate(raw):
     value = resolve(raw)
+    signature = json.dumps(value, sort_keys=True, separators=(',', ':'))
+    if signature in validators:
+        return validators[signature]
     name = 'shape' + str(len(functions))
+    validators[signature] = name
     functions.append(None)
     index = len(functions) - 1
     lines = []

@@ -4,6 +4,7 @@ import * as validation from "./validation";
 import * as shapes from "./validation.generated";
 import * as json from "std/json";
 import * as strings from "std/string";
+import * as sections from "./sections";
 
 // Private portable composition entry; native adapters only transport its data.
 export function parseFormulaJson(source: string): string { return formula.parseJson(source); }
@@ -52,13 +53,19 @@ function visit(id: string, ids: string[], dependencies: Record<string, unknown>,
     ordered[ordered.length] = id;
     return null;
 }
-export function dependenciesJson(input: string): string {
+export function dependenciesJson(input: string): string { return dependencies(input,false); }
+export function sectionDependenciesJson(input: string): string { return dependencies(input,true); }
+function dependencies(input: string, internal: boolean): string {
     let plan: Record<string, unknown> = json.parse(input);
     for (let key of ["fragments","commands","display"]) {
         try { if (key === "display") { let values: string[] = decoded.strings(plan[key]); } else { let values: Record<string, unknown>[] = decoded.records(plan[key]); } }
         catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "E8001" && error.code !== "E8009") { throw error; } throw {code:"INVALID_CONFIG",message:"Root '"+key+"' must be an actual JSON array (never a quoted/encoded document); submit all root fields title, fragments, commands, display."}; }
     }
-    shapes.validate(plan);
+    if (!internal) {
+        shapes.validate(plan);
+        let found: boolean = false; for (let fragment of decoded.records(plan.fragments)) { let kind: string = fragment.kind as string; found = found || kind === "section"; }
+        if (found) { let flattened: Record<string, unknown> = sections.flatten(plan); let graph: Record<string, unknown> = json.parse(dependencies(json.stringify(flattened) as string,true)); graph.plan = flattened; return json.stringify(graph) as string; }
+    }
     let fragments: Record<string, unknown>[] = decoded.records(plan.fragments); let ids: string[] = []; let dependencies: Record<string, unknown> = {}; let kinds: Record<string, unknown> = {};
     for (let fragment of fragments) {
         let id: string = (fragment.id as string);
@@ -66,7 +73,11 @@ export function dependenciesJson(input: string): string {
         ids[ids.length] = id; let kind: string = (fragment.kind as string); kinds[id] = kind;
         if (kind === "input") { let config: Record<string, unknown> = (fragment.config as Record<string, unknown>); validation.input(config); }
         let targets: string[] = [];
-        for (let expression of shapes.fragmentFormulas(fragment)) {
+        let expressions: string[] = [];
+        if (kind === "sectionImport") { let config: Record<string, unknown> = fragment.config as Record<string, unknown>; let value: Record<string, unknown> = config.value as Record<string, unknown>; expressions[expressions.length] = value.expr as string; }
+        else if (kind === "sectionExports") { let config: Record<string, unknown> = fragment.config as Record<string, unknown>; for (let entry of decoded.records(config.exports)) { let value: Record<string, unknown> = entry.value as Record<string, unknown>; expressions[expressions.length] = value.expr as string; } }
+        else { expressions = shapes.fragmentFormulas(fragment); }
+        for (let expression of expressions) {
             for (let path of formula.references(formula.parse(expression))) {
                 let parts: string[] = strings.split(path,"."); let owner: string = parts[0];
                 if (owner !== "row" && owner !== "item" && owner !== "reply" && !contains(targets,owner)) { targets[targets.length] = owner; }
@@ -75,7 +86,7 @@ export function dependenciesJson(input: string): string {
         dependencies[id] = targets;
     }
     let title: string = (plan.title as string);
-    if (strings.trim(title) === "" || ids.length === 0) { throw {code:"INVALID_CONFIG",message:"Title and fragments required"}; }
+    if (strings.trim(title) === "" || (ids.length === 0 && (!Object.hasOwn(plan,"notices") || decoded.strings(plan.notices).length === 0))) { throw {code:"INVALID_CONFIG",message:"Title and fragments required"}; }
     let display: string[] = decoded.strings(plan.display); let shown: string[] = [];
     for (let id of display) {
         if (!contains(ids,id) || contains(shown,id)) { throw {code:"INVALID_CONFIG",message:"Unknown or duplicate display instance"}; }
@@ -83,7 +94,7 @@ export function dependenciesJson(input: string): string {
     }
     for (let id of ids) {
         let kind: string = (kinds[id] as string);
-        if (kind !== "read" && kind !== "alternatives" && !contains(shown,id)) { throw {code:"INVALID_CONFIG",message:"Visible fragment omitted from display"}; }
+        if (kind !== "read" && kind !== "alternatives" && kind !== "sectionImport" && kind !== "sectionExports" && !contains(shown,id)) { throw {code:"INVALID_CONFIG",message:"Visible fragment omitted from display"}; }
     }
     let ordered: string[] = []; let visiting: string[] = [];
     for (let id of ids) { visit(id,ids,dependencies,ordered,visiting); }

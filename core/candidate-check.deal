@@ -29,4 +29,9 @@ export async function check(raw: string): Promise<Record<string, unknown>> {
     }
     return await checker.check(deal, ui);
 }
+export async function probe(pair: Record<string, unknown>): Promise<Record<string, unknown>> {
+    let deal: string = pair.deal as string; let ui: string = pair.dealui as string;
+    if (deal === "" || ui === "") { return invalid("Provisional source pair must be nonempty"); }
+    return await checker.probe(deal,ui);
+}
 export function main(): null { return null; }

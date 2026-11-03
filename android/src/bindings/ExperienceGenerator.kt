@@ -181,11 +181,18 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         }
                         "embedding/checker" -> {
                             progress(if (attempts == 0) "Checking catalogue workspace…" else "Checking AI-written code · attempt $attempts")
+                            val provisional = request.getString("function") == "probe"
                             val id = UUID.randomUUID().toString()
                             try {
                                 val source = ExperienceSource(args.getString(0), args.getString(1))
                                 telemetry.checkStart(source)
                                 val output = log.operation("check", candidate = id, detail = JSONObject().put("deal", source.deal).put("dealui", source.ui).toString()) { child -> ExperienceCompiler(context, config, child).compile(source.deal, source.ui) }
+                                if (provisional) {
+                                    StagingReclamation.remove(context,output.parentFile)
+                                    telemetry.checkEnd(true,"")
+                                    eval("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id",request.getInt("id")).put("ok",true).put("value",JSONObject().put("accepted",true).put("candidateId","").put("diagnostics","")))})")
+                                    continue
+                                }
                                 val test=config.candidateTest
                                 if(test!=null) {
                                     // Speculative test sessions must not mark the accepted

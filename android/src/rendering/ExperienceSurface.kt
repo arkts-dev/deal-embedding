@@ -69,15 +69,21 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
         if(terminalFailure || error is ProtocolFailure && error.code in setOf("CLOSED","SESSION_FAILED","INVALID_HANDLE"))terminal=live
         main.post{if(!ended&&generation==epoch&&session==live)failure?.invoke(error)}
     }
-    internal fun event(value:UiSnapshot,slot:Int,payload:String?,before:()->Unit={}) {
+    internal fun event(value:UiSnapshot,slot:Int,payload:String?,before:()->Unit={}) { enqueue(value,slot,payload,false,before) }
+    internal fun eventReceipt(value:UiSnapshot,slot:Int,payload:String?):java.util.concurrent.Future<Int?>? = enqueue(value,slot,payload,true,{})
+    private fun enqueue(value:UiSnapshot,slot:Int,payload:String?,receipt:Boolean,before:()->Unit):java.util.concurrent.Future<Int?>? {
         synchronized(this){
             // Reception can run before Compose replaces the currently visible callbacks.
             // Admit that still-rendered frame as well as the newest received frame; the
             // runtime still validates the slot against its current checked tree.
-            if(ended||(value!==snapshot&&value!==renderedSnapshot)||snapshotSession!=session)return
-            val live=session?:return;val generation=epoch;val owner=ownership
+            if(ended||(value!==snapshot&&value!==renderedSnapshot)||snapshotSession!=session)return null
+            val live=session?:return null;val generation=epoch;val owner=ownership
             before()
-            actions.execute{if(!ended&&owner==ownership&&session==live)try{protocol.dispatch(live,slot,payload)}catch(error:Throwable){report(live,generation,error)}}
+            return actions.submit<Int?>{
+                if(ended||owner!=ownership||session!=live)null
+                else try{protocol.dispatch(live,slot,payload);if(receipt)protocol.next(live,"").snapshot.version else null}
+                catch(error:Throwable){report(live,generation,error);throw error}
+            }
         }
     }
     internal fun accepted(value:UiSnapshot){

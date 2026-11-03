@@ -1,0 +1,100 @@
+import * as decoded from "./decoded";
+import * as json from "std/json";
+import * as tables from "std/table";
+import * as strings from "std/string";
+import * as math from "std/math";
+
+// The model names requirements and relations, never executable formulas or fragments.
+export class Term { id: string; op: string; args: string[]; source: string; path: string; value: unknown; evidence: string; dimension: string; }
+export class Need { id: string; kind: string; label: string; config: Record<string, unknown>; evidence: string; }
+export class Needs { title: string; terms: Term[]; needs: Need[]; }
+export function fail(message: string): null { throw {code:"NEEDS_INVALID",message:message}; }
+export function closed(value: Record<string, unknown>, keys: string[]): null {
+    for (let key of tables.keys(value)) { let found: boolean = false; for (let allowed of keys) { found = found || allowed === key; } if (!found) { fail("Unexpected key "+key); } }
+    for (let key of keys) { if (!Object.hasOwn(value,key)) { fail("Missing key "+key); } }
+    return null;
+}
+export function identifier(value: string): boolean {
+    let index: number = 0;
+    for (let ch of value) { let alphabet: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"; if (index > 0) { alphabet = alphabet + "_0123456789"; } if (!strings.contains(alphabet,ch)) { return false; } index = index+1; }
+    return index > 0 && value !== "row" && value !== "item" && value !== "reply";
+}
+export function contains(values: string[], value: string): boolean { for (let entry of values) { if (entry === value) { return true; } } return false; }
+export function parse(input: Record<string, unknown>, intent: string, context: string, catalog: string): Needs {
+    closed(input,["title","terms","needs"]);
+    let title: string = input.title as string; if (strings.trim(title) === "") { fail("Title required"); }
+    let terms: Term[] = []; let needs: Need[] = []; let ids: string[] = [];
+    for (let value of decoded.records(input.terms)) {
+        closed(value,["id","op","args","source","path","value","evidence","dimension"]);
+        let id: string = value.id as string; if (!identifier(id) || contains(ids,id)) { fail("Term identity"); } ids[ids.length] = id;
+        let op: string = value.op as string; let args: string[] = decoded.strings(value.args); let source: string = value.source as string; let path: string = value.path as string; let evidence: string = value.evidence as string; let dimension: string = value.dimension as string;
+        if (!contains(["literal","port","field","add","subtract","multiply","divide","eq","ne","lt","le","gt","ge","and","or","not","choose","floor","ceil","abs","clock","integer","length","sum","filter","any","all","project","concat"],op)) { fail("Unknown relation"); }
+        if (op === "literal" && (evidence === "" || (!strings.contains(intent,evidence) && !strings.contains(context,evidence)))) { fail("Literal requires exact disclosed evidence"); }
+        if (op === "field" && source !== "row" && source !== "item" && source !== "reply") { fail("Term "+id+": field source must be row/item/reply; use op port for need output "+source+"."+path); }
+        if (op === "literal") { try { literalEvidence(value.value,evidence,dimension); } catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "NEEDS_INVALID") { throw error; } fail("Term "+id+": "+error.message+"; value="+unwrap(value.value)+", evidence="+evidence); } }
+        if (op !== "literal" && dimension !== "unknown") { fail("Only evidenced facts may declare dimensions; provider structural types do not establish units"); }
+        if (dimension !== "unknown" && !contains(["scalar","money","minute","minuteOfDay","millisecond","length","count"],dimension)) { fail("Unknown dimension"); }
+        terms[terms.length] = {id:id,op:op,args:args,source:source,path:path,value:value.value,evidence:evidence,dimension:dimension};
+    }
+    let needIds: string[] = [];
+    for (let value of decoded.records(input.needs)) {
+        closed(value,["id","kind","label","config","evidence"]);
+        let id: string = value.id as string; let kind: string = value.kind as string; let label: string = value.label as string; let evidence: string = value.evidence as string; let config: Record<string, unknown> = value.config as Record<string, unknown>;
+        if (!identifier(id) || contains(needIds,id)) { fail("Need identity"); } needIds[needIds.length] = id;
+        if (!contains(["input","read","result","comparison","choice","allocation","alternatives","quotes","custom","section","unsupported"],kind)) { fail("Unknown need"); }
+        if (evidence === "" || (!strings.contains(intent,evidence) && !strings.contains(context,evidence))) { fail("Need requires exact disclosed evidence"); }
+        needs[needs.length] = {id:id,kind:kind,label:label,config:config,evidence:evidence};
+    }
+    if (needs.length === 0) { fail("Empty needs"); }
+    return {title:title,terms:terms,needs:needs};
+}
+export function term(needs: Needs, id: string): Term { for (let value of needs.terms) { if (value.id === id) { return value; } } fail("Unknown term "+id); throw {code:"UNREACHABLE",message:"term"}; }
+export function need(needs: Needs, id: string): Need { for (let value of needs.needs) { if (value.id === id) { return value; } } fail("Unknown need "+id); throw {code:"UNREACHABLE",message:"need"}; }
+function literalEvidence(value: unknown, evidence: string, dimension: string): null {
+    let encoded: string = unwrap(value);
+    if (strings.startsWith(encoded,"\"")) { let text: string = value as string; if (text === "" || !strings.contains(evidence,text)) { fail("String fact not present in evidence"); } return null; }
+    if (encoded === "true" || encoded === "false") { if (!strings.contains(evidence,encoded)) { fail("Boolean fact requires literal disclosed evidence"); } return null; }
+    let number: number = value as number; if (number-number !== 0) { fail("Finite fact required"); }
+    if (strings.endsWith(encoded,".0")) { encoded = strings.substring(encoded,0,strings.length(encoded)-2); }
+    let offset: number = 0;
+    while (offset < strings.length(evidence)) {
+        let tail: string = strings.substring(evidence,offset,strings.length(evidence));
+        if (strings.startsWith(tail,encoded)) {
+            let before: string = ""; let after: string = "";
+            if (offset > 0) { before = strings.substring(evidence,offset-1,offset); }
+            if (offset+strings.length(encoded) < strings.length(evidence)) { after = strings.substring(evidence,offset+strings.length(encoded),offset+strings.length(encoded)+1); }
+            if ((before === "" || !strings.contains("0123456789.-",before)) && (after === "" || !strings.contains("0123456789.",after))) { return null; }
+        }
+        offset = offset+1;
+    }
+    let words: string[] = ["zero","one","two","three","four","five","six","seven","eight","nine","ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"];
+    let lower: string = ""; let capitals: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; let alphabet: string = "abcdefghijklmnopqrstuvwxyz";
+    for (let ch of evidence) { let normalized: string = ch; let index: number = 0; for (let capital of capitals) { if (ch === capital) { normalized = strings.substring(alphabet,index,index+1); } index = index+1; } lower = lower+normalized; }
+    if (math.floor(number) === number && number >= 0 && number < words.length) {
+        let word: string = words[number]; let i: number = 0;
+        while (i < strings.length(lower)) {
+            let tail: string = strings.substring(lower,i,strings.length(lower));
+            if (strings.startsWith(tail,word)) {
+                let before: string = ""; let after: string = "";
+                if (i > 0) { before = strings.substring(lower,i-1,i); }
+                if (i+strings.length(word) < strings.length(lower)) { after = strings.substring(lower,i+strings.length(word),i+strings.length(word)+1); }
+                if ((before === "" || !strings.contains("abcdefghijklmnopqrstuvwxyz",before)) && (after === "" || !strings.contains("abcdefghijklmnopqrstuvwxyz",after))) { return null; }
+            }
+            i = i+1;
+        }
+    }
+    if (dimension === "minuteOfDay" && math.floor(number) === number && number >= 0 && number <= 1439) {
+        let hour: string = unwrap(math.floor(number/60)); let minute: string = unwrap(number-math.floor(number/60)*60);
+        if (strings.length(hour) === 1) { hour = "0"+hour; } if (strings.length(minute) === 1) { minute = "0"+minute; }
+        if (strings.contains(evidence,hour+":"+minute)) { return null; }
+    }
+    fail("Numeric fact not present in evidence; express conversion as typed relations"); return null;
+}
+export function unwrap(value: unknown): string { let encoded: string = json.stringify({value:value}) as string; return strings.substring(encoded,9,strings.length(encoded)-1); }
+export function document(value: Needs): Record<string, unknown> {
+    let terms: Record<string, unknown>[] = []; let needs: Record<string, unknown>[] = [];
+    for (let term of value.terms) { terms[terms.length] = {id:term.id,op:term.op,args:term.args,source:term.source,path:term.path,value:term.value,evidence:term.evidence,dimension:term.dimension}; }
+    for (let need of value.needs) { needs[needs.length] = {id:need.id,kind:need.kind,label:need.label,config:need.config,evidence:need.evidence}; }
+    return {title:value.title,terms:terms,needs:needs};
+}
+export function main(): null { return null; }

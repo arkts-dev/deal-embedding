@@ -1,1 +1,3 @@
 export function check(deal: string, dealui: string): Promise<Record<string, unknown>> ;
+// Compiler-only provisional admission; never publishes a canonical candidate or runs actions.
+export function probe(deal: string, dealui: string): Promise<Record<string, unknown>> ;

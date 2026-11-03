@@ -42,7 +42,7 @@ export function screen(builder: b.Builder, plan: Record<string, unknown>, graph:
     }
     let slots: Slot[] = [
         {name:"header",accepts:["hero"],required:true,maximum:1},
-        {name:"outcome",accepts:["comparison","result"],required:false,maximum:blocks.length},
+        {name:"outcome",accepts:["comparison","result","custom"],required:false,maximum:blocks.length},
         {name:"inputs",accepts:["input"],required:false,maximum:blocks.length},
         {name:"content",accepts:["choice","allocation","quotes"],required:false,maximum:blocks.length},
         {name:"resources",accepts:["read","alternatives"],required:false,maximum:blocks.length}

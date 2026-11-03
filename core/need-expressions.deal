@@ -1,0 +1,94 @@
+import * as n from "./needs";
+import * as decoded from "./decoded";
+import * as strings from "std/string";
+
+export class Value { expr: string; type: Record<string, unknown>; dimension: string; dependencies: string[]; }
+export class Environment { port: (owner: string, path: string) => Value; field: (owner: string, path: string) => Value; }
+export function wire(kind: string): Record<string, unknown> { let fields: Record<string, unknown>[] = []; return {kind:kind,fields:fields,element:null}; }
+export function member(type: Record<string, unknown>, path: string): Record<string, unknown> {
+    if (path === "") { return type; }
+    let current: Record<string, unknown> = type;
+    for (let part of strings.split(path,".")) {
+        if (!n.identifier(part)) { n.fail("Invalid field path"); }
+        let found: boolean = false;
+        for (let field of decoded.records(current.fields)) { let name: string = field.name as string; if (name === part) { let optional: boolean = field.optional as boolean; if (optional) { n.fail("Optional field requires an explicit presence-aware slow path"); } current = field.type as Record<string, unknown>; found = true; break; } }
+        if (!found) { n.fail("Undisclosed field "+path); }
+    }
+    return current;
+}
+export function same(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+    let a: string = left.kind as string; let b: string = right.kind as string;
+    if (a !== b) { return false; }
+    if (a === "array") { return same(left.element as Record<string, unknown>,right.element as Record<string, unknown>); }
+    if (a === "record") {
+        let af: Record<string, unknown>[] = decoded.records(left.fields); let bf: Record<string, unknown>[] = decoded.records(right.fields);
+        if (af.length !== bf.length) { return false; }
+        let i: number = 0; for (let field of af) { let other: Record<string, unknown> = bf[i]; let an: string = field.name as string; let bn: string = other.name as string; if (an !== bn || !same(field.type as Record<string, unknown>,other.type as Record<string, unknown>)) { return false; } i = i+1; }
+    }
+    return true;
+}
+function merged(values: Value[]): string[] { let result: string[] = []; for (let value of values) { for (let id of value.dependencies) { if (!n.contains(result,id)) { result[result.length] = id; } } } return result; }
+function scalar(value: Value, kind: string): null { let actual: string = value.type.kind as string; if (actual !== kind) { n.fail("Relation operand type"); } return null; }
+export function expression(needs: n.Needs, id: string, env: Environment, visiting: string[]): Value {
+    if (n.contains(visiting,id)) { n.fail("Cyclic relation"); }
+    let next: string[] = []; for (let prior of visiting) { next[next.length] = prior; } next[next.length] = id;
+    let term: n.Term = n.term(needs,id);
+    if (term.op === "literal") {
+        if (term.args.length !== 0 || term.source !== "" || term.path !== "") { n.fail("Literal shape"); }
+        let encoded: string = n.unwrap(term.value); let kind: string = "number";
+        if (strings.startsWith(encoded,"\"")) { kind = "string"; } else if (encoded === "true" || encoded === "false") { kind = "boolean"; } else { let number: number = term.value as number; if (number-number !== 0) { n.fail("Finite literal required"); } }
+        return {expr:encoded,type:wire(kind),dimension:term.dimension,dependencies:[]};
+    }
+    if (term.op === "port") { if (term.args.length !== 0) { n.fail("Port arity"); } return env.port(term.source,term.path); }
+    if (term.op === "field") { if (term.args.length !== 0) { n.fail("Field arity"); } return env.field(term.source,term.path); }
+    let values: Value[] = []; let args: string[] = []; let argumentIndex: number = 0;
+    for (let argument of term.args) {
+        let scope: Environment = env;
+        if (argumentIndex === 1 && n.contains(["sum","filter","any","all","project"],term.op)) {
+            let source: Value = values[0]; if ((source.type.kind as string) !== "array") { n.fail("Collection type"); }
+            let element: Record<string, unknown> = source.type.element as Record<string, unknown>;
+            scope = {port:env.port,field:function(owner: string, path: string): Value {
+                if (owner === "row") { return {expr:"row."+path,type:member(element,path),dimension:"unknown",dependencies:[]}; }
+                return env.field(owner,path);
+            }};
+        }
+        let value: Value = expression(needs,argument,scope,next); values[values.length] = value; args[args.length] = value.expr; argumentIndex = argumentIndex+1;
+    }
+    let op: string = term.op; let count: number = 2;
+    if (n.contains(["not","floor","ceil","abs","clock","integer","length"],op)) { count = 1; }
+    if (op === "choose") { count = 3; }
+    if (op !== "concat" && args.length !== count) { n.fail("Relation arity"); }
+    if (args.length === 0) { n.fail("Empty relation"); }
+    let type: Record<string, unknown> = wire("number"); let dimension: string = "unknown"; let expr: string = "";
+    let binary: string = "";
+    if (op === "add") { binary = "+"; } if (op === "subtract") { binary = "-"; } if (op === "multiply") { binary = "*"; } if (op === "divide") { binary = "/"; }
+    if (n.contains(["eq","ne","lt","le","gt","ge"],op)) {
+        if (!same(values[0].type,values[1].type)) { n.fail("Comparison types"); }
+        if (values[0].dimension !== "unknown" && values[1].dimension !== "unknown" && values[0].dimension !== values[1].dimension) { n.fail("Comparison dimensions"); }
+        if (op === "eq") { binary = "==="; } if (op === "ne") { binary = "!=="; } if (op === "lt") { binary = "<"; } if (op === "le") { binary = "<="; } if (op === "gt") { binary = ">"; } if (op === "ge") { binary = ">="; } type = wire("boolean");
+    } else if (op === "and" || op === "or") { scalar(values[0],"boolean"); scalar(values[1],"boolean"); binary = "&&"; if (op === "or") { binary = "||"; } type = wire("boolean"); }
+    else if (binary !== "") {
+        scalar(values[0],"number"); scalar(values[1],"number"); let left: string = values[0].dimension; let right: string = values[1].dimension;
+        if (left !== "unknown" && right !== "unknown") {
+            if (op === "add" || op === "subtract") {
+                if (left === "minuteOfDay" && right === "minute") { dimension = "minuteOfDay"; }
+                else if (left === right) { dimension = left; if (op === "subtract" && left === "minuteOfDay") { dimension = "minute"; } }
+                else { n.fail("Arithmetic dimensions"); }
+            } else if (right === "scalar" || right === "count") { dimension = left; } else if (op === "multiply" && (left === "scalar" || left === "count")) { dimension = right; } else if (op === "divide" && left === right) { dimension = "scalar"; } else { n.fail("Unestablished product dimension"); }
+        }
+    } else if (op === "not") { scalar(values[0],"boolean"); type = wire("boolean"); expr = "!("+args[0]+")"; }
+    else if (op === "choose") { scalar(values[0],"boolean"); if (!same(values[1].type,values[2].type)) { n.fail("Branch types"); } type = values[1].type; if (values[1].dimension === values[2].dimension) { dimension = values[1].dimension; } }
+    else if (n.contains(["floor","ceil","abs","clock","integer"],op)) { scalar(values[0],"number"); dimension = values[0].dimension; if (op === "clock" || op === "integer") { type = wire("string"); dimension = "unknown"; } }
+    else if (op === "length") { let kind: string = values[0].type.kind as string; if (kind !== "array" && kind !== "string") { n.fail("Length type"); } dimension = "count"; }
+    else if (op === "concat") { for (let value of values) { scalar(value,"string"); } type = wire("string"); }
+    else {
+        let kind: string = values[0].type.kind as string; if (kind !== "array") { n.fail("Collection type"); }
+        if (op === "sum") { scalar(values[1],"number"); dimension = values[1].dimension; }
+        if (op === "filter" || op === "any" || op === "all") { scalar(values[1],"boolean"); type = wire("boolean"); if (op === "filter") { type = values[0].type; } }
+        if (op === "project") { let fields: Record<string, unknown>[] = []; type = {kind:"array",fields:fields,element:values[1].type}; }
+    }
+    if (binary !== "") { expr = "("+args[0]+" "+binary+" "+args[1]+")"; }
+    else if (expr === "") { expr = op+"("; let index: number = 0; for (let argument of args) { if (index > 0) { expr = expr+","; } expr = expr+argument; index = index+1; } expr = expr+")"; }
+    return {expr:expr,type:type,dimension:dimension,dependencies:merged(values)};
+}
+export function main(): null { return null; }

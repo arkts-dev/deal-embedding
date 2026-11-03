@@ -9,6 +9,7 @@ import * as executionPolicy from "./lowering-execution.generated";
 import * as syntax from "embedding/syntax";
 import * as json from "std/json";
 import * as tables from "std/table";
+import * as strings from "std/string";
 
 function checkRecord(model: m.Model, type: string, active: string[]): null {
     let child: string = m.element(type); if (child !== "") { return checkRecord(model,child,active); }
@@ -29,9 +30,9 @@ function custom(model: m.Model, plan: Record<string, unknown>): null {
     for (let section of sections) {
         m.closed(section,["id","parameters","result","body"]); let id: string = (section.id as string); m.name(id);
         if (m.present(model.custom,id)) { m.reject("Duplicate custom section"); }
-        let body: string = (section.body as string); syntax.validateCustom(body); let parameters: Record<string, unknown>[] = decoded.records(section.parameters); let names: string[] = []; let args: string = "";
+        let body: string = (section.body as string); if (strings.contains(body,"DEAL-SECTION-BEGIN") || strings.contains(body,"DEAL-SECTION-END")) { m.reject("Reserved section boundary"); } syntax.validateCustom(body); let parameters: Record<string, unknown>[] = decoded.records(section.parameters); let names: string[] = []; let args: string = "";
         for (let parameter of parameters) { m.closed(parameter,["name","type"]); let name: string = (parameter.name as string); let type: string = (parameter.type as string); if (m.contains(names,name)) { m.reject("Duplicate custom parameter"); } names[names.length] = name; if (args !== "") { args = args+","; } args = args+m.name(name)+": "+m.type(model,type); }
-        let result: string = (section.result as string); model.addHelper("function custom_"+id+"("+args+"): "+m.type(model,result)+" {\n"+body+"\n}\n"); model.custom[id] = section;
+        let result: string = (section.result as string); model.addHelper("function custom_"+id+"("+args+"): "+m.type(model,result)+" {\n// DEAL-SECTION-BEGIN "+id+"\n"+body+"\n// DEAL-SECTION-END "+id+"\n}\n"); model.custom[id] = section;
     } return null;
 }
 function provider(c: actions.Context, action: Record<string, unknown>, step: Record<string, unknown>, stateFields: Record<string, unknown>[]): null {

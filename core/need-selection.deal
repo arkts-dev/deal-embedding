@@ -1,0 +1,80 @@
+import * as n from "./needs";
+import * as c from "./need-candidates";
+import * as policy from "catalogue-policy";
+import * as protocol from "embedding/protocol";
+import * as chooser from "embedding/chooser";
+import * as json from "std/json";
+import * as data from "embedding/policy-data";
+import * as observer from "embedding/observer";
+import * as literals from "./source-literals";
+
+// Batch only to respect the existing chooser envelope. The issued closures never escape
+// this request and raw answers cannot add or replace a candidate.
+export async function select(input: string, needs: n.Needs, issued: c.Issued): Promise<c.Candidate[]> {
+    let selected: c.Candidate[] = []; let ids: string[] = []; for (let candidate of issued.candidates) { if (!n.contains(ids,candidate.need)) { ids[ids.length] = candidate.need; } }
+    let offset: number = 0;
+    while (offset < ids.length) {
+        let questions: policy.ChoiceQuestion[] = []; let end: number = offset+32; if (end > ids.length) { end = ids.length; }
+        let index: number = offset;
+        while (index < end) {
+            let need: n.Need = n.need(needs,ids[index]);
+            let instructions: string = "Choose only an issued implementation that covers this requirement: "+need.label+". Supporting evidence: "+need.evidence;
+            let alias: string = "Need"+literals.decimal(index); let options: policy.ChoiceOption[] = [];
+            let alternative: number = 0;
+            for (let candidate of issued.candidates) { if (candidate.need === need.id) {
+                let description: string = "Checked maintained implementation: "+need.label+"\n"+(json.stringify(candidate.fragment) as string);
+                let option: string = candidate.id; if (await data.utf16Length(option) > 64) { option = "Implementation"+literals.decimal(alternative); }
+                if (await data.utf16Length(description) <= 4096 && options.length < 254) { options[options.length] = {name:option,description:description}; }
+                alternative = alternative+1;
+            } }
+            if (options.length === 0 || await data.utf16Length(instructions) > 4096) {
+                // Never truncate evidence or turn a protocol envelope failure into infinite
+                // extraction. Oversized alternatives remain explicit local gaps.
+                await observer.record("composition","choice-envelope-rejected",json.stringify({need:need.id,reason:"CHOICE_DESCRIPTION_LIMIT"}) as string);
+            } else { options[options.length] = {name:"uncovered",description:"None of the issued implementations covers this requirement; retain it as an explicit gap."}; questions[questions.length] = {name:alias,instructions:instructions,options:options}; }
+            index = index+1;
+        }
+        if (questions.length === 0) { offset = end; continue; }
+        let envelope: string = await protocol.questions(questions);
+        let raw: string = await chooser.choose(input+"\n\nISSUED OPTIONS\n"+envelope);
+        let decision: protocol.Decision = await protocol.answers(raw,questions);
+        if (!decision.accepted) { n.fail("Selection rejected: "+decision.reason); }
+        for (let answer of decision.answers) {
+            let found: boolean = false;
+            let i: number = offset; while (i < end) {
+                let alias: string = "Need"+literals.decimal(i);
+                if (answer.question === alias) {
+                    if (found) { n.fail("Duplicate selection"); } found = true;
+                    let matched: boolean = answer.choice === "uncovered"; let alternative: number = 0;
+                    for (let candidate of issued.candidates) { if (candidate.need === ids[i]) { let option: string = candidate.id; if (await data.utf16Length(option) > 64) { option = "Implementation"+literals.decimal(alternative); } if (answer.choice === option) { selected[selected.length] = candidate; matched = true; } alternative = alternative+1; } }
+                    if (!matched) { n.fail("Unissued candidate"); }
+                } i = i+1;
+            }
+            if (!found) { n.fail("Unissued question"); }
+        }
+        if (decision.answers.length !== questions.length) { n.fail("Incomplete selection"); }
+        offset = end;
+    }
+    return selected;
+}
+function visit(id: string, selected: c.Candidate[], visiting: string[], ordered: string[]): null {
+    if (n.contains(ordered,id)) { return null; } if (n.contains(visiting,id)) { n.fail("Selected dependency cycle"); }
+    let next: string[] = []; for (let prior of visiting) { next[next.length] = prior; } next[next.length] = id;
+    let found: boolean = false;
+    for (let candidate of selected) { if (candidate.need === id) { found = true; for (let dependency of candidate.dependencies) { visit(dependency,selected,next,ordered); } } }
+    if (!found) { n.fail("Missing selected prerequisite "+id); }
+    ordered[ordered.length] = id; return null;
+}
+export function plan(needs: n.Needs, selected: c.Candidate[]): Record<string, unknown> {
+    let ordered: string[] = []; for (let candidate of selected) { visit(candidate.need,selected,[],ordered); }
+    let fragments: Record<string, unknown>[] = []; let display: string[] = []; let targets: string[] = [];
+    for (let id of ordered) { for (let candidate of selected) { if (candidate.need === id) {
+        fragments[fragments.length] = candidate.fragment; let kind: string = candidate.fragment.kind as string;
+        if (kind !== "read" && kind !== "alternatives") { display[display.length] = id; }
+        if (kind === "read" || kind === "quotes") { targets[targets.length] = id; }
+    } } }
+    let commands: Record<string, unknown>[] = [];
+    if (targets.length > 0) { let id: string = "Refresh"; while (n.contains(ordered,id)) { id = id+"Data"; } commands[commands.length] = {id:id,label:"Load and recalculate",targets:targets}; }
+    return {title:needs.title,fragments:fragments,commands:commands,display:display};
+}
+export function main(): null { return null; }

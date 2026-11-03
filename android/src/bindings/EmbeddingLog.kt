@@ -130,9 +130,12 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
             if (artifact.isNotEmpty()) {
                 val stored = bytes!!
                 check(stored.size <= normalized.getInt("contentLimit"))
-                val files = directory.listFiles()?.filter { it.extension == "json" && it.name != "health.json" }?.sortedBy { it.lastModified() }.orEmpty()
-                var used = files.sumOf { it.length() }
-                for (file in files) { if (used + stored.size <= normalized.getInt("artifactStoreLimit")) break; used -= file.length(); check(file.delete());File(directory,"${file.nameWithoutExtension}.truncated").delete() }
+                // Snapshot metadata once: File.lastModified inside a sort comparator caused
+                // O(n log n) filesystem calls per captured event on retained artifact stores.
+                val files = directory.listFiles()?.filter { it.extension == "json" && it.name != "health.json" }
+                    ?.map { Triple(it, it.lastModified(), it.length()) }?.sortedBy { it.second }.orEmpty()
+                var used = files.sumOf { it.third }
+                for ((file, _, length) in files) { if (used + stored.size <= normalized.getInt("artifactStoreLimit")) break; used -= length; check(file.delete());File(directory,"${file.nameWithoutExtension}.truncated").delete() }
                 File(directory, "$artifact.json").writeBytes(stored)
                 if(truncated)File(directory,"$artifact.truncated").writeText("")
                 normalized.put("sha256", java.security.MessageDigest.getInstance("SHA-256").digest(stored).joinToString("") { "%02x".format(it) })

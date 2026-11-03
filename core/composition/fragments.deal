@@ -1,5 +1,6 @@
 import * as decoded from "../decoded";
 import * as recipes from "./recipes";
+import * as formulas from "../../ui/fragments/support/formulas";
 import * as b from "../../ui/fragments/support/builder";
 import * as instances from "../../ui/fragments/support/instances";
 import * as allocation from "../../ui/fragments/support/allocation-instance";
@@ -16,10 +17,31 @@ function instantiate(builder: b.Builder, plan: Record<string, unknown>, ordered:
 }
 function instance(builder: b.Builder, id: string, definition: Record<string, unknown>): string[] {
         let kind: string = (definition.kind as string); let config: Record<string, unknown> = (definition.config as Record<string, unknown>);
+        if (kind === "sectionImport") {
+            let value: Record<string, unknown> = config.value as Record<string, unknown>; let source: string = value.expr as string; let kind: string = config.type as string;
+            if (kind === "array" || kind === "record") {
+                // Borrow the exact checked published wire shape and ref. Do not create
+                // a retagged collection, duplicate state, or a guessed record schema.
+                let port: Record<string, unknown> = b.port(builder,source); let wire: Record<string, unknown> = port.type as Record<string, unknown>;
+                if ((wire.kind as string) !== kind) { b.fail("Section import type changed"); }
+                b.publish(builder,id,"value",port.ref as string,wire,port.present as string);
+            } else { publish(builder,id,"value",kind,value); }
+            let empty: string[] = []; return empty;
+        }
+        if (kind === "sectionExports") { for (let entry of decoded.records(config.exports)) { publish(builder,id,entry.name as string,entry.type as string,entry.value as Record<string, unknown>); } let empty: string[] = []; return empty; }
         if (kind === "allocation") { return allocation.compose(builder,id,config); }
         if (kind === "alternatives") { return alternatives.compose(builder,id,config); }
         if (kind === "quotes") { return quotes.compose(builder,id,config); }
         return localInstance(builder,id,kind,config);
+}
+function publish(builder: b.Builder, id: string, name: string, type: string, value: Record<string, unknown>): null {
+    let source: string = value.expr as string;
+    if (type === "array" || type === "record") { let port: Record<string, unknown> = b.port(builder,source); let wire: Record<string, unknown> = port.type as Record<string, unknown>; if ((wire.kind as string) !== type) { b.fail("Section export type changed"); } b.publish(builder,id,name,port.ref as string,wire,port.present as string); return null; }
+    let initial: string = "0"; if (type === "string") { initial = "\"\""; } if (type === "boolean") { initial = "false"; }
+    let present: string = formulas.present(builder,source);
+    let expression: string = b.choose(builder,present,formulas.parse(builder,source,[]),b.literal(builder,type,initial));
+    let ref: string = b.derive(builder,id+"_"+name,type,initial,expression);
+    b.publish(builder,id,name,ref,b.wire(type),present); return null;
 }
 function localInstance(builder: b.Builder, id: string, kind: string, config: Record<string, unknown>): string[] {
         let views: string[] = [];
@@ -28,6 +50,7 @@ function localInstance(builder: b.Builder, id: string, kind: string, config: Rec
         if (kind === "result") { views = instances.result(builder,id,config); }
         if (kind === "comparison") { views = instances.comparison(builder,id,config); }
         if (kind === "choice") { views = instances.choice(builder,id,config); }
+        if (kind === "custom") { views = instances.custom(builder,id,config); }
         return views;
 }
 function commands(builder: b.Builder, plan: Record<string, unknown>, graph: Record<string, unknown>, ordered: string[]): Record<string, unknown> {
@@ -62,15 +85,22 @@ function editability(builder: b.Builder, conflicts: Record<string, unknown>): Re
 function root(builder: b.Builder, plan: Record<string, unknown>, graph: Record<string, unknown>, commandViews: string[]): null {
     let failed: string = b.derive(builder,"failed","boolean","false",b.binary(builder,"ne","$state.error",b.text(builder,"")));
     let children: string[] = b.authored(builder,"WorkspaceStatus",{loading:"$state.loading",failed:failed,error:"$state.error",loadingLabel:b.text(builder,"Loading…"),errorTone:b.text(builder,"error")},{});
+    if (Object.hasOwn(plan,"notices")) {
+        for (let notice of decoded.strings(plan.notices)) {
+            children[children.length] = b.view(builder,"Notice",[{name:"text",node:b.text(builder,notice)},{name:"tone",node:b.text(builder,"error")}],[],[],"","","");
+        }
+    }
     recipes.screen(builder,plan,graph,commandViews,children);
     return null;
 }
 export function expandJson(input: string, catalogue: string, dependencies: string): string {
     let plan: Record<string, unknown> = json.parse(input); let envelope: Record<string, unknown> = json.parse(catalogue); let contracts: Record<string, unknown>[] = decoded.records(envelope.contracts);
-    let graph: Record<string, unknown> = json.parse(dependencies); let ordered: string[] = decoded.strings(graph.ordered);
+    let graph: Record<string, unknown> = json.parse(dependencies); if (Object.hasOwn(graph,"plan")) { plan = graph.plan as Record<string, unknown>; } let ordered: string[] = decoded.strings(graph.ordered);
     let builder: b.Builder = b.create(contracts); instantiate(builder,plan,ordered);
     let command: Record<string, unknown> = commands(builder,plan,graph,ordered); let conflicts: Record<string, unknown> = (command.conflicts as Record<string, unknown>); let views: string[] = decoded.strings(command.views);
     let editable: Record<string, unknown> = editability(builder,conflicts); root(builder,plan,graph,views);
-    return (json.stringify({plan:builder.plan(),authoredViews:builder.authoredViews(),instanceViews:builder.instanceViews(),editable:editable}) as string);
+    let expanded: Record<string, unknown> = builder.plan();
+    if (Object.hasOwn(plan,"custom")) { expanded.custom = plan.custom; expanded.reason = plan.reason; }
+    return (json.stringify({plan:expanded,authoredViews:builder.authoredViews(),instanceViews:builder.instanceViews(),editable:editable}) as string);
 }
 export function main(): null { return null; }

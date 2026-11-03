@@ -16,73 +16,31 @@
       "items": {
         "anyOf": [
           {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "kind",
-              "config"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "input"
-                ]
-              },
-              "config": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "label",
-                  "format",
-                  "value",
-                  "minimum",
-                  "maximum"
-                ],
-                "properties": {
-                  "label": {
-                    "type": "string"
-                  },
-                  "format": {
-                    "type": "string",
-                    "enum": [
-                      "integer",
-                      "money",
-                      "time",
-                      "text",
-                      "boolean"
-                    ]
-                  },
-                  "value": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "boolean"
-                      }
-                    ]
-                  },
-                  "minimum": {
-                    "type": "number",
-                    "description": "Numeric lower bound <= initial value; time at least 0. Text/boolean use zero placeholders."
-                  },
-                  "maximum": {
-                    "type": "number",
-                    "description": "Numeric upper bound >= initial value and minimum. For time at most 1439 (never 1440). Only text/boolean use zero placeholders."
-                  }
-                }
-              }
-            },
-            "description": "Publishes <id>.value, never a bare identifier. Preserve period instants with text format."
+            "$ref": "#/$defs/fragmentInput"
+          },
+          {
+            "$ref": "#/$defs/fragmentRead"
+          },
+          {
+            "$ref": "#/$defs/fragmentResult"
+          },
+          {
+            "$ref": "#/$defs/fragmentComparison"
+          },
+          {
+            "$ref": "#/$defs/fragmentChoice"
+          },
+          {
+            "$ref": "#/$defs/fragmentAllocation"
+          },
+          {
+            "$ref": "#/$defs/fragmentAlternatives"
+          },
+          {
+            "$ref": "#/$defs/fragmentQuotes"
+          },
+          {
+            "$ref": "#/$defs/fragmentCustom"
           },
           {
             "type": "object",
@@ -94,467 +52,92 @@
             ],
             "properties": {
               "id": {
-                "type": "string",
-                "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
+                "type": "string"
               },
               "kind": {
                 "type": "string",
                 "enum": [
-                  "read"
+                  "section"
                 ]
               },
               "config": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "binding",
-                  "arguments"
+                  "imports",
+                  "exports",
+                  "capabilities",
+                  "plan"
                 ],
                 "properties": {
-                  "binding": {
-                    "$ref": "#/$defs/binding"
-                  },
-                  "arguments": {
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/$defs/formula"
-                    }
-                  }
-                }
-              }
-            },
-            "description": "Publishes <id>.result and <id>.present; input arguments use <inputId>.value."
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "kind",
-              "config"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "result"
-                ]
-              },
-              "config": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "label",
-                  "format",
-                  "value"
-                ],
-                "properties": {
-                  "label": {
-                    "type": "string"
-                  },
-                  "format": {
-                    "type": "string",
-                    "enum": [
-                      "money",
-                      "time",
-                      "number",
-                      "integer",
-                      "text"
-                    ]
-                  },
-                  "value": {
-                    "$ref": "#/$defs/formula"
-                  }
-                }
-              }
-            },
-            "description": "Pure derived output. References require an actual fragment ID and its published port."
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "kind",
-              "config"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "comparison"
-                ]
-              },
-              "config": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "limit",
-                  "actual",
-                  "label"
-                ],
-                "properties": {
-                  "limit": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "actual": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "label": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "kind",
-              "config"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "choice"
-                ]
-              },
-              "config": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "source",
-                  "identity",
-                  "label",
-                  "eligible",
-                  "cost"
-                ],
-                "properties": {
-                  "source": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "identity": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "label": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "eligible": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "cost": {
-                    "$ref": "#/$defs/formula"
-                  }
-                }
-              }
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "kind",
-              "config"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "allocation"
-                ]
-              },
-              "config": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "source",
-                  "identity",
-                  "label",
-                  "cost",
-                  "eligible",
-                  "total",
-                  "budget",
-                  "surcharge",
-                  "quotas"
-                ],
-                "properties": {
-                  "source": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "identity": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "label": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "cost": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "eligible": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "total": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "budget": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "surcharge": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "quotas": {
+                  "imports": {
                     "type": "array",
                     "items": {
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
-                        "label",
-                        "minimum",
-                        "predicate"
+                        "name",
+                        "type",
+                        "value"
                       ],
                       "properties": {
-                        "label": {
+                        "name": {
                           "type": "string"
                         },
-                        "minimum": {
-                          "$ref": "#/$defs/formula"
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "number",
+                            "string",
+                            "boolean",
+                            "array",
+                            "record"
+                          ]
                         },
-                        "predicate": {
+                        "value": {
                           "$ref": "#/$defs/formula"
                         }
                       }
                     }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "kind",
-              "config"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "alternatives"
-                ]
-              },
-              "config": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "source",
-                  "identity",
-                  "label",
-                  "stock",
-                  "components",
-                  "roles"
-                ],
-                "properties": {
-                  "source": {
-                    "$ref": "#/$defs/formula"
                   },
-                  "identity": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "label": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "stock": {
-                    "$ref": "#/$defs/formula"
-                  },
-                  "components": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "source",
-                      "identity",
-                      "quantity"
-                    ],
-                    "properties": {
-                      "source": {
-                        "$ref": "#/$defs/formula",
-                        "description": "Current catalogue row component array, e.g. row.components or row.parts; NOT the full catalogue."
-                      },
-                      "identity": {
-                        "$ref": "#/$defs/formula"
-                      },
-                      "quantity": {
-                        "$ref": "#/$defs/formula"
-                      }
-                    }
-                  },
-                  "roles": {
+                  "exports": {
                     "type": "array",
                     "items": {
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
-                        "label",
-                        "quantity",
-                        "predicate"
+                        "name",
+                        "type",
+                        "value"
                       ],
                       "properties": {
-                        "label": {
+                        "name": {
                           "type": "string"
                         },
-                        "quantity": {
-                          "$ref": "#/$defs/formula"
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "number",
+                            "string",
+                            "boolean",
+                            "array",
+                            "record"
+                          ]
                         },
-                        "predicate": {
+                        "value": {
                           "$ref": "#/$defs/formula"
                         }
                       }
                     }
-                  }
-                }
-              }
-            },
-            "description": "Publishes <id>.baskets; never <id>.result. Roles consume distinct physical units."
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "kind",
-              "config"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "quotes"
-                ]
-              },
-              "config": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "source",
-                  "binding",
-                  "arguments",
-                  "cost",
-                  "deposit",
-                  "available",
-                  "ttlMillis",
-                  "budget"
-                ],
-                "properties": {
-                  "source": {
-                    "$ref": "#/$defs/formula"
                   },
-                  "binding": {
-                    "$ref": "#/$defs/binding"
-                  },
-                  "arguments": {
+                  "capabilities": {
                     "type": "array",
                     "items": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "required": [
-                            "kind",
-                            "value"
-                          ],
-                          "properties": {
-                            "kind": {
-                              "type": "string",
-                              "enum": [
-                                "value"
-                              ]
-                            },
-                            "value": {
-                              "$ref": "#/$defs/formula"
-                            }
-                          }
-                        },
-                        {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "required": [
-                            "kind",
-                            "encoding",
-                            "idField",
-                            "quantityField"
-                          ],
-                          "properties": {
-                            "kind": {
-                              "type": "string",
-                              "enum": [
-                                "basket"
-                              ]
-                            },
-                            "encoding": {
-                              "type": "string",
-                              "enum": [
-                                "idQuantity",
-                                "records"
-                              ]
-                            },
-                            "idField": {
-                              "type": "string"
-                            },
-                            "quantityField": {
-                              "type": "string"
-                            }
-                          }
-                        }
-                      ]
+                      "$ref": "#/$defs/binding"
                     }
                   },
-                  "cost": {
-                    "$ref": "#/$defs/formula",
-                    "description": "Pure formula over the actual provider reply: reply.field, NOT row.field."
-                  },
-                  "deposit": {
-                    "$ref": "#/$defs/formula",
-                    "description": "Pure formula over the actual provider reply: reply.field, NOT row.field."
-                  },
-                  "available": {
-                    "$ref": "#/$defs/formula",
-                    "description": "Pure formula over the actual provider reply: reply.field, NOT row.field."
-                  },
-                  "ttlMillis": {
-                    "$ref": "#/$defs/formula",
-                    "description": "Pure formula over the actual provider reply: reply.field, NOT row.field."
-                  },
-                  "budget": {
-                    "$ref": "#/$defs/formula"
+                  "plan": {
+                    "$ref": "#/$defs/sectionPlan"
                   }
                 }
               }
@@ -595,6 +178,58 @@
       "items": {
         "type": "string"
       }
+    },
+    "notices": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reason": {
+      "type": "string"
+    },
+    "custom": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "parameters",
+          "result",
+          "body"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "type"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "result": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -624,6 +259,693 @@
         },
         "function": {
           "type": "string"
+        }
+      }
+    },
+    "sectionPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "fragments",
+        "commands",
+        "display"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "fragments": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/fragmentInput"
+              },
+              {
+                "$ref": "#/$defs/fragmentRead"
+              },
+              {
+                "$ref": "#/$defs/fragmentResult"
+              },
+              {
+                "$ref": "#/$defs/fragmentComparison"
+              },
+              {
+                "$ref": "#/$defs/fragmentChoice"
+              },
+              {
+                "$ref": "#/$defs/fragmentAllocation"
+              },
+              {
+                "$ref": "#/$defs/fragmentAlternatives"
+              },
+              {
+                "$ref": "#/$defs/fragmentQuotes"
+              }
+            ]
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "targets"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "description": "Each resource belongs to one explicit command; reuse it to refresh. Local-only composition uses an empty array. Never duplicate load and refresh commands over shared resources."
+        },
+        "display": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "fragmentInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "config"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "input"
+          ]
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label",
+            "format",
+            "value",
+            "minimum",
+            "maximum"
+          ],
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "integer",
+                "money",
+                "time",
+                "text",
+                "boolean"
+              ]
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "minimum": {
+              "type": "number",
+              "description": "Numeric lower bound <= initial value; time at least 0. Text/boolean use zero placeholders."
+            },
+            "maximum": {
+              "type": "number",
+              "description": "Numeric upper bound >= initial value and minimum. For time at most 1439 (never 1440). Only text/boolean use zero placeholders."
+            }
+          }
+        }
+      },
+      "description": "Publishes <id>.value, never a bare identifier. Preserve period instants with text format."
+    },
+    "fragmentRead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "config"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "read"
+          ]
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "binding",
+            "arguments"
+          ],
+          "properties": {
+            "binding": {
+              "$ref": "#/$defs/binding"
+            },
+            "arguments": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/formula"
+              }
+            }
+          }
+        }
+      },
+      "description": "Publishes <id>.result and <id>.present; input arguments use <inputId>.value."
+    },
+    "fragmentResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "config"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "result"
+          ]
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label",
+            "format",
+            "value"
+          ],
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "money",
+                "time",
+                "number",
+                "integer",
+                "text"
+              ]
+            },
+            "value": {
+              "$ref": "#/$defs/formula"
+            }
+          }
+        }
+      },
+      "description": "Pure derived output. References require an actual fragment ID and its published port."
+    },
+    "fragmentComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "config"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "comparison"
+          ]
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "limit",
+            "actual",
+            "label"
+          ],
+          "properties": {
+            "limit": {
+              "$ref": "#/$defs/formula"
+            },
+            "actual": {
+              "$ref": "#/$defs/formula"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "fragmentChoice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "config"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "choice"
+          ]
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "identity",
+            "label",
+            "eligible",
+            "cost"
+          ],
+          "properties": {
+            "source": {
+              "$ref": "#/$defs/formula"
+            },
+            "identity": {
+              "$ref": "#/$defs/formula"
+            },
+            "label": {
+              "$ref": "#/$defs/formula"
+            },
+            "eligible": {
+              "$ref": "#/$defs/formula"
+            },
+            "cost": {
+              "$ref": "#/$defs/formula"
+            }
+          }
+        }
+      }
+    },
+    "fragmentAllocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "config"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "allocation"
+          ]
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "identity",
+            "label",
+            "cost",
+            "eligible",
+            "total",
+            "budget",
+            "surcharge",
+            "quotas"
+          ],
+          "properties": {
+            "source": {
+              "$ref": "#/$defs/formula"
+            },
+            "identity": {
+              "$ref": "#/$defs/formula"
+            },
+            "label": {
+              "$ref": "#/$defs/formula"
+            },
+            "cost": {
+              "$ref": "#/$defs/formula"
+            },
+            "eligible": {
+              "$ref": "#/$defs/formula"
+            },
+            "total": {
+              "$ref": "#/$defs/formula"
+            },
+            "budget": {
+              "$ref": "#/$defs/formula"
+            },
+            "surcharge": {
+              "$ref": "#/$defs/formula"
+            },
+            "quotas": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "label",
+                  "minimum",
+                  "predicate"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "minimum": {
+                    "$ref": "#/$defs/formula"
+                  },
+                  "predicate": {
+                    "$ref": "#/$defs/formula"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "fragmentAlternatives": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "config"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "alternatives"
+          ]
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "identity",
+            "label",
+            "stock",
+            "components",
+            "roles"
+          ],
+          "properties": {
+            "source": {
+              "$ref": "#/$defs/formula"
+            },
+            "identity": {
+              "$ref": "#/$defs/formula"
+            },
+            "label": {
+              "$ref": "#/$defs/formula"
+            },
+            "stock": {
+              "$ref": "#/$defs/formula"
+            },
+            "components": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "source",
+                "identity",
+                "quantity"
+              ],
+              "properties": {
+                "source": {
+                  "$ref": "#/$defs/formula",
+                  "description": "Current catalogue row component array, e.g. row.components or row.parts; NOT the full catalogue."
+                },
+                "identity": {
+                  "$ref": "#/$defs/formula"
+                },
+                "quantity": {
+                  "$ref": "#/$defs/formula"
+                }
+              }
+            },
+            "roles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "label",
+                  "quantity",
+                  "predicate"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "quantity": {
+                    "$ref": "#/$defs/formula"
+                  },
+                  "predicate": {
+                    "$ref": "#/$defs/formula"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "description": "Publishes <id>.baskets; never <id>.result. Roles consume distinct physical units."
+    },
+    "fragmentQuotes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "config"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Actual fragment identifier used verbatim in formulas; no hyphens or reserved row/item/reply."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "quotes"
+          ]
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "binding",
+            "arguments",
+            "cost",
+            "deposit",
+            "available",
+            "ttlMillis",
+            "budget"
+          ],
+          "properties": {
+            "source": {
+              "$ref": "#/$defs/formula"
+            },
+            "binding": {
+              "$ref": "#/$defs/binding"
+            },
+            "arguments": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "value"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "value"
+                        ]
+                      },
+                      "value": {
+                        "$ref": "#/$defs/formula"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "encoding",
+                      "idField",
+                      "quantityField"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "basket"
+                        ]
+                      },
+                      "encoding": {
+                        "type": "string",
+                        "enum": [
+                          "idQuantity",
+                          "records"
+                        ]
+                      },
+                      "idField": {
+                        "type": "string"
+                      },
+                      "quantityField": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "cost": {
+              "$ref": "#/$defs/formula",
+              "description": "Pure formula over the actual provider reply: reply.field, NOT row.field."
+            },
+            "deposit": {
+              "$ref": "#/$defs/formula",
+              "description": "Pure formula over the actual provider reply: reply.field, NOT row.field."
+            },
+            "available": {
+              "$ref": "#/$defs/formula",
+              "description": "Pure formula over the actual provider reply: reply.field, NOT row.field."
+            },
+            "ttlMillis": {
+              "$ref": "#/$defs/formula",
+              "description": "Pure formula over the actual provider reply: reply.field, NOT row.field."
+            },
+            "budget": {
+              "$ref": "#/$defs/formula"
+            }
+          }
+        }
+      }
+    },
+    "fragmentCustom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "config"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "custom"
+          ]
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label",
+            "format",
+            "section",
+            "arguments",
+            "result"
+          ],
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "text",
+                "number",
+                "integer",
+                "money",
+                "time"
+              ]
+            },
+            "section": {
+              "type": "string"
+            },
+            "arguments": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/formula"
+              }
+            },
+            "result": {
+              "type": "string",
+              "enum": [
+                "number",
+                "string",
+                "boolean"
+              ]
+            }
+          }
         }
       }
     }

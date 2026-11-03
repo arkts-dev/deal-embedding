@@ -1,0 +1,70 @@
+import * as decoded from "./decoded";
+import * as json from "std/json";
+import * as strings from "std/string";
+import * as formula from "./composition/formula";
+import * as tables from "std/table";
+
+// Section source is a closed compact subtree, not a second source/graph authoring path.
+export function fail(message: string): null { throw {code:"INVALID_CONFIG",message:"Section: "+message}; }
+function contains(values: string[], value: string): boolean { for (let item of values) { if (item === value) { return true; } } return false; }
+export function name(value: string): null {
+    let index: number = 0;
+    for (let ch of value) { let chars: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"; if (index > 0) { chars = chars+"_0123456789"; } if (!strings.contains(chars,ch)) { fail("Invalid local identity"); } index = index+1; }
+    if (index === 0 || contains(["row","reply","item"],value)) { fail("Invalid local identity"); } return null;
+}
+export function same(left: unknown, right: unknown): boolean {
+    let a: Record<string, unknown> | null = null; let b: Record<string, unknown> | null = null;
+    let leftJson: string = json.stringify({value:left}) as string; let rightJson: string = json.stringify({value:right}) as string;
+    if (strings.startsWith(leftJson,"{\"value\":{")) { a = left as Record<string, unknown>; }
+    if (strings.startsWith(rightJson,"{\"value\":{")) { b = right as Record<string, unknown>; }
+    if (a !== null && b !== null) {
+        let first: Record<string, unknown> = a as Record<string, unknown>; let second: Record<string, unknown> = b as Record<string, unknown>;
+        let keys: string[] = tables.keys(first); if (keys.length !== tables.keys(second).length) { return false; }
+        for (let key of keys) { if (!Object.hasOwn(second,key) || !same(first[key],second[key])) { return false; } } return true;
+    }
+    if (strings.startsWith(leftJson,"{\"value\":[") && strings.startsWith(rightJson,"{\"value\":[")) {
+        // Section contracts contain descriptor arrays. Validate/copy their decoded
+        // elements without retagging typed array descriptors as unknown[].
+        let first: Record<string, unknown>[] = decoded.records(left); let second: Record<string, unknown>[] = decoded.records(right); if (first.length !== second.length) { return false; }
+        let i: number = 0; for (let item of first) { if (!same(item,second[i])) { return false; } i = i+1; } return true;
+    }
+    return leftJson === rightJson;
+}
+export function type(kind: string): null { if (!contains(["number","string","boolean"],kind)) { fail("Scalar section export required"); } return null; }
+export function importType(kind: string): null { if (!contains(["number","string","boolean","array","record"],kind)) { fail("Checked section import required"); } return null; }
+export function exportType(kind: string): null { importType(kind); return null; }
+export function check(config: Record<string, unknown>): null {
+    let imports: Record<string, unknown>[] = decoded.records(config.imports); let exports: Record<string, unknown>[] = decoded.records(config.exports); let capabilities: Record<string, unknown>[] = decoded.records(config.capabilities);
+    let plan: Record<string, unknown> = config.plan as Record<string, unknown>; let fragments: Record<string, unknown>[] = decoded.records(plan.fragments);
+    let ids: string[] = []; let owners: string[] = [];
+    for (let entry of imports) { let id: string = entry.name as string; name(id); importType(entry.type as string); if (contains(ids,id)) { fail("Duplicate import"); } ids[ids.length] = id; }
+    for (let entry of fragments) { let id: string = entry.id as string; name(id); if (contains(ids,id)) { fail("Duplicate/overlapping owner"); } ids[ids.length] = id; owners[owners.length] = id; let kind: string = entry.kind as string;
+        if (kind === "section" || kind === "custom") { fail("Nested sections/raw custom bodies are not issued"); }
+        if (kind === "read" || kind === "quotes") { let value: Record<string, unknown> = entry.config as Record<string, unknown>; let binding: Record<string, unknown> = value.binding as Record<string, unknown>; let allowed: boolean = false; for (let capability of capabilities) { if (same(binding,capability)) { allowed = true; } } if (!allowed) { fail("Unissued capability"); } }
+    }
+    let names: string[] = [];
+    for (let entry of exports) { let id: string = entry.name as string; name(id); exportType(entry.type as string); if (contains(names,id)) { fail("Duplicate export"); } names[names.length] = id; }
+    for (let entry of fragments) { validateReferences(entry.config as Record<string, unknown>,ids); }
+    for (let entry of exports) { validateReferences(entry,ids); }
+    return null;
+}
+function validateReferences(value: Record<string, unknown>, ids: string[]): null {
+    if (Object.hasOwn(value,"expr")) { for (let path of formula.references(formula.parse(value.expr as string))) { reference(path,ids); } return null; }
+    for (let key of tables.keys(value)) { let child: Record<string, unknown> | null = null; try { child = value[key] as Record<string, unknown>; } catch (error) { }
+        if (child !== null) { validateReferences(child as Record<string, unknown>,ids); }
+        else { let array: Record<string, unknown>[] | null = null; try { array = decoded.records(value[key]); } catch (error) { } if (array !== null) { for (let entry of array as Record<string, unknown>[]) { validateReferences(entry,ids); } } }
+    } return null;
+}
+export function reference(path: string, ids: string[]): null { let parts: string[] = strings.split(path,"."); if (!contains(ids,parts[0]) && !contains(["row","reply","item"],parts[0])) { fail("Undeclared import/neighbor reference "+path); } return null; }
+function render(tree: Record<string, unknown>, mapping: Record<string, unknown>): string {
+    let kind: string = tree.kind as string;
+    if (kind === "literal") { return json.stringify(tree.value) as string; }
+    if (kind === "reference") { let path: string = tree.path as string; let parts: string[] = strings.split(path,"."); if (contains(["row","reply","item"],parts[0])) { return path; } if (!Object.hasOwn(mapping,parts[0])) { fail("Undeclared import/neighbor reference "+path); } let result: string = mapping[parts[0]] as string; let index: number = 1; while (index < parts.length) { result = result+"."+parts[index]; index = index+1; } return result; }
+    let op: string = tree.name as string; let args: string[] = []; for (let value of decoded.records(tree.arguments)) { args[args.length] = render(value,mapping); }
+    let symbols: Record<string, unknown> = {add:"+",subtract:"-",multiply:"*",divide:"/",eq:"===",ne:"!==",lt:"<",le:"<=",gt:">",ge:">=",and:"&&",or:"||"};
+    if (Object.hasOwn(symbols,op)) { return "("+args[0]+" "+(symbols[op] as string)+" "+args[1]+")"; }
+    if (op === "not") { return "!("+args[0]+")"; }
+    let result: string = op+"("; for (let arg of args) { if (result !== op+"(") { result = result+","; } result = result+arg; } return result+")";
+}
+export function rewrite(source: string, mapping: Record<string, unknown>): string { return render(formula.parse(source),mapping); }
+export function main(): null { return null; }

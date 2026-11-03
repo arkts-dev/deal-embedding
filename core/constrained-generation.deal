@@ -1,0 +1,91 @@
+import * as n from "./needs";
+import * as c from "./need-candidates";
+import * as selection from "./need-selection";
+import * as recovery from "./need-recovery";
+import * as holes from "./need-holes";
+import * as decoded from "./decoded";
+import * as model from "embedding/model";
+import * as data from "embedding/policy-data";
+import * as composer from "embedding/composer";
+import * as observer from "embedding/observer";
+import * as agent from "./source-agent";
+import * as guidance from "./generation-guidance";
+import * as json from "std/json";
+import * as tables from "std/table";
+
+function evidenceText(value: unknown): string {
+    let result: string = "";
+    let text: string | null = null; try { text = value as string; } catch (error) { }
+    if (text !== null) { return text; }
+    let values: unknown[] | null = null; try { values = value as unknown[]; } catch (error) { }
+    if (values !== null) { for (let child of values) { result = result+"\n"+evidenceText(child); } return result; }
+    let record: Record<string, unknown> | null = null; try { record = value as Record<string, unknown>; } catch (error) { }
+    if (record !== null) { let objectValue: Record<string, unknown> = record as Record<string, unknown>; for (let key of tables.keys(objectValue)) { result = result+"\n"+evidenceText(objectValue[key]); } }
+    return result;
+}
+
+export async function run(input: string, intent: string, context: string, catalog: string): Promise<Record<string, unknown>> {
+    let diagnostic: string = ""; let thinking: boolean = false; let tries: number = 0; let rejected: string = "";
+    let disclosure: Record<string, unknown> = await data.parse(context);
+    let evidence: string = evidenceText(disclosure);
+    while (true) {
+        let operation: string = json.stringify({operation:"needs",thinking:thinking}) as string;
+        let prior: string = ""; if (rejected !== "") { prior = "\nPREVIOUS REJECTED NEEDS (not new evidence)\n"+rejected; }
+        let raw: string = await model.complete(guidance.needs()+guidance.workflow()+input+prior+"\nGENERATION OPERATION\n"+operation,"",diagnostic);
+        rejected = raw; tries = tries+1;
+        let needs: n.Needs | null = null;
+        try { needs = n.parse(await data.parse(raw),intent,evidence,catalog); }
+        catch (errorUnknown) { let error: Error = errorUnknown as Error;
+            if (error.code !== "NEEDS_INVALID" && error.code !== "INVALID_JSON" && error.code !== "E8001") { throw error; }
+            diagnostic = error.message;
+            await observer.record("composition","needs-rejected",diagnostic);
+            if (tries > 1) { thinking = true; } continue;
+        }
+        let requirements: n.Needs = needs as n.Needs;
+        for (let need of requirements.needs) { if (need.kind === "unsupported") { throw {code:"UNSUPPORTED_NEEDS",message:"Essential facts unavailable: "+need.label}; } }
+        let envelope: Record<string, unknown> = await data.parse("{\"contracts\":"+catalog+"}");
+        try { holes.validate(requirements,decoded.records(envelope.contracts)); }
+        catch (errorUnknown) { let error: Error = errorUnknown as Error;
+            if (error.code !== "NEEDS_INVALID" && error.code !== "INVALID_CONFIG" && error.code !== "E8001") { throw error; }
+            diagnostic = error.message; await observer.record("composition","needs-rejected",diagnostic); if (tries > 1) { thinking = true; } continue;
+        }
+        let issued: c.Issued = c.enumerate(requirements,decoded.records(envelope.contracts));
+        // A malformed supported extraction is not a chooser coverage decision. Feed its
+        // typed diagnostic back before freezing the request's need identities/interfaces.
+        // Explicit section/custom needs are the local construction path, not errors.
+        let invalid: string[] = [];
+        for (let need of requirements.needs) {
+            if (need.kind !== "custom" && need.kind !== "section") {
+                let found: boolean = false; for (let candidate of issued.candidates) { found = found || candidate.need === need.id; }
+                if (!found) { invalid[invalid.length] = need.id; }
+            }
+        }
+        if (invalid.length > 0) {
+            diagnostic = "Typed candidate admission rejected extraction: "+(json.stringify(issued.gaps) as string)+". Repair the typed terms/configs; use an explicit section with immutable imports/exports/capabilities if the maintained kind cannot express this requirement. Do not omit requirements or invent facts.";
+            await observer.record("composition","needs-rejected",diagnostic);
+            if (tries > 1) { thinking = true; } continue;
+        }
+        let inventory: Record<string, unknown>[] = []; for (let candidate of issued.candidates) { inventory[inventory.length] = {id:candidate.id,need:candidate.need,fragment:candidate.fragment,dependencies:candidate.dependencies,dimension:candidate.dimension}; }
+        await observer.record("composition","candidates",json.stringify({candidates:inventory,gaps:issued.gaps}) as string);
+        let selected: c.Candidate[] = [];
+        // Selection transport failures remain operational failures, not source fallback.
+        try { selected = await selection.select(input,requirements,issued); }
+        catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "NEEDS_INVALID") { throw error; } diagnostic = error.message; await observer.record("composition","selection-rejected",diagnostic); continue; }
+        let plan: Record<string, unknown> = {};
+        try { selected = recovery.retain(selected); plan = selection.plan(requirements,selected); }
+        catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "NEEDS_INVALID") { throw error; } diagnostic = error.message; await observer.record("composition","selection-rejected",diagnostic); continue; }
+        let uncovered: string[] = [];
+        for (let need of requirements.needs) { let found: boolean = false; for (let candidate of selected) { found = found || candidate.need === need.id; } if (!found) { uncovered[uncovered.length] = need.id; } }
+        if (uncovered.length > 0) {
+            await observer.record("composition","gaps",json.stringify({uncovered:uncovered,selected:plan}) as string);
+            return await agent.uncovered(input,requirements,plan,uncovered,tries,decoded.records(envelope.contracts));
+        }
+        let assembled: Record<string, unknown> = await data.parse(await composer.assemble(json.stringify(plan) as string));
+        let accepted: boolean = assembled.accepted as boolean;
+        if (!accepted) { diagnostic = assembled.diagnostics as string; await observer.record("composition","admission-rejected",diagnostic); return await agent.fullSource(input,"Selected composition rejected; isolate checked task subsets",plan,tries); }
+        let pair: Record<string, unknown> = assembled.source as Record<string, unknown>;
+        return await agent.materialized(input,pair,tries);
+    }
+    throw {code:"UNREACHABLE",message:"Constrained generation exited"};
+}
+export function main(): null { return null; }

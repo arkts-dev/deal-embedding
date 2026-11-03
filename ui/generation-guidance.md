@@ -4,7 +4,7 @@ Only custom sections, source_fallback and exact repair use source bodies; mainta
 
 DEAL v1.5 is a TypeScript syntax subset with checked semantics. Imports first; export main():null, State, initialState() and visible action/row classes. Initialize locals/required fields. Custom bodies have declared parameters/results, never duplicate framework state/recompute/handlers/views.
 
-// @ui-update marks exported (state:State,action:Action):State. Borrowed descendants are immutable: rebuild changed rows/arrays, preserve untouched references. // @ui-effect marks async (...):Promise<Completion>. Request/completion updates set/clear pending. Catch unknown, extract Error, return honest failure/retry. No provider reads during initialization.
+// @ui-update marks exported (state:State,action:Action):State. Borrowed descendants are immutable: rebuild changed rows/arrays, preserve untouched references. // @ui-effect marks async (...):Promise<Completion>. Request/completion updates set/clear pending. Completion actions must not start their initiating effect again; use a distinct completion type or an explicit payload discriminator. Catch unknown, extract Error, return honest failure/retry. No provider reads during initialization.
 
 .dealui imports ./experience and ./platform.dealui-pack; export // @ui-root view Workspace(state:app.State):View. Use When(...) {...} Else {...}, ForEach(state.rows,row:app.Row,key:row.id) {...}, action app.Action {value:payload}. Bind checked fields/literals; compute in DEAL. Pack checks props/children. Money is minor units; TimeField minute-of-day; SessionClock epoch milliseconds/negative trust-loss.
 

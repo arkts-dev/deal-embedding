@@ -29,7 +29,7 @@ java -cp "$OUTPUT_DIR/native-tools" FragmentAssets "$ROOT/ui/fragments" "$OUTPUT
 javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$OUTPUT_DIR/generated/AuthoredFragments.java" "$ROOT/tools/FragmentStructure.java" "$ROOT/tools/FragmentSyntax.java"
 mkdir -p "$OUTPUT_DIR/composition/core/composition" "$OUTPUT_DIR/composition/ui/fragments/support"
 cp -r "$ROOT/core/composition/." "$OUTPUT_DIR/composition/core/composition/"
-cp "$ROOT/core/decoded.deal" "$OUTPUT_DIR/composition/core/decoded.deal"
+cp "$ROOT/core/decoded.deal" "$ROOT/core/section-contract.deal" "$OUTPUT_DIR/composition/core/"
 cp -r "$ROOT/ui/fragments/." "$OUTPUT_DIR/composition/ui/fragments/"
 # Separate compiled closures must not overwrite one another's module exports.
 python3 -c 'import pathlib,sys; pathlib.Path(sys.argv[2]).write_text(pathlib.Path(sys.argv[1]).read_text().replace("\"../decoded\"", "\"../../../core/decoded\""))' "$ROOT/core/composition/formula.deal" "$OUTPUT_DIR/composition/ui/fragments/support/formula.deal"
@@ -54,6 +54,7 @@ java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/guidance-tools" GenerationGuidance \
     "$ROOT/ui/platform.dealui-pack" "$ROOT/ui/generation-guidance.md" \
     "$DEAL_ROOT/skills/write-deal/references" "$ROOT/core/generation-guidance.generated.deal" "$ROOT/ui"
 cp -r "$ROOT/core/." "$OUTPUT_DIR/generation/src/"
+python3 "$ROOT/tools/composition-schema.py" "$ROOT/ui/fragment-contract.json" "$OUTPUT_DIR/generation/src/composition/validation.generated.deal"
 cp "$ROOT/core/host/"*.d.deal "$OUTPUT_DIR/generation/"
 cp -r "$DEAL_UI_ROOT/ui" "$OUTPUT_DIR/generation/ui"
 printf '%s' '{"languageVersion":"1.5","backend":"js","moduleRoots":["src","ui"],"externals":{"embedding/composer":{"declaration":"composer.d.deal"},"embedding/discovery":{"declaration":"discovery.d.deal"},"embedding/model":{"declaration":"model.d.deal"},"embedding/checker":{"declaration":"checker.d.deal"},"embedding/chooser":{"declaration":"chooser.d.deal"},"embedding/policy-data":{"declaration":"policy-data.d.deal"},"embedding/observer":{"declaration":"observer.d.deal"},"embedding":{"declaration":"embedding.d.deal"},"catalogue-policy":{"declaration":"catalogue-policy.d.deal"},"embedding/protocol":{"declaration":"protocol.d.deal"}}}' > "$OUTPUT_DIR/generation/deal.json"
