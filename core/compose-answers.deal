@@ -1,0 +1,22 @@
+import * as decode from "./plan-decoding";
+
+// VeraCompose.answerOf at 7ee06af. Confidence defaults to 1 when absent or
+// nonnumeric. Keep the original comparison (including NaN), not a new
+// probability admission rule. Transport validation remains a separate boundary.
+export function answerOf(answers: Record<string, unknown>, key: string, allowed: string[], log: string[],
+    above: number, fixedTwo: (value: number) => string): string {
+    let answer: unknown = answers[key];
+    if (answer === null || answer === undefined) {
+        log[log.length] = key + "=?";
+        return "";
+    }
+    let raw: Record<string, unknown> = decode.fields(answer);
+    let confidence: number = 1;
+    if (typeof raw.confidence === "number") { confidence = raw.confidence as number; }
+    let picked: string = decode.stringField(raw, "choice", "");
+    log[log.length] = key + "=" + picked + "@" + fixedTwo(confidence);
+    if (!decode.includes(allowed, picked) || confidence < above) { return ""; }
+    return picked;
+}
+
+export function main(): null { return null; }

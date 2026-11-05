@@ -1,0 +1,246 @@
+import * as sketch from "./sketch";
+import * as choice from "./needs-choice";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+
+// VeraCompose.ets at 7ee06af: complete recipes, never independently picked
+// operations and operands. Ordered entries preserve reference Map iteration.
+export class Operand {
+    id: string;
+    label: string;
+    measure: string;
+}
+
+function numeric(kind: string): boolean { return kind !== "toggle" && kind !== "text"; }
+function time(measure: string): boolean { return measure === "seconds" || measure === "minutes"; }
+function scalar(measure: string): boolean { return measure === "count" || measure === "number"; }
+
+// The reference splits only ASCII identifier characters, not Unicode words.
+function formulaTokens(text: string): string[] {
+    let result: string[] = [];
+    let word: string = "";
+    for (let character of text) {
+        if (strings.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_", character)) {
+            word = word + character;
+        } else {
+            result[result.length] = word;
+            word = "";
+        }
+    }
+    result[result.length] = word;
+    return result;
+}
+
+export function lengthFeeders(value: sketch.Sketch): string[] {
+    let result: string[] = [];
+    let todo: string[] = [value.countdownLength];
+    // An explicit stack cursor avoids depending on a host collection API.
+    let pending: number = todo.length;
+    while (pending > 0) {
+        pending = pending - 1;
+        let id: string = todo[pending];
+        let figure: sketch.SketchValue | null = null;
+        for (let candidate of value.values) { if (candidate.id === id && figure === null) { figure = candidate; } }
+        if (figure !== null && !decode.includes(result, id)) {
+            result[result.length] = id;
+            let words: string[] = formulaTokens((figure as sketch.SketchValue).formula);
+            for (let other of value.values) {
+                if (other.id !== id && decode.includes(words, other.id)) {
+                    todo[pending] = other.id;
+                    pending = pending + 1;
+                }
+            }
+        }
+    }
+    return result;
+}
+
+export function operandList(value: sketch.Sketch, index: number, numberText: (value: number) => string): Operand[] {
+    let result: Operand[] = [];
+    for (let input of value.inputs) {
+        if (numeric(input.kind)) {
+            let operand: Operand = {id: input.id, label: input.label, measure: input.measure};
+            result[result.length] = operand;
+        }
+    }
+    for (let constant of value.constants) {
+        let text: string = "0";
+        if (constant.value - constant.value === 0) { text = numberText(constant.value); }
+        let operand: Operand = {id: constant.id, label: constant.label + " (fixed: " + text + ")", measure: constant.measure};
+        result[result.length] = operand;
+    }
+    let previous: number = 0;
+    while (previous < index) {
+        let figure: sketch.SketchValue = value.values[previous];
+        let measure: string = figure.format;
+        if (measure === "plain") { measure = "number"; }
+        let operand: Operand = {id: figure.id, label: figure.label, measure: measure};
+        result[result.length] = operand;
+        previous = previous + 1;
+    }
+    let feedsClock: boolean = false;
+    if (index < value.values.length) { feedsClock = decode.includes(lengthFeeders(value), value.values[index].id); }
+    if (value.hasCountdown && !feedsClock) {
+        result[result.length] = {id: "remaining", label: "seconds left on the countdown", measure: "seconds"};
+        result[result.length] = {id: "elapsed", label: "seconds passed on the countdown", measure: "seconds"};
+        result[result.length] = {id: "duration", label: "whole length of the countdown", measure: "seconds"};
+    }
+    if (value.hasStopwatch) { result[result.length] = {id: "elapsed", label: "seconds passed on the stopwatch", measure: "seconds"}; }
+    let list: sketch.SketchList | null = value.list;
+    if (list !== null) {
+        let present: sketch.SketchList = list as sketch.SketchList;
+        result[result.length] = {id: "entryCount", label: "how many " + present.label + " there are", measure: "count"};
+        for (let field of present.fields) {
+            if (field.kind === "number") {
+                result[result.length] = {id: "entryTotal", label: field.label + " of all " + present.label + " added up", measure: field.measure};
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+/** Unit rules are the reference vocabulary's policy, not inferred physics. */
+export function resultMeasure(formula: string, a: Operand, b: Operand | null): string {
+    if (formula === "copy") { return a.measure; }
+    if (a.measure === "clock") { return ""; }
+    if (b !== null && (b as Operand).measure === "clock") { return ""; }
+    if (formula === "round_up") {
+        if (a.measure === "number" || a.measure === "fraction") { return "count"; }
+        return a.measure;
+    }
+    if (b === null) { return ""; }
+    let other: Operand = b as Operand;
+    if (a.id === other.id && formula !== "multiply") { return ""; }
+    if (formula === "add" || formula === "subtract") {
+        if (a.measure === other.measure && a.measure !== "percent") { return a.measure; }
+        return "";
+    }
+    if (formula === "multiply") {
+        if (scalar(other.measure) && a.measure !== "percent") { return a.measure; }
+        return "";
+    }
+    if (formula === "divide" || formula === "divide_up") {
+        let divided: string = "";
+        if (scalar(other.measure)) { divided = a.measure; }
+        else if (a.measure === other.measure) { divided = "fraction"; }
+        if (formula === "divide_up" && decode.includes(["number", "fraction", "count"], divided)) { return "count"; }
+        return divided;
+    }
+    if (formula === "ratio_percent") {
+        if (a.measure === other.measure) { return "percent"; }
+        return "";
+    }
+    if (decode.includes(["percent_of", "add_percent", "subtract_percent"], formula)) {
+        if (other.measure === "percent" && a.measure !== "percent") { return a.measure; }
+    }
+    return "";
+}
+
+function expressionText(formula: string, a: Operand, b: Operand | null): string {
+    let label: string = "";
+    if (b !== null) { label = b.label; }
+    if (formula === "copy") { return a.label + ", as it is"; }
+    if (formula === "round_up") { return a.label + ", rounded up to a whole number"; }
+    if (formula === "add") { return a.label + " + " + label; }
+    if (formula === "subtract") { return a.label + " - " + label; }
+    if (formula === "multiply") {
+        if (b !== null && (b as Operand).id === a.id) { return a.label + " squared"; }
+        return a.label + " x " + label;
+    }
+    if (formula === "divide") { return a.label + " / " + label; }
+    if (formula === "divide_up") { return a.label + " / " + label + ", rounded up to a whole number"; }
+    if (formula === "percent_of") { return label + " percent of " + a.label; }
+    if (formula === "subtract_percent") { return a.label + " reduced by " + label + " percent"; }
+    if (formula === "ratio_percent") { return a.label + " as a percent of " + label; }
+    return a.label + " increased by " + label + " percent";
+}
+
+function fitsFormat(measure: string, format: string, formula: string, a: Operand, b: Operand | null): boolean {
+    if (strings.length(measure) === 0) { return false; }
+    if (format === "plain") {
+        return measure === "number" || measure === "fraction" || (measure === "count" && formula !== "round_up" && formula !== "divide_up");
+    }
+    if (format === "fraction" && formula === "divide" && b !== null && a.id !== (b as Operand).id && a.measure === (b as Operand).measure) { return true; }
+    if (time(format) && time(measure)) { return true; }
+    return measure === format;
+}
+
+function put(result: choice.Criterion[], formula: string, a: Operand, b: Operand | null, format: string): void {
+    let measure: string = resultMeasure(formula, a, b);
+    if (!fitsFormat(measure, format, formula, a, b)) { return; }
+    let other: string = "";
+    if (b !== null) { other = b.id; }
+    let key: string = formula + ":" + a.id + ":" + other;
+    let description: string = expressionText(formula, a, b);
+    if (time(measure) && time(format) && measure !== format) { description = description + ", turned from " + measure + " into " + format; }
+    let entry: choice.Criterion = {key: key, description: description};
+    let index: number = 0;
+    for (let existing of result) {
+        if (existing.key === key) { result[index] = entry; return; }
+        index = index + 1;
+    }
+    result[result.length] = entry;
+}
+
+export function expressionsFor(value: sketch.Sketch, index: number, numberText: (value: number) => string): choice.Criterion[] {
+    let figure: sketch.SketchValue = value.values[index];
+    let operands: Operand[] = operandList(value, index, numberText);
+    let result: choice.Criterion[] = [];
+    for (let formula of ["copy", "add", "subtract", "multiply", "divide", "divide_up", "percent_of", "add_percent", "subtract_percent", "round_up", "ratio_percent"]) {
+        let ai: number = 0;
+        for (let a of operands) {
+            if (formula === "copy" || formula === "round_up") { put(result, formula, a, null, figure.format); }
+            else {
+                let bi: number = 0;
+                if (formula === "add" || formula === "multiply") { bi = ai; }
+                while (bi < operands.length) {
+                    let b: Operand = operands[bi];
+                    if (!(formula === "subtract" && a.id === "duration" && (b.id === "elapsed" || b.id === "remaining"))) {
+                        put(result, formula, a, b, figure.format);
+                    }
+                    bi = bi + 1;
+                }
+            }
+            ai = ai + 1;
+        }
+    }
+    return result;
+}
+
+// The vocabulary portion of buildComposeRequest. Written-expression verdicts
+// are separate: they require the reference parser, not a stand-in validator.
+export function expressionQuestions(value: sketch.Sketch, index: number,
+    numberText: (value: number) => string): Record<string, unknown> {
+    let questions: Record<string, unknown> = {};
+    let figure: sketch.SketchValue = value.values[index];
+    let options: choice.Criterion[] = expressionsFor(value, index, numberText);
+    // 255 includes the unavailable option. Preserve the reference's >= check.
+    if (options.length === 0 || options.length >= 255) { return questions; }
+    options[options.length] = {key: "unavailable", description: "none of these is exactly it: it takes another operation, more steps, or other numbers"};
+    questions["expr." + figure.id] = choice.choice("Which of these is exactly how \"" + figure.label + "\" (" + figure.means + ") is worked out? " +
+        "One that is only part of the calculation is wrong.", options);
+    let steps: choice.Criterion[] = [
+        {key: "one", description: "one of those numbers as it is, or one step from them: two added, subtracted, multiplied or divided, " +
+            "a percent of one, one as a percent of another, one rounded up, or one divided by another and rounded up"},
+        {key: "more", description: "more than one step, or something other than arithmetic"}
+    ];
+    let labels: string = "";
+    let count: number = 0;
+    for (let operand of operandList(value, index, numberText)) {
+        if (count > 0) { labels = labels + "; "; }
+        labels = labels + operand.label;
+        count = count + 1;
+    }
+    questions["steps." + figure.id] = choice.choice("The app already has these numbers: " + labels + ". Starting from them, " +
+        "how is \"" + figure.label + "\" worked out: " + figure.means + "?", steps);
+    let shows: choice.Criterion[] = [
+        {key: "stat", description: "one figure among the others in a row of figures"},
+        {key: "hero", description: "the one big number the screen is about"},
+        {key: "progress", description: "a progress bar (the value is a fraction from 0 to 1)"}
+    ];
+    questions["show." + figure.id] = choice.choice("How should \"" + figure.label + "\" be shown?", shows);
+    return questions;
+}
+
+export function main(): null { return null; }
