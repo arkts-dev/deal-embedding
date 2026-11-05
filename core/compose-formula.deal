@@ -1,0 +1,401 @@
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+import * as json from "std/json";
+import * as math from "std/math";
+import * as expressions from "./compose-expressions";
+import * as answers from "./compose-answers";
+import * as sketch from "./sketch";
+
+// Pinned VeraCompose expression grammar. This is not the broader compiler
+// grammar: known screen names and the eight reference functions are authority.
+export class ExprNode {
+    kind: string;
+    value: number;
+    name: string;
+    op: string;
+    args: ExprNode[];
+}
+export class ParsedExpr {
+    node: ExprNode | null;
+    error: string;
+    reads: string[];
+}
+class Parser {
+    tokens: string[];
+    at: number;
+    known: string[];
+    error: string;
+    reads: string[];
+}
+
+function node(kind: string, args: ExprNode[]): ExprNode {
+    return {kind: kind, value: 0, name: "", op: "", args: args};
+}
+function digit(text: string): boolean {
+    return strings.length(text) === 1 && strings.contains("0123456789", text);
+}
+function letter(text: string): boolean {
+    return strings.length(text) === 1 && strings.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_", text);
+}
+function char(text: string, at: number): string {
+    if (at >= strings.length(text)) { return ""; }
+    return strings.substring(text, at, at + 1);
+}
+function identifierEnd(text: string, at: number): number {
+    let end: number = at + 1;
+    while (letter(char(text, end)) || digit(char(text, end))) { end = end + 1; }
+    return end;
+}
+function tokens(text: string, utf16Length: (text: string) => number): string[] {
+    let result: string[] = [];
+    let at: number = 0;
+    while (at < strings.length(text)) {
+        let c: string = char(text, at);
+        if (c === " " || c === "\t") { at = at + 1; continue; }
+        let end: number = at;
+        if (digit(c) || (c === "." && digit(char(text, at + 1)))) {
+            if (c === ".") { end = end + 1; }
+            while (digit(char(text, end))) { end = end + 1; }
+            if (c !== "." && char(text, end) === "." && digit(char(text, end + 1))) {
+                end = end + 1;
+                while (digit(char(text, end))) { end = end + 1; }
+            }
+        } else if (letter(c)) {
+            end = identifierEnd(text, at);
+            if (char(text, end) === "." && letter(char(text, end + 1))) { end = identifierEnd(text, end + 1); }
+        } else {
+            let found: boolean = false;
+            for (let op of ["===", "!==", "<=", ">=", "==", "!="]) {
+                let size: number = strings.length(op);
+                if (!found && at + size <= strings.length(text) && strings.substring(text, at, at + size) === op) {
+                    end = at + size;
+                    found = true;
+                }
+            }
+            if (!found && strings.contains("-+*/%(),<>", c)) { end = at + 1; }
+        }
+        if (end === at) {
+            if (utf16Length(c) > 1) {
+                throw {code: "E8001", message: "Formula diagnostic would contain an unpaired Unicode surrogate"};
+            }
+            return ["?" + c];
+        }
+        result[result.length] = strings.substring(text, at, end);
+        at = end;
+    }
+    return result;
+}
+function peek(parser: Parser): string {
+    if (parser.at < parser.tokens.length) { return parser.tokens[parser.at]; }
+    return "";
+}
+function fail(parser: Parser, reason: string): ExprNode {
+    if (strings.length(parser.error) === 0) { parser.error = reason; }
+    return node("num", []);
+}
+function binary(op: string, a: ExprNode, b: ExprNode): ExprNode {
+    let result: ExprNode = node("bin", [a, b]);
+    result.op = op;
+    return result;
+}
+function comparison(parser: Parser): ExprNode {
+    let left: ExprNode = expression(parser);
+    let op: string = peek(parser);
+    if (!decode.includes(["<", "<=", ">", ">=", "==", "!=", "===", "!=="], op)) { return left; }
+    parser.at = parser.at + 1;
+    if (op === "===") { op = "=="; }
+    else if (op === "!==") { op = "!="; }
+    let result: ExprNode = binary(op, left, expression(parser));
+    result.kind = "cmp";
+    if (decode.includes(["<", "<=", ">", ">=", "==", "!=", "===", "!=="], peek(parser))) {
+        return fail(parser, "compares twice in a row");
+    }
+    return result;
+}
+function expression(parser: Parser): ExprNode {
+    let left: ExprNode = term(parser);
+    while (peek(parser) === "+" || peek(parser) === "-") {
+        let op: string = peek(parser);
+        parser.at = parser.at + 1;
+        left = binary(op, left, term(parser));
+    }
+    return left;
+}
+function term(parser: Parser): ExprNode {
+    let left: ExprNode = unary(parser);
+    while (decode.includes(["*", "/", "%"], peek(parser))) {
+        let op: string = peek(parser);
+        parser.at = parser.at + 1;
+        left = binary(op, left, unary(parser));
+    }
+    return left;
+}
+function unary(parser: Parser): ExprNode {
+    if (peek(parser) === "-") {
+        parser.at = parser.at + 1;
+        return node("neg", [unary(parser)]);
+    }
+    if (peek(parser) === "+") { parser.at = parser.at + 1; return unary(parser); }
+    return primary(parser);
+}
+function decimal(text: string): number {
+    let normalized: string = text;
+    if (strings.startsWith(normalized, ".")) { normalized = "0" + normalized; }
+    while (strings.length(normalized) > 1 && char(normalized, 0) === "0" && digit(char(normalized, 1))) {
+        normalized = strings.substring(normalized, 1, strings.length(normalized));
+    }
+    return json.parse("{\"value\":" + normalized + "}").value as number;
+}
+function primary(parser: Parser): ExprNode {
+    let token: string = peek(parser);
+    if (strings.length(token) === 0) { return fail(parser, "ends too soon"); }
+    parser.at = parser.at + 1;
+    if (token === "(") {
+        let inner: ExprNode = comparison(parser);
+        if (peek(parser) !== ")") { return fail(parser, "a ( without its )"); }
+        parser.at = parser.at + 1;
+        return inner;
+    }
+    if (digit(char(token, 0)) || char(token, 0) === ".") {
+        let result: ExprNode = node("num", []);
+        result.value = decimal(token);
+        return result;
+    }
+    if (letter(char(token, 0))) {
+        if (peek(parser) === "(") {
+            let name: string = token;
+            if (strings.startsWith(name, "math.") || strings.startsWith(name, "Math.")) {
+                name = strings.substring(name, 5, strings.length(name));
+            }
+            let arity: number = 1;
+            if (decode.includes(["min", "max", "pow"], name)) { arity = 2; }
+            if (!decode.includes(["floor", "ceil", "round", "abs", "sqrt", "min", "max", "pow"], name)) {
+                return fail(parser, "uses " + token + ", which a formula cannot");
+            }
+            parser.at = parser.at + 1;
+            let result: ExprNode = node("call", []);
+            result.name = name;
+            let args: ExprNode[] = [];
+            if (peek(parser) !== ")") {
+                args[args.length] = comparison(parser);
+                while (peek(parser) === ",") { parser.at = parser.at + 1; args[args.length] = comparison(parser); }
+            }
+            if (peek(parser) !== ")") { return fail(parser, token + "( without its )"); }
+            parser.at = parser.at + 1;
+            if ((name === "min" || name === "max") && args.length > 2) {
+                let folded: ExprNode = args[0];
+                let index: number = 1;
+                while (index < args.length) {
+                    let pair: ExprNode = node("call", [folded, args[index]]);
+                    pair.name = name;
+                    folded = pair;
+                    index = index + 1;
+                }
+                return folded;
+            }
+            if (args.length !== arity) { return fail(parser, name + " takes " + decode.integerText(arity) + " numbers"); }
+            result.args = args;
+            return result;
+        }
+        if (!decode.includes(parser.known, token)) { return fail(parser, "reads " + token + ", which the screen does not have"); }
+        let result: ExprNode = node("id", []);
+        result.name = token;
+        let reads: string[] = parser.reads;
+        if (!decode.includes(reads, token)) { reads[reads.length] = token; parser.reads = reads; }
+        return result;
+    }
+    if (strings.startsWith(token, "?")) { token = strings.substring(token, 1, strings.length(token)); }
+    return fail(parser, "has " + token + " where a number belongs");
+}
+
+export function parseFormula(text: string, known: string[], utf16Length: (text: string) => number): ParsedExpr {
+    let size: number = utf16Length(text);
+    if (size === 0) { return {node: null, error: "no formula", reads: []}; }
+    if (size > 300) { return {node: null, error: "too long", reads: []}; }
+    let parser: Parser = {tokens: tokens(text, utf16Length), at: 0, known: known, error: "", reads: []};
+    let result: ExprNode = comparison(parser);
+    if (strings.length(parser.error) === 0 && parser.at < parser.tokens.length) {
+        let extra: string = parser.tokens[parser.at];
+        if (strings.startsWith(extra, "?")) { extra = strings.substring(extra, 1, strings.length(extra)); }
+        parser.error = "has " + extra + " left over";
+    }
+    let parsed: ExprNode | null = null;
+    if (strings.length(parser.error) === 0) { parsed = result; }
+    return {node: parsed, error: parser.error, reads: parser.reads};
+}
+
+// Pow and ECMAScript remainder are numeric primitives; the portable module
+// owns expression interpretation and zero-divisor behavior.
+export function evaluate(n: ExprNode, env: (name: string) => number,
+    power: (a: number, b: number) => number, remainder: (a: number, b: number) => number): number {
+    if (n.kind === "num") { return n.value; }
+    if (n.kind === "id") { return env(n.name); }
+    if (n.kind === "neg") { return -evaluate(n.args[0], env, power, remainder); }
+    let a: number = evaluate(n.args[0], env, power, remainder);
+    let b: number = 0;
+    if (n.args.length > 1) { b = evaluate(n.args[1], env, power, remainder); }
+    if (n.kind === "cmp") {
+        let holds: boolean = false;
+        if (n.op === "<") { holds = a < b; }
+        else if (n.op === "<=") { holds = a <= b; }
+        else if (n.op === ">") { holds = a > b; }
+        else if (n.op === ">=") { holds = a >= b; }
+        else if (n.op === "==") { holds = a === b; }
+        else { holds = a !== b; }
+        if (holds) { return 1; }
+        return 0;
+    }
+    if (n.kind === "bin") {
+        if (n.op === "+") { return a + b; }
+        if (n.op === "-") { return a - b; }
+        if (n.op === "*") { return a * b; }
+        if (b === 0) { return 0; }
+        if (n.op === "/") { return a / b; }
+        return remainder(a, b);
+    }
+    if (n.name === "floor") { return math.floor(a); }
+    if (n.name === "ceil") { return math.ceil(a); }
+    if (n.name === "round") {
+        if (a === 0 || a - a !== 0) { return a; }
+        let lower: number = math.floor(a);
+        let rounded: number = lower;
+        if (a - lower >= 0.5) { rounded = lower + 1; }
+        if (rounded === 0 && a < 0) { return -0; }
+        return rounded;
+    }
+    if (n.name === "abs") { return math.absNumber(a); }
+    if (n.name === "sqrt") { return math.sqrt(a); }
+    if (n.name === "min" || n.name === "max") {
+        if (a !== a || b !== b) { return 0 / 0; }
+        if (a === 0 && b === 0) {
+            if (n.name === "min" && (1 / a < 0 || 1 / b < 0)) { return -0; }
+            if (n.name === "max" && (1 / a > 0 || 1 / b > 0)) { return 0; }
+            return a;
+        }
+        if ((n.name === "min" && a < b) || (n.name === "max" && a > b)) { return a; }
+        return b;
+    }
+    return power(a, b);
+}
+
+export function writtenMeasure(n: ExprNode, operands: expressions.Operand[]): string {
+    if (n.kind === "num") { return "any"; }
+    if (n.kind === "id") {
+        for (let operand of operands) {
+            if (operand.id === n.name) {
+                if (decode.includes(["seconds", "minutes"], operand.measure)) { return operand.measure; }
+                return "";
+            }
+        }
+        return "";
+    }
+    let alike: boolean = n.kind === "neg" || (n.kind === "bin" && (n.op === "+" || n.op === "-")) ||
+        (n.kind === "call" && decode.includes(["round", "floor", "ceil", "abs", "min", "max"], n.name));
+    if (!alike) { return ""; }
+    let unit: string = "any";
+    for (let child of n.args) {
+        let measured: string = writtenMeasure(child, operands);
+        if (measured === "" || (measured !== "any" && unit !== "any" && measured !== unit)) { return ""; }
+        if (measured !== "any") { unit = measured; }
+    }
+    return unit;
+}
+
+// Keep reference emission until backend lowering: division uses share, and
+// comparisons use whether. Never splice unparsed model formula text.
+export function formulaVera(n: ExprNode, numberText: (value: number) => string): string {
+    if (n.kind === "num") {
+        if (n.value - n.value !== 0) { return "0"; }
+        return numberText(n.value);
+    }
+    if (n.kind === "id") { return n.name; }
+    if (n.kind === "neg") { return "(0 - " + formulaVera(n.args[0], numberText) + ")"; }
+    if (n.kind === "call") {
+        let args: string = "";
+        let index: number = 0;
+        for (let child of n.args) {
+            if (index > 0) { args = args + ", "; }
+            args = args + formulaVera(child, numberText);
+            index = index + 1;
+        }
+        return "math." + n.name + "(" + args + ")";
+    }
+    let a: string = formulaVera(n.args[0], numberText);
+    let b: string = formulaVera(n.args[1], numberText);
+    if (n.kind === "cmp") {
+        let op: string = n.op;
+        if (op === "==") { op = "==="; }
+        else if (op === "!=") { op = "!=="; }
+        return "whether(" + a + " " + op + " " + b + ")";
+    }
+    if (n.op === "/") { return "share(" + a + ", " + b + ")"; }
+    return "(" + a + " " + n.op + " " + b + ")";
+}
+
+export class WrittenBinding {
+    expr: string;
+    reads: string[];
+    scale: string;
+}
+export class WrittenResult {
+    fault: string;
+    binding: WrittenBinding | null;
+}
+
+// Inner useWritten decision. The composer builds the example environment from
+// its bound earlier values; this routine must not replace that dependency work.
+export function validateWritten(value: sketch.SketchValue, operands: expressions.Operand[],
+    env: (name: string) => number, received: Record<string, unknown>, log: string[],
+    utf16Length: (text: string) => number, numberText: (value: number) => string,
+    fixedTwo: (value: number) => string, power: (a: number, b: number) => number,
+    remainder: (a: number, b: number) => number): WrittenResult {
+    if (strings.length(value.formula) === 0) { return {fault: "no written formula", binding: null}; }
+    let known: string[] = [];
+    for (let operand of operands) { if (!decode.includes(known, operand.id)) { known[known.length] = operand.id; } }
+    let parsed: ParsedExpr = parseFormula(value.formula, known, utf16Length);
+    let root: ExprNode | null = parsed.node;
+    if (root === null) { return {fault: "its written formula " + parsed.error, binding: null}; }
+    if (value.result !== value.result) { return {fault: "its written formula has no worked example", binding: null}; }
+    let tree: ExprNode = root as ExprNode;
+    let got: number = evaluate(tree, env, power, remainder);
+    if (got !== got) {
+        let missing: string = "";
+        for (let name of parsed.reads) {
+            let number: number = env(name);
+            if (number !== number) {
+                if (strings.length(missing) > 0) { missing = missing + ", "; }
+                missing = missing + name;
+            }
+        }
+        if (strings.length(missing) === 0) { missing = "it"; }
+        return {fault: "its worked example gives no number for " + missing, binding: null};
+    }
+    let tolerance: number = math.absNumber(value.result) * 0.006;
+    if (tolerance < 0.011) { tolerance = 0.011; }
+    if (math.absNumber(got - value.result) > tolerance) {
+        let rounded: number = got * 1000;
+        if (rounded - rounded === 0 && rounded !== 0) {
+            let lower: number = math.floor(rounded);
+            if (rounded - lower >= 0.5) { lower = lower + 1; }
+            rounded = lower;
+        }
+        rounded = rounded / 1000;
+        let shown: string = "0";
+        if (rounded - rounded === 0) { shown = numberText(rounded); }
+        let expected: string = "0";
+        if (value.result - value.result === 0) { expected = numberText(value.result); }
+        return {fault: "its written formula gives " + shown + " for its worked example, not " + expected, binding: null};
+    }
+    if (strings.length(answers.answerOf(received, "written." + value.id, ["right"], log, 0.5, fixedTwo)) === 0) {
+        return {fault: "Jev does not read its written formula as right", binding: null};
+    }
+    let measure: string = writtenMeasure(tree, operands);
+    let scale: string = "";
+    if (measure === "seconds" && value.format === "minutes") { scale = " / 60"; }
+    else if (measure === "minutes" && value.format === "seconds") { scale = " * 60"; }
+    let result: WrittenBinding = {expr: formulaVera(tree, numberText), reads: parsed.reads, scale: scale};
+    log[log.length] = "written." + value.id + ": " + value.formula;
+    return {fault: "", binding: result};
+}
+
+export function main(): null { return null; }
