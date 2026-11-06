@@ -1,0 +1,4 @@
+// ECMAScript-compatible binary64 conversion mechanisms, not input/format policy.
+export function parseDecimal(value: string): number;
+export function fixed(value: number, places: number): string;
+export function numberText(value: number): string;

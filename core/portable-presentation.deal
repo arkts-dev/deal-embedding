@@ -1,0 +1,32 @@
+import * as str from "std/string";
+import * as math from "std/math";
+import * as decode from "./plan-decoding";
+import * as numbers from "portable/numbers";
+
+// Pinned std/strings.toNumber lexical policy; numeric parsing/formatting is a
+// backend primitive. No validation outcome or task answer is supplied by it.
+export function toNumber(value: string, fallback: number): number {
+    let text: string = "";
+    for (let ch of value) { if (!str.contains(decode.whitespace(), ch)) { text = text + ch; } }
+    if (!str.contains(text, ".")) { text = str.replace(text, ",", "."); }
+    let i: number = 0; let digits: number = 0; let dot: boolean = false;
+    for (let ch of text) {
+        if (i === 0 && (ch === "+" || ch === "-")) { i = i + 1; continue; }
+        if (ch === "." && !dot) { dot = true; }
+        else if (str.contains("0123456789", ch)) { digits = digits + 1; }
+        else { return fallback; } i = i + 1;
+    }
+    if (digits === 0) { return fallback; } return numbers.parseDecimal(text);
+}
+export function formatNumber(value: number, decimals: number): string {
+    if (value - value !== 0) { return numbers.numberText(value); }
+    let places: number = math.floor(decimals); if (places > 10) { places = 10; }
+    let absolute: number = math.absNumber(value); let text: string = "";
+    if (decimals >= 0) { text = numbers.fixed(absolute, places); }
+    else {
+        if (math.floor(absolute) === absolute) { text = numbers.numberText(absolute); }
+        else { text = numbers.numberText(numbers.parseDecimal(numbers.fixed(absolute, 9))); }
+    }
+    if (value < 0 && numbers.parseDecimal(text) !== 0) { text = "-" + text; } return text;
+}
+export function main(): null { return null; }

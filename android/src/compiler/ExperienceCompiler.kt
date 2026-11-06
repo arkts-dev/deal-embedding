@@ -7,6 +7,22 @@ import java.io.File
 /** Checks and lowers source against host-supplied declarations and the renderer pack. */
 internal class ExperienceCompiler(private val context: Context, private val config: RuntimeConfig, private val log: EmbeddingLog = EmbeddingLog(context)) {
     private val storage = ExperienceStorage(context, config.storageName)
+    // Provisional reference-source boundary. Shared DEAL performs the lowering;
+    // its resulting pair also compiles through ordinary saved-source admission.
+    fun lowerPortable(source: String): ExperienceSource {
+        val pair = try { JSONObject(PortableBackendBridge.lower(source)) }
+        catch (error: deal.codegen.jvm.JvmRuntime.DealError) {
+            // A missing lowering implementation is not a bad model candidate.
+            // Propagate it operationally; never repair/fallback around it.
+            if (error.code != "PORTABLE_SYNTAX") throw error
+            throw CandidateRejected(JSONArray().put(JSONObject().put("stage", "lowering").put("code", error.code).put("message", error.msg)).toString())
+        }
+        return ExperienceSource(pair.getString("deal"), pair.getString("dealui"))
+    }
+    fun compilePortable(source: String): File {
+        val pair = lowerPortable(source)
+        return compile(pair.deal, pair.ui)
+    }
     fun compile(dealSource: String, uiSource: String): File {
         StagingReclamation.retry(context)
         val distribution = storage.distribution()
@@ -16,6 +32,9 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             val sources = File(project, "src").apply { mkdirs() }
             File(sources,"ui").apply { mkdirs() }.resolve("values.deal").writeText(File(distribution,"ui/values.deal").readText())
             File(distribution,"fragments").copyRecursively(File(sources,"fragments"),overwrite=true)
+            for (name in listOf("portable-presentation", "plan-decoding")) {
+                File(distribution,"portable/$name.deal").copyTo(File(sources,"$name.deal"),overwrite=true)
+            }
             val app = File(sources, "${config.sourceName}.deal").apply { writeText(dealSource) }
             val view = File(sources, "${config.sourceName}.dealui").apply { writeText(uiSource) }
             val packSource = context.assets.open("embedding/platform.dealui-pack").bufferedReader().use { it.readText() }
@@ -33,6 +52,8 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             // app module, so writing both to one path makes the view resolve the entry's exports.
             val entry = File(sources, ENTRY_NAME + ".deal").apply { writeText(generated.source()) }
             val externals = JSONObject()
+            File(distribution,"portable/numbers.d.deal").copyTo(File(project,"portable-numbers.d.deal"),overwrite=true)
+            externals.put("portable/numbers",JSONObject().put("declaration","portable-numbers.d.deal"))
             config.contracts.forEachIndexed { index, module ->
                 val declaration = "host-$index.d.deal"
                 File(project, declaration).writeText(dev.deal.embedding.capabilities.CapabilityBindings.declaration(module))
@@ -51,6 +72,8 @@ internal class ExperienceCompiler(private val context: Context, private val conf
                 log.event("compiler-deal", "diagnostics", code = "STATUS_$status", detail = if (diagnostics.exists()) diagnostics.readText().replace(project.absolutePath, "candidate") else null)
                 classifyCompilerOutcome(status, if (diagnostics.exists()) diagnostics.readText() else null, app.absolutePath, project.absolutePath)
             }
+            File(output,"portable").mkdirs()
+            File(distribution,"portable/numbers.js").copyTo(File(output,"portable/numbers.js"),overwrite=true)
             return output
         } catch (error: deal.ui.UiDiagnostic) {
             val rejection=CandidateRejected(JSONArray().put(JSONObject().put("stage", "ui").put("code", error.code()).put("message", error.message)

@@ -1,0 +1,11 @@
+import * as lowering from "./portable-source-lowering";
+import * as syntax from "portable/syntax";
+import * as json from "std/json";
+
+// Independent compilation unit for native compiler integration. This boundary
+// does not publish candidates or choose validation/recovery outcomes.
+export function lowerJson(source: string): string {
+    let pair: lowering.Pair = lowering.lower(source, syntax.inspect);
+    return json.stringify({deal: pair.deal, dealui: pair.dealui}) as string;
+}
+export function main(): null { return null; }

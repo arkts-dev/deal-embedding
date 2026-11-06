@@ -1,0 +1,134 @@
+import * as str from "std/string";
+import * as json from "std/json";
+import * as decode from "./plan-decoding";
+import * as literals from "./source-literals";
+
+// Backend lowering, not generation policy. The compiler projects syntax; DEAL
+// maps supported reference components and handler signatures into checked views.
+// Unsupported syntax/components fail explicitly, never disappear from the UI.
+export class Pair { deal: string; dealui: string; }
+class Property { name: string; type: string; expression: string; }
+class Action { name: string; handler: string; type: string; argument: string; }
+function fail(message: string): void { throw {code: "PORTABLE_UNSUPPORTED", message: message}; }
+function field(raw: Record<string, unknown>, key: string): string { return raw[key] as string; }
+function records(raw: Record<string, unknown>, key: string): Record<string, unknown>[] {
+    let out: Record<string, unknown>[] = []; for (let value of (raw[key] as unknown[])) { out[out.length] = value as Record<string, unknown>; } return out;
+}
+export function parserSource(source: string): string {
+    let out: string = "";
+    for (let line of str.split(source, "\n")) {
+        let trimmed: string = decode.trim(line);
+        if (trimmed === "@jsonable") { out = out + "\n"; continue; }
+        if (str.startsWith(trimmed, "import ") && !str.endsWith(trimmed, ";")) { line = line + ";"; }
+        out = out + line + "\n";
+    }
+    return out;
+}
+function join(values: string[], separator: string): string {
+    let out: string = ""; let i: number = 0; for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; } return out;
+}
+export function lower(source: string, inspect: (source: string) => string): Pair {
+    let parsed: string = parserSource(source); let syntax: Record<string, unknown> = json.parse(inspect(parsed));
+    if (field(syntax, "diagnostics") !== "") { throw {code: "PORTABLE_SYNTAX", message: field(syntax, "diagnostics")}; }
+    let declarations: Record<string, unknown>[] = records(syntax, "statements");
+    let functions: Record<string, unknown> = {}; let logic: string = ""; let view: Record<string, unknown> | null = null;
+    for (let declaration of declarations) {
+        let kind: string = field(declaration, "kind");
+        if (kind === "ImportDeclaration") {
+            if (field(declaration, "module") !== "std/ui") { fail("Import not yet lowered: " + field(declaration, "module")); }
+        } else if (kind === "FunctionDeclaration") {
+            let name: string = field(declaration, "name"); functions[name] = declaration;
+            if (name === "view") { view = declaration; } else { logic = logic + field(declaration, "source") + "\n"; }
+        } else if (kind === "ClassDeclaration") { logic = logic + field(declaration, "source") + "\n"; }
+        else { fail("Top-level syntax not yet lowered: " + kind); }
+    }
+    if (view === null || !Object.hasOwn(functions, "init")) { fail("Expected init and view functions"); }
+    let properties: Property[] = []; let actions: Action[] = []; let prologue: string = "";
+    let prop: (expression: Record<string, unknown>, type: string) => string = function(expression: Record<string, unknown>, type: string): string {
+        let name: string = "property" + literals.decimal(properties.length);
+        properties[properties.length] = {name: name, type: type, expression: field(expression, "source")}; return "state." + name;
+    };
+    let event: (expression: Record<string, unknown>, type: string, argument: string) => string = function(expression: Record<string, unknown>, type: string, argument: string): string {
+        if (field(expression, "kind") !== "LiteralExpr" || !Object.hasOwn(expression, "text")) { fail("Handler must be a literal issued function name"); }
+        let handler: string = field(expression, "text"); if (!Object.hasOwn(functions, handler)) { fail("Unknown handler: " + handler); }
+        let fn: Record<string, unknown> = functions[handler] as Record<string, unknown>; let params: Record<string, unknown>[] = records(fn, "parameters");
+        if (params.length !== 2 || field(params[0], "type") !== "AppState" || field(params[1], "type") !== type || field(fn, "result") !== "AppState") { fail("Handler signature not yet lowered: " + handler); }
+        let name: string = "Action" + literals.decimal(actions.length); let captured: string = argument;
+        if (argument !== "") { let expression: Record<string, unknown> = {source: argument}; captured = prop(expression, type); }
+        actions[actions.length] = {name: name, handler: handler, type: type, argument: captured};
+        if (captured !== "") { return "action app." + name + " {value: " + captured + "}"; }
+        return "action app." + name + " {value: payload}";
+    };
+    let render: (expression: Record<string, unknown>) => string = function(expression: Record<string, unknown>): string { fail("Uninitialized view lowering"); return ""; };
+    render = function(expression: Record<string, unknown>): string {
+        if (field(expression, "kind") !== "CallExpr") { fail("View expression not yet lowered: " + field(expression, "source")); }
+        let callee: Record<string, unknown> = expression.callee as Record<string, unknown>;
+        if (field(callee, "kind") !== "MemberAccessExpr" || field(callee.object as Record<string, unknown>, "source") !== "ui") { fail("Expected a ui component call"); }
+        let component: string = field(callee, "field"); let args: Record<string, unknown>[] = records(expression, "args");
+        if (args.length === 0) { fail("Missing component arguments: " + component); }
+        let style: string = field(args[0], "source");
+        if (style !== "\"default\"" && style !== "\"content\"" && style !== "\"summary\"") { fail("Component style not yet lowered: " + component + " " + style); }
+        let children: (at: number) => string = function(at: number): string {
+            if (at >= args.length || field(args[at], "kind") !== "ArrayLiteralExpr") { fail("Component children must be an explicit array: " + component); }
+            let out: string = ""; for (let child of records(args[at], "items")) { out = out + render(child); } return out;
+        };
+        if (component === "Header") {
+            if (args.length !== 5 || field(args[4], "source") !== "\"\"") { fail("Header icon not yet lowered"); }
+            let out: string = "ui.Heading(value: " + prop(args[1], "string") + ")\n";
+            if (args.length > 2) { out = out + "ui.Caption(value: " + prop(args[2], "string") + ")\n"; }
+            if (args.length > 3) { out = out + "ui.Text(value: " + prop(args[3], "string") + ")\n"; } return out;
+        }
+        if (component === "Section") { return "ui.Section(title: " + prop(args[1], "string") + ", summary: " + prop(args[2], "string") + ") {\n" + children(3) + "}\n"; }
+        if (component === "Column" || component === "ActionBar") { return "ui.Column() {\n" + children(1) + "}\n"; }
+        if (component === "MetricGroup") {
+            if (field(args[1], "source") !== "1") { fail("Multi-column MetricGroup not yet lowered"); }
+            return "ui.Column() {\n" + children(2) + "}\n";
+        }
+        if (component === "NumberStat") {
+            if (args.length !== 9 || field(args[5], "source") !== "1" || field(args[6], "source") !== "\"\"" || field(args[7], "source") !== "\"chart\"" || field(args[4], "source") !== "\"\"") { fail("NumberStat decoration/units not yet lowered"); }
+            let formatted: Record<string, unknown> = {source: field(args[3], "source") + " + presentation.formatNumber(" + field(args[2], "source") + ", " + field(args[8], "source") + ") + " + field(args[4], "source")};
+            return "ui.Metric(label: " + prop(args[1], "string") + ", value: " + prop(formatted, "string") + ")\n";
+        }
+        if (component === "Text") { return "ui.Text(value: " + prop(args[1], "string") + ")\n"; }
+        if (component === "TextField") {
+            if (args.length > 4 && field(args[4], "source") !== "\"number\"") { fail("TextField validation not yet lowered"); }
+            return "ui.TextField(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "string") + ", onChange: " + event(args[3], "string", "") + ")\n";
+        }
+        if (component === "NumberField") { return "ui.IntField(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "number") + ", minimum: " + prop(args[3], "number") + ", maximum: " + prop(args[4], "number") + ", onChange: " + event(args[5], "number", "") + ")\n"; }
+        if (component === "Button") { return "ui.Button(text: " + prop(args[1], "string") + ", enabled: " + prop(args[4], "boolean") + ", onClick: " + event(args[2], "number", field(args[3], "source")) + ")\n"; }
+        fail("Component not yet lowered: " + component); return "";
+    };
+    let walk: (body: Record<string, unknown>) => string = function(body: Record<string, unknown>): string { fail("Uninitialized statement lowering"); return ""; };
+    walk = function(body: Record<string, unknown>): string {
+        let out: string = "";
+        for (let statement of records(body, "statements")) {
+            let kind: string = field(statement, "kind");
+            if (kind === "Block") { out = out + walk(statement); }
+            else if (kind === "ExpressionStatement") {
+                let expression: Record<string, unknown> = statement.expression as Record<string, unknown>;
+                if (field(expression, "kind") !== "CallExpr") { fail("View statement not yet lowered"); }
+                let callee: Record<string, unknown> = expression.callee as Record<string, unknown>;
+                if (field(callee, "source") !== "sections.push") { fail("View mutation not yet lowered: " + field(callee, "source")); }
+                let args: Record<string, unknown>[] = records(expression, "args"); if (args.length !== 1) { fail("Expected one section per append"); } out = out + render(args[0]);
+            } else if (kind === "VariableDeclaration") {
+                if (!str.startsWith(decode.trim(field(statement, "source")), "let sections:")) { prologue = prologue + field(statement, "source") + "\n"; }
+            } else if (kind === "ReturnStatement") {
+                let expression: Record<string, unknown> = statement.expression as Record<string, unknown>;
+                if (field(expression, "kind") !== "CallExpr" || field(expression.callee as Record<string, unknown>, "source") !== "ui.AppTheme") { fail("Expected AppTheme root"); }
+                let args: Record<string, unknown>[] = records(expression, "args"); if (args.length !== 3 || field(args[2], "source") !== "sections") { fail("AppTheme children not yet lowered"); }
+                if (field(args[0], "source") !== "\"clean\"" || field(args[1], "source") !== "\"\"") { fail("AppTheme variant not yet lowered"); }
+            } else { fail("View control flow not yet lowered: " + kind); }
+        } return out;
+    };
+    let tree: string = walk((view as Record<string, unknown>).body as Record<string, unknown>);
+    let fields: string = ""; let values: string[] = ["app: state"];
+    for (let property of properties) { fields = fields + property.name + ": " + property.type + ";\n"; values[values.length] = property.name + ": " + property.expression; }
+    logic = "import * as strings from \"./portable-presentation\";\nimport * as presentation from \"./portable-presentation\";\n" + logic + "export class PortableState { app: AppState;\n" + fields + "}\nfunction project(state: AppState): PortableState {\n" + prologue + "return {" + join(values, ", ") + "};\n}\nexport function initialState(): PortableState { return project(init()); }\n";
+    for (let action of actions) {
+        let fields: string = "value: " + action.type + ";"; let argument: string = "action.value";
+        logic = logic + "export class " + action.name + " {" + fields + "}\n// @ui-update\nexport function update" + action.name + "(state: PortableState, action: " + action.name + "): PortableState { return project(" + action.handler + "(state.app, " + argument + ")); }\n";
+    }
+    logic = logic + "export function main(): null { return null; }\n";
+    return {deal: logic, dealui: "import * as app from \"./experience\";\nimport * as ui from \"./platform.dealui-pack\";\n// @ui-root\nexport view Experience(state: app.PortableState): View { ui.Column() {\n" + tree + "}\n}\n"};
+}
+export function main(): null { return null; }
