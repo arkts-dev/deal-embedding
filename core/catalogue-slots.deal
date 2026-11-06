@@ -1,0 +1,67 @@
+import * as catalogue from "./catalogue-contracts";
+import * as template from "./template-spec";
+import * as text from "./section-text";
+import * as decode from "./plan-decoding";
+import * as json from "std/json";
+import * as str from "std/string";
+
+export function slotKey(token: string, lowercase: (value: string) => string): string {
+    let trimmed: string = token;
+    if (str.startsWith(trimmed, "__")) { trimmed = str.substring(trimmed, 2, str.length(trimmed)); }
+    if (str.endsWith(trimmed, "__")) { trimmed = str.substring(trimmed, 0, str.length(trimmed) - 2); }
+    return lowercase(text.replaceAll(trimmed, "_IDX", ""));
+}
+export function buildSlotRequest(prompt: string, kinds: string[], specs: catalogue.CatalogueEntry[],
+    numberText: (value: number) => string, lowercase: (value: string) => string): string {
+    let questions: Record<string, unknown> = {}; let i: number = 1;
+    for (let kind of kinds) {
+        let found: catalogue.CatalogueEntry | null = catalogue.find(specs, kind);
+        if (found !== null) { for (let slot of (found as catalogue.CatalogueEntry).slots) {
+            let criteria: Record<string, unknown> = {}; for (let pair of slot.criteria) { criteria[pair.key] = pair.value; }
+            questions["section" + numberText(i) + "." + kind + "." + slotKey(slot.token, lowercase)] =
+                {type: slot.kind, instructions: slot.instructions, criteria: criteria};
+        } }
+        i = i + 1;
+    }
+    return json.stringify({model: "jev-latest", state: prompt, questions: questions}) as string;
+}
+export function readChoiceValue(answers: Record<string, unknown>, key: string, allowed: string[], above: number, fallback: string): string {
+    let raw: unknown = answers[key]; if (raw === null || raw === undefined) { return fallback; }
+    let answer: Record<string, unknown> = raw as Record<string, unknown>; let choice: unknown = answer.choice;
+    if (typeof choice !== "string") { return fallback; } let picked: string = choice as string;
+    if (!decode.includes(allowed, picked)) { return fallback; }
+    let confidence: number = 1; if (typeof answer.confidence === "number") { confidence = answer.confidence as number; }
+    if (confidence < above) { return fallback; } return picked;
+}
+function readSlotValue(answers: Record<string, unknown>, index: number, kind: string, slot: catalogue.Slot,
+    numberText: (value: number) => string, lowercase: (value: string) => string): string {
+    let key: string = "section" + numberText(index) + "." + kind + "." + slotKey(slot.token, lowercase);
+    let fallback: string = slot.values[0]; let raw: unknown = answers[key];
+    if (raw === null || raw === undefined) { return fallback; }
+    if (slot.kind === "noul") {
+        let value: unknown = (raw as Record<string, unknown>).noul; if (typeof value !== "number") { return fallback; }
+        let above: number = 0.25; if (slot.above >= 0) { above = slot.above; }
+        if ((value as number) > above) { return slot.values[1]; } return fallback;
+    }
+    return readChoiceValue(answers, key, slot.values, 0.25, fallback);
+}
+export function readSlotValues(body: string, kinds: string[], specs: catalogue.CatalogueEntry[],
+    numberText: (value: number) => string, lowercase: (value: string) => string): template.Entry[][] {
+    let answers: Record<string, unknown> = {};
+    try {
+        let parsed: Record<string, unknown> = json.parse(body); let raw: unknown = parsed.answers;
+        if (raw !== null && raw !== undefined) { answers = raw as Record<string, unknown>; }
+    } catch (caught) {
+        let error: Error = caught as Error;
+        if (error.code !== "INVALID_JSON" && error.code !== "E8001") { throw error; }
+    }
+    let out: template.Entry[][] = []; let i: number = 1;
+    for (let kind of kinds) {
+        let values: template.Entry[] = []; let found: catalogue.CatalogueEntry | null = catalogue.find(specs, kind);
+        if (found !== null) { for (let slot of (found as catalogue.CatalogueEntry).slots) {
+            template.set(values, slot.token, readSlotValue(answers, i, kind, slot, numberText, lowercase));
+        } }
+        out[out.length] = values; i = i + 1;
+    }
+    return out;
+}

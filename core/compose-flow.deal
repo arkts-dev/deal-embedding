@@ -1,0 +1,106 @@
+import * as sketch from "./sketch";
+import * as state from "./compose-state";
+import * as reader from "./compose-reader";
+import * as questions from "./compose-questions";
+import * as choice from "./needs-choice";
+import * as events from "./compose-events";
+import * as bindings from "./compose-bindings";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+import * as json from "std/json";
+import * as table from "std/table";
+
+export class ComposeResult {
+    source: string;
+    note: string;
+    sketchMs: number;
+    jevMs: number;
+    sketch: string;
+    answers: string[];
+    parsed: sketch.Sketch | null;
+    dropped: string[];
+    unboundNeeds: string[];
+    replanned: boolean;
+    planTries: number;
+    composition: state.Composition | null;
+}
+export function create(): ComposeResult {
+    return {source: "", note: "", sketchMs: 0, jevMs: 0, sketch: "", answers: [], parsed: null,
+        dropped: [], unboundNeeds: [], replanned: false, planTries: 0, composition: null};
+}
+function join(values: string[], separator: string): string {
+    let result: string = "";
+    let index: number = 0;
+    for (let value of values) {
+        if (index > 0) { result = result + separator; }
+        result = result + value; index = index + 1;
+    }
+    return result;
+}
+export function withAnswers(body: string, more: Record<string, unknown>): string {
+    try {
+        let parsed: Record<string, unknown> = json.parse(body);
+        let found: unknown = parsed.answers;
+        let answers: Record<string, unknown> = {};
+        if (found !== null && found !== undefined) { answers = decode.fields(found); }
+        for (let key of table.keys(more)) { answers[key] = more[key]; }
+        parsed.answers = answers;
+        return json.stringify(parsed) as string;
+    } catch (caught) {
+        let error: Error = caught as Error;
+        if (error.code !== "INVALID_JSON" && error.code !== "E8001") { throw error; }
+        return body;
+    }
+}
+// Selection/re-entry and result disposition are shared policy. Catalogue and
+// effect descriptors are data. Assembly is the downstream emitter boundary.
+export async function composeFromSketch(result: ComposeResult, prompt: string, value: sketch.Sketch,
+    askChoices: (body: string) => Promise<string>, widget: boolean, pre: Record<string, unknown> | null, settled: string[],
+    catalogue: choice.Catalogue, sectionData: questions.Section[], effects: events.Effect[], customEnabled: boolean,
+    tools: bindings.Primitives, lower: (text: string) => string, now: () => number,
+    assemble: (comp: state.Composition) => string): Promise<ComposeResult> {
+    result.parsed = value;
+    let started: number = now();
+    let chosen: questions.Section[] = [];
+    if (pre !== null) {
+        let previous: Record<string, unknown> = pre as Record<string, unknown>;
+        let index: number = 0;
+        for (let ready of value.ready) {
+            let key: string = "ready." + decode.integerText(index); index = index + 1;
+            let answer: Record<string, unknown> | null = decode.objectOrNull(previous[key]);
+            if (answer === null) { continue; }
+            let kind: unknown = (answer as Record<string, unknown>).choice;
+            if (typeof kind !== "string") { continue; }
+            let selectedKind: string = kind as string;
+            let owns: string = "";
+            for (let spec of sectionData) { if (spec.kind === selectedKind) { owns = spec.owns; break; } }
+            chosen[chosen.length] = {question: key, kind: selectedKind, owns: owns};
+        }
+    }
+    let request: string = questions.buildComposeRequest(prompt, value, widget, settled, chosen, catalogue, effects, tools.utf16Length, tools.numberText);
+    let body: string = await askChoices(request);
+    if (strings.length(body) === 0) { body = await askChoices(request); }
+    result.jevMs = result.jevMs + now() - started;
+    if (strings.length(body) === 0) { result.note = "Jev did not answer twice"; return result; }
+    if (pre !== null) { body = withAnswers(body, pre as Record<string, unknown>); }
+    let comp: state.Composition = reader.readComposition(body, value, widget, effects, customEnabled, tools, lower);
+    result.answers = comp.answers;
+    if (comp.unbound.length > 0) {
+        result.note = "unbound: " + join(comp.unbound, "; "); result.unboundNeeds = comp.unboundNeeds; return result;
+    }
+    result.unboundNeeds = comp.unboundNeeds; result.dropped = comp.dropped; result.composition = comp;
+    if (comp.blocks.length === 0 && comp.custom.length === 0) { result.source = assemble(comp); }
+    let note: string = "composed: " + tools.numberText(value.inputs.length) + " inputs, " + tools.numberText(value.values.length) + " values";
+    if (value.hasCountdown) { note = note + ", countdown"; }
+    if (value.hasStopwatch) { note = note + ", stopwatch"; }
+    if (value.list !== null) { note = note + ", list"; }
+    if (comp.events.length > 0) { note = note + ", " + tools.numberText(comp.events.length) + " effects"; }
+    if (comp.blocks.length > 0) {
+        note = note + ", sections " + join(comp.blocks, "+");
+        if (comp.realData) { note = note + " (real data)"; }
+    }
+    if (comp.custom.length > 0) { note = note + ", custom: " + join(comp.custom, "; "); }
+    if (comp.dropped.length > 0) { note = note + "; left out: " + join(comp.dropped, "; "); }
+    result.note = note; return result;
+}
+export function main(): null { return null; }

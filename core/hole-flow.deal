@@ -1,0 +1,119 @@
+import * as screen from "./screen-plan";
+import * as template from "./template-spec";
+import * as writer from "./custom-writer";
+import * as settlement from "./hole-settlement";
+import * as contracts from "./compose-contracts";
+import * as str from "std/string";
+
+export class Host {
+    language: string;
+    askCode: ((system: string, user: string, budget: number, think: boolean) => Promise<string | null>) | null;
+    askJev: ((body: string) => Promise<string>) | null;
+    // Batch transport may execute independent lookups concurrently, returning
+    // one answer per input in order. Caching and need selection stay in DEAL.
+    lookup: (needs: string[]) => Promise<string[]>;
+    looked: template.Entry[];
+    cannot: template.Entry[];
+    budget: writer.Budget;
+    // Request-local registry resolves plan slots to their original issued
+    // identity; widening/renaming a plan must preserve that registry entry.
+    identity: (slot: screen.PlanSlot) => string;
+    onHole: (record: settlement.HoleRecord) => void;
+}
+function join(values: string[], separator: string): string {
+    let out: string = ""; let i: number = 0;
+    for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; }
+    return out;
+}
+function withSection(plan: screen.ScreenPlan, section: template.Fragment | null,
+    compose: (specs: (template.Fragment | null)[], globals: template.Entry[], values: template.Entry[][]) => string): string {
+    if (section === null) { return screen.assemblePlan(plan, true, compose); }
+    // Same temporary append as the reference, without publishing a partially
+    // changed plan or depending on array pop/shrinking across DEAL boundaries.
+    let components: screen.PlanComponent[] = [];
+    for (let component of plan.components) { components[components.length] = component; }
+    components[components.length] = {fill: "hole", spec: section, values: []};
+    let temporary: screen.ScreenPlan = {origin: plan.origin, prompt: plan.prompt, widget: plan.widget, layout: plan.layout,
+        globals: plan.globals, state: plan.state, slots: plan.slots, components: components};
+    return screen.assemblePlan(temporary, true, compose);
+}
+function requestFor(plan: screen.ScreenPlan, prompt: string, hints: string[], facts: string[],
+    contract: contracts.PartsContract | null, host: Host,
+    compose: (specs: (template.Fragment | null)[], globals: template.Entry[], values: template.Entry[][]) => string): writer.Request {
+    let request: writer.Request = writer.create(); request.prompt = prompt; request.inputs = hints; request.facts = facts;
+    if (contract !== null) { let parts: contracts.PartsContract = contract as contracts.PartsContract;
+        request.parts = parts.lines; request.ownsClock = parts.clock; request.ownsList = parts.list; }
+    request.verify = host.askJev;
+    request.compose = function(section: template.Fragment | null): string { return withSection(plan, section, compose); };
+    return request;
+}
+export async function writeHole(plan: screen.ScreenPlan, prompt: string, hints: string[], host: Host, facts: string[],
+    contract: contracts.PartsContract | null, tools: writer.Primitives, notices: settlement.NoticePrimitives,
+    first8000: (text: string) => string,
+    compose: (specs: (template.Fragment | null)[], globals: template.Entry[], values: template.Entry[][]) => string,
+    sceneGuide: string, sceneTokens: number): Promise<settlement.Written | null> {
+    let slots: screen.PlanSlot[] = screen.toWrite(plan); if (slots.length === 0) { return null; }
+    let known: screen.PlanSlot[] = [];
+    for (let slot of slots) { if (slot.phone && template.get(host.cannot, slot.need) !== undefined) { known[known.length] = slot; } }
+    if (known.length > 0 && plan.components.length === 0 && known.length === slots.length) {
+        let nothing: settlement.Written = settlement.result(); nothing.cannot = template.get(host.cannot, known[0].need) as string;
+        nothing.failed = "custom section cannot: " + nothing.cannot + " (known from an earlier hole)"; return nothing;
+    }
+    if (known.length > 0) {
+        let why: string = template.get(host.cannot, known[0].need) as string;
+        plan.components[plan.components.length] = {fill: "reported", spec: settlement.noticeBlock(true, why, notices), values: []};
+        for (let slot of known) { screen.fillWith(slot, "reported", plan.components.length - 1, why); }
+        slots = screen.toWrite(plan);
+        if (slots.length === 0) {
+            let reported: settlement.Written = settlement.result(); reported.cannot = why;
+            reported.failed = "custom section cannot: " + why + " (known from an earlier hole)";
+            host.onHole(settlement.recordOf(plan, prompt, known, reported, "known")); settlement.quietSubtitle(plan); return reported;
+        }
+    }
+    let ask: ((system: string, user: string, budget: number, think: boolean) => Promise<string | null>) | null = host.askCode;
+    if (ask === null || str.length(host.language) === 0) {
+        let none: settlement.Written = settlement.result(); none.failed = "no model to write a custom section"; return none;
+    }
+    let request: writer.Request = requestFor(plan, prompt, hints, facts, contract, host, compose);
+    for (let slot of slots) {
+        request.needs[request.needs.length] = slot.need;
+        request.identities[request.identities.length] = host.identity(slot);
+    }
+    request.whole = plan.components.length === 0;
+    let missing: string[] = [];
+    // Duplicate uncached needs remain separate lookup dispatches as in the
+    // pinned Promise.all, and answers are published only in original order.
+    for (let slot of slots) { if (template.get(host.looked, slot.need) === undefined) { missing[missing.length] = slot.need; } }
+    let fetched: string[] = [];
+    if (missing.length > 0) { fetched = await host.lookup(missing); }
+    if (fetched.length !== missing.length) { throw {code: "LOOKUP_SHAPE", message: "One lookup reply per requested need required"}; }
+    let texts: string[] = []; let at: number = 0;
+    // Read cached membership before publishing fetched answers: duplicated
+    // misses must consume their own corresponding transport result.
+    for (let slot of slots) {
+        let cached: string | undefined = template.get(host.looked, slot.need);
+        if (cached !== undefined) { texts[texts.length] = cached as string; }
+        else { texts[texts.length] = fetched[at]; at = at + 1; }
+    }
+    let i: number = 0; let found: string[] = [];
+    for (let slot of slots) {
+        template.set(host.looked, slot.need, texts[i]);
+        if (str.length(texts[i]) > 0) { found[found.length] = "For \"" + slot.need + "\":\n" + first8000(texts[i]); } i = i + 1;
+    }
+    request.phone = join(found, "\n\n");
+    let written: settlement.Written = await writer.writeSection(request, host.language,
+        ask as (system: string, user: string, budget: number, think: boolean) => Promise<string | null>, host.budget, tools, sceneGuide, sceneTokens);
+    if (str.length(written.cannot) > 0 && slots.length > 1 && !request.whole) {
+        host.onHole(settlement.recordOf(plan, prompt, slots, written, "reported")); i = 0;
+        for (let slot of slots) {
+            let one: writer.Request = requestFor(plan, prompt, hints, facts, contract, host, compose); one.needs = [slot.need]; one.identities = [host.identity(slot)];
+            if (str.length(texts[i]) > 0) { one.phone = "For \"" + slot.need + "\":\n" + first8000(texts[i]); }
+            let individual: settlement.Written = await writer.writeSection(one, host.language,
+                ask as (system: string, user: string, budget: number, think: boolean) => Promise<string | null>, host.budget, tools, sceneGuide, sceneTokens);
+            settlement.settle(plan, prompt, [slot], one.whole, one.phone, individual, host.cannot, host.onHole, notices); i = i + 1;
+        }
+        settlement.quietSubtitle(plan); return written;
+    }
+    settlement.settle(plan, prompt, slots, request.whole, request.phone, written, host.cannot, host.onHole, notices);
+    settlement.quietSubtitle(plan); return written;
+}

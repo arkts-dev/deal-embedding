@@ -1,0 +1,127 @@
+import * as state from "./compose-state";
+import * as bindings from "./compose-bindings";
+import * as sketch from "./sketch";
+import * as screen from "./screen-plan";
+import * as template from "./template-spec";
+import * as str from "std/string";
+import * as text from "./section-text";
+
+function has(values: string[], text: string): boolean {
+    for (let value of values) { if (value === text) { return true; } } return false;
+}
+function unique(values: string[]): string[] {
+    let out: string[] = [];
+    for (let value of values) { if (str.length(value) > 0 && !has(out, value)) { out[out.length] = value; } }
+    return out;
+}
+function quoted(value: string): string {
+    return text.replaceAll(text.replaceAll(text.replaceAll(value, "\\", "\\\\"), "\"", "\\\""), "\n", " ");
+}
+function inputType(input: sketch.SketchInput): string {
+    if (input.kind === "toggle") { return "boolean"; } if (input.kind === "text") { return "string"; } return "number";
+}
+export function compositionBlocks(comp: state.Composition, catalogue: template.Fragment[]): template.Fragment[] {
+    let out: template.Fragment[] = [];
+    for (let kind of comp.blocks) {
+        for (let spec of catalogue) { if (spec.kind === kind) { out[out.length] = spec; break; } }
+    }
+    return out;
+}
+// Parts/defaults are the downstream portable emitter's results, not host
+// selected answers. Keeping this boundary explicit allows slot policy to be
+// checked before all backend source templates have been ported.
+export function screenPlan(comp: state.Composition, parts: template.Fragment[], catalogue: template.Fragment[],
+    blockValues: template.Entry[][], defaults: (kind: string) => template.Entry[], custom: template.Fragment | null,
+    readyKinds: string[], numberText: (value: number) => string): screen.ScreenPlan {
+    let value: sketch.Sketch = comp.sketch; let plan: screen.ScreenPlan = screen.create(); plan.widget = comp.widget;
+    let header: string = "default"; if (comp.widget) { header = "none"; }
+    let icon: string = ""; if (value.hasCountdown || value.hasStopwatch) { icon = "clock"; }
+    plan.globals = [{key: "__THEME__", value: comp.theme}, {key: "__HEADER_STYLE__", value: header}];
+    if (comp.widget) { template.set(plan.globals, "__WIDGET__", "true"); }
+    template.set(plan.globals, "__TITLE__", quoted(value.title)); template.set(plan.globals, "__EYEBROW__", quoted(value.eyebrow));
+    template.set(plan.globals, "__SUPPORTING__", quoted(value.subtitle)); template.set(plan.globals, "__HEADER_ICON__", icon);
+    for (let input of comp.inputs) { plan.state[plan.state.length] = {name: input.id, role: "input", type: inputType(input), label: input.label}; }
+    for (let constant of value.constants) { plan.state[plan.state.length] = {name: constant.id, role: "constant", type: "number", label: constant.label}; }
+    for (let item of value.values) {
+        if (state.bindingOf(comp, item.id) !== null) { plan.state[plan.state.length] = {name: item.id, role: "value", type: "number", label: item.label}; }
+    }
+    if (value.hasCountdown || value.hasStopwatch) {
+        let label: string = value.stopwatch; if (value.hasCountdown) { label = value.countdown; }
+        plan.state[plan.state.length] = {name: "clock", role: "clock", type: "number", label: label};
+    }
+    if (value.list !== null) { plan.state[plan.state.length] = {name: "entries", role: "list", type: "LogEntry[]", label: (value.list as sketch.SketchList).label}; }
+    for (let part of parts) { plan.components[plan.components.length] = {fill: "part", spec: part, values: []}; }
+    let blocks: template.Fragment[] = compositionBlocks(comp, catalogue); let i: number = 0;
+    for (let block of blocks) {
+        let values: template.Entry[] = []; if (i < blockValues.length) { values = blockValues[i]; } else { values = defaults(block.kind); }
+        plan.components[plan.components.length] = {fill: "block", spec: block, values: values}; i = i + 1;
+    }
+    if (custom !== null) { plan.components[plan.components.length] = {fill: "hole", spec: custom, values: []}; }
+    let partAt: (kind: string) => number = function(kind: string): number {
+        let at: number = 0;
+        for (let part of parts) { if (part.kind === kind) { return at; } at = at + 1; }
+        return parts.length - 1;
+    };
+    let add: (slot: screen.PlanSlot, fill: string, by: number, detail: string) => void =
+        function(slot: screen.PlanSlot, fill: string, by: number, detail: string): void {
+            screen.fillWith(slot, fill, by, detail); plan.slots[plan.slots.length] = slot;
+        };
+    for (let input of comp.inputs) {
+        let slot: screen.PlanSlot = screen.slot("input." + input.id, "the person sets " + input.label);
+        slot.writes = [input.id]; add(slot, "part", partAt("inputs"), "");
+    }
+    for (let item of value.values) {
+        let maybe = state.bindingOf(comp, item.id);
+        if (maybe === null) { continue; }
+        let binding: bindings.Binding = maybe as bindings.Binding;
+        let suffix: string = ""; if (str.length(item.means) > 0) { suffix = ": " + item.means; }
+        let slot: screen.PlanSlot = screen.slot("value." + item.id, item.label + suffix);
+        let reads: string[] = [binding.a, binding.b]; for (let name of binding.reads) { reads[reads.length] = name; }
+        slot.reads = unique(reads); slot.writes = [item.id]; add(slot, "part", partAt("figures"), "");
+    }
+    if (value.hasCountdown || value.hasStopwatch) {
+        let need: string = "counts up " + value.stopwatch; if (value.hasCountdown) { need = "counts down " + value.countdown; }
+        let slot: screen.PlanSlot = screen.slot("clock", need); slot.reads = unique([comp.countdownFrom]); slot.writes = ["clock"];
+        add(slot, "part", partAt("clock"), "");
+    }
+    if (value.list !== null) {
+        let slot: screen.PlanSlot = screen.slot("list", "the person adds " + (value.list as sketch.SketchList).label);
+        slot.writes = ["entries"]; add(slot, "part", partAt("list"), "");
+    }
+    for (let event of comp.events) {
+        let slot: screen.PlanSlot = screen.slot("event." + event.event.id, event.event.what);
+        slot.when = event.moment; slot.asked = event.event.asked; let reads: string[] = [];
+        for (let arg of event.args) {
+            let at: number = 0; let found: boolean = false; let i: number = 0;
+            for (let c of arg.source) { if (!found && c === ".") { at = i + 1; found = true; } i = i + 1; }
+            let name: string = str.substring(arg.source, at, str.length(arg.source));
+            if (str.startsWith(arg.source, "entry.")) { reads[reads.length] = "entries." + name; }
+            else if (!str.startsWith(arg.source, "fixed.")) { reads[reads.length] = name; }
+        }
+        slot.reads = unique(reads); add(slot, "effect", partAt("effects"), event.effect);
+    }
+    let block: number = parts.length; i = 0;
+    for (let kind of comp.readyKinds) {
+        if (str.length(kind) > 0) {
+            let slot: screen.PlanSlot = screen.slot("ready." + numberText(i), value.ready[i]);
+            for (let accepted of readyKinds) { slot.accepts[slot.accepts.length] = accepted; }
+            add(slot, "block", block, ""); block = block + 1;
+        }
+        i = i + 1;
+    }
+    for (let replaced of comp.replaced) {
+        let slot: screen.PlanSlot = screen.slot("section." + replaced.kind, replaced.need); slot.accepts = [replaced.kind];
+        add(slot, "block", block, ""); block = block + 1;
+    }
+    i = 0;
+    for (let need of comp.custom) {
+        let slot: screen.PlanSlot = screen.slot("custom." + numberText(i), need);
+        for (let name of comp.customReads) { slot.reads[slot.reads.length] = name; }
+        slot.phone = has(comp.phoneNeeds, need);
+        if (custom !== null) { add(slot, "hole", plan.components.length - 1, ""); } else { add(slot, "open", -1, "to be written"); }
+        i = i + 1;
+    }
+    i = 0;
+    for (let need of comp.unbound) { add(screen.slot("unbound." + numberText(i), need), "open", -1, "nothing does it"); i = i + 1; }
+    return plan;
+}

@@ -1,0 +1,40 @@
+import * as state from "./compose-state";
+import * as source from "./compose-source";
+import * as input from "./compose-input-emission";
+import * as figure from "./compose-figure-emission";
+import * as clock from "./compose-clock-emission";
+import * as list from "./compose-list-emission";
+import * as effect from "./compose-effect-emission";
+import * as events from "./compose-events";
+import * as sketch from "./sketch";
+import * as template from "./template-spec";
+import * as str from "std/string";
+
+export function compositionParts(comp: state.Composition, effects: events.Effect[], blocks: template.Fragment[],
+    numberText: (value: number) => string, lowercase: (value: string) => string): template.Fragment[] {
+    let fields: source.Field[] = source.inputFields(comp, numberText);
+    let hasClock: boolean = comp.sketch.hasCountdown || comp.sketch.hasStopwatch;
+    if (hasClock) { for (let field of source.clockFields()) { fields[fields.length] = field; } }
+    let entries: sketch.SketchList | null = comp.sketch.list;
+    if (entries !== null) { for (let field of source.entryFields(entries as sketch.SketchList, numberText)) { fields[fields.length] = field; } }
+    for (let field of source.effectFields(comp, effects)) { fields[fields.length] = field; }
+    let figures: figure.Figures = figure.figuresOf(comp, effects, numberText, lowercase);
+    let reads: boolean = false; for (let block of blocks) { for (let port of block.ports) { if (port.dir === "reads") { reads = true; } } }
+    let parts: template.Fragment[] = [];
+    if (hasClock) { parts[parts.length] = clock.clockPart(comp, fields, effects, numberText); }
+    parts[parts.length] = figure.figuresPart(comp, effects, reads, numberText);
+    parts[parts.length] = figure.heroPart(comp, figures, numberText);
+    parts[parts.length] = input.inputsPart(comp, fields, numberText, lowercase);
+    parts[parts.length] = figure.summaryPart(comp, figures, numberText);
+    if (entries !== null) { parts[parts.length] = list.listPart(comp, entries as sketch.SketchList, fields, effects, numberText, lowercase); }
+    parts[parts.length] = effect.effectsPart(comp, fields, effects, numberText);
+    if (comp.widget) { parts[parts.length] = effect.widgetPart(); }
+    let view: string[] = ["{"];
+    for (let part of parts) {
+        for (let line of str.split(part.viewBlock, "\n")) { if (str.length(line) > 0) { view[view.length] = "  " + line; } }
+        part.viewBlock = "";
+    }
+    view[view.length] = "}";
+    let screen: template.Fragment = source.part("screen", [], [], view, "", ""); screen.tab = "Overview";
+    parts[parts.length] = screen; return parts;
+}

@@ -1,0 +1,77 @@
+// VeraSmoke.ets at 7ee06af: validation policy over request-local VM mechanisms.
+// Values are opaque backend handles. Expected runtime traps are disposition
+// data; decoder/VM infrastructure exceptions propagate without authoring repair.
+export class Trap { code: string; message: string; line: number; loopLine: number; }
+export class Executed { value: string; trap: Trap | null; }
+export class Node { kind: string; label: string; children: Node[]; }
+export class Decoded { nodes: Node[]; trap: Trap | null; }
+export class Handler { name: string; kind: string; }
+export class Mechanisms {
+    execute: (name: string, args: string[]) => Executed;
+    decodeUi: (value: string) => Decoded;
+    decodeGfx: (value: string) => Trap | null;
+    numberValue: (value: number) => string;
+    stringValue: (value: string) => string;
+    booleanValue: (value: boolean) => string;
+    pointerValue: (kind: string, id: number, x: number, y: number) => string;
+    effectsAllowed: (allowed: boolean) => void;
+    clearEffects: () => void;
+    numberText: (value: number) => string;
+}
+function count(node: Node): number {
+    let total: number = 1; for (let child of node.children) { total = total + count(child); } return total;
+}
+function draw(node: Node, state: string, tools: Mechanisms): Trap | null {
+    if (node.kind === "surface" && node.label !== "") {
+        let result: Executed = tools.execute(node.label, [state]); if (result.trap !== null) { return result.trap; }
+        let trap: Trap | null = tools.decodeGfx(result.value); if (trap !== null) { return trap; }
+    }
+    for (let child of node.children) { let trap: Trap | null = draw(child, state, tools); if (trap !== null) { return trap; } } return null;
+}
+function frame(state: string, tools: Mechanisms): Decoded {
+    let view: Executed = tools.execute("view", [state]); if (view.trap !== null) { return {nodes: [], trap: view.trap}; }
+    let decoded: Decoded = tools.decodeUi(view.value); if (decoded.trap !== null) { return decoded; }
+    for (let root of decoded.nodes) { let trap: Trap | null = draw(root, state, tools); if (trap !== null) { return {nodes: [], trap: trap}; } } return decoded;
+}
+function plainValue(kind: string, tools: Mechanisms): string {
+    if (kind === "number") { return tools.numberValue(1); }
+    if (kind === "pointer") { return tools.pointerValue("down", 0, 12, 12); }
+    if (kind === "boolean") { return tools.booleanValue(true); } return tools.stringValue("12");
+}
+function after(tapped: string[]): string {
+    if (tapped.length === 0) { return ""; } let out: string = " after "; let first: number = 0;
+    if (tapped.length > 6) { out = out + "..., "; first = tapped.length - 6; }
+    let i: number = first; while (i < tapped.length) { if (i > first) { out = out + ", "; } out = out + tapped[i]; i = i + 1; } return out;
+}
+export function diagnostic(trap: Trap, when: string, numberText: (value: number) => string): string {
+    let text: string = "The program compiled, but stopped " + when + ": " + trap.message;
+    if (trap.line <= 0) { return text; }
+    let out: string = numberText(trap.line) + ":1 " + trap.code + " " + text;
+    if (trap.loopLine > 0 && trap.loopLine !== trap.line) { out = out + "\n" + numberText(trap.loopLine) + ":1 " + trap.code + " the loop it was in"; } return out;
+}
+export function smokeRun(handlers: Handler[], requireContent: boolean, tools: Mechanisms): string {
+    let initialized: Executed = tools.execute("init", []);
+    if (initialized.trap !== null) { return diagnostic(initialized.trap as Trap, "when the program starts", tools.numberText); }
+    let state: string = initialized.value; let initial: Decoded = frame(state, tools);
+    if (initial.trap !== null) { return diagnostic(initial.trap as Trap, "when the program starts", tools.numberText); }
+    let nodes: number = 0; for (let root of initial.nodes) { nodes = nodes + count(root); }
+    if (requireContent && nodes === 0) { return "The program compiled, but view() drew nothing"; }
+    if (requireContent && nodes < 2) { return "The program compiled, but view() drew an empty screen"; }
+    let tapped: string[] = []; let pass: number = 0;
+    while (pass < 2) {
+        for (let handler of handlers) {
+            tools.effectsAllowed(true); let next: Executed = {value: "", trap: null};
+            try { next = tools.execute(handler.name, [state, plainValue(handler.kind, tools)]); }
+            catch (caught) { tools.effectsAllowed(false); tools.clearEffects(); throw (caught as Error); }
+            tools.effectsAllowed(false); tools.clearEffects();
+            if (next.trap !== null) {
+                let trap: Trap = next.trap as Trap;
+                if (trap.code === "R0017" || trap.code === "R0022") { return diagnostic(trap, "in " + handler.name + after(tapped), tools.numberText); }
+                // A made-up index/value may trap: retain the state before it.
+                continue;
+            }
+            state = next.value; tapped[tapped.length] = handler.name; let rendered: Decoded = frame(state, tools);
+            if (rendered.trap !== null) { return diagnostic(rendered.trap as Trap, "drawing the screen" + after(tapped), tools.numberText); }
+        } pass = pass + 1;
+    } return "";
+}

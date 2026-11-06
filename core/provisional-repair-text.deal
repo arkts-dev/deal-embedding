@@ -1,0 +1,96 @@
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+
+// Pinned VeraRepair construction-time compatibility only. Canonical files use
+// source-repair's revision-bound, atomic exact edits, never this text protocol.
+export class Applied { source: string; edits: number; error: string; }
+class Block { search: string; replace: string; }
+function index(text: string, needle: string, start: number): number {
+    let i: number = start; while (i + str.length(needle) <= str.length(text)) {
+        if (str.substring(text, i, i + str.length(needle)) === needle) { return i; } i = i + 1;
+    } return -1;
+}
+function join(lines: string[]): string {
+    let out: string = ""; let i: number = 0; for (let line of lines) { if (i > 0) { out = out + "\n"; } out = out + line; i = i + 1; } return out;
+}
+function split(text: string): string[] { if (text === "") { return [""]; } return str.split(text, "\n"); }
+function digits(text: string): boolean {
+    if (text === "") { return false; } for (let c of text) { if (!str.contains("0123456789", c)) { return false; } } return true;
+}
+function number(text: string): number { let value: number = 0; for (let c of text) { value = value * 10 + index("0123456789", c, 0); } return value; }
+export function quoteDiagnostics(source: string, diagnostics: string, numberText: (value: number) => string): string {
+    if (source === "") { return diagnostics; } let lines: string[] = split(source); let out: string[] = []; let quoted: number = 0;
+    for (let d of split(diagnostics)) {
+        out[out.length] = d; let colon: number = index(d, ":", 0); let space: number = index(d, " ", 0);
+        if (quoted >= 12 || colon < 0 || space < colon) { continue; }
+        let lineText: string = str.substring(d, 0, colon); let colText: string = str.substring(d, colon + 1, space);
+        if (!digits(lineText) || !digits(colText)) { continue; }
+        let line: number = number(lineText); let col: number = number(colText);
+        if (line < 1 || line > lines.length) { continue; }
+        if (line > 1) { out[out.length] = "    " + numberText(line - 1) + " | " + lines[line - 2]; }
+        let gutter: string = "    " + numberText(line) + " | "; out[out.length] = gutter + lines[line - 1];
+        if (col < 1) { col = 1; } let pad: string = ""; let i: number = 1;
+        while (i < str.length(gutter) + col) { pad = pad + " "; i = i + 1; } out[out.length] = pad + "^"; quoted = quoted + 1;
+    } return join(out);
+}
+export function repairPrompt(prompt: string, diagnostics: string, source: string, numberText: (value: number) => string): string {
+    let failure: string = "failed to compile"; if (str.contains(diagnostics, "The program compiled, but")) { failure = "compiled, but failed when it ran"; }
+    return prompt + "\n\nThe program above is your previous attempt and it " + failure + ":\n" + quoteDiagnostics(source, diagnostics, numberText) + "\n\n" +
+        "Repair the failed source against these diagnostics. Preserve requested behavior and compatible state field names and types. " +
+        "Answer with edits only, not the whole program. Write one block per change:\n<<<<<<< SEARCH\nlines copied exactly from the failed program\n=======\n" +
+        "the lines that replace them\n>>>>>>> REPLACE\n" +
+        "Each SEARCH part must match exactly one place in the failed program: copy whole lines, with enough of them to be unique. " +
+        "Fix every diagnostic, and anything else that would fail the same way. Write nothing outside the blocks.";
+}
+function parseBlocks(reply: string): Block[] | null {
+    let lines: string[] = split(reply); let blocks: Block[] = []; let i: number = 0;
+    while (i < lines.length) {
+        if (decode.trim(lines[i]) !== "<<<<<<< SEARCH") { i = i + 1; continue; }
+        let search: string[] = []; let replace: string[] = []; i = i + 1;
+        while (i < lines.length && decode.trim(lines[i]) !== "=======") { search[search.length] = lines[i]; i = i + 1; }
+        if (i >= lines.length) { return null; } i = i + 1;
+        while (i < lines.length && decode.trim(lines[i]) !== ">>>>>>> REPLACE") { replace[replace.length] = lines[i]; i = i + 1; }
+        if (i >= lines.length) { return null; } i = i + 1;
+        blocks[blocks.length] = {search: join(search), replace: join(replace)};
+    } return blocks;
+}
+function applyBlock(source: string, block: Block): string | null {
+    let at: number = index(source, block.search, 0);
+    if (at >= 0 && index(source, block.search, at + 1) < 0) {
+        return str.substring(source, 0, at) + block.replace + str.substring(source, at + str.length(block.search), str.length(source));
+    }
+    let lines: string[] = split(source); let search: string[] = split(block.search); let first: number = 0; let last: number = search.length;
+    while (last > first && decode.trim(search[last - 1]) === "") { last = last - 1; }
+    while (first < last && decode.trim(search[first]) === "") { first = first + 1; }
+    if (first === last) { return null; }
+    let found: number = -1; let start: number = 0;
+    while (start + last - first <= lines.length) {
+        let same: boolean = true; let k: number = first;
+        while (k < last) { if (decode.trim(lines[start + k - first]) !== decode.trim(search[k])) { same = false; break; } k = k + 1; }
+        if (same) { if (found >= 0) { return null; } found = start; } start = start + 1;
+    }
+    if (found < 0) { return null; } let out: string[] = []; let i: number = 0;
+    for (let line of lines) { if (i < found) { out[out.length] = line; } i = i + 1; }
+    for (let line of split(block.replace)) { out[out.length] = line; } i = 0;
+    for (let line of lines) { if (i >= found + last - first) { out[out.length] = line; } i = i + 1; } return join(out);
+}
+function extract(text: string): string {
+    let trimmed: string = decode.trim(text); let fence: number = index(trimmed, "```", 0); if (fence < 0) { return trimmed; }
+    let after: number = index(trimmed, "\n", fence); if (after < 0) { return trimmed; }
+    let rest: string = str.substring(trimmed, after + 1, str.length(trimmed)); let close: number = index(rest, "```", 0);
+    if (close < 0) { return decode.trim(rest); } return decode.trim(str.substring(rest, 0, close));
+}
+export function applyProvisionalRepair(failedSource: string, reply: string, numberText: (value: number) => string): Applied {
+    let out: Applied = {source: "", edits: 0, error: ""}; let parsed: Block[] | null = parseBlocks(reply);
+    if (parsed === null) { out.error = "An edit block was not closed (each needs ======= and >>>>>>> REPLACE)."; return out; }
+    let blocks: Block[] = parsed as Block[]; if (blocks.length === 0) { out.source = extract(reply); return out; }
+    let source: string = failedSource; let n: number = 0;
+    for (let block of blocks) {
+        let next: string | null = applyBlock(source, block);
+        if (next === null) {
+            let first: string = split(decode.trim(block.search))[0];
+            out.error = "Edit " + numberText(n + 1) + " of " + numberText(blocks.length) +
+                " could not be applied: its SEARCH text is not in the program exactly once (it starts \"" + first + "\")."; return out;
+        } source = next as string; n = n + 1;
+    } out.source = decode.trim(source); out.edits = blocks.length; return out;
+}

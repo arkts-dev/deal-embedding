@@ -1,0 +1,124 @@
+import * as template from "./template-spec";
+import * as str from "std/string";
+
+export class StateItem { name: string; role: string; type: string; label: string; }
+export class PlanSlot {
+    id: string; need: string; reads: string[]; writes: string[]; when: string;
+    phone: boolean; accepts: string[]; asked: boolean; fill: string; by: number; detail: string;
+}
+export class PlanComponent { fill: string; spec: template.Fragment | null; values: template.Entry[]; }
+export class ScreenPlan {
+    origin: string; prompt: string; widget: boolean; layout: string;
+    globals: template.Entry[]; state: StateItem[]; slots: PlanSlot[]; components: PlanComponent[];
+}
+export function create(): ScreenPlan {
+    return {origin: "sketch", prompt: "", widget: false, layout: "stack",
+        globals: [], state: [], slots: [], components: []};
+}
+export function slot(id: string, need: string): PlanSlot {
+    return {id: id, need: need, reads: [], writes: [], when: "", phone: false,
+        accepts: [], asked: true, fill: "open", by: -1, detail: ""};
+}
+export function open(plan: ScreenPlan): PlanSlot[] {
+    let out: PlanSlot[] = [];
+    for (let item of plan.slots) { if (item.fill === "open") { out[out.length] = item; } }
+    return out;
+}
+export function toWrite(plan: ScreenPlan): PlanSlot[] {
+    let out: PlanSlot[] = [];
+    for (let item of plan.slots) {
+        if (item.fill === "open" && item.detail === "to be written") { out[out.length] = item; }
+    }
+    return out;
+}
+export function addToWrite(plan: ScreenPlan, id: string, need: string, phone: boolean): PlanSlot {
+    let item: PlanSlot = slot(id, need); item.detail = "to be written"; item.phone = phone;
+    plan.slots[plan.slots.length] = item;
+    return item;
+}
+export function fillWith(item: PlanSlot, fill: string, index: number, detail: string): void {
+    item.fill = fill; item.by = index; item.detail = detail;
+}
+function has(values: string[], text: string): boolean {
+    for (let value of values) { if (value === text) { return true; } }
+    return false;
+}
+export function portNames(spec: template.Fragment, dir: string): string[] {
+    let out: string[] = [];
+    for (let port of spec.ports) {
+        if (port.dir === dir && !has(out, port.name)) { out[out.length] = port.name; }
+    }
+    return out;
+}
+function acceptsOf(layouts: template.Layout[], layout: string, kind: string): string[] {
+    for (let spec of layouts) {
+        if (spec.id !== layout) { continue; }
+        for (let item of spec.slots) { if (has(item.accepts, kind)) { return item.accepts; } }
+        for (let item of spec.slots) { if (has(item.accepts, "*")) { return item.accepts; } }
+        return [];
+    }
+    return [];
+}
+export function planFromBlocks(prompt: string, layout: string, specs: (template.Fragment | null)[],
+    globals: template.Entry[], values: template.Entry[][], layouts: template.Layout[],
+    numberText: (value: number) => string): ScreenPlan {
+    let plan: ScreenPlan = create(); plan.origin = "layout"; plan.prompt = prompt; plan.layout = layout;
+    plan.globals = template.copy(globals);
+    let i: number = 0;
+    for (let maybe of specs) {
+        let fill: string = "open"; if (maybe !== null) { fill = "block"; }
+        let entries: template.Entry[] = []; if (i < values.length) { entries = values[i]; }
+        plan.components[plan.components.length] = {fill: fill, spec: maybe, values: entries};
+        if (maybe !== null) {
+            let spec: template.Fragment = maybe as template.Fragment;
+            let item: PlanSlot = slot(spec.kind + "." + numberText(i + 1), spec.criteria);
+            item.reads = portNames(spec, "reads"); item.writes = portNames(spec, "writes");
+            item.accepts = acceptsOf(layouts, layout, spec.kind); fillWith(item, "block", i, "");
+            plan.slots[plan.slots.length] = item;
+            for (let port of spec.ports) {
+                let found: boolean = false;
+                for (let state of plan.state) { if (state.name === port.name) { found = true; } }
+                if (port.dir === "writes" && !found) {
+                    plan.state[plan.state.length] = {name: port.name, role: "port", type: port.type, label: port.name};
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return plan;
+}
+function join(values: string[], separator: string): string {
+    let out: string = ""; let i: number = 0;
+    for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; }
+    return out;
+}
+export function describePlan(plan: ScreenPlan): string {
+    let lines: string[] = [];
+    for (let item of plan.slots) {
+        let kind: string = "";
+        if (item.by >= 0 && item.by < plan.components.length) {
+            let spec: template.Fragment | null = plan.components[item.by].spec;
+            if (spec !== null) { kind = (spec as template.Fragment).kind; }
+        }
+        let line: string = item.id + " " + item.fill;
+        if (str.length(item.detail) > 0) { line = line + "(" + item.detail + ")"; }
+        if (str.length(kind) > 0) { line = line + " by " + kind; }
+        if (item.reads.length > 0) { line = line + " reads " + join(item.reads, ","); }
+        if (item.writes.length > 0) { line = line + " writes " + join(item.writes, ","); }
+        if (str.length(item.when) > 0) { line = line + " when " + item.when; }
+        if (item.phone) { line = line + " (phone)"; }
+        lines[lines.length] = line + ": " + item.need;
+    }
+    return join(lines, "\n");
+}
+// The assembly implementation is injected only until the portable fragment
+// emitter is connected; open-slot refusal is always a shared-core decision.
+export function assemblePlan(plan: ScreenPlan, partial: boolean,
+    compose: (specs: (template.Fragment | null)[], globals: template.Entry[], values: template.Entry[][]) => string): string {
+    if (!partial && open(plan).length > 0) { return ""; }
+    let specs: (template.Fragment | null)[] = []; let values: template.Entry[][] = [];
+    for (let component of plan.components) {
+        specs[specs.length] = component.spec; values[values.length] = component.values;
+    }
+    return compose(specs, plan.globals, values);
+}

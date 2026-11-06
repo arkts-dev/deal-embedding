@@ -1,0 +1,233 @@
+import * as sketch from "./sketch";
+import * as choice from "./needs-choice";
+import * as answers from "./compose-answers";
+import * as strings from "std/string";
+
+// VeraCompose at 7ee06af. Effect descriptions/targets are catalogue data;
+// source eligibility, questions, confidence and event recovery stay in DEAL.
+export class EffectParam {
+    name: string;
+    kind: string;
+    key: string;
+    describe: string;
+}
+export class Effect {
+    id: string;
+    describe: string;
+    target: string;
+    fixed: string[];
+    params: EffectParam[];
+    done: string;
+    mode: string;
+    button: string;
+}
+export class Argument {
+    name: string;
+    source: string;
+}
+export class EventBinding {
+    event: sketch.SketchEvent;
+    effect: string;
+    moment: string;
+    args: Argument[];
+}
+export class CustomEffect {
+    need: string;
+    effect: string;
+}
+export class EventResult {
+    events: EventBinding[];
+    sectionInputs: string[];
+    dropped: string[];
+    claimed: string[];
+    custom: string[];
+    phoneNeeds: string[];
+    unboundNeeds: string[];
+    customEffects: CustomEffect[];
+    unbound: string[];
+    answers: string[];
+}
+function isTime(measure: string): boolean { return measure === "seconds" || measure === "minutes"; }
+function fits(param: EffectParam, kind: string, measure: string): boolean {
+    let numeric: boolean = kind !== "text" && kind !== "toggle" && kind !== "time" && kind !== "choice";
+    return (param.kind === "text" && kind === "text") || (param.kind === "clock" && kind === "time") ||
+        (param.kind === "toggle" && kind === "toggle") || (param.kind === "minutes" && numeric && isTime(measure)) ||
+        (param.kind === "number" && numeric && !isTime(measure));
+}
+function phrase(param: EffectParam, what: string): string {
+    if (param.kind === "toggle") { return "every day when " + what + " is on, once when it is off"; }
+    return what;
+}
+export function paramSources(value: sketch.Sketch, param: EffectParam, numberText: (value: number) => string): choice.Criterion[] {
+    let result: choice.Criterion[] = [];
+    let list: sketch.SketchList | null = value.list;
+    if (list !== null) {
+        for (let field of list.fields) {
+            if (fits(param, field.kind, field.measure)) {
+                result[result.length] = {key: "entry." + field.id, description: phrase(param, "the entry's \"" + field.label +
+                    "\" (the one just added, or the one whose button was tapped)")};
+            }
+        }
+    }
+    for (let input of value.inputs) {
+        if (fits(param, input.kind, input.measure)) {
+            result[result.length] = {key: "input." + input.id, description: phrase(param, "\"" + input.label + "\" as set on the screen")};
+        }
+    }
+    let zero: boolean = false;
+    for (let constant of value.constants) {
+        if (isTime(constant.measure) && constant.value === 0) { zero = true; }
+        let text: string = "0";
+        if (constant.value - constant.value === 0) { text = numberText(constant.value); }
+        if (param.kind === "minutes" && isTime(constant.measure)) {
+            result[result.length] = {key: "const." + constant.id, description: "the fixed " + constant.label + ", " + text + " " + constant.measure};
+        }
+        if (param.kind === "number" && !isTime(constant.measure)) {
+            result[result.length] = {key: "const." + constant.id, description: "the fixed " + constant.label + ", " + text};
+        }
+    }
+    if (param.kind === "number") { result[result.length] = {key: "fixed.blank", description: "left out: not known, so the app goes by the other details"}; }
+    if (param.kind === "text") { result[result.length] = {key: "fixed.title", description: "the app's title, \"" + value.title + "\""}; }
+    if (param.kind === "toggle") {
+        result[result.length] = {key: "fixed.once", description: "once, never repeating: what an event is when the request does not ask for a repeat"};
+        result[result.length] = {key: "fixed.daily", description: "every day, always: the request asks for every event to repeat daily"};
+    }
+    if (param.kind === "minutes" && !zero) {
+        result[result.length] = {key: "fixed.zero", description: "0: an alert right at the start time, which is what a reminder with no lead time named means, also when the event itself is the reminder"};
+    }
+    if (param.kind === "minutes") { result[result.length] = {key: "fixed.none", description: "no alert: the request asks for neither a reminder nor an alert"}; }
+    return result;
+}
+export function momentsOf(value: sketch.Sketch): choice.Criterion[] {
+    let result: choice.Criterion[] = [];
+    if (value.hasCountdown) { result[result.length] = {key: "countdown_end", description: "when the countdown reaches zero"}; }
+    if (value.list !== null) {
+        result[result.length] = {key: "entry_added", description: "right after the person adds an entry to the list"};
+        result[result.length] = {key: "row_button", description: "when the person taps its button on one entry of the list, for that entry"};
+    }
+    result[result.length] = {key: "button", description: "when the person taps a button for it on the screen"};
+    return result;
+}
+function otherSource(kind: string): string {
+    if (kind === "text") { return "some other title, which none of these gives"; }
+    if (kind === "clock") { return "some other time of day, which none of these gives"; }
+    if (kind === "toggle") { return "some repeat other than once or every day"; }
+    if (kind === "minutes") { return "a number of minutes that none of these holds"; }
+    if (kind === "number") { return "some other number, which none of these gives"; }
+    return "none of these";
+}
+export function eventQuestions(value: sketch.Sketch, effects: Effect[], numberText: (value: number) => string): Record<string, unknown> {
+    let result: Record<string, unknown> = {};
+    for (let event of value.events) {
+        let options: choice.Criterion[] = [];
+        for (let effect of effects) { options[options.length] = {key: effect.id, description: effect.describe}; }
+        options[options.length] = {key: "unavailable", description: "none of these"};
+        result["effect." + event.id] = choice.choice("What should the phone do " + event.when + " (\"" + event.what + "\")?", options);
+        for (let effect of effects) {
+            for (let param of effect.params) {
+                let sources: choice.Criterion[] = paramSources(value, param, numberText);
+                sources[sources.length] = {key: "unavailable", description: otherSource(param.kind)};
+                result["arg." + event.id + "." + effect.id + "." + param.name] = choice.choice("Suppose the phone is to " + effect.describe +
+                    ", at the moment \"" + event.when + "\" (\"" + event.what + "\"). Going by the request, what gives " + param.describe + "?", sources);
+            }
+        }
+        let moments: choice.Criterion[] = momentsOf(value);
+        if (moments.length > 0) {
+            moments[moments.length] = {key: "unavailable", description: "some other moment"};
+            result["moment." + event.id] = choice.choice("When does \"" + event.what + "\" happen (" + event.when + ")?", moments);
+        }
+    }
+    return result;
+}
+function effectOf(effects: Effect[], id: string): Effect | null {
+    for (let effect of effects) { if (effect.id === id) { return effect; } }
+    return null;
+}
+function keys(options: choice.Criterion[]): string[] {
+    let result: string[] = [];
+    for (let option of options) { result[result.length] = option.key; }
+    return result;
+}
+export function readEvents(value: sketch.Sketch, effects: Effect[], received: Record<string, unknown>, served: string[],
+    widget: boolean, customEnabled: boolean, numberText: (value: number) => string, fixedTwo: (value: number) => string): EventResult {
+    let result: EventResult = {events: [], sectionInputs: [], dropped: [], claimed: [], custom: [], phoneNeeds: [],
+        unboundNeeds: [], customEffects: [], unbound: [], answers: []};
+    let effectIds: string[] = [];
+    for (let effect of effects) { effectIds[effectIds.length] = effect.id; }
+    let momentIds: string[] = keys(momentsOf(value));
+    let entryAnswered: boolean = false;
+    for (let event of value.events) {
+        let within: string = answers.answerOf(received, "within.event." + event.id, served, result.answers, 0.5, fixedTwo);
+        if (strings.length(within) > 0) {
+            // served consists of issued ready.N identities, never model indexes.
+            let index: number = 0;
+            while (index < value.ready.length) {
+                if (within === "ready." + numberText(index)) {
+                    result.dropped[result.dropped.length] = "event \"" + event.what + "\": the section for \"" + value.ready[index] + "\" does it";
+                }
+                index = index + 1;
+            }
+            result.claimed[result.claimed.length] = event.what + " (" + event.when + ")";
+            let ignored: string[] = [];
+            let effect: Effect | null = effectOf(effects, answers.answerOf(received, "effect." + event.id, effectIds, ignored, 0.25, fixedTwo));
+            if (effect !== null) {
+                let selected: Effect = effect as Effect;
+                for (let param of selected.params) {
+                    let source: string = answers.answerOf(received, "arg." + event.id + "." + selected.id + "." + param.name,
+                        keys(paramSources(value, param, numberText)), ignored, 0.4, fixedTwo);
+                    if (strings.startsWith(source, "input.")) { result.sectionInputs[result.sectionInputs.length] = strings.substring(source, 6, strings.length(source)); }
+                }
+            }
+            continue;
+        }
+        let picked: string = answers.answerOf(received, "effect." + event.id, effectIds, result.answers, 0.25, fixedTwo);
+        let moment: string = "";
+        if (momentIds.length > 0) { moment = answers.answerOf(received, "moment." + event.id, momentIds, result.answers, 0.25, fixedTwo); }
+        let missing: string = "";
+        if (strings.length(picked) === 0) { missing = "no effect"; }
+        else if (strings.length(moment) === 0) { missing = "nothing on the screen marks that moment"; }
+        let effect: Effect | null = effectOf(effects, picked);
+        let args: Argument[] = [];
+        if (strings.length(missing) === 0 && effect !== null) {
+            let selected: Effect = effect as Effect;
+            for (let param of selected.params) {
+                let source: string = answers.answerOf(received, "arg." + event.id + "." + selected.id + "." + param.name,
+                    keys(paramSources(value, param, numberText)), result.answers, 0.4, fixedTwo);
+                if (strings.length(source) === 0) { missing = "nothing gives " + param.describe; break; }
+                if (strings.startsWith(source, "entry.") && moment !== "entry_added" && moment !== "row_button") {
+                    missing = param.describe + " is an entry's, but no entry is added or tapped then"; break;
+                }
+                args[args.length] = {name: param.name, source: source};
+            }
+            if (strings.length(missing) === 0 && strings.length(selected.done) > 0 && moment === "entry_added" && entryAnswered) {
+                missing = "a second answer for the same entry";
+            }
+        }
+        if (strings.length(missing) === 0) {
+            result.events[result.events.length] = {event: event, effect: picked, moment: moment, args: args};
+            if (effect !== null && strings.length((effect as Effect).done) > 0 && moment === "entry_added") { entryAnswered = true; }
+        } else if (event.asked && widget && missing === "no effect" &&
+            answers.answerOf(received, "detail.event." + event.id, ["detail"], result.answers, 0.7, fixedTwo) === "detail") {
+            result.dropped[result.dropped.length] = "event \"" + event.what + "\": a detail of how the widget looks or is worked";
+        } else if (event.asked && customEnabled) {
+            let need: string = event.what + " (" + event.when + ")";
+            result.custom[result.custom.length] = need;
+            result.phoneNeeds[result.phoneNeeds.length] = need;
+            result.unboundNeeds[result.unboundNeeds.length] = need;
+            if (strings.length(picked) > 0) {
+                let replaced: boolean = false;
+                let at: number = 0;
+                for (let previous of result.customEffects) {
+                    if (previous.need === need) { result.customEffects[at] = {need: need, effect: picked}; replaced = true; }
+                    at = at + 1;
+                }
+                if (!replaced) { result.customEffects[result.customEffects.length] = {need: need, effect: picked}; }
+            }
+        } else if (event.asked) {
+            result.unbound[result.unbound.length] = "event \"" + event.what + "\": " + missing;
+            result.unboundNeeds[result.unboundNeeds.length] = event.what + " (" + event.when + ")";
+        } else { result.dropped[result.dropped.length] = "event \"" + event.what + "\": " + missing; }
+    }
+    return result;
+}
+export function main(): null { return null; }

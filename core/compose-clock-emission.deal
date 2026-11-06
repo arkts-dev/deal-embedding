@@ -1,0 +1,42 @@
+import * as state from "./compose-state";
+import * as bindings from "./compose-bindings";
+import * as source from "./compose-source";
+import * as calls from "./compose-call-emission";
+import * as countdown from "./compose-countdown";
+import * as events from "./compose-events";
+import * as template from "./template-spec";
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+
+export function clockPart(comp: state.Composition, fields: source.Field[], effects: events.Effect[], numberText: (value: number) => string): template.Fragment {
+    let functions: string[] = []; let ticking: template.Entry[] = [{key: "elapsedMs", value: "next"}];
+    if (comp.sketch.hasCountdown) {
+        let seconds: string[] = ["function countdownSeconds(state: AppState): number {"];
+        state.append(seconds, source.inputLocals(comp, numberText)); let needed: string[] = countdown.dependsOn(comp.bindings, comp.countdownFrom);
+        for (let value of comp.sketch.values) {
+            let selected: bindings.Binding | null = state.bindingOf(comp, value.id);
+            if (decode.includes(needed, value.id) && selected !== null) { seconds[seconds.length] = "  let " + value.id + ": number = " + source.formulaExpr(selected as bindings.Binding) + ";"; }
+        }
+        let perUnit: string = ""; if (comp.countdownUnit === "minutes") { perUnit = " * 60"; }
+        let from: string = "0"; if (str.length(comp.countdownFrom) > 0) { from = comp.countdownFrom + perUnit; }
+        state.append(seconds, ["  return " + from + ";", "}"]); functions[functions.length] = source.join(seconds, "\n");
+        let effectCalls: string[] = calls.effectCallsAt(comp, effects, "countdown_end", "", numberText);
+        let done: template.Entry[] = [{key: "elapsedMs", value: "total"}, {key: "running", value: "false"}, {key: "finished", value: "true"}];
+        if (effectCalls.length > 0) { template.set(done, "effectStatus", "\"pending\""); }
+        if (calls.callsNeedLocals(comp, "countdown_end")) { let locals: string[] = source.inputLocals(comp, numberText); state.append(locals, effectCalls); effectCalls = locals; }
+        let tick: string[] = ["function onTick(state: AppState, elapsedMs: number): AppState {", "  if (!state.running) { return state; }",
+            "  let total: number = countdownSeconds(state) * 1000;", "  let next: number = state.elapsedMs + elapsedMs;",
+            "  if (next < total) { return " + source.changed(fields, ticking) + "; }"];
+        state.append(tick, effectCalls); state.append(tick, ["  return " + source.changed(fields, done) + ";", "}"]);
+        functions[functions.length] = source.join(tick, "\n");
+    } else {
+        functions[functions.length] = "function onTick(state: AppState, elapsedMs: number): AppState {\n  if (!state.running) { return state; }\n  let next: number = state.elapsedMs + elapsedMs;\n  return " + source.changed(fields, ticking) + ";\n}";
+    }
+    let start: template.Entry[] = [{key: "running", value: "true"}, {key: "finished", value: "false"}, {key: "elapsedMs", value: "startAt"}];
+    let stop: template.Entry[] = [{key: "running", value: "false"}];
+    let reset: template.Entry[] = [{key: "running", value: "false"}, {key: "finished", value: "false"}, {key: "elapsedMs", value: "0"}];
+    functions[functions.length] = "function onStart(state: AppState, ignored: number): AppState {\n  let startAt: number = state.elapsedMs;\n  if (state.finished) { startAt = 0; }\n  return " + source.changed(fields, start) + ";\n}";
+    functions[functions.length] = "function onStop(state: AppState, ignored: number): AppState {\n  return " + source.changed(fields, stop) + ";\n}";
+    functions[functions.length] = "function onReset(state: AppState, ignored: number): AppState {\n  return " + source.changed(fields, reset) + ";\n}";
+    return source.part("clock", source.clockFields(), functions, ["sections.push(ui.Ticker(\"default\", \"clock\", 200, state.running, \"onTick\"));"], "", "");
+}

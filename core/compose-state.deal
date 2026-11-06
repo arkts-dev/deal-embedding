@@ -1,0 +1,92 @@
+import * as sketch from "./sketch";
+import * as binding from "./compose-bindings";
+import * as events from "./compose-events";
+import * as countdown from "./compose-countdown";
+
+export class Named {
+    id: string;
+    value: string;
+}
+export class Replaced {
+    kind: string;
+    need: string;
+    detail: string;
+}
+export class Composition {
+    sketch: sketch.Sketch;
+    deadline: string;
+    theme: string;
+    widgets: Named[];
+    bindings: binding.Binding[];
+    countdownFrom: string;
+    countdownUnit: string;
+    events: events.EventBinding[];
+    dropped: string[];
+    defaulted: string[];
+    inputs: sketch.SketchInput[];
+    unbound: string[];
+    unboundNeeds: string[];
+    answers: string[];
+    provisional: boolean;
+    widget: boolean;
+    figures: boolean;
+    blocks: string[];
+    readyKinds: string[];
+    realData: boolean;
+    custom: string[];
+    customReads: string[];
+    phoneNeeds: string[];
+    customEffects: events.CustomEffect[];
+    claimed: string[];
+    replaced: Replaced[];
+}
+// withList deliberately resets questions, as the pinned reference constructor
+// does. All other arrays retain their reference identity unless copied below.
+export function withList(value: sketch.Sketch, list: sketch.SketchList | null): sketch.Sketch {
+    return {title: value.title, eyebrow: value.eyebrow, subtitle: value.subtitle, inputs: value.inputs,
+        constants: value.constants, values: value.values, countdown: value.countdown, hasCountdown: value.hasCountdown,
+        countdownLength: value.countdownLength, stopwatch: value.stopwatch, hasStopwatch: value.hasStopwatch,
+        list: list, events: value.events, ready: value.ready, questions: [], other: value.other};
+}
+export function create(value: sketch.Sketch, widget: boolean): Composition {
+    let copy: sketch.Sketch = withList(value, value.list);
+    let inputs: sketch.SketchInput[] = [];
+    for (let input of value.inputs) { inputs[inputs.length] = input; }
+    copy.inputs = inputs;
+    return {sketch: copy, deadline: "", theme: "clean", widgets: [], bindings: [], countdownFrom: "", countdownUnit: "seconds",
+        events: [], dropped: [], defaulted: [], inputs: [], unbound: [], unboundNeeds: [], answers: [], provisional: false,
+        widget: widget, figures: false, blocks: [], readyKinds: [], realData: false, custom: [], customReads: [], phoneNeeds: [],
+        customEffects: [], claimed: [], replaced: []};
+}
+export function setNamed(values: Named[], id: string, value: string): void {
+    let index: number = 0;
+    for (let named of values) {
+        if (named.id === id) { values[index] = {id: id, value: value}; return; }
+        index = index + 1;
+    }
+    values[values.length] = {id: id, value: value};
+}
+export function bindingOf(comp: Composition, id: string): binding.Binding | null {
+    for (let selected of comp.bindings) { if (selected.id === id) { return selected; } }
+    return null;
+}
+export function append(target: string[], source: string[]): void {
+    for (let item of source) { target[target.length] = item; }
+}
+export function defaultWidget(kind: string): string {
+    if (kind === "amount") { return "typed_number"; }
+    if (kind === "percent") { return "slider"; }
+    if (kind === "count") { return "stepper"; }
+    if (kind === "choice") { return "select"; }
+    if (kind === "text") { return "text_field"; }
+    if (kind === "time") { return "time_field"; }
+    return "switch";
+}
+export function addDefault(comp: Composition, id: string, label: string, measure: string, number: number,
+    numberText: (value: number) => string): void {
+    let input: sketch.SketchInput = countdown.defaultInput(id, label, measure, number);
+    comp.sketch.inputs[comp.sketch.inputs.length] = input;
+    setNamed(comp.widgets, id, defaultWidget(input.kind));
+    comp.defaulted[comp.defaulted.length] = countdown.defaultNotice(input, numberText);
+}
+export function main(): null { return null; }

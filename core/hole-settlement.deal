@@ -1,0 +1,116 @@
+import * as screen from "./screen-plan";
+import * as template from "./template-spec";
+import * as text from "./section-text";
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+
+export class Written {
+    section: template.Fragment | null; cannot: string; declined: template.Entry[];
+    thought: boolean; missed: string[]; attempts: number; failed: string; ms: number;
+}
+export class HoleRecord {
+    prompt: string; origin: string; needs: string[]; phone: boolean[]; outcome: string;
+    attempts: number; thought: boolean; ms: number; missed: string[]; why: string; code: string;
+    whole: boolean; lookup: string;
+}
+export function result(): Written {
+    return {section: null, cannot: "", declined: [], thought: false, missed: [], attempts: 0, failed: "", ms: 0};
+}
+export function recordOf(plan: screen.ScreenPlan, prompt: string, slots: screen.PlanSlot[], written: Written, outcome: string): HoleRecord {
+    let needs: string[] = []; let phones: boolean[] = [];
+    for (let slot of slots) { needs[needs.length] = slot.need; phones[phones.length] = slot.phone; }
+    let why: string = written.failed; if (str.length(written.cannot) > 0) { why = written.cannot; }
+    let code: string = "";
+    if (written.section !== null) {
+        let section: template.Fragment = written.section as template.Fragment; let fields: string[] = [];
+        for (let field of section.stateFields) { fields[fields.length] = field.name + ": " + field.type; }
+        code = section.supportClass + "\n" + join(fields, "\n") + "\n" + section.functions + "\n" + section.viewBlock;
+    }
+    return {prompt: prompt, origin: plan.origin, needs: needs, phone: phones, outcome: outcome, attempts: written.attempts,
+        thought: written.thought, ms: written.ms, missed: written.missed, why: why, code: code, whole: false, lookup: ""};
+}
+function join(values: string[], separator: string): string {
+    let out: string = ""; let i: number = 0;
+    for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; }
+    return out;
+}
+function literal(value: string): string {
+    return decode.trim(text.replaceAll(text.replaceAll(text.replaceAll(value, "\\", "/"), "\"", "'"), "\n", " "));
+}
+// Search and UTF-16 slicing are injected string mechanisms. Sentence selection
+// and the 140/137 cap remain pinned policy in DEAL.
+export class NoticePrimitives {
+    sentenceEnd: (value: string) => number;
+    utf16Length: (value: string) => number;
+    first137: (value: string) => string;
+}
+export function noticeBlock(cannot: boolean, why: string, tools: NoticePrimitives): template.Fragment {
+    let unchecked: boolean = !cannot && str.startsWith(why, "It may not do");
+    let title: string = "Part of this app could not be built";
+    let body: string = "Try asking for it again, or describe it differently.";
+    if (cannot) {
+        title = "Not available on this phone"; body = decode.trim(why);
+        let at: number = tools.sentenceEnd(body);
+        if (at > 0) {
+            // A scalar-safe prefix is supplied by the same regex mechanism
+            // below through the original string's ASCII punctuation position.
+            let i: number = 0; let units: number = 0; let end: number = 0;
+            for (let c of body) { units = units + tools.utf16Length(c); i = i + 1; if (units <= at + 1) { end = i; } }
+            body = str.substring(body, 0, end);
+        }
+        if (tools.utf16Length(body) > 140) { body = decode.trim(tools.first137(body)) + "..."; }
+    } else if (unchecked) { title = "Not checked"; body = "This part may not work exactly as described."; }
+    let view: string = "{\n  sections.push(ui.Section(\"supporting\", \"\", \"\", [ui.InsetBanner(\"warning\", \"" + literal(title) + "\", \"" +
+        literal(body) + "\", \"\", \"\", \"warning\")]));\n}";
+    return {kind: "notice", criteria: "", supportClass: "", stateFields: [], initStatements: "", initEntries: "", functions: "",
+        viewBlock: view, imports: [], ports: [], holes: [], indexed: false, owns: "", tab: ""};
+}
+export function quietSubtitle(plan: screen.ScreenPlan): void {
+    for (let component of plan.components) { if (component.fill === "reported") { template.set(plan.globals, "__SUPPORTING__", ""); return; } }
+}
+function component(plan: screen.ScreenPlan, fill: string, spec: template.Fragment): number {
+    plan.components[plan.components.length] = {fill: fill, spec: spec, values: []}; return plan.components.length - 1;
+}
+export function settle(plan: screen.ScreenPlan, prompt: string, slots: screen.PlanSlot[], whole: boolean, phone: string,
+    written: Written, cannot: template.Entry[], onHole: (record: HoleRecord) => void, tools: NoticePrimitives): void {
+    if (str.length(written.cannot) > 0 && slots.length === 1 && slots[0].phone) { template.set(cannot, slots[0].need, written.cannot); }
+    let outcome: string = "reported";
+    if (written.section !== null) { outcome = "written"; if (written.missed.length > 0) { outcome = "partial"; } }
+    let record: HoleRecord = recordOf(plan, prompt, slots, written, outcome); record.whole = whole; record.lookup = phone; onHole(record);
+    if (written.section !== null) {
+        let at: number = component(plan, "hole", written.section as template.Fragment);
+        let missed: screen.PlanSlot[] = []; let unread: screen.PlanSlot[] = [];
+        // The typed index table below stores actual numeric indices separately;
+        // string formatting is never used as a backend-dependent lookup key.
+        let reasons: string[] = []; let indices: number[] = [];
+        for (let slot of slots) {
+            if (decode.includes(written.missed, slot.need)) {
+                missed[missed.length] = slot;
+                let why: string | undefined = template.get(written.declined, slot.need);
+                if (why === undefined) { unread[unread.length] = slot; }
+                else if (!decode.includes(reasons, why as string)) {
+                    reasons[reasons.length] = why as string;
+                    indices[indices.length] = component(plan, "reported", noticeBlock(true, why as string, tools));
+                }
+            }
+        }
+        if (unread.length > 0) {
+            let needs: string[] = []; for (let slot of unread) { needs[needs.length] = slot.need; }
+            component(plan, "reported", noticeBlock(false, "It may not do: " + join(needs, "; ") + ".", tools));
+        }
+        for (let slot of slots) {
+            if (!decode.includes(written.missed, slot.need)) { screen.fillWith(slot, "hole", at, ""); continue; }
+            let why: string | undefined = template.get(written.declined, slot.need);
+            if (why !== undefined) {
+                let i: number = 0;
+                for (let reason of reasons) { if (reason === (why as string)) { screen.fillWith(slot, "reported", indices[i], why as string); break; } i = i + 1; }
+            } else { screen.fillWith(slot, "reported", plan.components.length - 1, written.failed); }
+        }
+    } else if (!whole) {
+        let refused: boolean = str.length(written.cannot) > 0; let why: string = written.cannot;
+        if (!refused) { let needs: string[] = []; for (let slot of slots) { needs[needs.length] = slot.need; }
+            why = "Not built: " + join(needs, "; ") + ". " + written.failed; }
+        let at: number = component(plan, "reported", noticeBlock(refused, why, tools));
+        for (let slot of slots) { screen.fillWith(slot, "reported", at, why); }
+    }
+}

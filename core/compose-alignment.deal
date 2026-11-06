@@ -1,0 +1,177 @@
+import * as state from "./compose-state";
+import * as sections from "./compose-sections";
+import * as catalogue from "./catalogue-contracts";
+import * as template from "./template-spec";
+import * as choice from "./needs-choice";
+import * as decode from "./plan-decoding";
+import * as sketch from "./sketch";
+import * as json from "std/json";
+import * as str from "std/string";
+
+export class RealDataQuestion { instructions: string; criteria: template.Entry[]; }
+export class Configuration { wide: boolean; custom: boolean; readyKinds: string[]; realData: RealDataQuestion | null; }
+export class Need { need: string; kind: string; p: number; rejected: string; }
+export class Result { asked: Need[]; added: string[]; taken: string[]; realData: boolean; readers: number; note: string; ms: number; }
+export function create(): Result { return {asked: [], added: [], taken: [], realData: false, readers: 0, note: "", ms: 0}; }
+function ownContent(): string[] { return ["reminders", "calendar_event", "timer", "note", "rating", "record_log", "progress_goal"]; }
+function notOffered(): string[] { return ["actions", "metrics", "intent_panel", "filter_box"]; }
+function standalone(spec: template.Fragment): boolean { for (let port of spec.ports) { if (port.dir === "reads" && !port.optional) { return false; } } return true; }
+function isReader(kind: string, specs: catalogue.CatalogueEntry[]): boolean {
+    let found: catalogue.CatalogueEntry | null = catalogue.find(specs, kind); return found !== null && !standalone((found as catalogue.CatalogueEntry).fragment);
+}
+function isContent(kind: string, specs: catalogue.CatalogueEntry[]): boolean { return !decode.includes(ownContent(), kind) && !isReader(kind, specs); }
+export function alignKinds(specs: catalogue.CatalogueEntry[], config: Configuration): string[] {
+    let out: string[] = []; state.append(out, config.readyKinds); state.append(out, ["reminders", "calendar_event"]);
+    if (config.wide) { for (let spec of specs) {
+        let kind: string = spec.fragment.kind;
+        if (standalone(spec.fragment) && !decode.includes(notOffered(), kind) && !decode.includes(out, kind)) { out[out.length] = kind; }
+    } } return out;
+}
+export function alignKindsFor(comp: state.Composition, specs: catalogue.CatalogueEntry[], config: Configuration): string[] {
+    let out: string[] = []; for (let kind of alignKinds(specs, config)) {
+        if (kind === "timer" && (comp.sketch.hasCountdown || comp.sketch.hasStopwatch)) { continue; }
+        if ((kind === "record_log" || kind === "reminders") && comp.sketch.list !== null && !sections.canReplaceList(comp, kind)) { continue; }
+        out[out.length] = kind;
+    } return out;
+}
+export function readerCandidates(comp: state.Composition): string[] {
+    let out: string[] = []; for (let need of comp.custom) {
+        if (!str.startsWith(need, "the figure \"") && !str.startsWith(need, "a scene the app draws itself: ")) { out[out.length] = need; }
+    } return out;
+}
+export function candidates(comp: state.Composition, lowercase: (value: string) => string): string[] {
+    let bar: boolean = false; for (let value of comp.sketch.values) { if (value.format === "fraction") { bar = true; } }
+    let out: string[] = []; for (let need of comp.custom) {
+        if (str.contains(need, " -- these are the person's own") || str.startsWith(need, "the figure \"") || str.startsWith(need, "a scene the app draws itself: ")) { continue; }
+        if (bar && str.contains(lowercase(need), "progress")) { continue; } out[out.length] = need;
+    } return out;
+}
+export function readerKinds(comp: state.Composition, specs: catalogue.CatalogueEntry[], wide: boolean): string[] {
+    let out: string[] = []; if (!wide) { return out; } let published: string[] = [];
+    for (let spec of specs) { if (decode.includes(comp.blocks, spec.fragment.kind)) { for (let port of spec.fragment.ports) {
+        if (port.dir === "writes") { published[published.length] = port.name + ":" + port.type; }
+    } } }
+    for (let spec of specs) {
+        let kind: string = spec.fragment.kind;
+        if (standalone(spec.fragment) || decode.includes(comp.blocks, kind) || decode.includes(notOffered(), kind)) { continue; }
+        let fed: boolean = true; for (let port of spec.fragment.ports) {
+            if (port.dir === "reads" && !port.optional && !decode.includes(published, port.name + ":" + port.type)) { fed = false; }
+        } if (fed) { out[out.length] = kind; }
+    } return out;
+}
+export function buildRequest(prompt: string, needs: string[], kinds: string[], shows: string,
+    specs: catalogue.CatalogueEntry[], realData: RealDataQuestion | null, numberText: (value: number) => string): string {
+    let questions: Record<string, unknown> = {}; let criteria: choice.Criterion[] = []; let content: boolean = false;
+    for (let spec of specs) { if (decode.includes(kinds, spec.fragment.kind)) { criteria[criteria.length] = {key: spec.fragment.kind, description: spec.fragment.criteria}; } }
+    criteria[criteria.length] = {key: "none", description: "no listed part does it"};
+    for (let kind of kinds) { if (isContent(kind, specs)) { content = true; } }
+    let i: number = 0; for (let need of needs) {
+        let instructions: string = "A person asked for an app. One thing it must do: \"" + need + "\". Which ready-made part of the screen does " +
+            "exactly that on its own, with nothing important missing? Answer none if no listed part does it.";
+        if (shows !== "") { instructions = instructions + " The screen already shows " + shows + ": a part that would only repeat one of these, or count something else, is not what is asked."; }
+        questions["need." + numberText(i)] = choice.choice(instructions, criteria);
+        if (content) { questions["whose." + numberText(i)] = choice.choice("What does \"" + need + "\" show or do?", [
+            {key: "own", description: "the person's own data, or what is worked out from it or done with it: what they entered, their totals, who owes whom, their progress, marks they make on their own entries"},
+            {key: "written", description: "facts, places, steps, figures or suggestions that anyone could look up or write for the request, before the person enters anything"}]); }
+        i = i + 1;
+    }
+    if (realData !== null) {
+        let options: choice.Criterion[] = []; for (let entry of (realData as RealDataQuestion).criteria) { options[options.length] = {key: entry.key, description: entry.value}; }
+        questions.real_data = choice.choice((realData as RealDataQuestion).instructions, options);
+    } return json.stringify({model: "jev-latest", state: prompt, questions: questions}) as string;
+}
+function answerOf(answers: Record<string, unknown>, key: string): Record<string, unknown> | null {
+    let value: unknown = answers[key]; if (value === null || value === undefined) { return null; } return value as Record<string, unknown>;
+}
+function confidence(answer: Record<string, unknown>): number { if (typeof answer.confidence === "number") { return answer.confidence as number; } return 1; }
+function ownProbability(answer: Record<string, unknown> | null): number {
+    if (answer === null) { return 0; } let a: Record<string, unknown> = answer as Record<string, unknown>; let probabilities: unknown = a.probabilities;
+    if (probabilities !== null && probabilities !== undefined) {
+        let own: unknown = (probabilities as Record<string, unknown>).own; if (typeof own === "number") { return own as number; }
+    }
+    if (typeof a.choice === "string" && (a.choice as string) === "own") { return confidence(a); } return 0;
+}
+export function readAlignment(body: string, needs: string[], result: Result, kinds: string[], specs: catalogue.CatalogueEntry[], numberText: (value: number) => string): void {
+    let answers: Record<string, unknown> = {};
+    try { let found: unknown = json.parse(body).answers; if (found !== null && found !== undefined) { answers = found as Record<string, unknown>; } }
+    catch (caught) { let error: Error = caught as Error; if (error.code !== "INVALID_JSON" && error.code !== "E8001") { throw error; } }
+    let i: number = 0; for (let need of needs) {
+        let aligned: Need = {need: need, kind: "", p: 0, rejected: ""}; let a: Record<string, unknown> | null = answerOf(answers, "need." + numberText(i));
+        if (a !== null) {
+            let answer: Record<string, unknown> = a as Record<string, unknown>; let selected: string = "";
+            if (typeof answer.choice === "string") { selected = answer.choice as string; } aligned.p = confidence(answer);
+            if (decode.includes(kinds, selected) && aligned.p >= 0.5) { aligned.kind = selected; }
+        }
+        if (ownProbability(answerOf(answers, "whose." + numberText(i))) >= 0.2 && aligned.kind !== "" && isContent(aligned.kind, specs)) {
+            aligned.rejected = aligned.kind; aligned.kind = "";
+        } result.asked[result.asked.length] = aligned; i = i + 1;
+    }
+    let real: Record<string, unknown> | null = answerOf(answers, "real_data");
+    if (real !== null) { let a: Record<string, unknown> = real as Record<string, unknown>;
+        result.realData = typeof a.choice === "string" && (a.choice as string) === "true" && confidence(a) >= 0.35;
+    }
+}
+function without(values: string[], remove: string): string[] { let out: string[] = []; for (let value of values) { if (value !== remove) { out[out.length] = value; } } return out; }
+export function applyAlignment(comp: state.Composition, result: Result, specs: catalogue.CatalogueEntry[], custom: boolean): void {
+    for (let aligned of result.asked) {
+        if (aligned.kind === "") { continue; }
+        if (decode.includes(comp.blocks, aligned.kind) && !decode.includes(result.added, aligned.kind)) { continue; }
+        if (!decode.includes(result.added, aligned.kind)) {
+            if (comp.sketch.list !== null && sections.canReplaceList(comp, aligned.kind)) { sections.replaceList(comp, aligned.kind, custom); }
+            else { comp.blocks[comp.blocks.length] = aligned.kind; } result.added[result.added.length] = aligned.kind;
+        }
+        result.taken[result.taken.length] = aligned.need; comp.custom = without(comp.custom, aligned.need);
+        comp.phoneNeeds = without(comp.phoneNeeds, aligned.need); comp.unboundNeeds = without(comp.unboundNeeds, aligned.need);
+    }
+    if (result.taken.length > 0 && comp.custom.length === 0 && comp.customReads.length > 0) {
+        let removed: string[] = []; let kept: sketch.SketchInput[] = [];
+        for (let input of comp.inputs) { if (decode.includes(comp.customReads, input.id)) { removed[removed.length] = "\"" + input.label + "\""; } else { kept[kept.length] = input; } }
+        if (removed.length > 0) {
+            let names: string = ""; for (let name of removed) { if (names !== "") { names = names + ", "; } names = names + name; }
+            comp.dropped[comp.dropped.length] = "input " + names + ": a section does it"; comp.inputs = kept;
+        } comp.customReads = [];
+    }
+    if (result.realData) { for (let kind of result.added) { if (isContent(kind, specs)) { comp.realData = true; } } }
+}
+function screenShows(comp: state.Composition): string {
+    let labels: string[] = []; for (let input of comp.sketch.inputs) { labels[labels.length] = input.label; }
+    for (let value of comp.sketch.values) { labels[labels.length] = value.label; }
+    let out: string = ""; let i: number = 0; for (let label of labels) {
+        if (i >= 10) { break; } if (i > 0) { out = out + ", "; } out = out + "\"" + label + "\""; i = i + 1;
+    } return out;
+}
+async function round(comp: state.Composition, prompt: string, ask: (body: string) => Promise<string>, needs: string[], kinds: string[],
+    result: Result, specs: catalogue.CatalogueEntry[], config: Configuration, numberText: (value: number) => string): Promise<boolean> {
+    let body: string = await ask(buildRequest(prompt, needs, kinds, screenShows(comp), specs, config.realData, numberText));
+    if (body === "") { return false; } let current: Result = create(); readAlignment(body, needs, current, kinds, specs, numberText);
+    applyAlignment(comp, current, specs, config.custom); for (let need of current.asked) { result.asked[result.asked.length] = need; }
+    state.append(result.added, current.added); state.append(result.taken, current.taken); if (current.realData) { result.realData = true; } return true;
+}
+export async function alignLeftovers(comp: state.Composition, prompt: string, ask: (body: string) => Promise<string>, specs: catalogue.CatalogueEntry[],
+    config: Configuration, lowercase: (value: string) => string, numberText: (value: number) => string,
+    fixedTwo: (value: number) => string, now: () => number): Promise<Result> {
+    let result: Result = create();
+    if (candidates(comp, lowercase).length === 0 && (readerKinds(comp, specs, config.wide).length === 0 || readerCandidates(comp).length === 0)) { return result; }
+    let started: number = now(); let answered: boolean = true; let readers: string[] = readerKinds(comp, specs, config.wide);
+    if (readers.length > 0) { answered = await round(comp, prompt, ask, readerCandidates(comp), readers, result, specs, config, numberText); }
+    let rest: string[] = candidates(comp, lowercase);
+    if (answered && rest.length > 0) {
+        let before: number = comp.blocks.length; answered = await round(comp, prompt, ask, rest, alignKindsFor(comp, specs, config), result, specs, config, numberText);
+        let more: string[] = []; if (answered && comp.blocks.length > before) { more = readerKinds(comp, specs, config.wide); }
+        let left: string[] = readerCandidates(comp);
+        if (more.length > 0 && left.length > 0) { await round(comp, prompt, ask, left, more, result, specs, config, numberText); }
+    }
+    for (let kind of result.added) { if (isReader(kind, specs)) { result.readers = result.readers + 1; } }
+    result.ms = now() - started;
+    if (!answered) { result.note = "; align: Jev did not answer"; return result; }
+    result.note = "; align: "; let i: number = 0;
+    for (let need of result.asked) {
+        if (i > 0) { result.note = result.note + ", "; }
+        if (need.kind !== "") { result.note = result.note + need.kind + "@" + fixedTwo(need.p); }
+        else if (need.rejected !== "") { result.note = result.note + "none(own, not " + need.rejected + ")"; }
+        else { result.note = result.note + "none"; } i = i + 1;
+    }
+    if (result.added.length > 0) { result.note = result.note + " -> sections "; i = 0;
+        for (let kind of result.added) { if (i > 0) { result.note = result.note + "+"; } result.note = result.note + kind; i = i + 1; }
+    } return result;
+}

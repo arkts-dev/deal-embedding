@@ -1,0 +1,58 @@
+import * as sketch from "./sketch";
+import * as choice from "./needs-choice";
+import * as decode from "./plan-decoding";
+import * as json from "std/json";
+
+export class Question { text: string; options: string[]; fallback: number; }
+export class Asked { question: string; answer: string; changed: boolean; waitedMs: number; }
+function join(values: string[], separator: string): string {
+    let out: string = ""; let i: number = 0; for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; } return out;
+}
+export function blockingRequest(prompt: string, questions: sketch.SketchQuestion[], numberText: (value: number) => string): string {
+    let asked: Record<string, unknown> = {}; let i: number = 0;
+    for (let q of questions) {
+        asked["blocking." + numberText(i)] = choice.choice("Can a good app be made for this request without asking \"" + q.ask + "\" (" + join(q.options, " / ") +
+            "), by taking \"" + q.options[q.fallback] + "\"?", [
+            {key: "ask", description: "no: the request does not say, the answer changes what the app is, and taking \"" + q.options[q.fallback] + "\" would often be wrong"},
+            {key: "skip", description: "yes: the request already says, or \"" + q.options[q.fallback] + "\" is a sensible choice the person can change later"}]); i = i + 1;
+    } return json.stringify({model: "jev-latest", state: "Request: " + prompt, questions: asked}) as string;
+}
+export function blockingOf(body: string, questions: sketch.SketchQuestion[], numberText: (value: number) => string): sketch.SketchQuestion[] {
+    let out: sketch.SketchQuestion[] = [];
+    try {
+        let parsed: Record<string, unknown> | null = decode.objectOrNull(json.parse(body));
+        if (parsed === null) { return []; }
+        let rawAnswers: Record<string, unknown> | null = decode.objectOrNull((parsed as Record<string, unknown>).answers);
+        if (rawAnswers === null) { return []; }
+        let answers: Record<string, unknown> = rawAnswers as Record<string, unknown>; let i: number = 0;
+        for (let q of questions) {
+            let a: Record<string, unknown> | null = decode.objectOrNull(answers["blocking." + numberText(i)]);
+            if (a !== null) {
+                let p: Record<string, unknown> | null = decode.objectOrNull((a as Record<string, unknown>).probabilities);
+                if (p !== null) { let ask: unknown = (p as Record<string, unknown>).ask;
+                    if (typeof ask === "number" && (ask as number) >= 0.6) { out[out.length] = q; }
+                }
+            } i = i + 1;
+        }
+    } catch (caught) { let error: Error = caught as Error; if (error.code !== "INVALID_JSON" && error.code !== "E8001") { throw error; } return []; }
+    return out;
+}
+export async function askBlocking(prompt: string, questions: sketch.SketchQuestion[], askJev: (body: string) => Promise<string>,
+    ask: (question: Question) => Promise<unknown>, log: Asked[], now: () => number, numberText: (value: number) => string): Promise<string> {
+    let body: string = await askJev(blockingRequest(prompt, questions, numberText));
+    let blocking: sketch.SketchQuestion[] = blockingOf(body, questions, numberText); let lines: string[] = [];
+    for (let q of blocking) {
+        let started: number = now(); let picked: unknown = await ask({text: q.ask, options: q.options, fallback: q.fallback});
+        let entry: Asked = {question: q.ask, answer: "", changed: false, waitedMs: now() - started}; let typed: string = "";
+        if (typeof picked === "string") { typed = decode.trim(picked as string); }
+        if (typed !== "") {
+            entry.answer = typed + " (typed)"; entry.changed = true; log[log.length] = entry; lines[lines.length] = q.ask + " " + typed; continue;
+        }
+        let chosen: number = -1; if (typeof picked === "number") { chosen = picked as number; }
+        let index: number = chosen; if (chosen < 0 || chosen >= q.options.length) { index = q.fallback; }
+        let suffix: string = " (default)"; if (typeof picked === "number") { suffix = ""; }
+        entry.answer = q.options[index] + suffix; entry.changed = index !== q.fallback; log[log.length] = entry;
+        if (entry.changed) { lines[lines.length] = q.ask + " " + q.options[index]; }
+    }
+    if (lines.length > 0) { return "The person was asked, and answered:\n- " + join(lines, "\n- "); } return "";
+}

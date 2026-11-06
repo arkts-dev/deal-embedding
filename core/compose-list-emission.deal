@@ -1,0 +1,142 @@
+import * as state from "./compose-state";
+import * as sketch from "./sketch";
+import * as source from "./compose-source";
+import * as calls from "./compose-call-emission";
+import * as effectsText from "./compose-effect-emission";
+import * as figures from "./compose-figure-emission";
+import * as events from "./compose-events";
+import * as template from "./template-spec";
+import * as str from "std/string";
+
+function first(list: sketch.SketchList, kind: string): sketch.ListField | null {
+    for (let field of list.fields) { if (field.kind === kind) { return field; } } return null;
+}
+function effectOf(effects: events.Effect[], id: string): events.Effect {
+    for (let effect of effects) { if (effect.id === id) { return effect; } }
+    throw {code: "COMPOSE_EFFECT", message: "Missing list effect"};
+}
+function shown(field: sketch.ListField, numberText: (value: number) => string): string {
+    if (field.kind === "text") { return "e." + field.id; }
+    if (field.kind === "time") { return "ui.clockToString(e." + field.id + ")"; }
+    return source.entryAmountText(field, numberText);
+}
+export function listPart(comp: state.Composition, list: sketch.SketchList, fields: source.Field[], effects: events.Effect[],
+    numberText: (value: number) => string, lowercase: (value: string) => string): template.Fragment {
+    let entryClass: string[] = ["@jsonable", "class LogEntry {"];
+    for (let field of list.fields) { entryClass[entryClass.length] = "  " + field.id + ": " + source.entryType(field) + ";"; }
+    entryClass[entryClass.length] = "  minute: number;"; let answering: string = source.entryAnswerEvent(comp, effects);
+    if (str.length(answering) > 0) { entryClass[entryClass.length] = "  status: string;"; } entryClass[entryClass.length] = "}";
+    let functions: string[] = [];
+    for (let field of list.fields) {
+        let replaced: template.Entry[] = [{key: source.draftOf(field), value: "value"}];
+        functions[functions.length] = "function set_" + source.draftOf(field) + "(state: AppState, value: " + source.draftType(field) + "): AppState {\n  return " + source.changed(fields, replaced) + ";\n}";
+    }
+    let added: template.Entry[] = [{key: "entries", value: "out"}, {key: "removedEntries", value: "none"}];
+    for (let field of list.fields) { if (source.draftType(field) === "string") { template.set(added, source.draftOf(field), "\"\""); } }
+    let effectCalls: string[] = calls.effectCallsAt(comp, effects, "entry_added", "", numberText);
+    for (let event of comp.events) { if (event.moment === "entry_added" && event.event.id !== answering) { template.set(added, "effectStatus", "\"pending\""); } }
+    let add: string[] = ["function addEntry(state: AppState, ignored: number): AppState {"];
+    let required: sketch.ListField | null = first(list, "text"); if (required === null) { required = first(list, "number"); }
+    if (required !== null) { add[add.length] = "  if (strings.trim(state." + source.draftOf(required as sketch.ListField) + ") === \"\") { return state; }"; }
+    if (calls.callsNeedLocals(comp, "entry_added")) { state.append(add, source.inputLocals(comp, numberText)); }
+    let members: string[] = []; for (let field of list.fields) { members[members.length] = field.id + ": " + source.draftValue(field); }
+    members[members.length] = "minute: time.hourOfDay() * 60 + time.minuteOfHour()";
+    if (str.length(answering) > 0) { members[members.length] = "status: \"pending\""; }
+    state.append(add, ["  let none: LogEntry[] = [];", "  let entry: LogEntry = {" + source.join(members, ", ") + "};", "  let out: LogEntry[] = [];",
+        "  for (let e: LogEntry of state.entries) { out.push(e); }", "  out.push(entry);"]);
+    state.append(add, effectCalls); state.append(add, ["  return " + source.changed(fields, added) + ";", "}"]); functions[functions.length] = source.join(add, "\n");
+    let laps: boolean = figures.hasLaps(comp, effects, lowercase);
+    if (laps) {
+        let lapMembers: string[] = []; let worded: boolean = false; let numbered: boolean = false; let timed: boolean = false;
+        let total: sketch.ListField | null = first(list, "number");
+        for (let field of list.fields) {
+            let value: string = "0";
+            if (field.kind === "text" && !worded) { value = "\"Lap \" + ui.numberToString(state.entries.length() + 1)"; worded = true; }
+            else if (field.kind === "number" && !numbered) { value = "math.round(state.elapsedMs / 1000)"; numbered = true; }
+            else if (field.kind === "number" && !timed) { value = "math.round(state.elapsedMs / 1000) - before"; timed = true; }
+            else if (field.kind === "text") { value = "\"\""; } else if (field.kind === "toggle") { value = "false"; }
+            lapMembers[lapMembers.length] = field.id + ": " + value;
+        }
+        lapMembers[lapMembers.length] = "minute: time.hourOfDay() * 60 + time.minuteOfHour()";
+        let lapped: template.Entry[] = [{key: "entries", value: "out"}, {key: "removedEntries", value: "none"}];
+        functions[functions.length] = source.join(["function lapEntry(state: AppState, ignored: number): AppState {", "  let none: LogEntry[] = [];", "  let before: number = 0;",
+            "  if (state.entries.length() > 0) { before = state.entries[state.entries.length() - 1]." + (total as sketch.ListField).id + "; }",
+            "  let lap: LogEntry = {" + source.join(lapMembers, ", ") + "};", "  let out: LogEntry[] = [];",
+            "  for (let e: LogEntry of state.entries) { out.push(e); }", "  out.push(lap);", "  return " + source.changed(fields, lapped) + ";", "}"], "\n");
+    }
+    if (str.length(answering) > 0) {
+        let copied: string[] = []; for (let field of list.fields) { copied[copied.length] = field.id + ": e." + field.id; }
+        state.append(copied, ["minute: e.minute", "status: value"]);
+        let answered: template.Entry[] = [{key: "entries", value: "out"}]; let capture: boolean = false;
+        for (let event of comp.events) { if (event.event.id === answering && event.effect === "calendar_add" && source.keepsCalendarIds(comp)) { capture = true; } }
+        if (capture) { template.set(answered, "calendarIds", "ids"); }
+        let answer: string[] = ["function onEntryAnswer(state: AppState, value: string): AppState {"];
+        if (capture) { state.append(answer, effectsText.idCapture()); }
+        state.append(answer, ["  let out: LogEntry[] = [];", "  let marked: boolean = false;", "  for (let e: LogEntry of state.entries) {",
+            "    if (marked === false && e.status === \"pending\") {", "      let answered: LogEntry = {" + source.join(copied, ", ") + "};",
+            "      out.push(answered);", "      marked = true;", "    } else {", "      out.push(e);", "    }", "  }",
+            "  return " + source.changed(fields, answered) + ";", "}"]); functions[functions.length] = source.join(answer, "\n");
+    }
+    let removed: template.Entry[] = [{key: "entries", value: "out"}, {key: "removedEntries", value: "gone"}, {key: "removedAt", value: "value"}];
+    functions[functions.length] = source.join(["function removeEntry(state: AppState, value: number): AppState {", "  let out: LogEntry[] = [];", "  let gone: LogEntry[] = [];", "  let i: number = 0;",
+        "  while (i < state.entries.length()) {", "    if (i !== value) { out.push(state.entries[i]); } else { gone.push(state.entries[i]); }", "    i = i + 1;", "  }",
+        "  return " + source.changed(fields, removed) + ";", "}"], "\n");
+    let restored: template.Entry[] = [{key: "entries", value: "out"}, {key: "removedEntries", value: "none"}, {key: "removedAt", value: "-1"}];
+    let expired: template.Entry[] = [{key: "removedEntries", value: "none"}, {key: "removedAt", value: "-1"}];
+    functions[functions.length] = source.join(["function undoRemove(state: AppState, ignored: number): AppState {", "  if (state.removedEntries.length() === 0) { return state; }",
+        "  let out: LogEntry[] = [];", "  let none: LogEntry[] = [];", "  let i: number = 0;", "  while (i < state.entries.length()) {",
+        "    if (i === state.removedAt) { out.push(state.removedEntries[0]); }", "    out.push(state.entries[i]);", "    i = i + 1;", "  }",
+        "  if (state.removedAt >= state.entries.length()) { out.push(state.removedEntries[0]); }", "  return " + source.changed(fields, restored) + ";", "}"], "\n");
+    functions[functions.length] = "function expireUndo(state: AppState, elapsedMs: number): AppState {\n  let none: LogEntry[] = [];\n  return " + source.changed(fields, expired) + ";\n}";
+    let form: string[] = [];
+    for (let field of list.fields) {
+        let at: string = "state." + source.draftOf(field) + ", " + source.quote("set_" + source.draftOf(field)); let component: string = "Toggle"; let after: string = "";
+        if (field.kind === "text" || field.kind === "number") { component = "TextField"; } if (field.kind === "number") { after = ", \"number\""; } if (field.kind === "time") { component = "TimeField"; }
+        form[form.length] = "ui." + component + "(\"default\", " + source.quote(field.label) + ", " + at + after + ")";
+    }
+    let canAdd: string = "true"; if (required !== null) { canAdd = "strings.trim(state." + source.draftOf(required as sketch.ListField) + ") !== \"\""; }
+    form[form.length] = "ui.ActionBar(\"end\", [ui.Button(\"primary\", \"Add\", \"addEntry\", 0, " + canAdd + ")])";
+    if (laps) { form = []; }
+    let rowButtons: string[] = [];
+    for (let event of comp.events) { if (event.moment === "row_button") { rowButtons[rowButtons.length] = "ui.Button(\"secondary\", " + source.quote(effectOf(effects, event.effect).button) + ", " + source.quote(effectsText.tapHandler(event.event.id, "row_button")) + ", i, true)"; } }
+    let textField: sketch.ListField | null = first(list, "text"); let numberField: sketch.ListField | null = first(list, "number");
+    let titleField: sketch.ListField | null = textField; if (titleField === null) { titleField = numberField; }
+    let trailingField: sketch.ListField | null = first(list, "time"); if (textField !== null && numberField !== null) { trailingField = numberField; }
+    let title: string = "\"#\" + ui.numberToString(i + 1)"; if (titleField !== null) { title = shown(titleField as sketch.ListField, numberText); }
+    let trailing: string = "\"\""; if (trailingField !== null) { trailing = shown(trailingField as sketch.ListField, numberText); }
+    let pieces: string[] = []; let flags: sketch.ListField[] = [];
+    for (let field of list.fields) {
+        if (titleField !== null && field === (titleField as sketch.ListField)) { continue; }
+        if (trailingField !== null && field === (trailingField as sketch.ListField)) { continue; }
+        if (field.kind === "toggle") { flags[flags.length] = field; } else { pieces[pieces.length] = shown(field, numberText); }
+    }
+    pieces[pieces.length] = "\"Added \" + ui.clockToString(e.minute)";
+    let limit: string = "21"; if (comp.widget) { limit = "5"; } else if (rowButtons.length > 0) { limit = "11"; }
+    let view: string[] = ["let rows: ui.View[] = [];", "let i: number = entryCount - 1;", "while (i >= 0 && i > entryCount - " + limit + ") {",
+        "  let e: LogEntry = state.entries[i];", "  let sub: string = " + source.join(pieces, " + \" · \" + ") + ";"];
+    for (let field of flags) { view[view.length] = "  if (e." + field.id + ") { sub = " + source.quote(field.label + " · ") + " + sub; }"; }
+    if (str.length(answering) > 0) {
+        let effect: string = ""; for (let event of comp.events) { if (event.event.id === answering) { effect = event.effect; } }
+        state.append(view, ["  let note: string = \"\";", "  if (e.status === \"pending\") { note = \"Asking the phone...\"; }",
+            "  if (strings.startsWith(e.status, \"error\") || strings.startsWith(e.status, \"declined\")) { note = \"Phone: \" + e.status; }",
+            "  if (note === \"\" && e.status !== \"\") { note = " + source.quote(effectOf(effects, effect).done) + "; }", "  sub = note + \" · \" + sub;"]);
+    }
+    view[view.length] = "  rows.push(ui.ListItem(\"default\", " + title + ", sub, " + trailing + ", \"\", 0, false, \"\"));";
+    if (rowButtons.length > 0) { view[view.length] = "  rows.push(ui.ActionBar(\"end\", [" + source.join(rowButtons, ", ") + ", ui.Button(\"secondary\", \"Remove\", \"removeEntry\", i, true)]));"; }
+    else { view[view.length] = "  rows.push(ui.ActionBar(\"end\", [ui.Button(\"secondary\", \"Remove\", \"removeEntry\", i, true)]));"; }
+    state.append(view, ["  i = i - 1;", "}"]);
+    let empty: string = "Tap Add to add one."; if (laps) { empty = "Start the stopwatch and tap Lap."; } else if (form.length > 1) { empty = "Fill in the fields above and tap Add."; }
+    let nodes: string[] = ["ui.SectionHeader(\"default\", " + source.quote(list.label) + ", \"Newest first\", ui.numberToString(entryCount))",
+        "ui.When(entryCount === 0, ui.EmptyState(\"default\", \"Nothing added yet\", " + source.quote(empty) + ", \"\", \"\", \"list\"))",
+        "ui.When(entryCount > 0, ui.ListGroup(\"default\", \"\", rows))", "ui.When(state.removedEntries.length() > 0, ui.Snackbar(\"default\", \"Removed\", \"Undo\", \"undoRemove\"))",
+        "ui.Ticker(\"default\", \"undoClock\", 6000 + state.entries.length() % 7, state.removedEntries.length() > 0, \"expireUndo\")"];
+    if (comp.widget) { for (let node of form) { view[view.length] = "sets.push(" + node + ");"; } for (let node of nodes) { view[view.length] = "sets.push(" + node + ");"; } }
+    else {
+        if (form.length > 0) { view[view.length] = "sections.push(ui.Section(\"content\", \"\", \"\", [" + source.join(form, ", ") + "]));"; }
+        view[view.length] = "sections.push(ui.Section(\"content\", \"\", \"\", [" + source.join(nodes, ", ") + "]));";
+    }
+    let spec: template.Fragment = source.part("list", source.entryFields(list, numberText), functions, view, source.join(entryClass, "\n"), "  let emptyEntries: LogEntry[] = [];");
+    spec.ports[spec.ports.length] = {dir: "writes", name: "entries", type: "LogEntry[]", ref: "entries", fallback: "", computed: false, optional: false};
+    spec.ports[spec.ports.length] = {dir: "writes", name: "count", type: "number", ref: "state.entries.length()", fallback: "", computed: true, optional: false};
+    return spec;
+}

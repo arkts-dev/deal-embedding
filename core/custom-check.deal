@@ -1,0 +1,57 @@
+import * as str from "std/string";
+import * as decode from "./plan-decoding";
+
+function join(values: string[], separator: string): string {
+    let out: string = ""; let n: number = 0;
+    for (let value of values) { if (n > 0) { out = out + separator; } out = out + value; n = n + 1; } return out;
+}
+export function quoted(source: string, errors: string, numberOf: (value: string) => number,
+    numberText: (value: number) => string): string {
+    let lines: string[] = str.split(source, "\n"); let out: string[] = [];
+    // ECMAScript split of empty text is [""], unlike std/string.split.
+    if (str.length(source) === 0) { lines = [""]; }
+    let messages: string[] = str.split(errors, "\n"); if (str.length(errors) === 0) { messages = [""]; }
+    for (let error of messages) {
+        out[out.length] = error; let colon: number = -1; let i: number = 0;
+        for (let c of error) { if (colon < 0 && c === ":") { colon = i; } i = i + 1; }
+        if (colon > 0) {
+            let n: number = numberOf(str.substring(error, 0, colon));
+            if (n === n && n >= 1 && n <= lines.length) {
+                // Pinned reference indexes lines[n - 1] without rounding;
+                // fractional in-range diagnostics fail, never get truncated.
+                out[out.length] = "    line " + numberText(n) + ": " + decode.trim(lines[n - 1]);
+            }
+        }
+        if (str.contains(error, "expected View, found View[]")) { out[out.length] = "    fix: a list of views is not one view: wrap it as ui.Column(\"default\", theList)"; }
+        if (str.contains(error, "expected View[], found View")) { out[out.length] = "    fix: one view is not a list: put it in brackets, [theView]"; }
+    }
+    return join(out, "\n");
+}
+export function unreadProblem(fields: string[]): string {
+    let unread: string[] = []; for (let field of fields) { if (str.startsWith(field, "c_")) { unread[unread.length] = field; } }
+    if (unread.length === 0) { return ""; }
+    let plural: boolean = unread.length > 1;
+    let fieldWord: string = " "; let verb: string = " is"; let pronoun: string = "it"; let changing: string = "it does";
+    if (plural) { fieldWord = "s "; verb = " are"; pronoun = "them"; changing = "them does"; }
+    return "The state field" + fieldWord + join(unread, ", ") + verb + " set by a handler but nothing reads " + pronoun +
+        ", so changing " + changing + " nothing the person can see. Show it or use it in view(), or remove it and whatever sets it.";
+}
+// Native checking exposes only compiler/smoke/surface mechanisms. Diagnostic
+// quoting, corrective wording and unread-state admission remain portable.
+export class Compiled { identity: string; unreadFields: string[]; diagnostics: string; }
+export class Mechanisms {
+    compile: (source: string) => Compiled;
+    smoke: (identity: string) => string;
+    play: (identity: string, fingers: boolean, buttons: boolean) => string;
+    numberOf: (value: string) => number;
+    numberText: (value: number) => string;
+}
+export function check(source: string, scene: boolean, tools: Mechanisms): string {
+    let compiled: Compiled = tools.compile(source);
+    if (str.length(compiled.diagnostics) > 0) { return quoted(source, compiled.diagnostics, tools.numberOf, tools.numberText); }
+    let ran: string = tools.smoke(compiled.identity);
+    if (str.length(ran) > 0) { return quoted(source, ran, tools.numberOf, tools.numberText); }
+    if (scene) { let played: string = tools.play(compiled.identity, true, true);
+        if (str.length(played) > 0) { return quoted(source, played, tools.numberOf, tools.numberText); } }
+    return unreadProblem(compiled.unreadFields);
+}

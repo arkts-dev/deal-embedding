@@ -1,0 +1,131 @@
+import * as smoke from "./program-smoke";
+import * as math from "std/math";
+
+// VeraSurfacePlay.ets at 7ee06af. VM and decode operations are mechanisms;
+// touches, frame counts, change detection and validation disposition stay here.
+export class Node {
+    kind: string; label: string; action: string; value: string; minimum: number; maximum: number;
+    enabled: boolean; text: string; eventValue: number; children: Node[];
+}
+export class Op {
+    kind: string; x: number; y: number; w: number; h: number; r: number; start: number; sweep: number; size: number;
+    color: string; text: string; points: number[]; children: Op[];
+}
+export class Ui { nodes: Node[]; trap: smoke.Trap | null; }
+export class Gfx { ops: Op[]; trap: smoke.Trap | null; }
+export class Mechanisms {
+    execute: (name: string, args: string[]) => smoke.Executed;
+    decodeUi: (value: string) => Ui;
+    decodeGfx: (value: string) => Gfx;
+    numberValue: (value: number) => string;
+    pointerValue: (kind: string, id: number, x: number, y: number) => string;
+    effectsAllowed: (allowed: boolean) => void;
+    clearEffects: () => void;
+    numberText: (value: number) => string;
+}
+export class Touch { frame: number; phase: string; id: number; x: number; y: number; }
+export function script(): Touch[] {
+    let out: Touch[] = [{frame: 2, phase: "down", id: 0, x: 0.5, y: 0.5}, {frame: 3, phase: "up", id: 0, x: 0.5, y: 0.5},
+        {frame: 20, phase: "down", id: 1, x: 0.2, y: 0.9}];
+    let i: number = 1; while (i <= 30) { out[out.length] = {frame: 20 + i * 2, phase: "move", id: 1, x: 0.2 + 0.6 * i / 30, y: 0.9}; i = i + 1; }
+    out[out.length] = {frame: 81, phase: "up", id: 1, x: 0.8, y: 0.9};
+    out[out.length] = {frame: 100, phase: "down", id: 2, x: 0.85, y: 0.4}; out[out.length] = {frame: 102, phase: "up", id: 2, x: 0.85, y: 0.4};
+    out[out.length] = {frame: 130, phase: "down", id: 3, x: 0.5, y: 0.75}; i = 1;
+    while (i <= 20) { out[out.length] = {frame: 130 + i * 2, phase: "move", id: 3, x: 0.5 - 0.3 * i / 20, y: 0.75 - 0.3 * i / 20}; i = i + 1; }
+    out[out.length] = {frame: 171, phase: "up", id: 3, x: 0.2, y: 0.45}; return out;
+}
+function find(node: Node): Node | null {
+    if (node.kind === "surface") { return node; }
+    for (let child of node.children) { let found: Node | null = find(child); if (found !== null) { return found; } } return null;
+}
+function buttons(node: Node, out: Node[]): void {
+    if (node.kind === "button" && node.enabled && node.action !== "") { out[out.length] = node; }
+    for (let child of node.children) { buttons(child, out); }
+}
+function round(value: number): number {
+    if (value - value !== 0 || value === 0) { return value; }
+    let below: number = math.floor(value); if (value - below < 0.5) { return below; }
+    if (below === -1) { return -0; } return below + 1;
+}
+export function fingerprint(ops: Op[], numberText: (value: number) => string): string {
+    let out: string = ""; let at: number = 0;
+    for (let op of ops) {
+        let points: number = 0; let i: number = 0; for (let point of op.points) { points = points + point * (i + 1); i = i + 1; }
+        if (at > 0) { out = out + ";"; } at = at + 1;
+        out = out + op.kind + ":" + numberText(round(op.x * 10)) + "," + numberText(round(op.y * 10)) + "," +
+            numberText(round(op.w * 10)) + "," + numberText(round(op.h * 10)) + "," + numberText(round(op.r * 10)) + "," +
+            numberText(round(op.start)) + "," + numberText(round(op.sweep)) + "," + numberText(round(op.size * 100)) + "," +
+            op.color + "," + op.text + "," + numberText(op.points.length) + "," + numberText(round(points)) + "[" + fingerprint(op.children, numberText) + "]";
+    } return out;
+}
+function count(ops: Op[]): number { let total: number = 0; for (let op of ops) { total = total + 1 + count(op.children); } return total; }
+function diagnostic(trap: smoke.Trap, when: string, tools: Mechanisms): string {
+    let text: string = "The program compiled, but stopped " + when + ": " + trap.message;
+    if (trap.line <= 0) { return text; } return tools.numberText(trap.line) + ":1 " + trap.code + " " + text;
+}
+function handle(name: string, state: string, value: string, tools: Mechanisms): smoke.Executed {
+    tools.effectsAllowed(true); let result: smoke.Executed = {value: "", trap: null};
+    try { result = tools.execute(name, [state, value]); }
+    catch (caught) { tools.effectsAllowed(false); tools.clearEffects(); throw (caught as Error); }
+    tools.effectsAllowed(false); tools.clearEffects(); return result;
+}
+function draw(name: string, state: string, tools: Mechanisms): Gfx {
+    let result: smoke.Executed = tools.execute(name, [state]); if (result.trap !== null) { return {ops: [], trap: result.trap}; } return tools.decodeGfx(result.value);
+}
+function view(state: string, tools: Mechanisms): Ui {
+    let result: smoke.Executed = tools.execute("view", [state]); if (result.trap !== null) { return {nodes: [], trap: result.trap}; } return tools.decodeUi(result.value);
+}
+export function playSurface(requireSurface: boolean, pressButtons: boolean, tools: Mechanisms): string {
+    let initialized: smoke.Executed = tools.execute("init", []); if (initialized.trap !== null) { return diagnostic(initialized.trap as smoke.Trap, "when the program starts", tools); }
+    let state: string = initialized.value; let initial: Ui = view(state, tools);
+    if (initial.trap !== null) { return diagnostic(initial.trap as smoke.Trap, "when the program starts", tools); }
+    let surface: Node | null = null; for (let root of initial.nodes) { if (surface === null) { surface = find(root); } }
+    if (surface === null) { if (requireSurface) { return "The program compiled, but view() draws no ui.Surface: the game must be drawn on one"; } return ""; }
+    let s: Node = surface as Node; let w: number = s.minimum; let h: number = s.maximum;
+    if (!(w > 0) || !(h > 0)) { return "The program compiled, but its ui.Surface is " + tools.numberText(w) + " by " + tools.numberText(h) + ": width and height must be positive"; }
+    let where: string = "drawing the first frame"; let firstDraw: Gfx = draw(s.label, state, tools);
+    if (firstDraw.trap !== null) { return diagnostic(firstDraw.trap as smoke.Trap, where, tools); }
+    if (count(firstDraw.ops) === 0) { return "The program compiled, but draw() returns no shapes: the surface is blank"; }
+    let first: string = fingerprint(firstDraw.ops, tools.numberText); let changed: boolean = false; let frame: number = 1; let touches: Touch[] = script();
+    while (frame <= 240) {
+        for (let touch of touches) {
+            if (touch.frame !== frame || s.value === "") { continue; }
+            where = "in " + s.value + " (a finger " + touch.phase + " at frame " + tools.numberText(frame) + ")";
+            let next: smoke.Executed = handle(s.value, state, tools.pointerValue(touch.phase, touch.id, touch.x * w, touch.y * h), tools);
+            if (next.trap !== null) { return diagnostic(next.trap as smoke.Trap, where, tools); } state = next.value;
+        }
+        if (s.action !== "") {
+            where = "in " + s.action + " at frame " + tools.numberText(frame); let next: smoke.Executed = handle(s.action, state, tools.numberValue(16), tools);
+            if (next.trap !== null) { return diagnostic(next.trap as smoke.Trap, where, tools); } state = next.value;
+        }
+        where = "in " + s.label + " at frame " + tools.numberText(frame); let drawn: Gfx = draw(s.label, state, tools);
+        if (drawn.trap !== null) { return diagnostic(drawn.trap as smoke.Trap, where, tools); }
+        if (!changed && fingerprint(drawn.ops, tools.numberText) !== first) { changed = true; } frame = frame + 1;
+    }
+    // Reference loop leaves frame at PLAY_FRAMES + 1 before button trials.
+    if (pressButtons && s.action !== "" && !changed) {
+        let current: Ui = view(state, tools); if (current.trap !== null) { return diagnostic(current.trap as smoke.Trap, where, tools); }
+        let offered: Node[] = []; for (let root of current.nodes) { buttons(root, offered); } let at: number = 0;
+        for (let button of offered) {
+            if (at >= 6 || changed) { break; } at = at + 1;
+            where = "in " + button.action + " (the button \"" + button.text + "\")";
+            let next: smoke.Executed = handle(button.action, state, tools.numberValue(button.eventValue), tools);
+            if (next.trap !== null) { return diagnostic(next.trap as smoke.Trap, where, tools); } state = next.value;
+            let beforeDraw: Gfx = draw(s.label, state, tools); if (beforeDraw.trap !== null) { return diagnostic(beforeDraw.trap as smoke.Trap, where, tools); }
+            let before: string = fingerprint(beforeDraw.ops, tools.numberText); let more: number = 1;
+            while (more <= 120 && !changed) {
+                frame = frame + 1; where = "in " + s.action + " at frame " + tools.numberText(frame) + ", after the button \"" + button.text + "\"";
+                next = handle(s.action, state, tools.numberValue(16), tools);
+                if (next.trap !== null) { return diagnostic(next.trap as smoke.Trap, where, tools); } state = next.value;
+                where = "in " + s.label + " at frame " + tools.numberText(frame) + ", after the button \"" + button.text + "\"";
+                let drawn: Gfx = draw(s.label, state, tools); if (drawn.trap !== null) { return diagnostic(drawn.trap as smoke.Trap, where, tools); }
+                let printed: string = fingerprint(drawn.ops, tools.numberText); if (printed !== before || printed !== first) { changed = true; } more = more + 1;
+            }
+        }
+    }
+    if (s.action !== "" && !changed) {
+        let message: string = "The program compiled, but nothing on the surface changed in " + tools.numberText(240 * 16 / 1000) + " seconds of frames after a tap in the middle and drags across it";
+        if (pressButtons) { return message + ", nor after pressing each button on the screen: what sets the scene moving (a tap on it, or a button such as Spin or Roll) must change the state " + s.label + " draws, and " + s.action + " must move it by elapsedMs"; }
+        return message + ": a tap anywhere on the surface must start the game, and " + s.action + " must move things by elapsedMs";
+    } return "";
+}

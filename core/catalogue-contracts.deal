@@ -1,0 +1,23 @@
+import * as template from "./template-spec";
+
+// Backend catalogue source is data. Ordered metadata feeds portable slot,
+// content and hole policy; it must not contain preselected chooser answers.
+export class Slot {
+    token: string; values: string[]; kind: string; instructions: string;
+    criteria: template.Entry[]; above: number; provides: string[];
+}
+export class ContentField {
+    token: string; key: string; fallback: string; hint: string; maxLength: number; numeric: boolean;
+}
+export class ListField {
+    token: string; key: string; hint: string; columnHints: string[]; columnMax: number[];
+    rowTemplate: string; separator: string; minRows: number; maxRows: number;
+    fallbackRows: string[][]; numericColumns: number[]; columnChecks: string[];
+}
+export class CatalogueEntry {
+    fragment: template.Fragment; slots: Slot[]; contentFields: ContentField[]; listFields: ListField[];
+    covers: string[]; coversIf: string[];
+}
+export function find(catalogue: CatalogueEntry[], kind: string): CatalogueEntry | null {
+    for (let entry of catalogue) { if (entry.fragment.kind === kind) { return entry; } } return null;
+}

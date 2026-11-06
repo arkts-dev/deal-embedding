@@ -1,0 +1,118 @@
+import * as state from "./compose-state";
+import * as sketch from "./sketch";
+import * as screen from "./screen-plan";
+import * as events from "./compose-events";
+import * as str from "std/string";
+import * as text from "./section-text";
+
+function join(values: string[], separator: string): string {
+    let out: string = ""; let n: number = 0;
+    for (let value of values) { if (n > 0) { out = out + separator; } out = out + value; n = n + 1; }
+    return out;
+}
+function has(values: string[], text: string): boolean {
+    for (let value of values) { if (value === text) { return true; } }
+    return false;
+}
+function quotedText(value: string): string {
+    return text.replaceAll(text.replaceAll(text.replaceAll(value, "\\", "\\\\"), "\"", "\\\""), "\n", " ");
+}
+export class PartsContract { lines: string[]; clock: boolean; list: boolean; }
+export function partsContract(comp: state.Composition, effects: events.Effect[]): PartsContract {
+    let out: PartsContract = {lines: [], clock: false, list: false}; let value: sketch.Sketch = comp.sketch;
+    if (value.hasCountdown || value.hasStopwatch) {
+        out.clock = true; let clock: string = "a stopwatch"; let length: string = "";
+        if (value.hasCountdown) { clock = "a countdown"; length = " and countdownSeconds(state), the length in seconds"; }
+        out.lines[out.lines.length] = "a clock (" + clock + "): state.elapsedMs is the milliseconds passed, state.running whether it runs, " +
+            "state.finished whether it ended. Its Start, Stop and Reset buttons and its Ticker are already on the screen and drive it: " +
+            "the section draws no timer, no Start/Stop/Reset buttons and no Ticker of its own, and keeps no clock state of its own; " +
+            "it reads state.elapsedMs" + length + ".";
+    }
+    if (value.list !== null) {
+        out.list = true; let list: sketch.SketchList = value.list as sketch.SketchList; let fields: string[] = [];
+        for (let field of list.fields) {
+            let type: string = "number"; if (field.kind === "text") { type = "string"; }
+            if (field.kind === "toggle") { type = "boolean"; }
+            fields[fields.length] = field.id + ": " + type;
+        }
+        fields[fields.length] = "minute: number";
+        let status: string = "";
+        for (let event of comp.events) {
+            for (let effect of effects) {
+                if (effect.id === event.effect && str.length(effect.done) > 0 && event.moment === "entry_added") { status = ", status: string"; }
+            }
+        }
+        out.lines[out.lines.length] = "a list of entries: state.entries is LogEntry[] with the fields {" + join(fields, ", ") + status + "}. " +
+            "Its form, its Add and Remove buttons and its rows are already on the screen. The section makes no list of its own for the same entries; " +
+            "to add one it copies state.entries into a new array, pushes a LogEntry (minute: time.hourOfDay() * 60 + time.minuteOfHour()) and returns {entries: thatArray __PASSTHROUGH__}.";
+    }
+    return out;
+}
+export function inputsOnlyForCustom(comp: state.Composition): string[] {
+    let read: string[] = [comp.countdownFrom];
+    for (let binding of comp.bindings) {
+        read[read.length] = binding.a; read[read.length] = binding.b;
+        for (let name of binding.reads) { read[read.length] = name; }
+    }
+    for (let event of comp.events) {
+        for (let arg of event.args) { if (str.startsWith(arg.source, "input.")) { read[read.length] = str.substring(arg.source, 6, str.length(arg.source)); } }
+    }
+    let out: string[] = [];
+    for (let id of comp.customReads) { if (!has(read, id)) { out[out.length] = id; } }
+    return out;
+}
+export function customInputs(comp: state.Composition): string[] {
+    let out: string[] = [];
+    for (let input of comp.inputs) {
+        if (!has(comp.customReads, input.id)) { continue; }
+        let field: string = input.id;
+        if (input.kind === "choice") {
+            let labels: string[] = []; for (let option of input.options) { labels[labels.length] = option.label; }
+            field = input.id + "Index (the index of the chosen option: " + join(labels, ", ") + ")";
+        } else {
+            for (let widget of comp.widgets) {
+                if (widget.id === input.id && widget.value === "typed_number") { field = input.id + "Text (the number as typed; strings.toNumber reads it)"; }
+            }
+        }
+        out[out.length] = "\"" + input.label + "\": state." + field;
+    }
+    return out;
+}
+export function wholeScreenPlan(value: sketch.Sketch, widget: boolean, numberText: (value: number) => string): screen.ScreenPlan {
+    let plan: screen.ScreenPlan = screen.create(); plan.widget = widget;
+    let header: string = "default"; if (widget) { header = "none"; }
+    let icon: string = ""; if (value.hasCountdown || value.hasStopwatch) { icon = "clock"; }
+    plan.globals = [{key: "__THEME__", value: "clean"}, {key: "__HEADER_STYLE__", value: header},
+        {key: "__TITLE__", value: quotedText(value.title)}, {key: "__EYEBROW__", value: quotedText(value.eyebrow)},
+        {key: "__SUPPORTING__", value: quotedText(value.subtitle)}, {key: "__HEADER_ICON__", value: icon}];
+    let n: number = 0;
+    let add: (need: string, phone: boolean) => void = function(need: string, phone: boolean): void {
+        screen.addToWrite(plan, "screen." + numberText(n), need, phone); n = n + 1;
+    };
+    for (let input of value.inputs) {
+        let suffix: string = "";
+        if (input.options.length > 0) {
+            let labels: string[] = []; for (let option of input.options) { labels[labels.length] = option.label; }
+            suffix = " (one of: " + join(labels, ", ") + ")";
+        } else if (str.length(input.unit) > 0) { suffix = " (" + input.unit + ")"; }
+        add("the person sets " + input.label + suffix, false);
+    }
+    for (let item of value.values) {
+        let suffix: string = ""; if (str.length(item.means) > 0) { suffix = ": " + item.means; }
+        add("shows " + item.label + suffix, false);
+    }
+    if (value.hasCountdown) { add("counts " + value.countdown + " down to zero, with start, stop and reset", false); }
+    if (value.hasStopwatch) { add("counts " + value.stopwatch + " up from zero, with start, stop and reset", false); }
+    if (value.list !== null) {
+        let list: sketch.SketchList = value.list as sketch.SketchList; let suffix: string = "";
+        if (list.fields.length > 0) {
+            let fields: string[] = []; for (let field of list.fields) { fields[fields.length] = field.label; }
+            suffix = ", each with " + join(fields, ", ");
+        }
+        add("the person adds " + list.label + suffix + ", and sees them listed", false);
+    }
+    for (let event of value.events) { if (event.asked) { add(event.what + " (" + event.when + ")", true); } }
+    for (let ready of value.ready) { add(ready, false); }
+    for (let other of value.other) { add(other, false); }
+    return plan;
+}

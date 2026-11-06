@@ -1,0 +1,247 @@
+import * as needs from "./needs-composition";
+import * as drawing from "./needs-drawing";
+import * as filtering from "./needs-filtering";
+import * as flow from "./compose-flow";
+import * as state from "./compose-state";
+import * as sketch from "./sketch";
+import * as choice from "./needs-choice";
+import * as questions from "./compose-questions";
+import * as bindings from "./compose-bindings";
+import * as events from "./compose-events";
+import * as assembly from "./compose-assembly";
+import * as partEmission from "./compose-part-emission";
+import * as screen from "./screen-plan";
+import * as template from "./template-spec";
+import * as emission from "./section-emission";
+import * as preview from "./compose-preview";
+import * as person from "./agent-questions";
+import * as catalogue from "./catalogue-contracts";
+import * as content from "./catalogue-content";
+import * as contentText from "./catalogue-content-text";
+import * as fill from "./catalogue-fill";
+import * as slots from "./catalogue-slots";
+import * as provided from "./compose-provided";
+import * as align from "./compose-alignment";
+import * as claims from "./compose-claims";
+import * as hole from "./hole-flow";
+import * as holeResult from "./hole-settlement";
+import * as writer from "./custom-writer";
+import * as contracts from "./compose-contracts";
+import * as settlement from "./program-settlement";
+import * as record from "./composition-record";
+import * as catalogueHoles from "./catalogue-holes";
+import * as stages from "./run-stages";
+import * as decode from "./plan-decoding";
+import * as math from "std/math";
+import * as str from "std/string";
+
+export class Request { prompt: string; widget: boolean; scene: string; sceneAllowed: boolean; }
+export class Data {
+    planLanguage: string; catalogue: catalogue.CatalogueEntry[]; choices: choice.Catalogue; sections: questions.Section[];
+    effects: events.Effect[]; readyKinds: string[]; layouts: template.Layout[]; banner: string; sceneGuide: string; sceneTokens: number;
+    custom: boolean; planEnabled: boolean; alignEnabled: boolean; alignment: align.Configuration;
+}
+export class Mechanisms {
+    drawing: drawing.DrawingTools; filtering: filtering.TextTools; bindings: bindings.Primitives;
+    content: contentText.Primitives; emission: emission.Primitives; writer: writer.Primitives; notices: holeResult.NoticePrimitives;
+    settlement: settlement.Mechanisms; first8000: (value: string) => string;
+}
+export class Host {
+    askJev: (body: string) => Promise<string>; ask: (question: person.Question) => Promise<unknown>;
+    cancelled: () => boolean; status: (text: string) => void; preview: (identity: string) => void;
+    holes: hole.Host; filling: fill.Calls; settling: settlement.Host;
+    // Original identities of all issued construction work. Whole-program
+    // provisional repairs can alter any of them and must charge all of them.
+    constructionIdentities: () => string[];
+    toolCount: () => number; toolSpanSince: (start: number) => number;
+}
+export class Result {
+    source: string; executable: string; note: string; errors: string; composed: flow.ComposeResult; plan: string;
+    blocks: string[]; blockFill: fill.Filled | null; align: align.Result | null; custom: holeResult.Written | null;
+    repair: settlement.Repaired | null; whole: holeResult.Written | null; asked: person.Asked[];
+    screen: screen.ScreenPlan | null; record: record.Composition | null;
+    firstPreviewMs: number; previews: number; checkMs: number; ms: number; stages: stages.Stage[];
+}
+export function create(): Result {
+    return {source: "", executable: "", note: "", errors: "", composed: flow.create(), plan: "", blocks: [], blockFill: null,
+        align: null, custom: null, repair: null, whole: null, asked: [], screen: null, record: null,
+        firstPreviewMs: 0, previews: 0, checkMs: 0, ms: 0, stages: []};
+}
+function join(values: string[], separator: string): string {
+    let out: string = ""; let i: number = 0; for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; } return out;
+}
+export function fragments(data: Data): template.Fragment[] {
+    let out: template.Fragment[] = []; for (let entry of data.catalogue) { out[out.length] = entry.fragment; } return out;
+}
+export function planFor(comp: state.Composition, values: template.Entry[][], data: Data, tools: Mechanisms): screen.ScreenPlan {
+    return assembly.screenPlan(comp, data.effects, fragments(data), values,
+        function(kind: string): template.Entry[] { return content.blockDefaults(kind, data.catalogue, tools.content); },
+        null, data.readyKinds, tools.bindings.numberText, tools.writer.lowercase);
+}
+export function assembleProgram(comp: state.Composition, values: template.Entry[][], data: Data, tools: Mechanisms): string {
+    if (comp.unbound.length > 0) { return ""; } return assembly.assemble(planFor(comp, values, data, tools), true, tools.emission, data.banner);
+}
+function partCount(comp: state.Composition, data: Data, tools: Mechanisms): number {
+    let blocks: template.Fragment[] = []; for (let entry of data.catalogue) { if (decode.includes(comp.blocks, entry.fragment.kind)) { blocks[blocks.length] = entry.fragment; } }
+    return partEmission.compositionParts(comp, data.effects, blocks, tools.bindings.numberText, tools.writer.lowercase).length;
+}
+export function waitedMs(result: Result): number { let total: number = 0; for (let entry of result.asked) { total = total + entry.waitedMs; } return total; }
+export function recordOf(result: Result, comp: state.Composition, prompt: string, data: Data, tools: Mechanisms): record.Composition | null {
+    if (result.screen === null) { return null; } let base: template.Entry[][] = []; let holes: template.Entry[][] = [];
+    if (result.blockFill !== null && comp.blocks.length > 0) {
+        let filled: fill.Filled = result.blockFill as fill.Filled; let kinds: string[] = []; let offset: number = partCount(comp, data, tools); let i: number = 0;
+        while (i < offset) { kinds[kinds.length] = "none"; i = i + 1; } for (let kind of comp.blocks) { kinds[kinds.length] = kind; }
+        base = filled.baseValues; i = 0;
+        for (let values of catalogueHoles.holeValues(kinds, filled.holeBodies, data.catalogue, tools.bindings.numberText, false)) {
+            if (i >= offset) { holes[holes.length] = values; } i = i + 1;
+        }
+    }
+    let saved: record.Composition = record.compositionFromPlan(result.screen as screen.ScreenPlan, prompt, base, holes);
+    if (record.rebuilds(saved, result.source, fragments(data), data.layouts, tools.emission, data.banner)) { return saved; } return null;
+}
+export function withoutDeadInputs(comp: state.Composition, values: template.Entry[][], plan: screen.ScreenPlan, data: Data, tools: Mechanisms): screen.ScreenPlan {
+    let dead: string[] = contracts.inputsOnlyForCustom(comp); let inputs: sketch.SketchInput[] = []; let reads: string[] = [];
+    for (let input of comp.inputs) { if (!decode.includes(dead, input.id)) { inputs[inputs.length] = input; } }
+    for (let id of comp.customReads) { if (!decode.includes(dead, id)) { reads[reads.length] = id; } }
+    comp.inputs = inputs; comp.customReads = reads;
+    let again: screen.ScreenPlan = planFor(comp, values, data, tools); let from: number[] = []; let to: number[] = []; let i: number = 0;
+    for (let component of plan.components) {
+        if (component.fill === "reported") { from[from.length] = i; to[to.length] = again.components.length; again.components[again.components.length] = component; } i = i + 1;
+    }
+    for (let slot of screen.toWrite(again)) {
+        let was: screen.PlanSlot | null = null; for (let old of plan.slots) { if (old.id === slot.id) { was = old; break; } }
+        let at: number = -1; if (was !== null) { i = 0; for (let previous of from) { if (previous === (was as screen.PlanSlot).by) { at = to[i]; } i = i + 1; } }
+        if (at < 0) { return plan; } screen.fillWith(slot, "reported", at, (was as screen.PlanSlot).detail);
+    } return again;
+}
+export async function runAgent(request: Request, host: Host, data: Data, tools: Mechanisms): Promise<Result> {
+    // Catalogue and UI-section dispatches consume the same request ledger.
+    host.filling.budget = host.holes.budget;
+    let result: Result = create(); let started: number = tools.writer.now();
+    let show: (source: string) => void = function(source: string): void {
+        if (host.cancelled() || source === "") { return; }
+        // Expected compiler diagnostics skip a preview; infrastructure faults propagate.
+        let compiled: settlement.Compiled = tools.settlement.compile(source); if (compiled.diagnostics !== "") { return; }
+        host.preview(compiled.identity); result.previews = result.previews + 1;
+        if (result.firstPreviewMs === 0) { result.firstPreviewMs = tools.writer.now() - started; }
+    };
+    let status: string = "Composing..."; if (request.widget) { status = "Sketching the widget..."; } host.status(status);
+    let draw: drawing.DrawingTools = {ask: tools.drawing.ask, head: tools.drawing.head,
+        preview: function(value: sketch.Sketch): void {
+            let comp: state.Composition | null = preview.provisionalComposition(value, request.widget, tools.bindings.numberText);
+            if (comp !== null) { show(assembleProgram(comp as state.Composition, [], data, tools)); }
+        }, review: async function(value: sketch.Sketch): Promise<string> {
+            if (host.cancelled()) { return ""; }
+            let answered: string = await person.askBlocking(request.prompt, value.questions, host.askJev,
+                async function(question: person.Question): Promise<unknown> { host.status("Waiting for your answer..."); return await host.ask(question); },
+                result.asked, tools.writer.now, tools.bindings.numberText);
+            if (answered !== "") { host.status("Planning again with your answer..."); } return answered;
+        }};
+    let composed: flow.ComposeResult = await needs.composeNeeds(request.prompt, data.planLanguage, request.widget, request.scene, request.sceneAllowed,
+        draw, tools.filtering, host.askJev, data.choices, data.sections, data.effects, data.custom, tools.bindings, tools.writer.lowercase,
+        tools.writer.now, function(comp: state.Composition): string { return assembleProgram(comp, [], data, tools); });
+    result.composed = composed; result.note = composed.note;
+    let planning: number = tools.writer.now() - started; let waited: number = waitedMs(result);
+    stages.add(result.stages, "Plan of needs", "Model", composed.sketchMs, "the request as a list of needs");
+    stages.add(result.stages, "Choosing parts and sections", "Jev", composed.jevMs, "");
+    stages.add(result.stages, "Your answers", "You", waited, tools.bindings.numberText(result.asked.length) + " question(s)");
+    stages.add(result.stages, "Planning, the rest", "Phone", planning - composed.sketchMs - composed.jevMs - waited, "building the sketch, checks");
+    if (composed.parsed !== null && data.planEnabled) { result.plan = preview.sketchPlan(composed.parsed as sketch.Sketch, tools.bindings.numberText); }
+    if (composed.composition !== null && data.alignEnabled && !host.cancelled() && align.candidates(composed.composition as state.Composition, tools.writer.lowercase).length > 0) {
+        host.status("Looking for ready-made parts..."); let alignStart: number = tools.writer.now();
+        let aligned: align.Result = await align.alignLeftovers(composed.composition as state.Composition, request.prompt, host.askJev, data.catalogue, data.alignment, tools.writer.lowercase, tools.bindings.numberText, tools.bindings.fixedTwo, tools.writer.now);
+        stages.add(result.stages, "Looking for ready-made parts", "Jev", tools.writer.now() - alignStart, "");
+        if (aligned.asked.length > 0 || aligned.note !== "") { result.align = aligned; result.note = result.note + aligned.note; }
+    }
+    if (composed.composition !== null && !host.cancelled()) {
+        let comp: state.Composition = composed.composition as state.Composition; show(assembleProgram(comp, [], data, tools));
+        let values: template.Entry[][] = []; let ready: boolean = true;
+        let fillBlocks: () => Promise<void> = async function(): Promise<void> {
+        if (comp.blocks.length > 0) {
+            status = "Filling in the sections..."; if (comp.realData) { status = "Looking up real data..."; } host.status(status);
+            let fixed: string[] = []; for (let replaced of comp.replaced) { if (replaced.detail !== "") { fixed[fixed.length] = replaced.need + ": " + replaced.detail; } }
+            let prompt: string = request.prompt; if (fixed.length > 0) { prompt = prompt + "\n\nThe plan fixes: " + join(fixed, "; "); }
+            if (comp.sketch.ready.length > 0) { prompt = prompt + "\n\nThe plan says the sections are for: " + join(comp.sketch.ready, " | "); }
+            let blockRequest: fill.Request = {kinds: comp.blocks, prompt: prompt, work: "", mode: "deepseek", realData: comp.realData, offset: partCount(comp, data, tools),
+                slotValues: [], globals: [], compose: function(filled: template.Entry[][], globals: template.Entry[]): string { return assembleProgram(comp, filled, data, tools); }};
+            let hasSlots: boolean = false; for (let kind of comp.blocks) { let spec: catalogue.CatalogueEntry | null = catalogue.find(data.catalogue, kind); if (spec !== null && (spec as catalogue.CatalogueEntry).slots.length > 0) { hasSlots = true; } }
+            if (hasSlots) {
+                let slotStart: number = tools.writer.now(); let body: string = await host.askJev(slots.buildSlotRequest(request.prompt, comp.blocks, data.catalogue, tools.bindings.numberText, tools.writer.lowercase));
+                blockRequest.slotValues = slots.readSlotValues(body, comp.blocks, data.catalogue, tools.bindings.numberText, tools.writer.lowercase);
+                stages.add(result.stages, "What each section offers", "Jev", tools.writer.now() - slotStart, "");
+                let offered: string[] = []; let i: number = 0;
+                for (let kind of comp.blocks) { let spec: catalogue.CatalogueEntry | null = catalogue.find(data.catalogue, kind);
+                    if (spec !== null) { for (let slot of (spec as catalogue.CatalogueEntry).slots) {
+                        let selected: string | undefined = template.get(blockRequest.slotValues[i], slot.token);
+                        if (selected !== undefined && (selected as string) === slot.values[1]) { for (let word of slot.provides) { offered[offered.length] = word; } }
+                    } } i = i + 1;
+                }
+                let gone: string[] = provided.dropProvided(comp, offered); if (gone.length > 0) { result.note = result.note + "; done by the sections: " + join(gone, "; "); }
+            }
+            let fillStart: number = tools.writer.now(); let fillTools: number = host.toolCount();
+            let filled: fill.Filled = await fill.fillSections(blockRequest, host.filling, data.catalogue, tools.content, tools.writer.lowercase);
+            let fillMs: number = tools.writer.now() - fillStart; let searchMs: number = filled.searchMs; if (searchMs < 0) { searchMs = 0; }
+            let lookupMs: number = host.toolSpanSince(fillTools); if (lookupMs > filled.holesMs) { lookupMs = filled.holesMs; }
+            stages.add(result.stages, "Looking up real data", "Search", filled.searchMs, "");
+            stages.add(result.stages, "Text of the sections", "Model", filled.contentMs, "");
+            stages.add(result.stages, "Looking up phone functions for the sections", "Phone", lookupMs, "");
+            stages.add(result.stages, "Functions of the sections", "Model", filled.holesMs - lookupMs, "");
+            stages.add(result.stages, "Filling the sections, the rest", "Phone", fillMs - searchMs - filled.contentMs - filled.holesMs, "checks of what was found");
+            result.blocks = comp.blocks; result.blockFill = filled; let note: string = filled.note; if (filled.failed !== "") { note = filled.failed; }
+            result.note = result.note + "; " + note; ready = filled.failed === ""; values = filled.values;
+        }
+        };
+        await fillBlocks();
+        let finish: () => Promise<void> = async function(): Promise<void> {
+        let plan: screen.ScreenPlan = planFor(comp, values, data, tools); result.screen = plan;
+        if (ready && comp.blocks.length > 0) { show(assembly.assemble(plan, true, tools.emission, data.banner)); }
+        let claimStart: number = tools.writer.now();
+        if (ready && comp.claimed.length > 0 && !host.cancelled()) {
+            let missing: string[] = await claims.claimsUndone(comp.claimed, request.prompt, assembly.assemble(plan, true, tools.emission, data.banner), host.askJev, tools.bindings.numberText);
+            if (missing.length > 0) { claims.putBack(plan, missing, tools.bindings.numberText); result.note = result.note + "; not done by the sections said to do it: " + join(missing, "; "); }
+        }
+        if (ready && screen.toWrite(plan).length > 0 && !host.cancelled()) {
+            let own: number = -1; let i: number = 0; for (let component of plan.components) { if (component.fill === "block") { own = i; break; } i = i + 1; }
+            let byPart: boolean = own < 0;
+            if (byPart) { i = 0; for (let component of plan.components) { if (component.fill === "part") { own = i; break; } i = i + 1; } }
+            let open: screen.PlanSlot[] = []; let words: string[] = [];
+            for (let slot of screen.toWrite(plan)) { if (!slot.phone && str.startsWith(slot.id, "custom.") && !str.startsWith(slot.need, "the figure \"")) { open[open.length] = slot; words[words.length] = slot.need; } }
+            let done: string[] = []; if (own >= 0 && open.length > 0) { done = await claims.claimsDone(words, request.prompt, assembly.assemble(plan, true, tools.emission, data.banner), host.askJev, tools.bindings.numberText); }
+            if (done.length > 0) {
+                let kind: string = "block"; if (byPart) { kind = "part"; }
+                for (let slot of open) { if (decode.includes(done, slot.need)) { screen.fillWith(slot, kind, own, "already on the screen"); } }
+                result.note = result.note + "; already on the screen: " + join(done, "; ");
+            }
+        }
+        stages.add(result.stages, "Does a section do it already?", "Jev", tools.writer.now() - claimStart, "");
+        if (ready && screen.toWrite(plan).length > 0 && !host.cancelled()) {
+            host.status("Writing the rest..."); let writeStart: number = tools.writer.now(); let writeTools: number = host.toolCount();
+            let written: holeResult.Written | null = await hole.writeHole(plan, request.prompt, contracts.customInputs(comp), host.holes, [], contracts.partsContract(comp, data.effects),
+                tools.writer, tools.notices, tools.first8000, function(specs: (template.Fragment | null)[], globals: template.Entry[], instances: template.Entry[][]): string {
+                    return emission.composeFragments(specs, globals, instances, tools.emission, data.banner);
+                }, data.sceneGuide, data.sceneTokens);
+            result.custom = written; let wrote: number = tools.writer.now() - writeStart; let lookupMs: number = host.toolSpanSince(writeTools); if (lookupMs > wrote) { lookupMs = wrote; }
+            stages.add(result.stages, "Looking up phone functions", "Phone", lookupMs, "before the model writes"); let detail: string = "";
+            if (written !== null) { detail = tools.bindings.numberText((written as holeResult.Written).attempts) + " attempt(s)"; }
+            stages.add(result.stages, "Model writes the rest", "Model", wrote - lookupMs, detail); ready = screen.toWrite(plan).length === 0;
+            if (ready && written !== null && (written as holeResult.Written).section === null && contracts.inputsOnlyForCustom(comp).length > 0) { plan = withoutDeadInputs(comp, values, plan, data, tools); result.screen = plan; }
+            if (written !== null) {
+                let w: holeResult.Written = written as holeResult.Written; let note: string = "reported on the screen (" + w.failed + ")";
+                if (w.section !== null) { note = "custom section in " + tools.bindings.numberText(w.attempts) + " attempt(s)"; } result.note = result.note + "; " + note;
+            }
+        }
+        if (ready) { composed.source = assembly.assemble(plan, false, tools.emission, data.banner); }
+        };
+        await finish();
+    }
+    if (composed.source !== "") {
+        let settleStart: number = tools.writer.now(); let settled: settlement.Settled = await settlement.settleBudgetedProgram(composed.source, request.prompt, host.settling, tools.settlement, host.constructionIdentities(), host.holes.budget);
+        stages.add(result.stages, "Compile and run once", "Phone", settled.checkMs, "");
+        stages.add(result.stages, "Repair by edits", "Model", tools.writer.now() - settleStart - settled.checkMs, "");
+        result.checkMs = settled.checkMs; result.repair = settled.repair; result.errors = settled.errors; result.note = result.note + settled.note; composed.source = settled.source;
+        if (settled.errors === "") { result.source = settled.source; result.executable = settled.executable;
+            if (settled.repair === null && composed.composition !== null) { result.record = recordOf(result, composed.composition as state.Composition, request.prompt, data, tools); }
+        } else { result.note = result.note + "; " + settled.errors; }
+    }
+    result.ms = tools.writer.now() - started; return result;
+}

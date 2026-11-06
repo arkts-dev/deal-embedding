@@ -67,7 +67,7 @@ function joined(values: string[], separator: string): string {
     return result;
 }
 
-function describeInput(input: sketch.SketchInput, numberText: (value: number) => string): string {
+export function describeInput(input: sketch.SketchInput, numberText: (value: number) => string): string {
     if (input.kind === "choice") {
         let parts: string[] = [];
         for (let option of input.options) { parts[parts.length] = option.label + " = " + numberText(option.value); }
@@ -79,7 +79,7 @@ function describeInput(input: sketch.SketchInput, numberText: (value: number) =>
     return "input \"" + input.label + "\" (" + input.kind + unit + ")";
 }
 
-function describeList(list: sketch.SketchList): string {
+export function describeList(list: sketch.SketchList): string {
     let fields: string[] = [];
     for (let field of list.fields) {
         let word: string = field.kind;
@@ -95,7 +95,7 @@ function describeList(list: sketch.SketchList): string {
         "shows what the phone answered when the phone does something as it is added, and can be removed";
 }
 
-function labelOf(value: sketch.Sketch, id: string): string {
+export function labelOf(value: sketch.Sketch, id: string): string {
     for (let input of value.inputs) { if (input.id === id) { return input.label; } }
     for (let constant of value.constants) { if (constant.id === id) { return constant.label; } }
     for (let figure of value.values) { if (figure.id === id) { return figure.label; } }

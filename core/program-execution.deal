@@ -1,0 +1,46 @@
+import * as smoke from "./program-smoke";
+import * as play from "./program-surface-play";
+import * as checking from "./custom-check";
+import * as settlement from "./program-settlement";
+
+// Native backends compile/load/execute/decode only. Each validation opens an
+// isolated VM, as the pinned smoke/play functions do; no user effects escape.
+export class Machine {
+    mechanisms: play.Mechanisms;
+    handlers: smoke.Handler[];
+    stringValue: (value: string) => string;
+    booleanValue: (value: boolean) => string;
+}
+export class Backend {
+    compile: (source: string) => checking.Compiled;
+    open: (identity: string) => Machine;
+    now: () => number;
+    numberText: (value: number) => string;
+    numberOf: (value: string) => number;
+}
+function smokeNodes(values: play.Node[]): smoke.Node[] {
+    let out: smoke.Node[] = []; for (let node of values) { out[out.length] = {kind: node.kind, label: node.label, children: smokeNodes(node.children)}; } return out;
+}
+export function smokeProgram(identity: string, backend: Backend, requireContent: boolean): string {
+    let machine: Machine = backend.open(identity); let vm: play.Mechanisms = machine.mechanisms;
+    let tools: smoke.Mechanisms = {execute: vm.execute,
+        decodeUi: function(value: string): smoke.Decoded { let decoded: play.Ui = vm.decodeUi(value); return {nodes: smokeNodes(decoded.nodes), trap: decoded.trap}; },
+        decodeGfx: function(value: string): smoke.Trap | null { return vm.decodeGfx(value).trap; },
+        numberValue: vm.numberValue, stringValue: machine.stringValue, booleanValue: machine.booleanValue, pointerValue: vm.pointerValue,
+        effectsAllowed: vm.effectsAllowed, clearEffects: vm.clearEffects, numberText: backend.numberText};
+    return smoke.smokeRun(machine.handlers, requireContent, tools);
+}
+export function playProgram(identity: string, backend: Backend, requireSurface: boolean, pressButtons: boolean): string {
+    let machine: Machine = backend.open(identity); return play.playSurface(requireSurface, pressButtons, machine.mechanisms);
+}
+export function customMechanisms(backend: Backend): checking.Mechanisms {
+    return {compile: backend.compile,
+        smoke: function(identity: string): string { return smokeProgram(identity, backend, true); },
+        play: function(identity: string, requireSurface: boolean, pressButtons: boolean): string { return playProgram(identity, backend, requireSurface, pressButtons); },
+        numberText: backend.numberText, numberOf: backend.numberOf};
+}
+export function settlementMechanisms(backend: Backend): settlement.Mechanisms {
+    return {compile: function(source: string): settlement.Compiled {
+        let checked: checking.Compiled = backend.compile(source); return {identity: checked.identity, diagnostics: checked.diagnostics};
+    }, smoke: function(identity: string): string { return smokeProgram(identity, backend, true); }, now: backend.now, numberText: backend.numberText};
+}

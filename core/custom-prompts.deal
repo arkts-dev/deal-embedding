@@ -1,0 +1,47 @@
+import * as str from "std/string";
+
+export function contract(): string {
+    return "\n\nNow you do not write a whole program. You add ONE section to a VERA-L program that already exists, " +
+        "and you write only that section, in exactly this form and nothing else:\n" +
+        "<classes>\nany @jsonable record classes the section needs, or nothing\n</classes>\n" +
+        "<fields>\none state field per line, as  name: type = initial value  (or nothing)\n</fields>\n" +
+        "<functions>\nthe handlers and helper functions the section needs\n</functions>\n" +
+        "<view>\nstatements that build the section and add it with sections.push(ui.Section(...));\n</view>\n" +
+        "Rules for the section:\n" +
+        "- Begin the name of every class, field and function with c_ (classes with C_), so nothing clashes with the program.\n" +
+        "- A handler returns only the fields it changes, followed by __PASSTHROUGH__ just before the closing brace, which stands " +
+        "for every other field of the state kept as it is: return {c_count: state.c_count + 1__PASSTHROUGH__};\n" +
+        "- The view statements run inside view(state): they may read any state field, but the local variables of the program's " +
+        "other sections are not visible there.\n" +
+        "- Do not repeat, change or restyle anything the program already has. Do what the section must do, completely.\n" +
+        "- If the program already has a clock (Start, Stop, Reset buttons, a time shown) or a list of entries with its own Add button, " +
+        "the section draws no clock, no Start/Stop/Reset buttons and no second list of the same entries: it works with that state and shows only what is new.\n" +
+        "- A message about an empty or wrong field (such as \"Enter a task name\") is shown only after the person has tried to add it, never while the field is still untouched.\n" +
+        "- Show each piece of information once: no heading and caption that say the same thing, and no second view (a table, \"splits\") of entries the program already lists in rows.\n";
+}
+function cannotForm(): string {
+    return "one short sentence for the person using the app, in plain words about their phone and its apps: " +
+        "what this app cannot do, and why. Never mention the language, the section, sdk.call or code";
+}
+export function phoneRule(phone: string): string {
+    let decline: string = "- When some of the needs cannot be done but others can, write the section for the ones that can and add, for each one " +
+        "that cannot, <cannot need=\"the need, copied exactly\">" + cannotForm() + "</cannot> beside it. Answer a bare <cannot> only when none can be done.\n";
+    if (str.length(phone) === 0) {
+        return decline + "- The section never calls sdk.call: what the phone does is not its job.\n" +
+            "- If the section cannot really do it with this language and these components -- it needs a camera, a live feed, " +
+            "the person's location or data the phone does not hold -- answer only <cannot>" + cannotForm() + "</cannot>. Never fake it with made-up data.\n";
+    }
+    return decline + "- What the phone or another app must do, the section does with sdk.call from a handler, calling ONLY targets from " +
+        "\"Phone functions found\" in the request, copied exactly, with the parameters they show, values from the screen's state. " +
+        "Its answer handler shows what came back: an answer starting with \"declined\" or \"error\" is a failure, anything else succeeded.\n" +
+        "- A function that opens another app with the action ready for the person to confirm (a message filled in, a contact " +
+        "form, a route) does the job: use it, and say on the screen that the person confirms it there.\n" +
+        "- Before answering <cannot>, go through the phone functions found for each need: when one does it -- even by parts, " +
+        "such as audio samples written to a renderer, or the flashlight switched on and off -- write the section with it.\n" +
+        "- A need worded as something to do inside this app that the app cannot do (it has no such component) is not refused " +
+        "if a function found does the nearest useful thing for the person -- shows or opens the same thing in the app made for it: " +
+        "write the section with that function, and say in a line on the screen what it does instead.\n" +
+        "- If none of the phone functions found does what is needed, or it needs something the phone cannot give a program " +
+        "(a camera, a live feed, the person's location), answer only <cannot>" + cannotForm() + "</cannot>. Never fake it, never pretend a call happened, " +
+        "never call a target that is not listed.\n";
+}

@@ -101,7 +101,7 @@ function decimals(raw: Record<string, unknown>): number {
     return -1;
 }
 
-function usableId(raw: string, seen: string[]): string {
+export function usableId(raw: string, seen: string[]): string {
     let lower: string = "abcdefghijklmnopqrstuvwxyz";
     let index: number = 0;
     for (let character of raw) {

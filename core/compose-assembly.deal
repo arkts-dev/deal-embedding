@@ -1,0 +1,23 @@
+import * as state from "./compose-state";
+import * as events from "./compose-events";
+import * as parts from "./compose-part-emission";
+import * as slots from "./compose-screen";
+import * as screen from "./screen-plan";
+import * as emission from "./section-emission";
+import * as template from "./template-spec";
+
+// Catalogue/default values are source data. These entry points connect the
+// portable part, slot, port and fragment policies without a host composer.
+export function screenPlan(comp: state.Composition, effects: events.Effect[], catalogue: template.Fragment[],
+    values: template.Entry[][], defaults: (kind: string) => template.Entry[], custom: template.Fragment | null,
+    readyKinds: string[], numberText: (value: number) => string, lowercase: (value: string) => string): screen.ScreenPlan {
+    let blocks: template.Fragment[] = slots.compositionBlocks(comp, catalogue);
+    let emitted: template.Fragment[] = parts.compositionParts(comp, effects, blocks, numberText, lowercase);
+    return slots.screenPlan(comp, emitted, catalogue, values, defaults, custom, readyKinds, numberText);
+}
+export function assemble(plan: screen.ScreenPlan, partial: boolean, tools: emission.Primitives, bannerView: string): string {
+    return screen.assemblePlan(plan, partial,
+        function(specs: (template.Fragment | null)[], globals: template.Entry[], values: template.Entry[][]): string {
+            return emission.composeFragments(specs, globals, values, tools, bannerView);
+        });
+}

@@ -1,0 +1,81 @@
+// Layout descriptions are catalogue data; placement and completion are shared policy.
+export class Slot { name: string; accepts: string[]; max: number; required: boolean; }
+export class Layout { id: string; criteria: string; slots: Slot[]; swaps: string[][]; }
+function contains(values: string[], value: string): boolean {
+    for (let item of values) { if (item === value) { return true; } } return false;
+}
+export function findLayout(layouts: Layout[], id: string): Layout | null {
+    for (let layout of layouts) { if (layout.id === id) { return layout; } } return null;
+}
+function namedSlotOf(layout: Layout, kind: string): number {
+    let i: number = 0; for (let slot of layout.slots) { if (contains(slot.accepts, kind)) { return i; } i = i + 1; } return -1;
+}
+export function arrangeInLayout(layouts: Layout[], id: string, kinds: string[]): number[] | null {
+    let found: Layout | null = findLayout(layouts, id); if (found === null) { return null; } let layout: Layout = found as Layout;
+    let taken: boolean[] = []; for (let kind of kinds) { taken[taken.length] = kind === "none"; }
+    let pass: number[] = []; let i: number = 0;
+    for (let slot of layout.slots) { if (!contains(slot.accepts, "*")) { pass[pass.length] = i; } i = i + 1; }
+    i = 0; for (let slot of layout.slots) { if (contains(slot.accepts, "*")) { pass[pass.length] = i; } i = i + 1; }
+    let bySlot: number[][] = []; for (let slot of layout.slots) { let empty: number[] = []; bySlot[bySlot.length] = empty; }
+    for (let s of pass) {
+        let slot: Slot = layout.slots[s]; let wildcard: boolean = contains(slot.accepts, "*"); i = 0;
+        for (let kind of kinds) {
+            if (!taken[i] && (wildcard || contains(slot.accepts, kind))) {
+                if (bySlot[s].length >= slot.max) { return null; }
+                bySlot[s][bySlot[s].length] = i; taken[i] = true;
+            } i = i + 1;
+        }
+    }
+    for (let value of taken) { if (!value) { return null; } }
+    let order: number[] = []; i = 0;
+    for (let slot of layout.slots) {
+        if (slot.required && bySlot[i].length === 0) { return null; }
+        for (let index of bySlot[i]) { order[order.length] = index; } i = i + 1;
+    } return order;
+}
+export function completeRequiredSlots(layouts: Layout[], id: string, kinds: string[]): number[] {
+    let out: number[] = []; let found: Layout | null = findLayout(layouts, id); if (found === null) { return out; }
+    for (let slot of (found as Layout).slots) {
+        if (!slot.required || slot.accepts.length !== 1 || slot.accepts[0] === "*" || contains(kinds, slot.accepts[0])) { continue; }
+        let i: number = 0; for (let kind of kinds) {
+            if (kind === "none") { kinds[i] = slot.accepts[0]; out[out.length] = i; break; } i = i + 1;
+        }
+    } return out;
+}
+export function swapForLayout(layouts: Layout[], id: string, kinds: string[]): number[] {
+    let out: number[] = []; let found: Layout | null = findLayout(layouts, id); if (found === null) { return out; }
+    for (let pair of (found as Layout).swaps) {
+        let from: number = -1; let i: number = 0;
+        for (let kind of kinds) { if (kind === pair[0]) { from = i; break; } i = i + 1; }
+        if (from >= 0 && !contains(kinds, pair[1])) { kinds[from] = pair[1]; out[out.length] = from; }
+    } return out;
+}
+export function layoutKinds(layouts: Layout[]): string[] {
+    let out: string[] = [];
+    for (let layout of layouts) { for (let slot of layout.slots) { for (let kind of slot.accepts) {
+        if (kind !== "*" && !contains(out, kind)) { out[out.length] = kind; }
+    } } } return out;
+}
+export function kindsOfLayout(layouts: Layout[], id: string): string[] {
+    let out: string[] = []; let found: Layout | null = findLayout(layouts, id); if (found === null) { return out; }
+    for (let slot of (found as Layout).slots) { for (let kind of slot.accepts) {
+        if (kind !== "*" && !contains(out, kind)) { out[out.length] = kind; }
+    } } return out;
+}
+export function placeKinds(kinds: string[], wanted: string[]): number[] {
+    let out: number[] = []; for (let kind of wanted) {
+        if (contains(kinds, kind)) { continue; } let i: number = 0;
+        for (let previous of kinds) { if (previous === "none") { kinds[i] = kind; out[out.length] = i; break; } i = i + 1; }
+    } return out;
+}
+export function fitToSlots(layouts: Layout[], id: string, kinds: string[], wanted: string[]): string[] {
+    let found: Layout | null = findLayout(layouts, id); if (found === null) { return wanted; } let layout: Layout = found as Layout;
+    let counts: number[] = []; for (let slot of layout.slots) { counts[counts.length] = 0; }
+    for (let kind of kinds) { if (kind !== "none") { let slot: number = namedSlotOf(layout, kind); if (slot >= 0) { counts[slot] = counts[slot] + 1; } } }
+    let out: string[] = []; for (let kind of wanted) {
+        if (contains(kinds, kind)) { continue; } let slot: number = namedSlotOf(layout, kind);
+        if (slot < 0) { out[out.length] = kind; continue; }
+        if (counts[slot] >= layout.slots[slot].max) { continue; }
+        counts[slot] = counts[slot] + 1; out[out.length] = kind;
+    } return out;
+}

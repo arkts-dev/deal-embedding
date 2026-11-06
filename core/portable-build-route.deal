@@ -1,0 +1,124 @@
+import * as agent from "./portable-agent";
+import * as surface from "./agent-surface";
+import * as screen from "./screen-plan";
+import * as contracts from "./compose-contracts";
+import * as source from "./compose-source";
+import * as sketch from "./sketch";
+import * as hole from "./hole-flow";
+import * as writer from "./custom-writer";
+import * as holeResult from "./hole-settlement";
+import * as assembly from "./compose-assembly";
+import * as template from "./template-spec";
+import * as emission from "./section-emission";
+import * as settlement from "./program-settlement";
+import * as record from "./composition-record";
+import * as stages from "./run-stages";
+import * as json from "std/json";
+
+export class Request { agent: agent.Request | null; mode: string; wholeEnabled: boolean; surfaceEnabled: boolean; }
+export class Outcome { kind: string; agent: agent.Result | null; reason: string; }
+export function create(): Outcome { return {kind: "not-built", agent: null, reason: ""}; }
+export function notBuiltReason(outcome: Outcome): string {
+    if (outcome.agent === null) { return "nothing was tried"; }
+    let note: string = (outcome.agent as agent.Result).note; if (note === "") { note = "no answer"; } return "agent: " + note;
+}
+// Approved fallback guard: an independently checked task component survives
+// even when other slots remain open. Notices/empty scaffolding are not tasks.
+// No exception path supplies fallback authority.
+export function retainedRunnable(plan: screen.ScreenPlan | null, data: agent.Data, tools: agent.Mechanisms): boolean {
+    if (plan === null) { return false; } let value: screen.ScreenPlan = plan as screen.ScreenPlan; let task: boolean = false;
+    for (let slot of value.slots) {
+        if (slot.fill !== "part" && slot.fill !== "block" && slot.fill !== "hole") { continue; }
+        if (slot.by < 0 || slot.by >= value.components.length) { continue; }
+        let spec: template.Fragment | null = value.components[slot.by].spec;
+        if (spec !== null && (spec as template.Fragment).kind !== "notice") { task = true; }
+    }
+    if (!task) { return false; }
+    let source: string = assembly.assemble(value, true, tools.emission, data.banner); if (source === "") { return false; }
+    let compiled: settlement.Compiled = tools.settlement.compile(source); if (compiled.diagnostics !== "") { return false; }
+    return tools.settlement.smoke(compiled.identity) === "";
+}
+async function writeWholeScreen(request: Request, host: agent.Host, data: agent.Data, tools: agent.Mechanisms, outcome: Outcome): Promise<boolean> {
+    if (!request.wholeEnabled || request.agent === null || outcome.agent === null || request.mode !== "deepseek") { return false; }
+    let result: agent.Result = outcome.agent as agent.Result;
+    if (retainedRunnable(result.screen, data, tools)) { return false; }
+    let asked: agent.Request = request.agent as agent.Request; let parsed: sketch.Sketch | null = result.composed.parsed; let plan: screen.ScreenPlan = screen.create();
+    if (parsed !== null) { plan = contracts.wholeScreenPlan(parsed as sketch.Sketch, asked.widget, tools.bindings.numberText); }
+    else { plan.widget = asked.widget; template.set(plan.globals, "__HEADER_STYLE__", "none"); screen.addToWrite(plan, "screen.0", "everything the request asks", true); }
+    plan.prompt = asked.prompt; host.status("Writing the whole screen..."); let facts: string[] = [];
+    if (parsed !== null) { for (let constant of (parsed as sketch.Sketch).constants) { facts[facts.length] = constant.label + ": " + source.numberLiteral(constant.value, tools.bindings.numberText); } }
+    if (plan.widget) { facts[facts.length] = "This is a small widget inside a chat reply: no header of its own, at most two sections, compact"; }
+    let started: number = tools.writer.now(); let toolStart: number = host.toolCount();
+    let originals: string[] = host.constructionIdentities();
+    if (originals.length === 0) { throw {code: "HOLE_IDENTITY", message: "Original identities required when widening to whole screen"}; }
+    for (let identity of originals) { if (identity === "") { throw {code: "HOLE_IDENTITY", message: "Empty original whole-screen identity"}; } }
+    // Whole-screen code can replace every original task: its new slot wording
+    // does not create a fresh allowance. Charge all original identities too.
+    let ledger: writer.Budget = host.holes.budget;
+    let wholeHost: hole.Host = {language: host.holes.language, askCode: host.holes.askCode, askJev: host.holes.askJev, lookup: host.holes.lookup,
+        looked: host.holes.looked, cannot: host.holes.cannot, identity: host.holes.identity, onHole: host.holes.onHole,
+        budget: {remaining: function(identities: string[]): number {
+            let own: number = ledger.remaining(identities); let prior: number = ledger.remaining(originals); if (prior < own) { return prior; } return own;
+        }, charge: function(identities: string[]): void {
+            let all: string[] = []; for (let identity of originals) { all[all.length] = identity; }
+            for (let identity of identities) { let seen: boolean = false; for (let before of all) { if (before === identity) { seen = true; break; } } if (!seen) { all[all.length] = identity; } }
+            ledger.charge(all);
+        }}};
+    let written: holeResult.Written | null = await hole.writeHole(plan, asked.prompt, [], wholeHost, facts, null, tools.writer, tools.notices, tools.first8000,
+        function(specs: (template.Fragment | null)[], globals: template.Entry[], values: template.Entry[][]): string {
+            return emission.composeFragments(specs, globals, values, tools.emission, data.banner);
+        }, data.sceneGuide, data.sceneTokens);
+    let wrote: number = tools.writer.now() - started; let lookups: number = host.toolSpanSince(toolStart); if (lookups > wrote) { lookups = wrote; }
+    stages.add(result.stages, "Looking up phone functions", "Phone", lookups, "before the model writes"); let detail: string = "";
+    if (written !== null) { detail = tools.bindings.numberText((written as holeResult.Written).attempts) + " attempt(s)"; }
+    stages.add(result.stages, "Model writes the whole screen", "Model", wrote - lookups, detail); result.whole = written;
+    if (written === null || (written as holeResult.Written).section === null) {
+        let failure: string = "nothing to write"; if (written !== null) { failure = (written as holeResult.Written).failed; }
+        result.note = result.note + "; whole screen: " + failure; return false;
+    }
+    started = tools.writer.now(); let settled: settlement.Settled = await settlement.settleBudgetedProgram(assembly.assemble(plan, false, tools.emission, data.banner), asked.prompt, host.settling, tools.settlement, host.constructionIdentities(), host.holes.budget);
+    stages.add(result.stages, "Compile and run once", "Phone", settled.checkMs, "");
+    stages.add(result.stages, "Repair by edits", "Model", tools.writer.now() - started - settled.checkMs, "");
+    result.checkMs = result.checkMs + settled.checkMs; if (settled.repair !== null) { result.repair = settled.repair; } result.note = result.note + settled.note;
+    if (settled.errors !== "") { result.note = result.note + "; whole screen: " + settled.errors; return false; }
+    result.executable = settled.executable; result.source = settled.source; result.composed.source = settled.source; result.errors = ""; result.screen = plan;
+    let saved: record.Composition = record.compositionFromPlan(plan, asked.prompt, [], []); result.record = null;
+    if (settled.repair === null && record.rebuilds(saved, settled.source, agent.fragments(data), data.layouts, tools.emission, data.banner)) { result.record = saved; }
+    result.note = result.note + "; whole screen written in " + tools.bindings.numberText((written as holeResult.Written).attempts) + " attempt(s)"; return true;
+}
+async function buildSurface(request: Request, host: agent.Host, data: agent.Data, tools: agent.Mechanisms,
+    surfaceHost: surface.Host, surfaceTools: surface.Mechanisms, surfaceCatalogue: string): Promise<Outcome | null> {
+    if (request.agent === null || (request.agent as agent.Request).widget || request.mode !== "deepseek") { return null; }
+    let asked: agent.Request = request.agent as agent.Request; let started: number = tools.writer.now();
+    let brief: surface.Brief | null = await surface.briefSurface(asked.prompt, request.surfaceEnabled, surfaceHost, surfaceTools);
+    let briefMs: number = tools.writer.now() - started;
+    if (brief === null || (brief as surface.Brief).kind !== "whole") {
+        if (brief !== null && (brief as surface.Brief).kind === "part") { asked.scene = (brief as surface.Brief).scene; }
+        if (brief !== null && (brief as surface.Brief).kind === "none") { asked.sceneAllowed = false; } return null;
+    }
+    let outcome: Outcome = create(); let result: agent.Result = agent.create(); outcome.agent = result; let value: surface.Brief = brief as surface.Brief;
+    stages.add(result.stages, "Model designs the game", "Model", briefMs, value.title);
+    let written: surface.Result = await surface.writeSurfaceApp(asked.prompt, value, surfaceHost, surfaceTools, surfaceCatalogue);
+    stages.add(result.stages, "Model writes the game", "Model", written.writeMs, tools.bindings.numberText(written.attempts) + " attempt(s)");
+    stages.add(result.stages, "Compile and play it", "Phone", written.checkMs, ""); result.note = written.note; result.ms = tools.writer.now() - started;
+    if (host.cancelled()) { outcome.kind = "cancelled"; return outcome; }
+    if (written.source === "") { outcome.kind = "not-built"; outcome.reason = written.note; return outcome; }
+    result.source = written.source; result.executable = written.executable; result.composed.source = written.source;
+    result.composed.sketch = json.stringify({kind: value.kind, title: value.title, design: value.design, scene: value.scene}) as string; outcome.kind = "agent"; return outcome;
+}
+export async function buildScreen(request: Request, host: agent.Host, data: agent.Data, tools: agent.Mechanisms,
+    surfaceHost: surface.Host, surfaceTools: surface.Mechanisms, surfaceCatalogue: string): Promise<Outcome> {
+    surfaceHost.budget = host.holes.budget;
+    let outcome: Outcome = create(); if (host.cancelled()) { outcome.kind = "cancelled"; return outcome; }
+    let drawn: Outcome | null = await buildSurface(request, host, data, tools, surfaceHost, surfaceTools, surfaceCatalogue); if (drawn !== null) { return drawn as Outcome; }
+    if (host.cancelled()) { outcome.kind = "cancelled"; return outcome; }
+    if (request.agent !== null) {
+        let result: agent.Result = await agent.runAgent(request.agent as agent.Request, host, data, tools); outcome.agent = result;
+        if (host.cancelled()) { outcome.kind = "cancelled"; return outcome; } if (result.executable !== "") { outcome.kind = "agent"; return outcome; }
+    }
+    if (await writeWholeScreen(request, host, data, tools, outcome)) {
+        outcome.kind = "agent"; if (host.cancelled()) { outcome.kind = "cancelled"; } return outcome;
+    }
+    if (host.cancelled()) { outcome.kind = "cancelled"; return outcome; }
+    outcome.kind = "not-built"; outcome.reason = notBuiltReason(outcome); return outcome;
+}

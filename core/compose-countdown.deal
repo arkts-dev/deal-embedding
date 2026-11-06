@@ -1,0 +1,121 @@
+import * as sketch from "./sketch";
+import * as bindings from "./compose-bindings";
+import * as lengths from "./compose-lengths";
+import * as answers from "./compose-answers";
+import * as choice from "./needs-choice";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+import * as math from "std/math";
+
+export class Countdown {
+    from: string;
+    unit: string;
+    input: sketch.SketchInput | null;
+    widget: string;
+    defaulted: string[];
+    answers: string[];
+}
+export function dependsOn(selected: bindings.Binding[], id: string): string[] {
+    let result: string[] = [];
+    let todo: string[] = [id];
+    let pending: number = 1;
+    while (pending > 0) {
+        pending = pending - 1;
+        let next: string = todo[pending];
+        if (strings.length(next) === 0 || decode.includes(result, next)) { continue; }
+        result[result.length] = next;
+        for (let binding of selected) {
+            if (binding.id !== next) { continue; }
+            todo[pending] = binding.a; pending = pending + 1;
+            todo[pending] = binding.b; pending = pending + 1;
+            for (let name of binding.reads) { todo[pending] = name; pending = pending + 1; }
+            break;
+        }
+    }
+    return result;
+}
+export function defaultInput(id: string, label: string, measure: string, number: number): sketch.SketchInput {
+    let kind: string = "count";
+    if (measure === "money") { kind = "amount"; }
+    else if (measure === "percent") { kind = "percent"; }
+    let value: number = number;
+    if (value - value !== 0) { value = 0; }
+    let min: number = 0;
+    if (measure === "minutes" || measure === "seconds") { min = 1; }
+    let max: number = math.ceil(math.absNumber(value) * 4);
+    if (max < 100) { max = 100; }
+    return {id: id, label: label, kind: kind, measure: measure, value: value, min: min, max: max, unit: "", options: []};
+}
+export function defaultNotice(input: sketch.SketchInput, numberText: (value: number) => string): string {
+    let suffix: string = "";
+    if (input.measure === "minutes" || input.measure === "seconds") { suffix = " " + input.measure; }
+    return input.label + ": set by you, starting at " + numberText(input.value) + suffix;
+}
+function measureOf(value: sketch.Sketch, id: string): string {
+    for (let input of value.inputs) { if (input.id === id) { return input.measure; } }
+    for (let constant of value.constants) { if (constant.id === id) { return constant.measure; } }
+    for (let figure of value.values) { if (figure.id === id) { return figure.format; } }
+    return "";
+}
+function startingNumber(value: sketch.Sketch, source: string): number {
+    let id: string = source;
+    let parts: string[] = strings.split(source, ".");
+    if (parts.length > 1) { id = strings.substring(source, strings.length(parts[0]) + 1, strings.length(source)); }
+    for (let input of value.inputs) {
+        if (input.id !== id) { continue; }
+        if (input.options.length > 0) {
+            let most: number = input.options[0].value;
+            for (let option of input.options) { if (option.value > most) { most = option.value; } }
+            return most;
+        }
+        return input.value;
+    }
+    for (let constant of value.constants) { if (constant.id === id) { return constant.value; } }
+    for (let figure of value.values) { if (figure.id === id) { return figure.result; } }
+    return 0 / 0;
+}
+export function readCountdown(value: sketch.Sketch, selected: bindings.Binding[], received: Record<string, unknown>,
+    numberText: (value: number) => string, fixedTwo: (value: number) => string): Countdown {
+    let result: Countdown = {from: "", unit: "seconds", input: null, widget: "", defaulted: [], answers: []};
+    if (!value.hasCountdown) { return result; }
+    let sources: string[] = [];
+    for (let source of lengths.lengthSources(value, numberText)) { sources[sources.length] = source.key; }
+    result.from = answers.answerOf(received, "countdown.length", sources, result.answers, 0.25, fixedTwo);
+    let unclear: boolean = strings.length(result.from) === 0;
+    for (let read of dependsOn(selected, result.from)) {
+        if (decode.includes(["remaining", "elapsed", "duration"], read)) { unclear = true; }
+    }
+    if (!unclear) {
+        result.unit = measureOf(value, result.from);
+        if (received["unit." + result.from] !== undefined) {
+            result.unit = answers.answerOf(received, "unit." + result.from, ["seconds", "minutes"], result.answers, 0.5, fixedTwo);
+            if (strings.length(result.unit) === 0) {
+                let ignored: string[] = [];
+                unclear = answers.answerOf(received, "unit." + result.from, ["neither"], ignored, 0.5, fixedTwo) === "neither";
+                if (!unclear) {
+                    let start: number = startingNumber(value, result.from);
+                    result.unit = "minutes";
+                    if (start - start === 0 && start > 120) { result.unit = "seconds"; }
+                    result.defaulted[result.defaulted.length] = choice.labelOf(value, result.from) + ": taken as " + result.unit;
+                }
+            }
+        }
+    }
+    if (unclear) {
+        let seen: string[] = [];
+        for (let input of value.inputs) { seen[seen.length] = input.id; }
+        for (let constant of value.constants) { seen[seen.length] = constant.id; }
+        for (let figure of value.values) { seen[seen.length] = figure.id; }
+        let list: sketch.SketchList | null = value.list;
+        if (list !== null) { for (let field of list.fields) { seen[seen.length] = field.id; } }
+        let id: string = sketch.usableId("countdownLength", seen);
+        let label: string = value.countdown;
+        if (strings.length(label) === 0) { label = "Timer"; }
+        let input: sketch.SketchInput = defaultInput(id, label + " length", "minutes", 5);
+        result.input = input; result.widget = "stepper";
+        result.defaulted[result.defaulted.length] = defaultNotice(input, numberText);
+        result.from = id; result.unit = "minutes";
+    }
+    return result;
+}
+export function main(): null { return null; }

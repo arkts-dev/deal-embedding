@@ -1,0 +1,49 @@
+import * as sketch from "./sketch";
+import * as state from "./compose-state";
+import * as lengths from "./compose-lengths";
+import * as choice from "./needs-choice";
+import * as source from "./compose-source";
+import * as str from "std/string";
+
+function join(values: string[], separator: string): string {
+    let out: string = ""; let i: number = 0; for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; } return out;
+}
+export function provisionalComposition(value: sketch.Sketch, widget: boolean, numberText: (value: number) => string): state.Composition | null {
+    if (value.title === "" && value.inputs.length === 0 && value.values.length === 0) { return null; }
+    let comp: state.Composition = state.create(value, widget); comp.provisional = true; comp.widget = widget; comp.inputs = value.inputs;
+    for (let input of value.inputs) { state.setNamed(comp.widgets, input.id, state.defaultWidget(input.kind)); }
+    for (let figure of value.values) {
+        let show: string = "stat"; if (figure.format === "fraction") { show = "progress"; }
+        comp.bindings[comp.bindings.length] = {id: figure.id, formula: "", a: "", b: "", expr: "", reads: [], show: show, scale: ""};
+    }
+    if (value.hasCountdown) {
+        let sources: choice.Criterion[] = lengths.lengthSources(value, numberText);
+        if (sources.length > 0) { comp.countdownFrom = sources[0].key; }
+        // measureOf preserves formats for values and the empty unknown measure.
+        for (let input of value.inputs) { if (input.id === comp.countdownFrom) { comp.countdownUnit = input.measure; } }
+        for (let constant of value.constants) { if (constant.id === comp.countdownFrom) { comp.countdownUnit = constant.measure; } }
+        for (let figure of value.values) { if (figure.id === comp.countdownFrom) { comp.countdownUnit = figure.format; } }
+        if (comp.countdownFrom === "") { comp.countdownUnit = ""; }
+    } return comp;
+}
+export function sketchPlan(value: sketch.Sketch, numberText: (value: number) => string): string {
+    let lines: string[] = ["A sketch of this app, made before writing it, which the screen already shows as a preview:"];
+    for (let input of value.inputs) {
+        let options: string = ""; if (input.options.length > 0) {
+            let labels: string[] = []; for (let option of input.options) { labels[labels.length] = option.label; }
+            options = ", options " + join(labels, " / ");
+        }
+        let range: string = ""; if (input.kind !== "text" && input.kind !== "toggle" && input.kind !== "choice") { range = ", " + numberText(input.min) + " to " + numberText(input.max); }
+        lines[lines.length] = "- input \"" + input.label + "\" (" + input.kind + range + options + ")";
+    }
+    for (let constant of value.constants) { lines[lines.length] = "- fixed: " + constant.label + " = " + source.numberLiteral(constant.value, numberText); }
+    if (value.hasCountdown) { lines[lines.length] = "- a countdown: " + value.countdown; }
+    if (value.hasStopwatch) { lines[lines.length] = "- a stopwatch: " + value.stopwatch; }
+    if (value.list !== null) { lines[lines.length] = "- " + choice.describeList(value.list as sketch.SketchList); }
+    for (let figure of value.values) { lines[lines.length] = "- shows \"" + figure.label + "\": " + figure.means; }
+    for (let event of value.events) { lines[lines.length] = "- " + event.when + ": " + event.what; }
+    for (let ready of value.ready) { lines[lines.length] = "- a ready-made section: " + ready; }
+    for (let other of value.other) { lines[lines.length] = "- also: " + other; }
+    lines[lines.length] = "Keep these inputs, values and their labels where they fit the request, and add whatever else it needs. The request decides.";
+    return join(lines, "\n");
+}

@@ -1,0 +1,171 @@
+import * as state from "./compose-state";
+import * as sketch from "./sketch";
+import * as bindings from "./compose-bindings";
+import * as events from "./compose-events";
+import * as template from "./template-spec";
+import * as text from "./section-text";
+import * as decode from "./plan-decoding";
+import * as math from "std/math";
+import * as str from "std/string";
+
+export class Field { name: string; type: string; init: string; }
+export function join(values: string[], separator: string): string {
+    let out: string = ""; let n: number = 0;
+    for (let value of values) { if (n > 0) { out = out + separator; } out = out + value; n = n + 1; } return out;
+}
+export function quote(value: string): string {
+    return "\"" + text.replaceAll(text.replaceAll(text.replaceAll(value, "\\", "\\\\"), "\"", "\\\""), "\n", " ") + "\"";
+}
+export function numberLiteral(value: number, numberText: (value: number) => string): string {
+    if (value - value !== 0) { return "0"; } return numberText(value);
+}
+export function named(values: state.Named[], id: string): string {
+    for (let pair of values) { if (pair.id === id) { return pair.value; } } return "";
+}
+export function inputFields(comp: state.Composition, numberText: (value: number) => string): Field[] {
+    let fields: Field[] = [];
+    for (let input of comp.inputs) {
+        let name: string = input.id; let type: string = "number"; let initial: string = "";
+        if (input.kind === "toggle") { type = "boolean"; initial = "false"; if (input.value !== 0) { initial = "true"; } }
+        else if (input.kind === "text") { type = "string"; initial = "\"\""; }
+        else if (input.kind === "choice") {
+            let rounded: number = math.floor(input.value); if (input.value - rounded >= 0.5) { rounded = rounded + 1; }
+            if (rounded > input.options.length - 1) { rounded = input.options.length - 1; } if (rounded < 0) { rounded = 0; }
+            name = name + "Index"; initial = numberText(rounded);
+        } else if (named(comp.widgets, input.id) === "typed_number") {
+            name = name + "Text"; type = "string"; initial = quote(numberLiteral(input.value, numberText));
+        } else { initial = numberLiteral(input.value, numberText); }
+        fields[fields.length] = {name: name, type: type, init: initial};
+    }
+    return fields;
+}
+export function clockFields(): Field[] {
+    return [{name: "elapsedMs", type: "number", init: "0"}, {name: "running", type: "boolean", init: "false"}, {name: "finished", type: "boolean", init: "false"}];
+}
+export function draftOf(field: sketch.ListField): string { return "draft_" + field.id; }
+export function draftType(field: sketch.ListField): string {
+    if (field.kind === "time") { return "number"; } if (field.kind === "toggle") { return "boolean"; } return "string";
+}
+export function draftInit(field: sketch.ListField, numberText: (value: number) => string): string {
+    if (field.kind === "time") { return numberLiteral(field.value, numberText); }
+    if (field.kind === "toggle") { if (field.value !== 0) { return "true"; } return "false"; } return "\"\"";
+}
+export function draftValue(field: sketch.ListField): string {
+    if (field.kind === "text") { return "strings.trim(state." + draftOf(field) + ")"; }
+    if (field.kind === "number") { return "strings.toNumber(state." + draftOf(field) + ", 0)"; }
+    return "state." + draftOf(field);
+}
+export function entryType(field: sketch.ListField): string {
+    if (field.kind === "text") { return "string"; } if (field.kind === "toggle") { return "boolean"; } return "number";
+}
+export function entryFields(list: sketch.SketchList, numberText: (value: number) => string): Field[] {
+    let fields: Field[] = [{name: "entries", type: "LogEntry[]", init: "emptyEntries"}];
+    for (let field of list.fields) { fields[fields.length] = {name: draftOf(field), type: draftType(field), init: draftInit(field, numberText)}; }
+    fields[fields.length] = {name: "removedEntries", type: "LogEntry[]", init: "emptyEntries"};
+    fields[fields.length] = {name: "removedAt", type: "number", init: "-1"}; return fields;
+}
+export function entryAnswerEvent(comp: state.Composition, effects: events.Effect[]): string {
+    for (let event of comp.events) { for (let effect of effects) {
+        if (effect.id === event.effect && str.length(effect.done) > 0 && event.moment === "entry_added") { return event.event.id; }
+    } } return "";
+}
+export function hasBanner(comp: state.Composition, effects: events.Effect[]): boolean {
+    let answering: string = entryAnswerEvent(comp, effects);
+    for (let event of comp.events) { if (event.event.id !== answering) { return true; } } return false;
+}
+export function keepsCalendarIds(comp: state.Composition): boolean {
+    let add: boolean = false; let clear: boolean = false;
+    for (let event of comp.events) { if (event.effect === "calendar_add") { add = true; } if (event.effect === "calendar_clear") { clear = true; } }
+    return add && clear;
+}
+export function effectFields(comp: state.Composition, effects: events.Effect[]): Field[] {
+    let fields: Field[] = [];
+    if (hasBanner(comp, effects)) { fields[fields.length] = {name: "effectStatus", type: "string", init: "\"\""}; }
+    if (keepsCalendarIds(comp)) { fields[fields.length] = {name: "calendarIds", type: "string", init: "\"\""}; } return fields;
+}
+export function changed(fields: Field[], replaced: template.Entry[]): string {
+    let parts: string[] = [];
+    for (let pair of replaced) { for (let field of fields) { if (field.name === pair.key) { parts[parts.length] = pair.key + ": " + pair.value; break; } } }
+    return "{" + join(parts, ", ") + "__PASSTHROUGH__}";
+}
+export function inputLocals(comp: state.Composition, numberText: (value: number) => string): string[] {
+    let lines: string[] = [];
+    for (let input of comp.inputs) {
+        if (input.kind === "text" || input.kind === "toggle") { continue; }
+        if (input.kind === "choice") {
+            let values: string[] = []; for (let option of input.options) { values[values.length] = numberLiteral(option.value, numberText); }
+            lines[lines.length] = "  let " + input.id + "Values: number[] = [" + join(values, ", ") + "];";
+            lines[lines.length] = "  let " + input.id + ": number = " + input.id + "Values[state." + input.id + "Index];";
+        } else if (named(comp.widgets, input.id) === "typed_number") {
+            lines[lines.length] = "  let " + input.id + ": number = strings.toNumber(state." + input.id + "Text, 0);";
+        } else { lines[lines.length] = "  let " + input.id + ": number = state." + input.id + ";"; }
+    }
+    for (let constant of comp.sketch.constants) { lines[lines.length] = "  let " + constant.id + ": number = " + numberLiteral(constant.value, numberText) + ";"; }
+    return lines;
+}
+export function bareExpr(binding: bindings.Binding): string {
+    let a: string = binding.a; let b: string = binding.b; let formula: string = binding.formula;
+    if (formula === "written") { return binding.expr; } if (formula === "copy") { return a; }
+    if (formula === "add") { return a + " + " + b; } if (formula === "subtract") { return a + " - " + b; }
+    if (formula === "multiply") { return a + " * " + b; } if (formula === "divide") { return "share(" + a + ", " + b + ")"; }
+    if (formula === "divide_up") { return "math.ceil(share(" + a + ", " + b + "))"; }
+    if (formula === "percent_of") { return a + " * " + b + " / 100"; }
+    if (formula === "add_percent") { return a + " * (1 + " + b + " / 100)"; }
+    if (formula === "subtract_percent") { return a + " * (1 - " + b + " / 100)"; }
+    if (formula === "round_up") { return "math.ceil(" + a + ")"; }
+    if (formula === "ratio_percent") { return "share(" + a + ", " + b + ") * 100"; } return "0";
+}
+export function formulaExpr(binding: bindings.Binding): string {
+    let value: string = bareExpr(binding); if (str.length(binding.scale) > 0) { return "(" + value + ")" + binding.scale; } return value;
+}
+export function isTime(measure: string): boolean { return measure === "seconds" || measure === "minutes"; }
+export function decimalsFor(measure: string, asked: number): number {
+    if (asked >= 0 && decode.includes(["number", "plain", "count"], measure)) { return asked; }
+    if (measure === "fraction") { if (asked >= 0) { return asked; } return 4; }
+    if (measure === "money") { return 2; } if (measure === "count") { return 0; } return 1;
+}
+export function durationText(measure: string, expr: string): string {
+    let scale: string = ""; if (measure === "minutes") { scale = " * 60"; } return "ui.durationToString(math.ceil(" + expr + scale + "))";
+}
+export function amountText(measure: string, unit: string, expr: string, asked: number, numberText: (value: number) => string): string {
+    if (measure === "money") { return quote(unit) + " + ui.formatNumber(" + expr + ", 2)"; }
+    if (measure === "percent") { return "ui.formatNumber(" + expr + ", 1) + \"%\""; }
+    if (isTime(measure)) { return durationText(measure, expr); }
+    if (measure === "clock") { return "ui.clockToString(math.round((" + expr + ") - math.floor((" + expr + ") / 1440) * 1440))"; }
+    return "ui.formatNumber(" + expr + ", " + numberText(decimalsFor(measure, asked)) + ")";
+}
+export function entryAmountText(field: sketch.ListField, numberText: (value: number) => string): string {
+    if (isTime(field.measure)) {
+        let decimals: number = 0; if (field.decimals >= 0) { decimals = field.decimals; }
+        let unit: string = " s"; if (field.measure === "minutes") { unit = " min"; }
+        return "ui.formatNumber(e." + field.id + ", " + numberText(decimals) + ") + " + quote(unit);
+    }
+    return amountText(field.measure, field.unit, "e." + field.id, field.decimals, numberText);
+}
+export function statFor(value: sketch.SketchValue, expr: string, numberText: (value: number) => string): string {
+    if (isTime(value.format) || value.format === "clock") { return "ui.Stat(\"default\", " + quote(value.label) + ", " + amountText(value.format, value.unit, expr, -1, numberText) + ", \"\", \"clock\")"; }
+    let prefix: string = ""; let suffix: string = "";
+    if (value.format === "money") { prefix = value.unit; }
+    if (value.format === "percent") { suffix = "%"; } else if (value.format !== "money" && str.length(value.unit) > 0) { suffix = " " + value.unit; }
+    return "ui.NumberStat(\"default\", " + quote(value.label) + ", " + expr + ", " + quote(prefix) + ", " + quote(suffix) + ", 1, \"\", \"chart\", " + numberText(decimalsFor(value.format, value.decimals)) + ")";
+}
+export function figureRow(value: sketch.SketchValue, expr: string, numberText: (value: number) => string): string {
+    if (isTime(value.format) || value.format === "clock") { return "ui.ListItem(\"default\", " + quote(value.label) + ", \"\", " + amountText(value.format, value.unit, expr, -1, numberText) + ", \"\", 0, false, \"\")"; }
+    let prefix: string = ""; let suffix: string = "";
+    if (value.format === "money") { prefix = value.unit; }
+    if (value.format === "percent") { suffix = "%"; } else if (value.format !== "money" && str.length(value.unit) > 0) { suffix = " " + value.unit; }
+    return "ui.NumberListItem(\"default\", " + quote(value.label) + ", \"\", " + expr + ", " + quote(prefix) + ", " + quote(suffix) + ", 1, \"\", 0, false, \"\", " + numberText(decimalsFor(value.format, value.decimals)) + ")";
+}
+export function heroText(value: sketch.SketchValue, expr: string, numberText: (value: number) => string): string {
+    if (isTime(value.format) || value.format === "clock") { return amountText(value.format, value.unit, expr, -1, numberText); }
+    if (value.format === "money") { return quote(value.unit) + " + ui.formatNumber(" + expr + ", 2)"; }
+    if (value.format === "percent") { return "ui.formatNumber(" + expr + ", 1) + \"%\""; }
+    return "ui.formatNumber(" + expr + ", " + numberText(decimalsFor(value.format, value.decimals)) + ")";
+}
+export function part(kind: string, fields: Field[], functions: string[], view: string[], support: string, initial: string): template.Fragment {
+    let stateFields: template.StateField[] = []; let entries: string[] = [];
+    for (let field of fields) { stateFields[stateFields.length] = {name: field.name, type: field.type}; entries[entries.length] = field.name + ": " + field.init; }
+    return {kind: kind, criteria: "", supportClass: support, stateFields: stateFields, initStatements: initial,
+        initEntries: join(entries, ", "), functions: join(functions, "\n\n"), viewBlock: join(view, "\n"),
+        imports: [], ports: [], holes: [], indexed: false, owns: "", tab: ""};
+}

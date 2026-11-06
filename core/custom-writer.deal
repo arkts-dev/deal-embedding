@@ -1,0 +1,134 @@
+import * as template from "./template-spec";
+import * as section from "./custom-section";
+import * as calls from "./custom-calls";
+import * as prompts from "./custom-prompts";
+import * as checking from "./custom-check";
+import * as holes from "./hole-settlement";
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+
+export class Request {
+    needs: string[]; identities: string[]; prompt: string; inputs: string[]; facts: string[]; parts: string[];
+    ownsClock: boolean; ownsList: boolean; phone: string; whole: boolean;
+    compose: (section: template.Fragment | null) => string;
+    verify: ((body: string) => Promise<string>) | null;
+}
+export class Primitives {
+    matches: (pattern: string, text: string) => calls.Match[];
+    lowercase: (text: string) => string;
+    numberText: (value: number) => string;
+    now: () => number;
+    // Native mechanisms provide diagnostics and executable handles; shared
+    // custom-check decides quoting, smoke/play order and unread-state policy.
+    checking: checking.Mechanisms;
+}
+// Accessors share request-local accounting with split/re-entered holes. A
+// dispatched grouped call is charged to every participating stable need.
+export class Budget {
+    remaining: (needs: string[]) => number;
+    charge: (needs: string[]) => void;
+}
+export function createBudget(): Budget {
+    let names: string[] = []; let used: number[] = [];
+    return {
+        remaining: function(needs: string[]): number {
+            let remaining: number = 3;
+            for (let need of needs) {
+                let i: number = 0;
+                for (let name of names) { if (name === need && 3 - used[i] < remaining) { remaining = 3 - used[i]; } i = i + 1; }
+            }
+            return remaining;
+        },
+        charge: function(needs: string[]): void {
+            let seen: string[] = [];
+            for (let need of needs) {
+                if (decode.includes(seen, need)) { continue; } seen[seen.length] = need;
+                let found: boolean = false; let i: number = 0;
+                for (let name of names) { if (name === need) { used[i] = used[i] + 1; found = true; break; } i = i + 1; }
+                if (!found) { names[names.length] = need; used[used.length] = 1; }
+            }
+        }
+    };
+}
+function join(values: string[], separator: string): string {
+    let out: string = ""; let i: number = 0;
+    for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; }
+    return out;
+}
+export function create(): Request {
+    return {needs: [], identities: [], prompt: "", inputs: [], facts: [], parts: [], ownsClock: false, ownsList: false, phone: "", whole: false,
+        compose: function(section: template.Fragment | null): string { return ""; }, verify: null};
+}
+export async function writeSection(request: Request, language: string,
+    ask: (system: string, user: string, budget: number, think: boolean) => Promise<string | null>,
+    budget: Budget, tools: Primitives, sceneGuide: string, sceneTokens: number): Promise<holes.Written> {
+    if (request.identities.length !== request.needs.length || request.identities.length === 0) {
+        throw {code: "HOLE_IDENTITY", message: "One stable request identity per issued need required"};
+    }
+    for (let identity of request.identities) { if (identity === "") { throw {code: "HOLE_IDENTITY", message: "Nonempty original need identity required"}; } }
+    let result: holes.Written = holes.result(); let started: number = tools.now();
+    let mechanisms: calls.Primitives = {matches: tools.matches}; let found: string[] = calls.foundTargets(request.phone, mechanisms);
+    let phone: string = ""; if (found.length > 0) { phone = request.phone; }
+    let scene: boolean = false;
+    for (let need of request.needs) { if (str.startsWith(need, "a scene the app draws itself: ")) { scene = true; } }
+    let system: string = language + prompts.contract() + prompts.phoneRule(phone); if (scene) { system = system + sceneGuide; }
+    let asked: string = "Request: " + request.prompt + "\n\nThe section must do:\n- " + join(request.needs, "\n- ");
+    if (request.inputs.length > 0) { asked = asked + "\n\nThe person sets these on the screen and nothing else uses them yet; the section uses them:\n- " + join(request.inputs, "\n- "); }
+    if (request.parts.length > 0) { asked = asked + "\n\nThe program already has these: use them, do not make your own:\n- " + join(request.parts, "\n- "); }
+    if (request.facts.length > 0) { asked = asked + "\n\nFixed numbers the app uses:\n- " + join(request.facts, "\n- "); }
+    if (str.length(phone) > 0) { asked = asked + "\n\nPhone functions found (the only targets the section may call):\n" + phone; }
+    if (request.whole) { asked = asked + "\n\nThe program has nothing yet but its header: your section is the whole screen, everything the request " +
+        "asks for. It may push several ui.Section(...) in its view."; }
+    asked = asked + "\n\nThe program so far, which the section joins (do not repeat it):\n" + request.compose(null);
+    let user: string = asked; let best: template.Fragment | null = null; let bestMissed: string[] = [];
+    let attempt: number = 0;
+    // Approved request-wide three-dispatch budget intentionally supersedes
+    // the reference's four local calls. Final remaining call uses thinking;
+    // splitting/re-entry consumes the same accessor, never a fresh allowance.
+    while (budget.remaining(request.identities) > 0) {
+        let remaining: number = budget.remaining(request.identities); let think: boolean = remaining === 1;
+        let tokens: number = 3000; if (scene) { tokens = sceneTokens; } if (request.whole) { tokens = 8000; }
+        if (think) { tokens = tokens * 3; }
+        result.attempts = result.attempts + 1; result.thought = think;
+        budget.charge(request.identities);
+        let reply: string | null = await ask(system, user, tokens, think);
+        if (reply === null) { result.failed = "no answer for the custom section"; break; }
+        let response: string = reply as string; let cannot: string | null = section.between(response, "cannot");
+        if (cannot !== null) { result.cannot = cannot as string; result.failed = "custom section cannot: " + (cannot as string); break; }
+        let parsed: template.Fragment | null = section.parseSection(response); let problem: string = "";
+        if (parsed === null) { problem = "The answer was not in the form asked for: <classes>, <fields>, <functions> and <view>."; }
+        else {
+            let part: template.Fragment = parsed as template.Fragment;
+            problem = calls.callProblem(response, found, mechanisms);
+            if (str.length(problem) === 0 && attempt < 2) { problem = section.repeats(part, request.ownsClock, request.ownsList, tools.lowercase); }
+            if (str.length(problem) === 0) { problem = checking.check(request.compose(part), scene, tools.checking); }
+        }
+        if (str.length(problem) === 0) {
+            let declined: template.Entry[] = calls.declinedNeeds(response, request.needs, mechanisms);
+            let doing: string[] = [];
+            for (let need of request.needs) { if (template.get(declined, need) === undefined) { doing[doing.length] = need; } }
+            let unread: string[] = []; let verify: ((body: string) => Promise<string>) | null = request.verify;
+            if (verify !== null && doing.length > 0) {
+                let answer: string = await (verify as (body: string) => Promise<string>)(section.verifyRequest(request.prompt, doing, response, tools.numberText));
+                unread = section.undone(doing, answer, tools.numberText);
+            }
+            let missed: string[] = []; for (let need of unread) { missed[missed.length] = need; }
+            for (let need of request.needs) { if (template.get(declined, need) !== undefined) { missed[missed.length] = need; } }
+            if (unread.length === 0) {
+                result.section = parsed; result.failed = ""; result.declined = declined; result.missed = missed;
+                if (missed.length > 0) { result.failed = "custom section does not do: " + join(missed, "; "); } break;
+            }
+            result.failed = "custom section does not do: " + join(missed, "; ");
+            if (missed.length < request.needs.length && (best === null || missed.length < bestMissed.length)) { best = parsed; bestMissed = missed; }
+            problem = "Read against the request, it does not do: " + join(missed, "; ") + ". It must really do that, used as written -- " +
+                "or, if it cannot be done here, answer <cannot>.";
+        } else { result.failed = "custom section: " + str.split(problem, "\n")[0]; }
+        user = asked + "\n\nYour section was:\n" + response + "\n\nIt failed:\n" + problem + "\n\nWrite the whole section again, fixed, in the same form.";
+        attempt = attempt + 1;
+    }
+    if (result.section === null && str.length(result.cannot) === 0 && best !== null) {
+        result.section = best; result.missed = bestMissed; result.failed = "custom section does not do: " + join(bestMissed, "; ");
+    }
+    if (result.attempts === 0) { result.failed = "custom section invocation budget exhausted"; }
+    result.ms = tools.now() - started; return result;
+}

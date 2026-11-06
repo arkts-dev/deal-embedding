@@ -1,0 +1,142 @@
+import * as template from "./template-spec";
+import * as text from "./section-text";
+import * as str from "std/string";
+
+function join(values: string[], separator: string): string {
+    let out: string = ""; let i: number = 0;
+    for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; }
+    return out;
+}
+function has(values: string[], text: string): boolean {
+    for (let value of values) { if (value === text) { return true; } }
+    return false;
+}
+function get(values: template.Entry[], key: string, fallback: string): string {
+    let value: string | undefined = template.get(values, key);
+    if (value === undefined) { return fallback; } return value as string;
+}
+export class Primitives {
+    numberText: (value: number) => string;
+    // Exact ECMAScript UTF-16 casing/slice for tab labels, not catalogue policy.
+    upperFirst: (value: string) => string;
+    first14: (value: string) => string;
+}
+function paneLabel(spec: template.Fragment, taken: string[], tools: Primitives): string {
+    let words: string = spec.tab;
+    if (str.length(words) === 0) { words = text.replaceAll(spec.kind, "_", " "); }
+    let label: string = tools.first14(tools.upperFirst(words)); let out: string = label; let n: number = 2;
+    while (has(taken, out)) { out = label + " " + tools.numberText(n); n = n + 1; }
+    return out;
+}
+export function composeFragments(specs: (template.Fragment | null)[], globals: template.Entry[],
+    instanceValues: template.Entry[][], tools: Primitives, bannerView: string): string {
+    let support: string[] = []; let imports: string[] = [];
+    for (let maybe of specs) {
+        if (maybe === null) { continue; } let spec: template.Fragment = maybe as template.Fragment;
+        if (str.length(spec.supportClass) > 0 && !has(support, spec.supportClass)) { support[support.length] = spec.supportClass; }
+        for (let imp of spec.imports) { if (!has(imports, imp)) { imports[imports.length] = imp; } }
+    }
+    let allNames: string[][] = []; let classFields: string[] = []; let i: number = 0;
+    for (let maybe of specs) {
+        let names: string[] = []; let idx: string = tools.numberText(i + 1);
+        if (maybe !== null) {
+            let spec: template.Fragment = maybe as template.Fragment;
+            for (let field of spec.stateFields) {
+                let name: string = field.name; if (spec.indexed) { name = text.replaceAll(name, "IDX", idx); }
+                names[names.length] = name; classFields[classFields.length] = "  " + name + ": " + field.type + ";";
+            }
+        }
+        allNames[allNames.length] = names; i = i + 1;
+    }
+    let widget: boolean = get(globals, "__WIDGET__", "") === "true";
+    let panes: number[] = []; i = 0;
+    if (widget) {
+        for (let maybe of specs) {
+            if (maybe !== null && str.length((maybe as template.Fragment).viewBlock) > 0) { panes[panes.length] = i; }
+            i = i + 1;
+        }
+    }
+    let tabbed: boolean = panes.length > 1;
+    if (tabbed) { classFields[classFields.length] = "  paneTab: number;"; allNames[allNames.length] = ["paneTab"]; }
+    let portBindings: template.Entry[][] = text.bindSpecPorts(specs, tools.numberText);
+    let slots: template.Entry[][] = []; i = 0;
+    for (let maybe of specs) {
+        let entries: template.Entry[] = [];
+        if (maybe !== null) {
+            let supplied: template.Entry[] = []; if (i < instanceValues.length) { supplied = instanceValues[i]; }
+            entries = text.withHoleDefaults(maybe as template.Fragment, tools.numberText(i + 1), supplied);
+        }
+        slots[slots.length] = entries; i = i + 1;
+    }
+    let statements: string[] = []; let initEntries: string[] = []; i = 0;
+    for (let maybe of specs) {
+        if (maybe !== null) {
+            let spec: template.Fragment = maybe as template.Fragment; let idx: string = tools.numberText(i + 1);
+            if (str.length(spec.initStatements) > 0) {
+                statements[statements.length] = text.applyPorts(text.resolveInstanceText(spec.initStatements, idx, slots[i], spec.indexed), portBindings[i]);
+            }
+            if (str.length(spec.initEntries) > 0) {
+                let entries: string = spec.initEntries; if (spec.indexed) { entries = text.replaceAll(entries, "IDX", idx); }
+                initEntries[initEntries.length] = entries;
+            }
+        }
+        i = i + 1;
+    }
+    let fields: string[] = [];
+    for (let names of allNames) { for (let name of names) { fields[fields.length] = name; } }
+    let functions: string[] = []; i = 0;
+    for (let maybe of specs) {
+        if (maybe !== null) {
+            let spec: template.Fragment = maybe as template.Fragment;
+            let fn: string = text.applyPorts(text.resolveInstanceText(spec.functions, tools.numberText(i + 1), slots[i], spec.indexed), portBindings[i]);
+            functions[functions.length] = text.fillPassthrough(fn, fields);
+        }
+        i = i + 1;
+    }
+    if (tabbed) {
+        functions[functions.length] = text.fillPassthrough("function setPaneTab(state: AppState, index: number): AppState {\n  return {paneTab: index__PASSTHROUGH__};\n}", fields);
+    }
+    let views: string[] = []; let tabNames: string[] = []; let tabPanes: string[] = []; i = 0;
+    for (let maybe of specs) {
+        if (maybe !== null) {
+            let spec: template.Fragment = maybe as template.Fragment;
+            let flag: string = "false"; if (widget) { flag = "true"; }
+            let block: string = text.replaceAll(text.applyPorts(text.resolveInstanceText(spec.viewBlock, tools.numberText(i + 1), slots[i], spec.indexed), portBindings[i]), "__WIDGET__", flag);
+            let pane: number = -1; let at: number = 0;
+            for (let index of panes) { if (index === i && pane < 0) { pane = at; } at = at + 1; }
+            if (tabbed && pane >= 0 && str.length(block) > 0) {
+                let name: string = "pane" + tools.numberText(pane);
+                block = "let " + name + ": ui.View[] = [];\n" + text.replaceAll(block, "sections.push(", name + ".push(");
+                tabNames[tabNames.length] = paneLabel(spec, tabNames, tools);
+                tabPanes[tabPanes.length] = "ui.Column(\"default\", " + name + ")";
+            }
+            views[views.length] = block;
+        }
+        i = i + 1;
+    }
+    let lines: string[] = ["import * as ui from \"std/ui\""];
+    for (let imp of imports) { lines[lines.length] = imp; } lines[lines.length] = "";
+    for (let sc of support) { lines[lines.length] = sc; lines[lines.length] = ""; }
+    lines[lines.length] = "@jsonable"; lines[lines.length] = "class AppState {";
+    for (let field of classFields) { lines[lines.length] = field; }
+    lines[lines.length] = "}"; lines[lines.length] = ""; lines[lines.length] = "function init(): AppState {";
+    for (let statement of statements) { lines[lines.length] = statement; }
+    if (tabbed) { initEntries[initEntries.length] = "paneTab: 0"; }
+    lines[lines.length] = "  return {" + join(initEntries, ", ") + "};";
+    lines[lines.length] = "}"; lines[lines.length] = "";
+    for (let fn of functions) { lines[lines.length] = fn; lines[lines.length] = ""; }
+    lines[lines.length] = "function view(state: AppState): ui.View {";
+    lines[lines.length] = "  let sections: ui.View[] = [];";
+    let header: string = get(globals, "__HEADER_STYLE__", "default");
+    if (header !== "none") {
+        lines[lines.length] = "  sections.push(ui.Header(\"" + header + "\", \"" + get(globals, "__TITLE__", "") + "\", \"" + get(globals, "__EYEBROW__", "") + "\", \"" + get(globals, "__SUPPORTING__", "") + "\", \"" + get(globals, "__HEADER_ICON__", "check") + "\"));";
+    }
+    for (let view of views) { if (str.length(view) > 0) { lines[lines.length] = "  " + text.replaceAll(view, "\n", "\n  "); } }
+    if (tabbed) {
+        let quoted: string[] = []; for (let name of tabNames) { quoted[quoted.length] = "\"" + name + "\""; }
+        lines[lines.length] = "  sections.push(ui.Tabs(\"default\", [" + join(quoted, ", ") + "], state.paneTab, \"setPaneTab\", [" + join(tabPanes, ", ") + "]));";
+    }
+    if (get(globals, "__BANNER_SECTION__", "") === "show") { lines[lines.length] = "  sections.push(" + bannerView + ");"; }
+    lines[lines.length] = "  return ui.AppTheme(\"" + get(globals, "__THEME__", "clean") + "\", \"\", sections);";
+    lines[lines.length] = "}"; return join(lines, "\n");
+}

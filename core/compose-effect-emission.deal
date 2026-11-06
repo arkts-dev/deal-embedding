@@ -1,0 +1,70 @@
+import * as state from "./compose-state";
+import * as source from "./compose-source";
+import * as calls from "./compose-call-emission";
+import * as events from "./compose-events";
+import * as template from "./template-spec";
+
+function effectOf(effects: events.Effect[], id: string): events.Effect {
+    for (let effect of effects) { if (effect.id === id) { return effect; } }
+    throw {code: "COMPOSE_EFFECT", message: "Missing emitted effect"};
+}
+export function tapHandler(id: string, moment: string): string {
+    if (moment === "row_button") { return "row_" + id; } return "do_" + id;
+}
+export function idCapture(): string[] {
+    return ["  let ids: string = state.calendarIds;", "  if (strings.toNumber(value, 0) > 0) { if (ids === \"\") { ids = value; } else { ids = ids + \",\" + value; } }"];
+}
+export function effectsPart(comp: state.Composition, fields: source.Field[], effects: events.Effect[], numberText: (value: number) => string): template.Fragment {
+    let functions: string[] = [];
+    for (let event of comp.events) {
+        let moment: string = event.moment; if (moment !== "button" && moment !== "row_button") { continue; }
+        let effect: events.Effect = effectOf(effects, event.effect);
+        let tapped: template.Entry[] = [{key: "effectStatus", value: "\"pending\""}];
+        let parameter: string = "ignored"; if (moment === "row_button") { parameter = "index"; }
+        let tap: string[] = ["function " + tapHandler(event.event.id, moment) + "(state: AppState, " + parameter + ": number): AppState {"];
+        if (moment === "row_button") { state.append(tap, ["  if (index < 0 || index >= state.entries.length()) { return state; }", "  let entry: LogEntry = state.entries[index];"]); }
+        if (effect.id === "calendar_clear") {
+            let nothing: template.Entry[] = [{key: "effectStatus", value: "\"No calendar events added yet\""}];
+            let ids: string = "\"\""; if (source.keepsCalendarIds(comp)) { ids = "state.calendarIds"; }
+            tap[tap.length] = "  if (" + ids + " === \"\") { return " + source.changed(fields, nothing) + "; }";
+        }
+        if (calls.callsNeedLocals(comp, moment)) { state.append(tap, source.inputLocals(comp, numberText)); }
+        state.append(tap, calls.effectCallsAt(comp, effects, moment, event.event.id, numberText));
+        state.append(tap, ["  return " + source.changed(fields, tapped) + ";", "}"]);
+        functions[functions.length] = source.join(tap, "\n");
+    }
+    if (source.keepsCalendarIds(comp)) {
+        let added: template.Entry[] = [{key: "effectStatus", value: "value"}, {key: "calendarIds", value: "ids"}];
+        let lines: string[] = ["function onCalendarAdded(state: AppState, value: string): AppState {"];
+        state.append(lines, idCapture()); state.append(lines, ["  return " + source.changed(fields, added) + ";", "}"]);
+        functions[functions.length] = source.join(lines, "\n");
+    }
+    let clears: boolean = false; for (let event of comp.events) { if (event.effect === "calendar_clear") { clears = true; } }
+    if (clears) {
+        let cleared: template.Entry[] = [{key: "effectStatus", value: "value"}];
+        if (source.keepsCalendarIds(comp)) { template.set(cleared, "calendarIds", "left"); }
+        let lines: string[] = ["function onCalendarCleared(state: AppState, value: string): AppState {"];
+        if (source.keepsCalendarIds(comp)) { state.append(lines, ["  let left: string = state.calendarIds;", "  if (value === \"ok\") { left = \"\"; }"]); }
+        state.append(lines, ["  return " + source.changed(fields, cleared) + ";", "}"]); functions[functions.length] = source.join(lines, "\n");
+    }
+    if (source.hasBanner(comp, effects)) {
+        let status: template.Entry[] = [{key: "effectStatus", value: "value"}];
+        functions[functions.length] = "function onEffect(state: AppState, value: string): AppState {\n  return " + source.changed(fields, status) + ";\n}";
+    }
+    let buttons: string[] = [];
+    for (let event of comp.events) { if (event.moment === "button") {
+        buttons[buttons.length] = "ui.Button(\"secondary\", " + source.quote(effectOf(effects, event.effect).button) + ", " + source.quote(tapHandler(event.event.id, "button")) + ", 0, true)";
+    } }
+    let view: string[] = []; let into: string = "sections.push("; if (comp.widget) { into = "sets.push("; }
+    if (buttons.length > 0) {
+        let bar: string = "ui.ActionBar(\"end\", [" + source.join(buttons, ", ") + "])";
+        if (comp.widget) { view[view.length] = "sets.push(" + bar + ");"; }
+        else { view[view.length] = "sections.push(ui.Section(\"content\", \"\", \"\", [" + bar + "]));"; }
+    }
+    if (source.hasBanner(comp, effects)) { view[view.length] = into + "ui.When(state.effectStatus !== \"\", ui.InsetBanner(\"default\", \"Done\", effectNote, \"\", \"\", \"info\")));"; }
+    return source.part("effects", source.effectFields(comp, effects), functions, view, "", "");
+}
+export function widgetPart(): template.Fragment {
+    return source.part("widget", [], [], ["if (shows.length() > 0) { sections.push(ui.Section(\"summary\", \"\", \"\", shows)); }",
+        "if (sets.length() > 0) { sections.push(ui.Section(\"content\", \"\", \"\", sets)); }"], "", "");
+}

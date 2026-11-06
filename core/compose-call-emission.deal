@@ -1,0 +1,77 @@
+import * as state from "./compose-state";
+import * as events from "./compose-events";
+import * as sketch from "./sketch";
+import * as source from "./compose-source";
+import * as str from "std/string";
+
+function suffix(value: string): string {
+    let i: number = 0; for (let c of value) { if (c === ".") { return str.substring(value, i + 1, str.length(value)); } i = i + 1; } return value;
+}
+export function sourceExpr(comp: state.Composition, value: string): string {
+    let id: string = suffix(value);
+    if (str.startsWith(value, "entry.")) { return "entry." + id; }
+    if (str.startsWith(value, "fixed.")) { if (id === "title") { return source.quote(comp.sketch.title); } return "0"; }
+    if (str.startsWith(value, "input.")) {
+        for (let input of comp.sketch.inputs) { if (input.id === id && (input.kind === "text" || input.kind === "toggle")) { return "state." + id; } }
+    }
+    return id;
+}
+export function sourceMeasure(value: sketch.Sketch, key: string): string {
+    let id: string = suffix(key); let list: sketch.SketchList | null = value.list;
+    if (str.startsWith(key, "entry.") && list !== null) { for (let field of (list as sketch.SketchList).fields) { if (field.id === id) { return field.measure; } } }
+    for (let input of value.inputs) { if (input.id === id) { return input.measure; } }
+    for (let constant of value.constants) { if (constant.id === id) { return constant.measure; } }
+    for (let item of value.values) { if (item.id === id) { return item.format; } }
+    return "";
+}
+export function callsNeedLocals(comp: state.Composition, moment: string): boolean {
+    for (let event of comp.events) { if (event.moment === moment) { for (let arg of event.args) {
+        if (str.startsWith(arg.source, "const.") || (str.startsWith(arg.source, "input.") && !str.contains(sourceExpr(comp, arg.source), "state."))) { return true; }
+    } } } return false;
+}
+export function effectCallsAt(comp: state.Composition, effects: events.Effect[], moment: string, only: string,
+    numberText: (value: number) => string): string[] {
+    let calls: string[] = []; let answering: string = source.entryAnswerEvent(comp, effects); let n: number = 0;
+    for (let event of comp.events) {
+        if (event.moment !== moment || (str.length(only) > 0 && event.event.id !== only)) { n = n + 1; continue; }
+        let chosen: events.Effect | null = null; for (let effect of effects) { if (effect.id === event.effect) { chosen = effect; break; } }
+        if (chosen === null) { n = n + 1; continue; }
+        let effect: events.Effect = chosen as events.Effect; let args: string[] = [];
+        for (let fixed of effect.fixed) { args[args.length] = source.quote(fixed); }
+        for (let param of effect.params) {
+            let given: string = ""; for (let arg of event.args) { if (arg.name === param.name) { given = arg.source; break; } }
+            let local: string = "call_" + param.name + numberText(n);
+            if (param.kind === "text") { args[args.length] = source.quote(param.key); args[args.length] = sourceExpr(comp, given); }
+            else if (param.kind === "clock") {
+                calls[calls.length] = "  let " + local + ": number = math.round(" + sourceExpr(comp, given) + ");";
+                args[args.length] = "\"hour\""; args[args.length] = "ui.numberToString(math.floor(" + local + " / 60))";
+                args[args.length] = "\"minute\""; args[args.length] = "ui.numberToString(" + local + " % 60)";
+            } else if (param.kind === "toggle") {
+                args[args.length] = source.quote(param.key);
+                if (given === "fixed.daily" || given === "fixed.once") {
+                    let value: string = "\"once\""; if (given === "fixed.daily") { value = "\"daily\""; } args[args.length] = value;
+                } else {
+                    calls[calls.length] = "  let " + local + ": string = \"once\";";
+                    calls[calls.length] = "  if (" + sourceExpr(comp, given) + ") { " + local + " = \"daily\"; }";
+                    args[args.length] = local;
+                }
+            } else if (param.kind === "number") {
+                args[args.length] = source.quote(param.key); let value: string = "\"\"";
+                if (given !== "fixed.blank") { value = "ui.numberToString(" + sourceExpr(comp, given) + ")"; } args[args.length] = value;
+            } else if (given === "fixed.zero") { args[args.length] = source.quote(param.key); args[args.length] = "\"0\""; }
+            else if (given !== "fixed.none") {
+                let per: string = ""; if (sourceMeasure(comp.sketch, given) === "seconds") { per = " / 60"; }
+                args[args.length] = source.quote(param.key); args[args.length] = "ui.numberToString(math.round(" + sourceExpr(comp, given) + per + "))";
+            }
+        }
+        let handler: string = "onEffect"; if (event.event.id === answering) { handler = "onEntryAnswer"; }
+        if (effect.id === "calendar_add" && event.event.id !== answering && source.keepsCalendarIds(comp)) { handler = "onCalendarAdded"; }
+        let mode: string = ""; if (str.length(effect.mode) > 0) { mode = ", " + source.quote(effect.mode); }
+        if (effect.id === "calendar_clear") {
+            let ids: string = "\"\""; if (source.keepsCalendarIds(comp)) { ids = "state.calendarIds"; }
+            calls[calls.length] = "  if (" + ids + " !== \"\") { sdk.call(" + source.quote(effect.target) + ", [\"ids\", " + ids + "], \"onCalendarCleared\"); }";
+        } else { calls[calls.length] = "  sdk.call(" + source.quote(effect.target) + ", [" + source.join(args, ", ") + "], " + source.quote(handler) + mode + ");"; }
+        n = n + 1;
+    }
+    return calls;
+}

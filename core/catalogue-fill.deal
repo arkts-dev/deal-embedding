@@ -1,0 +1,97 @@
+import * as catalogue from "./catalogue-contracts";
+import * as content from "./catalogue-content";
+import * as text from "./catalogue-content-text";
+import * as provenance from "./catalogue-provenance";
+import * as holes from "./catalogue-holes";
+import * as writer from "./custom-writer";
+import * as template from "./template-spec";
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+
+export class Request {
+    kinds: string[]; prompt: string; work: string; mode: string; realData: boolean; offset: number;
+    slotValues: template.Entry[][]; globals: template.Entry[];
+    compose: (values: template.Entry[][], globals: template.Entry[]) => string;
+}
+export class Calls {
+    search: ((query: string, chars: number) => Promise<string>) | null;
+    content: (system: string, user: string, budget: number) => Promise<string | null>;
+    hole: (system: string, user: string, think: boolean) => Promise<string | null>;
+    sdkContext: (prompt: string) => Promise<string>;
+    status: (text: string) => void; cancelled: () => boolean; now: () => number;
+    compile: (source: string) => holes.Diagnostic[]; identity: (hole: holes.Instance) => string;
+    budget: writer.Budget;
+}
+export class Filled {
+    values: template.Entry[][]; baseValues: template.Entry[][]; globals: template.Entry[]; holeBodies: template.Entry[];
+    note: string; failed: string; contentNote: string; liveNotes: string[]; holesNote: string;
+    grounded: boolean; searchText: string; searched: boolean; searchMs: number; contentMs: number; holesMs: number; cancelled: boolean;
+}
+export function mergedValues(values: template.Entry[][], extra: template.Entry[][]): template.Entry[][] {
+    let out: template.Entry[][] = []; let i: number = 0;
+    for (let value of values) {
+        let copied: template.Entry[] = template.copy(value);
+        if (i < extra.length) { for (let entry of extra[i]) { template.set(copied, entry.key, entry.value); } }
+        out[out.length] = copied; i = i + 1;
+    } return out;
+}
+export function needsGrounding(kinds: string[], realData: boolean): boolean {
+    return realData || decode.includes(kinds, "trend_chart") || decode.includes(kinds, "live_facts");
+}
+function after(values: template.Entry[][], offset: number): template.Entry[][] {
+    let out: template.Entry[][] = []; let i: number = 0;
+    for (let value of values) { if (i >= offset) { out[out.length] = value; } i = i + 1; } return out;
+}
+export async function fillSections(request: Request, calls: Calls, specs: catalogue.CatalogueEntry[],
+    tools: text.Primitives, lowercase: (value: string) => string): Promise<Filled> {
+    let fill: Filled = {values: [], baseValues: [], globals: [], holeBodies: [], note: "", failed: "", contentNote: "", liveNotes: [], holesNote: "",
+        grounded: false, searchText: "", searched: false, searchMs: -1, contentMs: 0, holesMs: 0, cancelled: false};
+    let work: string = request.prompt; if (request.work !== "") { work = request.work; } let searchText: string = "";
+    if (needsGrounding(request.kinds, request.realData)) {
+        let search: ((query: string, chars: number) => Promise<string>) | null = calls.search;
+        if (search === null) { fill.failed = "sections need real data and no search is available"; return fill; }
+        calls.status("Looking up real data..."); let start: number = calls.now(); let chars: number = 400;
+        if (decode.includes(request.kinds, "trend_chart")) { chars = 2400; }
+        searchText = await (search as (query: string, chars: number) => Promise<string>)(request.prompt, chars);
+        fill.searchMs = calls.now() - start; fill.grounded = true; fill.searchText = searchText;
+        fill.searched = searchText !== "" && !str.startsWith(searchText, "Search failed:") && searchText !== "No results.";
+        if (calls.cancelled()) { fill.cancelled = true; return fill; }
+    }
+    let start: number = calls.now();
+    let written: content.Filled = await content.fillSectionsContent(request.kinds, work, request.mode, searchText, specs, calls.content, tools);
+    fill.contentMs = calls.now() - start; fill.contentNote = written.note;
+    if (calls.cancelled()) { fill.cancelled = true; return fill; }
+    fill.globals = template.copy(request.globals); for (let entry of written.globalValues) { template.set(fill.globals, entry.key, entry.value); }
+    let values: template.Entry[][] = []; let i: number = 0;
+    for (let kind of request.kinds) {
+        let value: template.Entry[] = content.blockDefaults(kind, specs, tools);
+        if (i < request.slotValues.length) { for (let entry of request.slotValues[i]) { template.set(value, entry.key, entry.value); } }
+        if (i < written.instanceValues.length) { for (let entry of written.instanceValues[i]) { template.set(value, entry.key, entry.value); } }
+        if (kind === "live_facts") { fill.liveNotes[fill.liveNotes.length] = provenance.checkLiveProvenance(value, searchText, request.prompt, lowercase, tools); }
+        values[values.length] = value; i = i + 1;
+    }
+    fill.baseValues = mergedValues(values, []);
+    let kinds: string[] = []; let padded: template.Entry[][] = []; i = 0;
+    while (i < request.offset) { kinds[kinds.length] = "none"; let empty: template.Entry[] = []; padded[padded.length] = empty; i = i + 1; }
+    for (let kind of request.kinds) { kinds[kinds.length] = kind; } for (let value of values) { padded[padded.length] = value; }
+    let declared: holes.Instance[] = holes.holesOf(kinds, padded, specs, tools.numberText); let hasModel: boolean = false; let sdk: boolean = false;
+    for (let hole of declared) { if (hole.spec.byModel) { hasModel = true; } if (hole.spec.usesSdk) { sdk = true; } }
+    if (hasModel) {
+        if (request.mode !== "deepseek") { fill.holesNote = "holes=default(" + request.mode + ")"; }
+        else {
+            calls.status("Writing the details..."); start = calls.now(); let context: string = "";
+            if (sdk) { context = await calls.sdkContext(request.prompt); }
+            let filled: holes.Filled = await holes.fillHoles(work, kinds, specs, padded, context, calls.hole,
+                function(bodies: template.Entry[]): string {
+                    return request.compose(mergedValues(values, after(holes.holeValues(kinds, bodies, specs, tools.numberText, true), request.offset)), fill.globals);
+                }, calls.compile, calls.identity, calls.budget, tools.numberText, tools.utf16Length);
+            values = mergedValues(values, after(holes.holeValues(kinds, filled.bodies, specs, tools.numberText, true), request.offset));
+            fill.holeBodies = filled.bodies; fill.holesMs = calls.now() - start; fill.holesNote = filled.note;
+            if (calls.cancelled()) { fill.cancelled = true; }
+        }
+    }
+    fill.values = values; let notes: string[] = [fill.contentNote];
+    if (fill.grounded) { let state: string = "empty"; if (fill.searched) { state = "ok"; } notes[notes.length] = "search=" + state; }
+    for (let live of fill.liveNotes) { notes[notes.length] = live; } if (fill.holesNote !== "") { notes[notes.length] = fill.holesNote; }
+    for (let note of notes) { if (fill.note !== "") { fill.note = fill.note + " "; } fill.note = fill.note + note; } return fill;
+}

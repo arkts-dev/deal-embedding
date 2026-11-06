@@ -1,0 +1,144 @@
+import * as state from "./compose-state";
+import * as bindings from "./compose-bindings";
+import * as countdown from "./compose-countdown";
+import * as choice from "./needs-choice";
+import * as sketch from "./sketch";
+import * as answers from "./compose-answers";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+
+function failureOf(failed: bindings.BindingFailure[], id: string): string | null {
+    for (let failure of failed) { if (failure.id === id) { return failure.reason; } }
+    return null;
+}
+function figureForm(figure: sketch.SketchValue, numberText: (value: number) => string): string {
+    let result: string = "";
+    if (figure.format === "clock") { result = " (a time of day: show it as hh:mm, never as the number of minutes since midnight)"; }
+    else if (figure.format === "minutes") { result = " (a length of time in minutes: show it as minutes, or as hours and minutes)"; }
+    else if (figure.format === "seconds") { result = " (a length of time in seconds: show it as m:ss)"; }
+    else if (figure.format === "money") {
+        let suffix: string = "";
+        if (strings.length(figure.unit) > 0) { suffix = " " + figure.unit; }
+        result = " (money: show it with its currency sign" + suffix + ")";
+    } else if (figure.format === "percent") { result = " (a percent: show it with the % sign)"; }
+    if (strings.length(figure.formula) === 0) { return result; }
+    result = result + " (the plan works it out as " + figure.formula;
+    if (figure.result === figure.result) {
+        let given: string = "";
+        for (let sample of figure.given) {
+            if (strings.length(given) > 0) { given = given + ", "; }
+            let text: string = "0";
+            if (sample.value - sample.value === 0) { text = numberText(sample.value); }
+            given = given + sample.name + " = " + text;
+        }
+        if (strings.length(given) === 0) { given = "its example"; }
+        let number: string = "0";
+        if (figure.result - figure.result === 0) { number = numberText(figure.result); }
+        result = result + "; for " + given + " that is " + number;
+    }
+    return result + ")";
+}
+export function dropValues(comp: state.Composition, received: Record<string, unknown>, failed: bindings.BindingFailure[],
+    served: string[], shownBySection: string[], customEnabled: boolean, tools: bindings.Primitives): void {
+    let value: sketch.Sketch = comp.sketch;
+    for (let figure of value.values) {
+        let selected: bindings.Binding | null = state.bindingOf(comp, figure.id);
+        if (failureOf(failed, figure.id) !== null || selected === null) { continue; }
+        let binding: bindings.Binding = selected as bindings.Binding;
+        let reads: string[] = [binding.a, binding.b]; state.append(reads, binding.reads);
+        for (let read of reads) {
+            if (failureOf(failed, read) !== null) {
+                failed[failed.length] = {id: figure.id, reason: "reads \"" + choice.labelOf(value, read) + "\", which nothing works out"}; break;
+            }
+        }
+    }
+    let leaving: string[] = [];
+    let sections: string[] = [];
+    let written: string[] = [];
+    for (let failure of failed) {
+        if (answers.answerOf(received, "asked.value." + failure.id, ["added"], comp.answers, 0.5, tools.fixedTwo) === "added") { leaving[leaving.length] = failure.id; }
+        else if (strings.length(answers.answerOf(received, "within.value." + failure.id, served, comp.answers, 0.5, tools.fixedTwo)) > 0) {
+            leaving[leaving.length] = failure.id; sections[sections.length] = failure.id;
+        }
+    }
+    for (let id of shownBySection) {
+        if (failureOf(failed, id) === null) { leaving[leaving.length] = id; sections[sections.length] = id; }
+    }
+    let covering: string[] = [];
+    let index: number = 0;
+    for (let other of value.other) {
+        let raw: Record<string, unknown> = {};
+        let answer: unknown = received["covers." + decode.integerText(index)]; index = index + 1;
+        if (answer !== null && answer !== undefined) { raw = decode.fields(answer); }
+        let part: string[] = strings.split(decode.stringField(raw, "choice", ""), ".");
+        if (part.length === 2 && (part[0] === "value" || part[0] === "bar")) { covering[covering.length] = part[1]; }
+    }
+    let changed: boolean = true;
+    while (changed) {
+        let needed: string[] = countdown.dependsOn(comp.bindings, comp.countdownFrom); state.append(needed, covering);
+        for (let figure of value.values) {
+            if (decode.includes(leaving, figure.id)) { continue; }
+            let selected: bindings.Binding | null = state.bindingOf(comp, figure.id);
+            if (selected !== null) {
+                let binding: bindings.Binding = selected as bindings.Binding;
+                needed[needed.length] = binding.a; needed[needed.length] = binding.b; state.append(needed, binding.reads);
+            }
+        }
+        let kept: string[] = [];
+        for (let id of leaving) { if (!decode.includes(needed, id)) { kept[kept.length] = id; } }
+        changed = kept.length < leaving.length; leaving = kept;
+    }
+    if (customEnabled) {
+        let readByParts: string[] = countdown.dependsOn(comp.bindings, comp.countdownFrom);
+        for (let figure of value.values) {
+            let selected: bindings.Binding | null = state.bindingOf(comp, figure.id);
+            if (selected === null || failureOf(failed, figure.id) !== null) { continue; }
+            let binding: bindings.Binding = selected as bindings.Binding;
+            readByParts[readByParts.length] = binding.a; readByParts[readByParts.length] = binding.b; state.append(readByParts, binding.reads);
+        }
+        for (let failure of failed) {
+            if (decode.includes(leaving, failure.id)) { continue; }
+            let selected: sketch.SketchValue | null = null;
+            for (let figure of value.values) { if (figure.id === failure.id) { selected = figure; break; } }
+            let figure: sketch.SketchValue = selected as sketch.SketchValue;
+            if (decode.includes(readByParts, failure.id)) {
+                let measure: string = "number";
+                if (decode.includes(["money", "percent", "minutes", "seconds"], figure.format)) { measure = figure.format; }
+                state.addDefault(comp, failure.id, figure.label, measure, figure.result, tools.numberText);
+                leaving[leaving.length] = failure.id; written[written.length] = failure.id; continue;
+            }
+            comp.custom[comp.custom.length] = "the figure \"" + figure.label + "\": " + figure.means + figureForm(figure, tools.numberText);
+            for (let input of value.inputs) {
+                if (tools.matches("\\b" + input.id + "\\b", figure.formula).length > 0) { comp.customReads[comp.customReads.length] = input.id; }
+            }
+            leaving[leaving.length] = failure.id; written[written.length] = failure.id;
+        }
+    }
+    for (let failure of failed) {
+        let label: string = choice.labelOf(value, failure.id);
+        if (decode.includes(written, failure.id)) { continue; }
+        if (!decode.includes(leaving, failure.id)) { comp.unbound[comp.unbound.length] = "\"" + label + "\": " + failure.reason; }
+        else if (decode.includes(sections, failure.id)) {
+            comp.dropped[comp.dropped.length] = "value \"" + label + "\": a section shows it";
+            comp.claimed[comp.claimed.length] = "shows " + label;
+        } else { comp.dropped[comp.dropped.length] = "value \"" + label + "\": not asked for, and " + failure.reason; }
+    }
+    for (let id of shownBySection) {
+        if (failureOf(failed, id) !== null || !decode.includes(leaving, id)) { continue; }
+        let label: string = choice.labelOf(value, id);
+        comp.dropped[comp.dropped.length] = "value \"" + label + "\": a section shows it";
+        comp.claimed[comp.claimed.length] = "shows " + label;
+    }
+    if (leaving.length === 0) { return; }
+    let selected: bindings.Binding[] = [];
+    for (let binding of comp.bindings) { if (!decode.includes(leaving, binding.id)) { selected[selected.length] = binding; } }
+    comp.bindings = selected;
+    let out: sketch.Sketch = state.withList(value, value.list);
+    let kept: sketch.SketchValue[] = [];
+    for (let figure of value.values) { if (!decode.includes(leaving, figure.id)) { kept[kept.length] = figure; } }
+    out.values = kept; comp.sketch = out;
+    if (out.values.length === 0 && !out.hasCountdown && !out.hasStopwatch && out.list === null && comp.events.length === 0 && comp.blocks.length === 0 && comp.custom.length === 0) {
+        comp.unbound[comp.unbound.length] = "nothing left to show once the values not asked for are left out";
+    }
+}
+export function main(): null { return null; }

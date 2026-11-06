@@ -1,0 +1,55 @@
+import * as decode from "./plan-decoding";
+import * as text from "./section-text";
+import * as str from "std/string";
+import * as math from "std/math";
+
+export class Primitives {
+    utf16Length: (value: string) => number;
+    slice: (value: string, start: number, end: number) => string;
+    replaceRegex: (value: string, pattern: string, flags: string, replacement: string) => string;
+    matches: (value: string, pattern: string, flags: string) => string[];
+    parseNumber: (value: string) => number;
+    numberText: (value: number) => string;
+}
+export function cutAtWord(value: string, maximum: number, tools: Primitives): string {
+    let cut: string = tools.slice(value, 0, maximum);
+    if (tools.slice(value, maximum, maximum + 1) !== " ") {
+        let at: number = -1; let i: number = 0;
+        for (let c of cut) { if (c === " ") { at = tools.utf16Length(str.substring(cut, 0, i)); } i = i + 1; }
+        if (at >= math.floor(maximum / 2)) { cut = tools.slice(cut, 0, at); }
+    }
+    cut = decode.trim(cut); let hanging: string = "\\s+(and|or|of|the|a|an|to|in|on|at|for|with|by)$";
+    while (tools.matches(cut, hanging, "i").length > 0 && tools.utf16Length(cut) > 4) {
+        cut = tools.replaceRegex(cut, hanging, "i", "");
+    }
+    return cut;
+}
+export function escapeForVeraString(raw: string, maximum: number, tools: Primitives): string {
+    let value: string = decode.trim(tools.replaceRegex(raw, "[\\r\\n]+", "g", " "));
+    value = tools.replaceRegex(value, "_{2,}", "g", "_");
+    if (tools.utf16Length(value) > maximum) { value = cutAtWord(value, maximum, tools); }
+    return text.replaceAll(text.replaceAll(value, "\\", "\\\\"), "\"", "\\\"");
+}
+export function sanitizeVeraInt(raw: string, fallback: string): string {
+    let whole: string = "";
+    for (let c of raw) { if (c === ".") { break; } whole = whole + c; }
+    let digits: string = ""; for (let c of whole) { if (str.contains("0123456789-", c)) { digits = digits + c; } }
+    let negative: boolean = str.startsWith(digits, "-"); digits = text.replaceAll(digits, "-", "");
+    if (str.length(digits) === 0 || str.length(digits) > 15) { return fallback; }
+    if (negative) { return "-" + digits; } return digits;
+}
+export function checkedNumber(raw: string, tools: Primitives): string {
+    let clean: string = text.replaceAll(text.replaceAll(raw, ",", ""), " ", "");
+    let matched: string[] = tools.matches(clean, "-?[0-9]+(\\.[0-9]+)?", "");
+    if (matched.length === 0) { return "0"; }
+    let value: number = tools.parseNumber(matched[0]);
+    if (value - value !== 0 || value > 1000000000 || value < -1000000000) { return "0"; }
+    let scaled: number = value * 100; let rounded: number = math.floor(scaled);
+    if (scaled - rounded >= 0.5) { rounded = rounded + 1; }
+    return tools.numberText(rounded / 100);
+}
+export function checkedCoordinate(raw: string, limit: number, tools: Primitives): string {
+    let value: string = decode.trim(raw);
+    if (tools.matches(value, "^-?[0-9]{1,3}(\\.[0-9]{1,8})?$", "").length === 0) { return ""; }
+    let number: number = tools.parseNumber(value); if (number > limit || number < -limit) { return ""; } return value;
+}

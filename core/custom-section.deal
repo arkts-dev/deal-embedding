@@ -1,0 +1,98 @@
+import * as template from "./template-spec";
+import * as text from "./section-text";
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+import * as json from "std/json";
+
+function indexOf(text: string, wanted: string, start: number): number {
+    let i: number = start;
+    while (i <= str.length(text) - str.length(wanted)) {
+        if (str.substring(text, i, i + str.length(wanted)) === wanted) { return i; } i = i + 1;
+    }
+    return -1;
+}
+export function between(text: string, tag: string): string | null {
+    let open: number = indexOf(text, "<" + tag + ">", 0); let close: number = indexOf(text, "</" + tag + ">", 0);
+    if (open < 0 || close < open) { return null; }
+    // Reference substring swaps reversed arguments when a malformed closing
+    // tag begins inside an opening tag. Real tag spellings cannot overlap.
+    return decode.trim(str.substring(text, open + str.length(tag) + 2, close));
+}
+export function parseSection(reply: string): template.Fragment | null {
+    let functions: string | null = between(reply, "functions"); let view: string | null = between(reply, "view");
+    let fieldsText: string | null = between(reply, "fields");
+    if (functions === null || view === null || fieldsText === null) { return null; }
+    let classes: string = ""; let maybe: string | null = between(reply, "classes"); if (maybe !== null) { classes = maybe as string; }
+    if (str.startsWith(classes, "any @jsonable") || classes === "nothing") { classes = ""; }
+    let fields: template.StateField[] = []; let inits: string[] = [];
+    for (let line of str.split(fieldsText as string, "\n")) {
+        let value: string = decode.trim(line);
+        if (str.endsWith(value, ";")) { value = decode.trim(str.substring(value, 0, str.length(value) - 1)); }
+        if (str.length(value) === 0 || value === "nothing") { continue; }
+        let colon: number = indexOf(value, ":", 0); let equals: number = indexOf(value, "=", colon + 1);
+        if (colon <= 0 || equals <= colon) { return null; }
+        let name: string = decode.trim(str.substring(value, 0, colon));
+        fields[fields.length] = {name: name, type: decode.trim(str.substring(value, colon + 1, equals))};
+        inits[inits.length] = name + ": " + decode.trim(str.substring(value, equals + 1, str.length(value)));
+    }
+    let entries: string = ""; let n: number = 0;
+    for (let init of inits) { if (n > 0) { entries = entries + ", "; } entries = entries + init; n = n + 1; }
+    return {kind: "custom", criteria: "", supportClass: classes, stateFields: fields, initStatements: "", initEntries: entries,
+        functions: functions as string, viewBlock: "{\n" + (view as string) + "\n}", imports: [], ports: [], holes: [], indexed: false, owns: "", tab: "More"};
+}
+export function repeats(section: template.Fragment, ownsClock: boolean, ownsList: boolean,
+    lowercase: (text: string) => string): string {
+    let combined: string = section.viewBlock + "\n" + section.functions;
+    if (ownsClock) {
+        let own: boolean = false;
+        for (let field of section.stateFields) {
+            if (str.contains(lowercase(field.name), "elapsed") || str.contains(lowercase(field.name), "running")) { own = true; }
+        }
+        if (own || str.contains(combined, "ui.Ticker(")) {
+            return "The program already has a clock (state.elapsedMs, state.running) with its own Start, Stop and Reset buttons and Ticker. " +
+                "Do not draw another clock, Ticker or Start/Stop/Reset buttons and do not keep elapsed or running state of your own: read state.elapsedMs.";
+        }
+    }
+    if (ownsList) {
+        for (let field of section.stateFields) {
+            if (str.endsWith(field.type, "[]")) {
+                return "The program already has a list of entries, state.entries (LogEntry[]), with its own form, Add and Remove buttons and rows. " +
+                    "Do not keep a list of your own for the same entries: add to state.entries (copy it, push a LogEntry, return {entries: copy __PASSTHROUGH__}) and draw only what is new.";
+            }
+        }
+    }
+    return "";
+}
+export function verifyRequest(prompt: string, needs: string[], reply: string, numberText: (value: number) => string): string {
+    let questions: Record<string, unknown> = {}; let i: number = 0;
+    for (let need of needs) {
+        questions["does." + numberText(i)] = {type: "choice", instructions: "Does this section of the app do \"" + need + "\"?",
+            criteria: {yes: "yes: used as written, it really does that",
+                no: "no: it only says it cannot, asks the person to do it some other way, shows made-up data, or does something else"}};
+        i = i + 1;
+    }
+    return json.stringify({model: "jev-latest", state: "Request: " + prompt + "\nThe app's state (every field) is saved and restored by the phone between " +
+        "visits without any code for it.\nThe section, as code:\n" + reply, questions: questions}) as string;
+}
+export function undone(needs: string[], answer: string, numberText: (value: number) => string): string[] {
+    let out: string[] = [];
+    try {
+        let answers: Record<string, unknown> = decode.fields(json.parse(answer).answers); let i: number = 0;
+        for (let need of needs) {
+            let raw: unknown = answers["does." + numberText(i)]; let yes: number = 1;
+            if (raw !== null && raw !== undefined) {
+                let probabilities: unknown = decode.fields(raw).probabilities;
+                if (probabilities !== null && probabilities !== undefined) {
+                    let value: unknown = decode.fields(probabilities).yes;
+                    if (typeof value === "number") { yes = value; }
+                }
+            }
+            if (yes < 0.5) { out[out.length] = need; } i = i + 1;
+        }
+    } catch (error) {
+        let failure: Error = error as Error;
+        if (failure.code !== "E8001" && failure.code !== "SKETCH_SHAPE") { throw failure; }
+        return [];
+    }
+    return out;
+}

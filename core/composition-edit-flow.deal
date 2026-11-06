@@ -1,0 +1,40 @@
+import * as record from "./composition-record";
+import * as edits from "./composition-record-edits";
+import * as catalogue from "./catalogue-contracts";
+import * as layouts from "./catalogue-layouts";
+import * as content from "./catalogue-content";
+import * as contentText from "./catalogue-content-text";
+import * as template from "./template-spec";
+import * as emission from "./section-emission";
+import * as settlement from "./program-settlement";
+
+export class Result { applied: boolean; note: string; composition: record.Composition | null; source: string; executable: string; }
+export async function editComposition(request: string, comp: record.Composition, mode: string,
+    select: (request: string, comp: record.Composition) => Promise<edits.Edit>,
+    askContent: (system: string, user: string, tokens: number) => Promise<string | null>,
+    specs: catalogue.CatalogueEntry[], layoutData: layouts.Layout[], planLayouts: template.Layout[],
+    contentTools: contentText.Primitives, emissionTools: emission.Primitives, checks: settlement.Mechanisms, banner: string): Promise<Result> {
+    let result: Result = {applied: false, note: "", composition: null, source: "", executable: ""};
+    // Expected compile/runtime diagnostics are disposition data. Selection,
+    // transport and compiler infrastructure faults must not authorize a rewrite.
+    let edit: edits.Edit = await select(request, comp); result.note = edit.note; if (edit.op === "none") { return result; }
+    let values: template.Entry[] | null = null;
+    if (edit.kind !== "") {
+        let spec: catalogue.CatalogueEntry | null = catalogue.find(specs, edit.kind); if (spec === null) { return result; }
+        values = edits.defaultValues(spec as catalogue.CatalogueEntry);
+        if (mode === "deepseek") {
+            let filled: content.Filled = await content.fillSectionsContent([edit.kind], request, mode, "", specs, askContent, contentTools);
+            if (filled.instanceValues.length > 0) { for (let entry of filled.instanceValues[0]) { template.set(values as template.Entry[], entry.key, entry.value); } }
+            result.note = result.note + " " + filled.note;
+        }
+    }
+    let next: record.Composition | null = edits.applyEdit(comp, edit, values, specs, layoutData, contentTools);
+    if (next === null) { result.note = result.note + " (cannot be applied)"; return result; }
+    let fragments: template.Fragment[] = []; for (let spec of specs) { fragments[fragments.length] = spec.fragment; }
+    let source: string = record.composeFrom(next as record.Composition, fragments, planLayouts, emissionTools, banner);
+    let compiled: settlement.Compiled = checks.compile(source);
+    if (compiled.diagnostics !== "") { result.note = result.note + " (did not compile)"; return result; }
+    let problem: string = checks.smoke(compiled.identity);
+    if (problem !== "") { result.note = result.note + " (did not run: " + problem + ")"; return result; }
+    result.applied = true; result.composition = next; result.source = source; result.executable = compiled.identity; return result;
+}

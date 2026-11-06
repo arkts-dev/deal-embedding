@@ -1,0 +1,45 @@
+import * as section from "./custom-section";
+import * as screen from "./screen-plan";
+import * as json from "std/json";
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+
+export async function claimsUndone(claimed: string[], prompt: string, source: string,
+    ask: (body: string) => Promise<string>, numberText: (value: number) => string): Promise<string[]> {
+    if (claimed.length === 0) { return []; }
+    let answer: string = await ask(section.verifyRequest(prompt, claimed, source, numberText));
+    return section.undone(claimed, answer, numberText);
+}
+export function putBack(plan: screen.ScreenPlan, needs: string[], numberText: (value: number) => string): void {
+    let i: number = 0; for (let need of needs) { screen.addToWrite(plan, "claimed." + numberText(i), need, false); i = i + 1; }
+}
+export async function claimsDone(needs: string[], prompt: string, source: string,
+    ask: (body: string) => Promise<string>, numberText: (value: number) => string): Promise<string[]> {
+    if (needs.length === 0) { return []; }
+    // Deliberate operational boundary: the pinned broad catch swallowed
+    // transport failures. Only JSON/shape decoding may yield empty coverage.
+    let reply: string = await ask(section.verifyRequest(prompt, needs, source, numberText));
+    if (str.length(reply) === 0) { return []; }
+    let parsed: Record<string, unknown> = {};
+    try { parsed = json.parse(reply); }
+    catch (caught) {
+        let error: Error = caught as Error;
+        if (error.code !== "INVALID_JSON" && error.code !== "E8001") { throw error; } return [];
+    }
+    // A valid JSON reply missing answers is not the reference's malformed-JSON
+    // recovery path: it faults when indexed. Preserve refusal to infer coverage.
+    let answers: Record<string, unknown> = parsed.answers as Record<string, unknown>;
+    let out: string[] = []; let i: number = 0;
+    for (let need of needs) {
+        let answer: unknown = answers["does." + numberText(i)];
+        if (answer !== undefined && answer !== null) {
+            let probabilities: unknown = (answer as Record<string, unknown>).probabilities;
+            if (probabilities !== null && probabilities !== undefined) {
+                let yes: unknown = (probabilities as Record<string, unknown>).yes;
+                if (typeof yes === "number" && (yes as number) >= 0.5) { out[out.length] = need; }
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}

@@ -1,0 +1,128 @@
+import * as decode from "./plan-decoding";
+import * as json from "std/json";
+import * as str from "std/string";
+import * as settlement from "./program-settlement";
+import * as budgetPolicy from "./custom-writer";
+
+export class Brief { kind: string; title: string; design: string; scene: string; }
+export class Result { source: string; executable: string; brief: Brief | null; attempts: number; rounds: number; failed: string; briefMs: number; writeMs: number; checkMs: number; note: string; }
+export class Host {
+    language: string; guide: string;
+    askCode: ((system: string, user: string, tokens: number, think: boolean) => Promise<string | null>) | null;
+    askPlan: (system: string, user: string, partial: (text: string) => void, think: boolean) => Promise<string | null>;
+    cancelled: () => boolean; status: (text: string) => void;
+    // Original request identities, never reconstructed from the design/prose.
+    identities: string[]; budget: budgetPolicy.Budget;
+}
+export class Mechanisms {
+    test: (pattern: string, flags: string, value: string) => boolean;
+    checking: settlement.Mechanisms; play: (identity: string) => string;
+}
+function index(text: string, needle: string, from: number): number {
+    let i: number = from; while (i + str.length(needle) <= str.length(text)) {
+        if (str.substring(text, i, i + str.length(needle)) === needle) { return i; } i = i + 1;
+    } return -1;
+}
+export function looksLikeSurface(prompt: string, tools: Mechanisms): boolean {
+    return tools.test("\\b(game|games|play|playable|arcade|shoot\\w*|shooter|tank|tanks|snake|pong|brick\\w*|" +
+        "breakout|arkanoid|asteroid\\w*|invader\\w*|flappy|racing|racer|race|platformer|jump\\w*|maze|pinball|bounc\\w*|ball|balls|" +
+        "physics|particle\\w*|simulat\\w*|draw|drawing|paint\\w*|sketch\\w*|doodle|canvas|animat\\w*|aquarium|fireworks?|orbit\\w*|" +
+        "planet\\w*|galaxy|starfield|joystick|dodge|catch|falling|neon|spaceship|ship|missile\\w*|zombie\\w*|enemy|enemies|" +
+        "level|levels|score|arena|battle|fight\\w*|racket|paddle|tetris|puzzle|screensaver|kaleidoscope|spirograph|pendulum|" +
+        "gravity|swarm|boids|life|roulette|casino|wheel|spin\\w*|dice|die|coin|lottery|slots?|plinko|marbles?|pendulum|" +
+        "signature|sign)\\b", "i", prompt) || tools.test("游戏|小游戏|坦克|打砖块|弹球|贪吃蛇|射击|飞机大战|赛车|跑酷|俄罗斯方块|消除|闯关|关卡|" +
+        "画板|画画|涂鸦|绘画|动画|模拟|物理|粒子|烟花|弹跳|重力|躲避|接住|掉落|霓虹|红白机|街机|太空|外星|僵尸|敌人|对战|大战|球|" +
+        "轮盘|转盘|骰子|抽奖|赌场|老虎机|签名|单摆", "", prompt);
+}
+export function classifyPrompt(): string {
+    return "You decide how an app request on a phone is built, and if it is a game or something like one, you design it.\n" +
+        "Answer with one JSON object: {\"surface\": \"whole\" | \"part\" | \"none\", \"title\": \"...\", \"design\": \"...\", \"scene\": \"...\"}.\n\n" +
+        "surface is \"whole\" when the heart of the request is something that moves continuously or is touched anywhere on a\n" +
+        "drawing, and the whole screen is that: a real-time game (arcade, action, shooter, racing, a ball and a paddle, falling\n" +
+        "things, a tank battle, a snake), a physics or particle toy, a simulation, an animated scene, a drawing or painting pad.\n" +
+        "surface is \"part\" when the request is a screen of ordinary controls -- forms, choices, amounts, lists, results -- with\n" +
+        "one drawn picture among them that moves or is touched: a roulette or prize wheel that spins beside the bets and the\n" +
+        "bank, dice that tumble above a score sheet, a signature area on a delivery form, a pendulum whose length a slider sets.\n" +
+        "surface is \"none\" for everything built from controls and text alone: trackers, lists, timers, calculators, forms,\n" +
+        "quizzes, flashcards, charts of figures, and turn-based games played by tapping buttons or cells (tic-tac-toe, hangman,\n" +
+        "memory), and dice, coins or cards that only show a result.\n" +
+        "\"part\" needs the request itself to ask for the picture: an animation, a wheel or ball that moves, something drawn or\n" +
+        "signed with a finger. A request that only names a thing that could be animated (a coin flip, a dice roll, a timer) is\n" +
+        "\"none\", however well an animation would suit it.\n\n" +
+        "When surface is \"whole\", title is a short name of your own for the app, and design is a short original game design in\n" +
+        "plain sentences, at most 12 lines: the goal; what the player controls and exactly how on a touch screen (drag, tap,\n" +
+        "a stick on the left half and fire on the right half); the objects and how each moves and behaves; collisions and what\n" +
+        "they do; score, lives, levels and how the game gets harder; how a round starts and ends; the look, with 4 to 6 hex\n" +
+        "colours; portrait (360 by 640) unless landscape clearly suits it better. A named game means its genre and mechanics:\n" +
+        "describe your own take, never its levels, characters, names or artwork.\n" +
+        "When surface is \"part\", scene is one or two plain sentences: what the picture shows, what moves or is touched, what\n" +
+        "sets it moving, and what it decides or changes on the screen. title and design are \"\".\n" +
+        "When surface is \"none\", title, design and scene are \"\".";
+}
+export function parseSurfaceBrief(text: string): Brief | null {
+    let start: number = index(text, "{", 0); let end: number = -1; let i: number = 0;
+    for (let c of text) { if (c === "}") { end = i; } i = i + 1; } if (start < 0 || end <= start) { return null; }
+    try {
+        let raw: Record<string, unknown> = json.parse(str.substring(text, start, end + 1)); let kind: string = "none";
+        let said: unknown = raw.surface; if (typeof said === "boolean" && (said as boolean)) { kind = "whole"; }
+        if (typeof said === "string") { if ((said as string) === "whole") { kind = "whole"; } else if ((said as string) === "part") { kind = "part"; } }
+        let brief: Brief = {kind: kind, title: decode.trim(decode.stringField(raw, "title", "")), design: decode.trim(decode.stringField(raw, "design", "")), scene: decode.trim(decode.stringField(raw, "scene", ""))};
+        if (kind === "whole" && brief.design === "") { return null; } if (kind === "part" && brief.scene === "") { return null; } return brief;
+    } catch (caught) { let error: Error = caught as Error; if (error.code !== "INVALID_JSON" && error.code !== "E8001") { throw error; } return null; }
+}
+// Catalogue text is backend UI data for the exact component names below.
+export function componentNames(): string[] { return ["AppTheme", "Surface", "Column", "Row", "Text", "Header", "Button", "ActionBar"]; }
+export function surfaceLanguage(language: string, guide: string, catalogue: string): string {
+    let start: number = index(language, "{{UI_CATALOG}}", 0); if (start < 0) { start = index(language, "UI constructors (all return ui.View):", 0); }
+    let end: number = index(language, "Clock -- time.", 0);
+    if (start < 0 || end <= start) { return language + "\n\n" + catalogue + "\n\n" + guide; }
+    return str.substring(language, 0, start) + catalogue + "\n\n" + guide + "\n\n" + str.substring(language, end, str.length(language));
+}
+export function sourceIn(reply: string): string {
+    let fence: number = index(reply, "```", 0); if (fence < 0) { return decode.trim(reply); }
+    let open: number = index(reply, "\n", fence); if (open < 0) { return decode.trim(reply); }
+    let close: number = index(reply, "```", open + 1); if (close < 0) { close = str.length(reply); }
+    return decode.trim(str.substring(reply, open + 1, close));
+}
+export async function briefSurface(prompt: string, enabled: boolean, host: Host, tools: Mechanisms): Promise<Brief | null> {
+    if (!enabled || host.guide === "" || host.askCode === null || !looksLikeSurface(prompt, tools)) { return null; }
+    host.status("Is this a game?"); let reply: string | null = await host.askPlan(classifyPrompt(), "Request: " + prompt, function(text: string): void {}, false);
+    if (reply === null) { return null; } return parseSurfaceBrief(reply as string);
+}
+export async function writeSurfaceApp(prompt: string, brief: Brief, host: Host, tools: Mechanisms, catalogue: string): Promise<Result> {
+    if (host.identities.length === 0) { throw {code: "HOLE_IDENTITY", message: "Original surface request identities required"}; }
+    for (let identity of host.identities) { if (identity === "") { throw {code: "HOLE_IDENTITY", message: "Nonempty original surface identity required"}; } }
+    let out: Result = {source: "", executable: "", brief: brief, attempts: 0, rounds: 0, failed: "", briefMs: 0, writeMs: 0, checkMs: 0, note: ""};
+    let system: string = surfaceLanguage(host.language, host.guide, catalogue);
+    let user: string = "Request: " + prompt + "\n\nDesign (" + brief.title + "):\n" + brief.design + "\n\nWrite the complete program for it on one ui.Surface. Output the source only.";
+    let check: settlement.Mechanisms = {compile: tools.checking.compile, now: tools.checking.now, numberText: tools.checking.numberText,
+        smoke: function(identity: string): string { let problem: string = tools.checking.smoke(identity); if (problem !== "") { return problem; } return tools.play(identity); }};
+    let ask: (system: string, user: string, tokens: number, think: boolean) => Promise<string | null> = async function(system: string, user: string, tokens: number, think: boolean): Promise<string | null> {
+        let remaining: number = host.budget.remaining(host.identities); if (remaining <= 0) { return null; }
+        if (remaining === 1) { think = true; } host.budget.charge(host.identities);
+        return await (host.askCode as (system: string, user: string, tokens: number, think: boolean) => Promise<string | null>)(system, user, tokens, think);
+    };
+    let attempt: number = 0;
+    while (attempt < 2 && out.source === "" && host.budget.remaining(host.identities) > 0) {
+        if (host.cancelled()) { out.failed = "cancelled"; break; }
+        let think: boolean = attempt > 0; let status: string = "Writing the game again, thinking it through...";
+        if (!think) { let title: string = brief.title; if (title === "") { title = "the game"; } status = "Writing " + title + "..."; } host.status(status);
+        out.attempts = attempt + 1; let started: number = check.now(); let reply: string | null = await ask(system, user, 14000, think);
+        out.writeMs = out.writeMs + check.now() - started; attempt = attempt + 1;
+        if (reply === null || decode.trim(reply as string) === "") { out.failed = "no program came back"; continue; }
+        let source: string = sourceIn(reply as string); started = check.now(); let problem: string = settlement.checkProgram(source, check); out.checkMs = out.checkMs + check.now() - started;
+        if (problem !== "" && !host.cancelled() && host.budget.remaining(host.identities) > 0) {
+            host.status("Playing it and fixing what broke..."); let rounds: number = host.budget.remaining(host.identities); if (rounds > 2) { rounds = 2; }
+            let repaired: settlement.Repaired = await settlement.repairProvisionalWithLimit(source, problem, prompt, system, ask, check, rounds);
+            out.rounds = out.rounds + repaired.rounds;
+            if (repaired.source !== "") { source = repaired.source; problem = ""; } else { problem = repaired.failed; }
+        }
+        if (problem !== "") { out.failed = str.split(problem, "\n")[0]; continue; }
+        out.source = source; let compiled: settlement.Compiled = check.compile(source);
+        if (compiled.diagnostics !== "") { throw {code: "COMPILER_CHANGED", message: "Checked surface no longer compiles"}; }
+        out.executable = compiled.identity; out.failed = "";
+    }
+    let disposition: string = "not built (" + out.failed + ")"; if (out.source !== "") { disposition = "written"; }
+    out.note = "surface \"" + brief.title + "\": " + disposition + " in " + check.numberText(out.attempts) + " attempt(s), " + check.numberText(out.rounds) + " repair round(s)";
+    return out;
+}

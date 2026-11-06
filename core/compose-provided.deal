@@ -1,0 +1,26 @@
+import * as state from "./compose-state";
+import * as events from "./compose-events";
+import * as decode from "./plan-decoding";
+
+function without(values: string[], remove: string): string[] {
+    let out: string[] = []; for (let value of values) { if (value !== remove) { out[out.length] = value; } } return out;
+}
+// Cosmetic slot decisions can provide an effect already requested by a part;
+// remove the duplicate event and any custom fallback for that same effect.
+export function dropProvided(comp: state.Composition, provided: string[]): string[] {
+    let out: string[] = []; let kept: events.EventBinding[] = [];
+    for (let event of comp.events) {
+        if (!decode.includes(provided, event.effect)) { kept[kept.length] = event; }
+        else {
+            comp.dropped[comp.dropped.length] = "event \"" + event.event.what + "\": a section does it";
+            out[out.length] = event.event.what;
+        }
+    } comp.events = kept;
+    let remaining: events.CustomEffect[] = [];
+    for (let effect of comp.customEffects) {
+        if (!decode.includes(provided, effect.effect)) { remaining[remaining.length] = effect; continue; }
+        comp.custom = without(comp.custom, effect.need); comp.phoneNeeds = without(comp.phoneNeeds, effect.need);
+        comp.unboundNeeds = without(comp.unboundNeeds, effect.need);
+        comp.dropped[comp.dropped.length] = "event \"" + effect.need + "\": a section does it"; out[out.length] = effect.need;
+    } comp.customEffects = remaining; return out;
+}

@@ -1,0 +1,33 @@
+// Portable catalogue contracts. Source text is backend-supplied data;
+// selection, binding and assembly decisions belong to DEAL.
+export class Entry { key: string; value: string; }
+export class StateField { name: string; type: string; }
+export class Port {
+    dir: string; name: string; type: string; ref: string;
+    fallback: string; computed: boolean; optional: boolean;
+}
+export class Hole {
+    key: string; token: string; signature: string; purpose: string;
+    defaultBody: string; when: string; byModel: boolean; usesSdk: boolean; slot: string;
+}
+export class Fragment {
+    kind: string; criteria: string; supportClass: string; stateFields: StateField[];
+    initStatements: string; initEntries: string; functions: string; viewBlock: string;
+    imports: string[]; ports: Port[]; holes: Hole[]; indexed: boolean; owns: string; tab: string;
+}
+export class LayoutSlot { accepts: string[]; }
+export class Layout { id: string; slots: LayoutSlot[]; }
+
+export function get(entries: Entry[], key: string): string | undefined {
+    for (let entry of entries) { if (entry.key === key) { return entry.value; } }
+    return undefined;
+}
+export function set(entries: Entry[], key: string, value: string): void {
+    for (let entry of entries) { if (entry.key === key) { entry.value = value; return; } }
+    entries[entries.length] = {key: key, value: value};
+}
+export function copy(entries: Entry[]): Entry[] {
+    let out: Entry[] = [];
+    for (let entry of entries) { out[out.length] = {key: entry.key, value: entry.value}; }
+    return out;
+}

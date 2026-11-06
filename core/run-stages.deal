@@ -1,0 +1,18 @@
+import * as math from "std/math";
+export class Stage { name: string; who: string; ms: number; note: string; }
+export function add(stages: Stage[], name: string, who: string, ms: number, note: string): void {
+    if (ms >= 50) { stages[stages.length] = {name: name, who: who, ms: math.floor(ms + 0.5), note: note}; }
+}
+export function appMs(stages: Stage[]): number {
+    let total: number = 0; for (let stage of stages) { if (stage.who !== "You") { total = total + stage.ms; } } return total;
+}
+export function yourMs(stages: Stage[]): number {
+    let total: number = 0; for (let stage of stages) { if (stage.who === "You") { total = total + stage.ms; } } return total;
+}
+export function byWho(stages: Stage[]): Stage[] {
+    let out: Stage[] = []; for (let stage of stages) {
+        if (stage.who === "You") { continue; } let found: boolean = false;
+        for (let previous of out) { if (previous.who === stage.who) { previous.ms = previous.ms + stage.ms; found = true; break; } }
+        if (!found) { out[out.length] = {name: stage.who, who: stage.who, ms: stage.ms, note: ""}; }
+    } return out;
+}

@@ -1,0 +1,144 @@
+import * as template from "./template-spec";
+import * as str from "std/string";
+
+function at(text: string, index: number): string {
+    if (index < 0 || index >= str.length(text)) { return ""; }
+    return str.substring(text, index, index + 1);
+}
+function ident(c: string): boolean {
+    return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "_";
+}
+function has(values: string[], text: string): boolean {
+    for (let value of values) { if (value === text) { return true; } }
+    return false;
+}
+export function replaceAll(text: string, token: string, value: string): string {
+    let out: string = ""; let i: number = 0;
+    for (let part of str.split(text, token)) {
+        if (i > 0) { out = out + value; } out = out + part; i = i + 1;
+    }
+    return out;
+}
+export function resolveInstanceText(text: string, idx: string, values: template.Entry[], indexed: boolean): string {
+    let resolved: string = text;
+    if (indexed) { resolved = replaceAll(text, "IDX", idx); }
+    for (let entry of values) {
+        let token: string = entry.key; if (indexed) { token = replaceAll(token, "IDX", idx); }
+        resolved = replaceAll(resolved, token, entry.value);
+    }
+    return resolved;
+}
+function keysSet(text: string, open: number, end: number): string[] {
+    let keys: string[] = []; let depth: number = 0; let expectKey: boolean = true; let i: number = open + 1;
+    while (i < end) {
+        let c: string = at(text, i);
+        if (c === "\"") {
+            i = i + 1;
+            while (i < end && at(text, i) !== "\"") {
+                if (at(text, i) === "\\") { i = i + 2; } else { i = i + 1; }
+            }
+            expectKey = false;
+        } else if (c === "{" || c === "(" || c === "[") {
+            depth = depth + 1; expectKey = false;
+        } else if (c === "}" || c === ")" || c === "]") {
+            depth = depth - 1;
+        } else if (c === "," && depth === 0) {
+            expectKey = true;
+        } else if (expectKey && depth === 0 && ident(c)) {
+            let start: number = i;
+            while (i < end && ident(at(text, i))) { i = i + 1; }
+            let name: string = str.substring(text, start, i);
+            while (i < end && at(text, i) === " ") { i = i + 1; }
+            if (i < end && at(text, i) === ":") { keys[keys.length] = name; }
+            expectKey = false; continue;
+        }
+        i = i + 1;
+    }
+    return keys;
+}
+export function fillPassthrough(text: string, fields: string[]): string {
+    let out: string = ""; let opens: number[] = []; let count: number = 0;
+    let i: number = 0; let copied: number = 0; let token: string = "__PASSTHROUGH__";
+    while (i < str.length(text)) {
+        let c: string = at(text, i);
+        if (c === "\"") {
+            i = i + 1;
+            while (i < str.length(text) && at(text, i) !== "\"") {
+                if (at(text, i) === "\\") { i = i + 2; } else { i = i + 1; }
+            }
+        } else if (c === "/" && at(text, i + 1) === "/") {
+            while (i < str.length(text) && at(text, i) !== "\n") { i = i + 1; }
+            continue;
+        } else if (c === "{") {
+            if (count < opens.length) { opens[count] = i; } else { opens[opens.length] = i; }
+            count = count + 1;
+        } else if (c === "}") {
+            if (count > 0) { count = count - 1; }
+        } else if (c === "_" && str.startsWith(str.substring(text, i, str.length(text)), token)) {
+            let set: string[] = []; if (count > 0) { set = keysSet(text, opens[count - 1], i); }
+            let rest: string = "";
+            for (let name of fields) { if (!has(set, name)) { rest = rest + ", " + name + ": state." + name; } }
+            let upTo: number = i;
+            while (upTo > copied && at(text, upTo - 1) === " ") { upTo = upTo - 1; }
+            if (upTo > copied && at(text, upTo - 1) === ",") { upTo = upTo - 1; } else { upTo = i; }
+            let before: number = upTo;
+            while (before > 0 && at(text, before - 1) === " ") { before = before - 1; }
+            if (before > 0 && at(text, before - 1) === "{" && str.length(rest) > 0) {
+                rest = str.substring(rest, 2, str.length(rest));
+            }
+            out = out + str.substring(text, copied, upTo) + rest;
+            i = i + str.length(token); copied = i; continue;
+        }
+        i = i + 1;
+    }
+    // The reference substring clamps an unterminated escaped quote's cursor;
+    // copied itself always denotes a completed substitution boundary.
+    return out + str.substring(text, copied, str.length(text));
+}
+export function markedHole(key: string, instance: string, body: string): string {
+    return "//@hole " + key + instance + " begin\n" + replaceAll(body, "IDX", instance) + "\n//@hole " + key + instance + " end";
+}
+export function withHoleDefaults(spec: template.Fragment, idx: string, values: template.Entry[]): template.Entry[] {
+    let merged: template.Entry[] = template.copy(values);
+    for (let hole of spec.holes) {
+        if (template.get(merged, hole.token) === undefined) {
+            template.set(merged, hole.token, markedHole(hole.key, idx, hole.defaultBody));
+        }
+    }
+    return merged;
+}
+export function bindSpecPorts(specs: (template.Fragment | null)[], numberText: (value: number) => string): template.Entry[][] {
+    let out: template.Entry[][] = []; let i: number = 0;
+    for (let maybe of specs) {
+        let bound: template.Entry[] = [];
+        if (maybe !== null) {
+            let spec: template.Fragment = maybe as template.Fragment;
+            for (let port of spec.ports) {
+                if (port.dir !== "reads") { continue; }
+                let expr: string = port.fallback; let j: number = 0;
+                for (let other of specs) {
+                    if (j !== i && other !== null) {
+                        let found: string = "";
+                        for (let candidate of (other as template.Fragment).ports) {
+                            if (candidate.dir === "writes" && candidate.name === port.name && candidate.type === port.type) {
+                                let resolved: string = replaceAll(candidate.ref, "IDX", numberText(j + 1));
+                                found = resolved; if (!candidate.computed) { found = "state." + resolved; }
+                                break;
+                            }
+                        }
+                        if (str.length(found) > 0) { expr = found; break; }
+                    }
+                    j = j + 1;
+                }
+                template.set(bound, port.ref, expr);
+            }
+        }
+        out[out.length] = bound; i = i + 1;
+    }
+    return out;
+}
+export function applyPorts(text: string, bound: template.Entry[]): string {
+    let out: string = text;
+    for (let entry of bound) { out = replaceAll(out, entry.key, entry.value); }
+    return out;
+}

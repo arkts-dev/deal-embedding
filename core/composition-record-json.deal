@@ -1,0 +1,61 @@
+import * as record from "./composition-record";
+import * as template from "./template-spec";
+import * as decode from "./plan-decoding";
+import * as table from "std/table";
+import * as json from "std/json";
+
+function object(entries: template.Entry[]): Record<string, unknown> {
+    let out: Record<string, unknown> = {}; for (let entry of entries) { out[entry.key] = entry.value; } return out;
+}
+function entries(value: unknown): template.Entry[] {
+    let out: template.Entry[] = []; let parsed: Record<string, unknown> | null = decode.objectOrNull(value); if (parsed === null) { return out; }
+    let raw: Record<string, unknown> = parsed as Record<string, unknown>;
+    for (let key of table.keys(raw)) { if (typeof raw[key] === "string") { template.set(out, key, raw[key] as string); } } return out;
+}
+function literalObject(spec: template.Fragment): Record<string, unknown> {
+    let fields: unknown[] = []; for (let field of spec.stateFields) { fields[fields.length] = {name: field.name, type: field.type}; }
+    let out: Record<string, unknown> = {criteria: spec.criteria, supportClass: spec.supportClass, stateFields: fields,
+        initStatements: spec.initStatements, initEntries: spec.initEntries, functions: spec.functions, viewBlock: spec.viewBlock, imports: spec.imports};
+    if (spec.tab !== "") { out.tab = spec.tab; } if (spec.owns !== "") { out.owns = spec.owns; } return out;
+}
+function literal(kind: string, raw: Record<string, unknown>): template.Fragment {
+    let fields: template.StateField[] = []; let imports: string[] = [];
+    let rawFields: unknown = raw.stateFields;
+    if (rawFields !== null && rawFields !== undefined) { for (let entry of rawFields as unknown[]) { let field: Record<string, unknown> = decode.fields(entry);
+        fields[fields.length] = {name: decode.stringField(field, "name", ""), type: decode.stringField(field, "type", "")}; } }
+    let rawImports: unknown = raw.imports;
+    if (rawImports !== null && rawImports !== undefined) { for (let entry of rawImports as unknown[]) { imports[imports.length] = entry as string; } }
+    return {kind: kind, criteria: decode.stringField(raw, "criteria", ""), supportClass: decode.stringField(raw, "supportClass", ""), stateFields: fields,
+        initStatements: decode.stringField(raw, "initStatements", ""), initEntries: decode.stringField(raw, "initEntries", ""), functions: decode.stringField(raw, "functions", ""),
+        viewBlock: decode.stringField(raw, "viewBlock", ""), imports: imports, ports: [], holes: [], indexed: false, tab: decode.stringField(raw, "tab", ""), owns: decode.stringField(raw, "owns", "")};
+}
+export function compositionToJson(comp: record.Composition): string {
+    let blocks: unknown[] = []; let version: number = 1;
+    for (let block of comp.blocks) {
+        let item: Record<string, unknown> = {kind: block.kind, values: object(block.values), holes: object(block.holes)};
+        if (block.literal !== null) { item.literal = literalObject(block.literal as template.Fragment); version = 2; } blocks[blocks.length] = item;
+    }
+    return json.stringify({v: version, layout: comp.layout, prompt: comp.prompt, globals: object(comp.globals), blocks: blocks}) as string;
+}
+export function compositionFromJson(text: string, catalogue: template.Fragment[]): record.Composition | null {
+    if (text === "") { return null; }
+    try {
+        let raw: Record<string, unknown> = json.parse(text); let v: unknown = raw.v;
+        if (typeof v !== "number") { return null; } let version: number = v as number; if (version !== 1 && version !== 2) { return null; }
+        let out: record.Composition = record.create(); out.layout = decode.stringField(raw, "layout", "stack"); if (out.layout === "") { out.layout = "stack"; }
+        out.prompt = decode.stringField(raw, "prompt", ""); out.globals = entries(raw.globals);
+        // Unlike an absent optional metadata array, missing blocks is a damaged record.
+        let blocks: unknown = raw.blocks; if (blocks === null || blocks === undefined) { return null; }
+        for (let entry of blocks as unknown[]) {
+            let item: Record<string, unknown> = entry as Record<string, unknown>; let kind: string = item.kind as string;
+            let spec: template.Fragment | null = null; let rawLiteral: unknown = item.literal;
+            if (rawLiteral !== null && rawLiteral !== undefined) {
+                if (version !== 2) { return null; } spec = literal(kind, rawLiteral as Record<string, unknown>);
+            } else {
+                let known: boolean = false; for (let candidate of catalogue) { if (candidate.kind === kind) { known = true; break; } } if (!known) { return null; }
+            }
+            out.blocks[out.blocks.length] = {kind: kind, values: entries(item.values), holes: entries(item.holes), literal: spec};
+        }
+        if (out.blocks.length === 0) { return null; } return out;
+    } catch (caught) { let error: Error = caught as Error; if (error.code !== "INVALID_JSON" && error.code !== "E8001" && error.code !== "E8002" && error.code !== "SKETCH_SHAPE") { throw error; } return null; }
+}

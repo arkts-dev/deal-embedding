@@ -1,0 +1,70 @@
+import * as catalogue from "./catalogue-contracts";
+import * as text from "./catalogue-content-text";
+import * as decode from "./plan-decoding";
+import * as section from "./section-text";
+import * as str from "std/string";
+
+export class Expansion { text: string; note: string; rows: number; }
+function contains(values: number[], wanted: number): boolean {
+    for (let value of values) { if (value === wanted) { return true; } } return false;
+}
+function renderCell(spec: catalogue.ListField, column: number, cell: string, tools: text.Primitives): string {
+    let check: string = ""; if (column < spec.columnChecks.length) { check = spec.columnChecks[column]; }
+    if (check === "number") { return text.checkedNumber(cell, tools); }
+    if (check === "lat") { return text.checkedCoordinate(cell, 90, tools); }
+    if (check === "lon") { return text.checkedCoordinate(cell, 180, tools); }
+    if (check === "minutes" || check === "seconds") {
+        let digits: string = text.sanitizeVeraInt(cell, "60"); let n: number = tools.parseNumber(digits);
+        let maximum: number = 600; if (check === "seconds") { maximum = 86400; }
+        if (n >= 5 && n <= maximum) { return tools.numberText(n); } return "60";
+    }
+    if (contains(spec.numericColumns, column)) { return text.sanitizeVeraInt(cell, "0"); }
+    return text.escapeForVeraString(section.replaceAll(section.replaceAll(cell, "{", "("), "}", ")"), spec.columnMax[column], tools);
+}
+function renderRows(spec: catalogue.ListField, rows: string[][], tools: text.Primitives): string {
+    let out: string = ""; let n: number = 0;
+    for (let row of rows) {
+        let value: string = spec.rowTemplate; let c: number = 0;
+        for (let hint of spec.columnHints) {
+            let cell: string = ""; if (c < row.length) { cell = row[c]; }
+            value = section.replaceAll(value, "{" + tools.numberText(c) + "}", cell); c = c + 1;
+        }
+        if (n > 0) { out = out + spec.separator; } out = out + value; n = n + 1;
+    }
+    return out;
+}
+export function expandListRows(raw: unknown, spec: catalogue.ListField, tools: text.Primitives): Expansion {
+    let rows: string[][] = [];
+    for (let item of decode.arrayOrEmpty(raw)) {
+        let cells: string[] = [];
+        if (typeof item === "string") { cells[cells.length] = item as string; }
+        else {
+            for (let cell of decode.arrayOrEmpty(item)) {
+                if (typeof cell === "string") { cells[cells.length] = cell as string; }
+                else if (typeof cell === "number") { cells[cells.length] = tools.numberText(cell as number); }
+            }
+        }
+        if (cells.length === 0 || str.length(decode.trim(cells[0])) === 0) { continue; }
+        let row: string[] = []; let c: number = 0;
+        for (let hint of spec.columnHints) {
+            let cell: string = ""; if (c < cells.length) { cell = cells[c]; }
+            row[row.length] = renderCell(spec, c, cell, tools); c = c + 1;
+        }
+        rows[rows.length] = row; if (rows.length >= spec.maxRows) { break; }
+    }
+    if (rows.length === 0) {
+        let shape: string = "bad shape"; if (raw === null || raw === undefined) { shape = "missing"; }
+        let fallback: string[][] = [];
+        for (let row of spec.fallbackRows) {
+            let escaped: string[] = []; let c: number = 0;
+            for (let hint of spec.columnHints) {
+                let cell: string = ""; if (c < row.length) { cell = row[c]; }
+                escaped[escaped.length] = renderCell(spec, c, cell, tools); c = c + 1;
+            }
+            fallback[fallback.length] = escaped;
+        }
+        return {text: renderRows(spec, fallback, tools), note: spec.key + "=default(" + shape + ")", rows: fallback.length};
+    }
+    let note: string = spec.key + "=" + tools.numberText(rows.length); if (rows.length < spec.minRows) { note = note + "(short)"; }
+    return {text: renderRows(spec, rows, tools), note: note, rows: rows.length};
+}

@@ -1,0 +1,122 @@
+import * as state from "./compose-state";
+import * as sketch from "./sketch";
+import * as bindings from "./compose-bindings";
+import * as countdown from "./compose-countdown";
+import * as answers from "./compose-answers";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+import * as math from "std/math";
+
+export function valuesOverEntries(comp: state.Composition): string[] {
+    let result: string[] = [];
+    for (let figure of comp.sketch.values) {
+        if (state.bindingOf(comp, figure.id) === null) { continue; }
+        for (let read of countdown.dependsOn(comp.bindings, figure.id)) {
+            if (read === "entryCount" || read === "entryTotal") { result[result.length] = figure.id; break; }
+        }
+    }
+    return result;
+}
+export function canReplaceClock(comp: state.Composition): boolean {
+    if (!comp.sketch.hasCountdown || decode.includes(comp.blocks, "timer")) { return false; }
+    let fixed: boolean = false;
+    for (let constant of comp.sketch.constants) { if (constant.id === comp.countdownFrom) { fixed = true; } }
+    if (!fixed) { return false; }
+    for (let event of comp.events) { if (event.moment === "countdown_end") { return false; } }
+    for (let selected of comp.bindings) {
+        let reads: string[] = [selected.a, selected.b];
+        state.append(reads, selected.reads);
+        for (let read of reads) { if (decode.includes(["remaining", "elapsed", "duration"], read)) { return false; } }
+    }
+    return true;
+}
+export function canReplaceList(comp: state.Composition, kind: string): boolean {
+    if (comp.sketch.list === null || !decode.includes(["record_log", "reminders"], kind) || decode.includes(comp.blocks, kind)) { return false; }
+    for (let event of comp.events) {
+        if (event.moment === "entry_added" || event.moment === "row_button") { return false; }
+        for (let arg of event.args) { if (strings.startsWith(arg.source, "entry.")) { return false; } }
+    }
+    return kind === "record_log" || valuesOverEntries(comp).length === 0;
+}
+function lengthWords(seconds: number, tools: bindings.Primitives): string {
+    let number: number = seconds;
+    let unit: string = "second";
+    if (seconds >= 3600 && tools.remainder(seconds, 3600) === 0) { number = seconds / 3600; unit = "hour"; }
+    else if (seconds >= 60 && tools.remainder(seconds, 60) === 0) { number = seconds / 60; unit = "minute"; }
+    else {
+        let lower: number = math.floor(seconds);
+        number = lower;
+        if (seconds - lower >= 0.5) { number = lower + 1; }
+    }
+    let suffix: string = "s";
+    if (number === 1) { suffix = ""; }
+    return tools.numberText(number) + " " + unit + suffix;
+}
+export function replaceClock(comp: state.Composition, tools: bindings.Primitives): void {
+    let need: string = comp.sketch.countdown;
+    let length: string = "";
+    for (let constant of comp.sketch.constants) {
+        if (constant.id === comp.countdownFrom) {
+            let seconds: number = constant.value;
+            if (constant.measure === "minutes") { seconds = seconds * 60; }
+            length = lengthWords(seconds, tools); break;
+        }
+    }
+    comp.sketch = state.withList(comp.sketch, comp.sketch.list);
+    comp.sketch.countdown = ""; comp.sketch.hasCountdown = false;
+    comp.sketch.stopwatch = ""; comp.sketch.hasStopwatch = false;
+    comp.countdownFrom = "";
+    comp.blocks[comp.blocks.length] = "timer";
+    let detail: string = "";
+    let claim: string = need;
+    if (strings.length(length) > 0) { detail = "counts down " + length + " (its first preset)"; claim = need + ", counting down " + length; }
+    comp.replaced[comp.replaced.length] = {kind: "timer", need: need, detail: detail};
+    comp.claimed[comp.claimed.length] = claim;
+    comp.dropped[comp.dropped.length] = "\"" + need + "\": a section does it, not a part";
+}
+export function replaceList(comp: state.Composition, kind: string, customEnabled: boolean): void {
+    let list: sketch.SketchList = comp.sketch.list as sketch.SketchList;
+    let leaving: string[] = valuesOverEntries(comp);
+    let kept: sketch.SketchValue[] = [];
+    let gone: sketch.SketchValue[] = [];
+    for (let figure of comp.sketch.values) {
+        if (decode.includes(leaving, figure.id)) { gone[gone.length] = figure; }
+        else { kept[kept.length] = figure; }
+    }
+    comp.sketch = state.withList(comp.sketch, null); comp.sketch.values = kept;
+    let selected: bindings.Binding[] = [];
+    for (let binding of comp.bindings) { if (!decode.includes(leaving, binding.id)) { selected[selected.length] = binding; } }
+    comp.bindings = selected;
+    for (let figure of gone) {
+        let shown: string = "shows " + figure.label;
+        if (strings.length(figure.means) > 0) { shown = shown + ": " + figure.means; }
+        if (customEnabled) { comp.custom[comp.custom.length] = shown; } else { comp.unbound[comp.unbound.length] = shown; }
+        comp.dropped[comp.dropped.length] = "value \"" + figure.label + "\": left to what the section that keeps the entries publishes";
+    }
+    comp.blocks[comp.blocks.length] = kind;
+    comp.replaced[comp.replaced.length] = {kind: kind, need: list.label, detail: ""};
+    comp.dropped[comp.dropped.length] = "\"" + list.label + "\": a section does it, not a part";
+}
+export function chooseSections(comp: state.Composition, received: Record<string, unknown>, customEnabled: boolean, tools: bindings.Primitives): void {
+    if (comp.sketch.hasCountdown && answers.answerOf(received, "clock.part", ["timer"], comp.answers, 0.5, tools.fixedTwo) === "timer" && canReplaceClock(comp)) { replaceClock(comp, tools); }
+    if (comp.sketch.list !== null) {
+        let kind: string = answers.answerOf(received, "list.part", ["record_log", "reminders"], comp.answers, 0.5, tools.fixedTwo);
+        if (strings.length(kind) > 0 && canReplaceList(comp, kind)) { replaceList(comp, kind, customEnabled); }
+    }
+}
+export function showEntryTotalsAsNumbers(comp: state.Composition): void {
+    let over: string[] = valuesOverEntries(comp);
+    let shown: sketch.SketchValue[] = [];
+    for (let figure of comp.sketch.values) {
+        if (!decode.includes(["minutes", "seconds"], figure.format) || !decode.includes(over, figure.id)) { shown[shown.length] = figure; continue; }
+        let unit: string = "s";
+        if (figure.format === "minutes") { unit = "min"; }
+        let decimals: number = figure.decimals;
+        if (decimals < 0) { decimals = 0; }
+        let plain: sketch.SketchValue = {id: figure.id, label: figure.label, means: figure.means, format: "plain", unit: unit,
+            decimals: decimals, formula: figure.formula, hidden: figure.hidden, given: figure.given, result: figure.result};
+        shown[shown.length] = plain;
+    }
+    comp.sketch.values = shown;
+}
+export function main(): null { return null; }

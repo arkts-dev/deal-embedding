@@ -1,0 +1,248 @@
+import * as sketch from "./sketch";
+import * as expr from "./compose-expressions";
+import * as formula from "./compose-formula";
+import * as answers from "./compose-answers";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+import * as math from "std/math";
+import * as json from "std/json";
+
+export class Binding {
+    id: string;
+    formula: string;
+    a: string;
+    b: string;
+    expr: string;
+    reads: string[];
+    show: string;
+    scale: string;
+}
+export class BindingFailure {
+    id: string;
+    reason: string;
+}
+export class ValueBindings {
+    bindings: Binding[];
+    failed: BindingFailure[];
+    shownBySection: string[];
+    answers: string[];
+}
+export class Primitives {
+    utf16Length: (text: string) => number;
+    numberText: (value: number) => string;
+    fixedTwo: (value: number) => string;
+    power: (a: number, b: number) => number;
+    remainder: (a: number, b: number) => number;
+    matches: (pattern: string, text: string) => string[];
+}
+
+function newBinding(id: string): Binding {
+    return {id: id, formula: "", a: "", b: "", expr: "", reads: [], show: "stat", scale: ""};
+}
+function put(env: sketch.SampleNumber[], name: string, value: number): void {
+    let index: number = 0;
+    for (let entry of env) {
+        if (entry.name === name) { env[index] = {name: name, value: value}; return; }
+        index = index + 1;
+    }
+    env[env.length] = {name: name, value: value};
+}
+export function numberOf(env: sketch.SampleNumber[], name: string): number {
+    for (let entry of env) { if (entry.name === name) { return entry.value; } }
+    return 0 / 0;
+}
+function round(value: number): number {
+    if (value === 0 || value - value !== 0) { return value; }
+    let lower: number = math.floor(value);
+    if (value - lower >= 0.5) { lower = lower + 1; }
+    if (lower === 0 && value < 0) { return -0; }
+    return lower;
+}
+function share(a: number, b: number): number {
+    if (b === 0) { return 0; }
+    return a / b;
+}
+function scale(number: number, unit: string): number {
+    if (unit === " / 60") { return number / 60; }
+    if (unit === " * 60") { return number * 60; }
+    return number;
+}
+
+export function boundNumber(value: sketch.Sketch, bindings: Binding[], index: number,
+    env: sketch.SampleNumber[], tools: Primitives): number {
+    let earlier: sketch.SketchValue = value.values[index];
+    let selected: Binding | null = null;
+    for (let binding of bindings) { if (binding.id === earlier.id && selected === null) { selected = binding; } }
+    if (selected === null) { return 0 / 0; }
+    let binding: Binding = selected as Binding;
+    if (binding.formula === "written") {
+        let known: string[] = [];
+        for (let operand of expr.operandList(value, index, tools.numberText)) {
+            if (!decode.includes(known, operand.id)) { known[known.length] = operand.id; }
+        }
+        let parsed: formula.ParsedExpr = formula.parseFormula(earlier.formula, known, tools.utf16Length);
+        let node: formula.ExprNode | null = parsed.node;
+        let result: number = 0 / 0;
+        if (node !== null) {
+            result = formula.evaluate(node, function(name: string): number { return numberOf(env, name); }, tools.power, tools.remainder);
+        }
+        return scale(result, binding.scale);
+    }
+    let a: number = numberOf(env, binding.a);
+    let b: number = numberOf(env, binding.b);
+    let result: number = 0 / 0;
+    if (binding.formula === "copy") { result = a; }
+    else if (binding.formula === "add") { result = a + b; }
+    else if (binding.formula === "subtract") { result = a - b; }
+    else if (binding.formula === "multiply") { result = a * b; }
+    else if (binding.formula === "divide") { result = share(a, b); }
+    else if (binding.formula === "divide_up") { result = math.ceil(share(a, b)); }
+    else if (binding.formula === "percent_of") { result = a * b / 100; }
+    else if (binding.formula === "add_percent") { result = a * (1 + b / 100); }
+    else if (binding.formula === "subtract_percent") { result = a * (1 - b / 100); }
+    else if (binding.formula === "round_up") { result = math.ceil(a); }
+    else if (binding.formula === "ratio_percent") { result = share(a, b) * 100; }
+    return scale(result, binding.scale);
+}
+
+export function exampleNumbers(value: sketch.Sketch, bindings: Binding[], index: number, tools: Primitives): sketch.SampleNumber[] {
+    let current: sketch.SketchValue = value.values[index];
+    let env: sketch.SampleNumber[] = [];
+    for (let input of value.inputs) {
+        if (input.kind === "toggle" || input.kind === "text") { continue; }
+        let number: number = input.value;
+        if (input.kind === "choice") {
+            let at: number = round(number);
+            number = 0 / 0;
+            if (at >= 0 && at < input.options.length) { number = input.options[at].value; }
+        }
+        put(env, input.id, number);
+    }
+    for (let constant of value.constants) { put(env, constant.id, constant.value); }
+    for (let sample of current.given) { put(env, sample.name, sample.value); }
+    let earlier: number = 0;
+    while (earlier < index) {
+        let id: string = value.values[earlier].id;
+        let given: boolean = false;
+        for (let sample of current.given) { if (sample.name === id) { given = true; } }
+        if (!given) { put(env, id, boundNumber(value, bindings, earlier, env, tools)); }
+        earlier = earlier + 1;
+    }
+    return env;
+}
+
+function timeScale(value: sketch.Sketch, index: number, binding: Binding, tools: Primitives): string {
+    let format: string = value.values[index].format;
+    if (!decode.includes(["seconds", "minutes"], format)) { return ""; }
+    let a: expr.Operand | null = null;
+    let b: expr.Operand | null = null;
+    for (let operand of expr.operandList(value, index, tools.numberText)) {
+        if (operand.id === binding.a && a === null) { a = operand; }
+        if (operand.id === binding.b && b === null) { b = operand; }
+    }
+    if (a === null) { return ""; }
+    let measured: string = expr.resultMeasure(binding.formula, a as expr.Operand, b);
+    if (measured === "seconds" && format === "minutes") { return " / 60"; }
+    if (measured === "minutes" && format === "seconds") { return " * 60"; }
+    return "";
+}
+
+function strayNumber(value: sketch.Sketch, figure: sketch.SketchValue, operation: string, tools: Primitives): string {
+    let held: number[] = [];
+    for (let constant of value.constants) { held[held.length] = constant.value; }
+    if (decode.includes(["percent_of", "add_percent", "subtract_percent", "ratio_percent"], operation)) {
+        held[held.length] = 100;
+        held[held.length] = 1;
+    }
+    if (decode.includes(["seconds", "minutes"], figure.format)) { held[held.length] = 60; }
+    for (let text of tools.matches("\\d+(\\.\\d+)?", figure.means)) {
+        // Number on a decimal regex match has no formula-length ceiling.
+        let normalized: string = text;
+        while (strings.length(normalized) > 1 && strings.substring(normalized, 0, 1) === "0" &&
+            strings.contains("0123456789", strings.substring(normalized, 1, 2))) {
+            normalized = strings.substring(normalized, 1, strings.length(normalized));
+        }
+        let numberValue: number = json.parse("{\"value\":" + normalized + "}").value as number;
+        let found: boolean = false;
+        for (let number of held) { if (number === numberValue) { found = true; } }
+        if (!found) { return text; }
+    }
+    return "";
+}
+function writtenSaysMore(figure: sketch.SketchValue, operation: string, tools: Primitives): boolean {
+    let rounding: boolean = operation === "divide_up" || operation === "round_up";
+    for (let call of tools.matches("\\b(max|min|abs|floor|ceil|round|pow|sqrt)\\s*\\(", figure.formula)) {
+        if (!(rounding && strings.startsWith(call, "ceil"))) { return true; }
+    }
+    return false;
+}
+function useWritten(value: sketch.Sketch, bindings: Binding[], index: number, selected: Binding,
+    received: Record<string, unknown>, log: string[], tools: Primitives): string {
+    let env: sketch.SampleNumber[] = exampleNumbers(value, bindings, index, tools);
+    let result: formula.WrittenResult = formula.validateWritten(value.values[index], expr.operandList(value, index, tools.numberText),
+        function(name: string): number { return numberOf(env, name); }, received, log,
+        tools.utf16Length, tools.numberText, tools.fixedTwo, tools.power, tools.remainder);
+    let written: formula.WrittenBinding | null = result.binding;
+    if (written !== null) {
+        selected.formula = "written";
+        selected.expr = written.expr;
+        selected.reads = written.reads;
+        selected.scale = written.scale;
+    }
+    return result.fault;
+}
+
+// The value-binding loop of readComposition, before dependent pruning/defaults.
+// Keeping failures explicit lets the rest of the composer make those decisions.
+export function bindValues(value: sketch.Sketch, received: Record<string, unknown>, served: string[],
+    hasBlocks: boolean, tools: Primitives): ValueBindings {
+    let result: ValueBindings = {bindings: [], failed: [], shownBySection: [], answers: []};
+    let bindings: Binding[] = [];
+    let failed: BindingFailure[] = [];
+    let shown: string[] = [];
+    let log: string[] = [];
+    let index: number = 0;
+    for (let figure of value.values) {
+        let keys: string[] = [];
+        for (let option of expr.expressionsFor(value, index, tools.numberText)) { keys[keys.length] = option.key; }
+        let binding: Binding = newBinding(figure.id);
+        let show: string = answers.answerOf(received, "show." + figure.id, ["stat", "hero", "progress"], log, 0.25, tools.fixedTwo);
+        if (strings.length(show) > 0) { binding.show = show; }
+        else if (figure.format === "fraction") { binding.show = "progress"; }
+        if (hasBlocks && strings.length(answers.answerOf(received, "within.value." + figure.id, served, log, 0.5, tools.fixedTwo)) > 0) {
+            shown[shown.length] = figure.id;
+        }
+        if (keys.length === 0 || keys.length >= 255) {
+            let why: string = "nothing to work it out from";
+            if (keys.length >= 255) { why = "too many ways to work it out"; }
+            let fault: string = useWritten(value, bindings, index, binding, received, log, tools);
+            if (strings.length(fault) > 0) { failed[failed.length] = {id: figure.id, reason: why + "; " + fault}; }
+        } else {
+            let picked: string = answers.answerOf(received, "expr." + figure.id, keys, log, 0.4, tools.fixedTwo);
+            if (strings.length(answers.answerOf(received, "steps." + figure.id, ["more"], log, 0.5, tools.fixedTwo)) > 0) { picked = ""; }
+            if (strings.length(picked) > 0) {
+                let parts: string[] = strings.split(picked, ":");
+                binding.formula = parts[0]; binding.a = parts[1]; binding.b = parts[2];
+                binding.scale = timeScale(value, index, binding, tools);
+            }
+            let why: string = "";
+            if (strings.length(binding.formula) === 0) { why = "no formula"; }
+            else {
+                let stray: string = strayNumber(value, figure, binding.formula, tools);
+                if (strings.length(stray) > 0) { why = "uses " + stray + ", which no fixed number holds"; }
+            }
+            if (strings.length(why) > 0) {
+                let fault: string = useWritten(value, bindings, index, binding, received, log, tools);
+                if (strings.length(fault) > 0) { failed[failed.length] = {id: figure.id, reason: why + "; " + fault}; }
+            } else if (writtenSaysMore(figure, binding.formula, tools)) {
+                useWritten(value, bindings, index, binding, received, log, tools);
+            }
+        }
+        bindings[bindings.length] = binding;
+        index = index + 1;
+    }
+    result.bindings = bindings; result.failed = failed; result.shownBySection = shown; result.answers = log;
+    return result;
+}
+
+export function main(): null { return null; }

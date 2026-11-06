@@ -1,0 +1,70 @@
+import * as template from "./template-spec";
+import * as text from "./catalogue-content-text";
+import * as section from "./section-text";
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+
+export function normalizeFigure(value: string, lowercase: (value: string) => string, tools: text.Primitives): string {
+    return section.replaceAll(tools.replaceRegex(lowercase(value), "[\\s   ]+", "g", ""), ",", ".");
+}
+function digit(value: string): boolean { return str.length(value) === 1 && value >= "0" && value <= "9"; }
+function character(value: string, at: number): string {
+    if (at < 0 || at >= str.length(value)) { return ""; } return str.substring(value, at, at + 1);
+}
+export function foundIn(value: string, source: string, lowercase: (value: string) => string, tools: text.Primitives): boolean {
+    let v: string = normalizeFigure(value, lowercase, tools); if (v === "" || v === "-") { return false; }
+    let t: string = normalizeFigure(source, lowercase, tools); let at: number = 0;
+    while (at + str.length(v) <= str.length(t)) {
+        if (str.substring(t, at, at + str.length(v)) === v) {
+            let end: number = at + str.length(v); let before: string = character(t, at - 1); let after: string = character(t, end);
+            let joinsBefore: boolean = digit(character(v, 0)) && (digit(before) || (before === "." && at > 1 && digit(character(t, at - 2))));
+            let joinsAfter: boolean = digit(character(v, str.length(v) - 1)) && (digit(after) || (after === "." && end + 1 < str.length(t) && digit(character(t, end + 1))));
+            if (!joinsBefore && !joinsAfter) { return true; }
+        } at = at + 1;
+    } return false;
+}
+function index(value: string, part: string): number {
+    let i: number = 0; while (i + str.length(part) <= str.length(value)) {
+        if (str.substring(value, i, i + str.length(part)) === part) { return i; } i = i + 1;
+    } return -1;
+}
+export function domainOf(url: string): string {
+    let rest: string = url; let scheme: number = index(rest, "://");
+    if (scheme >= 0) { rest = str.substring(rest, scheme + 3, str.length(rest)); }
+    let end: number = str.length(rest); for (let stop of ["/", "?", "#"]) { let at: number = index(rest, stop); if (at >= 0 && at < end) { end = at; } }
+    rest = str.substring(rest, 0, end); if (str.startsWith(rest, "www.")) { rest = str.substring(rest, 4, str.length(rest)); } return rest;
+}
+function get(values: template.Entry[], key: string): string {
+    let value: string | undefined = template.get(values, key); if (value === undefined) { return ""; } return value as string;
+}
+function unescape(value: string): string {
+    return section.replaceAll(section.replaceAll(value, "\\\"", "\""), "\\\\", "\\");
+}
+function escape(value: string, maximum: number, tools: text.Primitives): string {
+    let result: string = decode.trim(tools.replaceRegex(value, "[\\r\\n]+", "g", " "));
+    if (tools.utf16Length(result) > maximum) { result = decode.trim(tools.slice(result, 0, maximum)); }
+    return section.replaceAll(section.replaceAll(result, "\\", "\\\\"), "\"", "\\\"");
+}
+export function checkLiveProvenance(values: template.Entry[], searchText: string, request: string,
+    lowercase: (value: string) => string, tools: text.Primitives): string {
+    let sourceOk: boolean = false; let url: string = unescape(get(values, "__SRC_URL_IDX__"));
+    if (url !== "" && str.contains(searchText, url)) {
+        sourceOk = true; template.set(values, "__SRC_URL_IDX__", escape(url, 160, tools));
+        template.set(values, "__SRC_NAME_IDX__", escape(domainOf(url), 40, tools));
+    } else { template.set(values, "__SRC_URL_IDX__", ""); template.set(values, "__SRC_NAME_IDX__", ""); }
+    let kept: number = 0; let n: number = 1;
+    while (n <= 3) {
+        let key: string = "__V" + tools.numberText(n) + "_IDX__";
+        let label: string = unescape(get(values, "__L" + tools.numberText(n) + "_IDX__"));
+        let value: string = unescape(get(values, key));
+        if (label === "") { template.set(values, key, ""); n = n + 1; continue; }
+        let ok: boolean = searchText !== "" && value !== "" && value !== "-";
+        if (ok) { for (let group of tools.matches(value, "\\d+(?:[.,]\\d+)*", "g")) {
+            if (!foundIn(group, searchText, lowercase, tools)) { ok = false; }
+        } }
+        if (ok) { kept = kept + 1; } else { template.set(values, key, "-"); } n = n + 1;
+    }
+    if ((get(values, "__QUERY_IDX__")) === "") { template.set(values, "__QUERY_IDX__", escape(request, 80, tools)); }
+    let source: string = "none"; if (sourceOk) { source = "ok"; }
+    return "live=checked(source=" + source + " figures=" + tools.numberText(kept) + ")";
+}

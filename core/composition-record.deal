@@ -1,0 +1,70 @@
+import * as screen from "./screen-plan";
+import * as template from "./template-spec";
+import * as text from "./section-text";
+import * as emission from "./section-emission";
+
+export class Block { kind: string; values: template.Entry[]; holes: template.Entry[]; literal: template.Fragment | null; }
+export class Composition { layout: string; prompt: string; globals: template.Entry[]; blocks: Block[]; }
+export function create(): Composition { return {layout: "stack", prompt: "", globals: [], blocks: []}; }
+export function kinds(comp: Composition): string[] {
+    let out: string[] = []; for (let block of comp.blocks) { out[out.length] = block.kind; } return out;
+}
+export function targetKinds(comp: Composition): string[] {
+    let out: string[] = []; for (let block of comp.blocks) {
+        if (block.literal === null || block.kind === "custom" || block.kind === "notice") { out[out.length] = block.kind; }
+    } return out;
+}
+export function catalogueCount(comp: Composition): number {
+    let count: number = 0; for (let block of comp.blocks) { if (block.literal === null) { count = count + 1; } } return count;
+}
+export function copy(comp: Composition): Composition {
+    let out: Composition = create(); out.layout = comp.layout; out.prompt = comp.prompt; out.globals = template.copy(comp.globals);
+    for (let block of comp.blocks) { out.blocks[out.blocks.length] = {kind: block.kind, values: template.copy(block.values), holes: template.copy(block.holes), literal: block.literal}; }
+    return out;
+}
+function literalOf(spec: template.Fragment, criteria: string): template.Fragment {
+    // Pinned literal records intentionally omit ports/holes and keep source arrays.
+    return {kind: spec.kind, criteria: criteria, supportClass: spec.supportClass, stateFields: spec.stateFields,
+        initStatements: spec.initStatements, initEntries: spec.initEntries, functions: spec.functions, viewBlock: spec.viewBlock,
+        imports: spec.imports, ports: [], holes: [], indexed: false, owns: spec.owns, tab: spec.tab};
+}
+function criteriaOfLiteral(plan: screen.ScreenPlan, at: number, spec: template.Fragment): string {
+    if (spec.kind === "notice") { return "a notice that part of the screen could not be built or is not available on this phone"; }
+    let needs: string = ""; let count: number = 0;
+    for (let slot of plan.slots) { if (slot.by === at) { if (count > 0) { needs = needs + "; "; } needs = needs + slot.need; count = count + 1; } }
+    if (count > 0) { return "a part written for this request that does: " + needs; } return "a part written for this request";
+}
+export function compositionFromPlan(plan: screen.ScreenPlan, prompt: string, baseValues: template.Entry[][], holes: template.Entry[][]): Composition {
+    let out: Composition = create(); if (plan.layout !== "") { out.layout = plan.layout; } out.prompt = prompt; out.globals = template.copy(plan.globals);
+    let at: number = 0; let i: number = 0;
+    for (let component of plan.components) {
+        let maybe: template.Fragment | null = component.spec;
+        if (maybe !== null) {
+            let spec: template.Fragment = maybe as template.Fragment;
+            if (component.fill === "block") {
+                let values: template.Entry[] = []; let bodies: template.Entry[] = [];
+                if (at < baseValues.length) { values = baseValues[at]; } if (at < holes.length) { bodies = holes[at]; }
+                out.blocks[out.blocks.length] = {kind: spec.kind, values: values, holes: bodies, literal: null}; at = at + 1;
+            } else { out.blocks[out.blocks.length] = {kind: spec.kind, values: [], holes: [], literal: literalOf(spec, criteriaOfLiteral(plan, i, spec))}; }
+        } i = i + 1;
+    } return out;
+}
+export function composeFrom(comp: Composition, catalogue: template.Fragment[], layouts: template.Layout[], tools: emission.Primitives, banner: string): string {
+    let specs: (template.Fragment | null)[] = []; let values: template.Entry[][] = []; let i: number = 0;
+    for (let block of comp.blocks) {
+        let merged: template.Entry[] = template.copy(block.values); let spec: template.Fragment | null = block.literal;
+        if (spec === null) { for (let item of catalogue) { if (item.kind === block.kind) { spec = item; break; } } }
+        specs[specs.length] = spec;
+        if (spec !== null) { for (let hole of (spec as template.Fragment).holes) {
+            for (let body of block.holes) { if (body.key === hole.key) { template.set(merged, hole.token, text.markedHole(hole.key, tools.numberText(i + 1), body.value)); } }
+        } }
+        values[values.length] = merged; i = i + 1;
+    }
+    let plan: screen.ScreenPlan = screen.planFromBlocks(comp.prompt, comp.layout, specs, comp.globals, values, layouts, tools.numberText);
+    return screen.assemblePlan(plan, false, function(parts: (template.Fragment | null)[], globals: template.Entry[], instances: template.Entry[][]): string {
+        return emission.composeFragments(parts, globals, instances, tools, banner);
+    });
+}
+export function rebuilds(comp: Composition, source: string, catalogue: template.Fragment[], layouts: template.Layout[], tools: emission.Primitives, banner: string): boolean {
+    return composeFrom(comp, catalogue, layouts, tools, banner) === source;
+}

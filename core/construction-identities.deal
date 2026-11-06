@@ -1,0 +1,25 @@
+// Request-local original identity inventory. Bindings are issued provenance
+// keys, never inferred from need text. Rebinding one issued key to a different
+// original is a contract fault; aliases require the caller's explicit original.
+export class Registry {
+    issue: (key: string, original: string) => string;
+    all: () => string[];
+}
+export function create(originals: string[]): Registry {
+    let names: string[] = []; let keys: string[] = []; let values: string[] = [];
+    let add: (identity: string) => void = function(identity: string): void {
+        if (identity === "") { throw {code: "HOLE_IDENTITY", message: "Nonempty original construction identity required"}; }
+        for (let name of names) { if (name === identity) { return; } } names[names.length] = identity;
+    };
+    for (let original of originals) { add(original); }
+    return {issue: function(key: string, original: string): string {
+        if (key === "") { throw {code: "HOLE_IDENTITY", message: "Nonempty issued construction key required"}; }
+        let i: number = 0; for (let before of keys) {
+            if (before === key) {
+                if (values[i] !== original) { throw {code: "HOLE_IDENTITY", message: "Issued construction key changed original identity"}; }
+                return original;
+            } i = i + 1;
+        }
+        add(original); keys[keys.length] = key; values[values.length] = original; return original;
+    }, all: function(): string[] { let out: string[] = []; for (let name of names) { out[out.length] = name; } return out; }};
+}

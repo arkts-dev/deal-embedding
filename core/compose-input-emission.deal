@@ -1,0 +1,58 @@
+import * as state from "./compose-state";
+import * as sketch from "./sketch";
+import * as source from "./compose-source";
+import * as countdown from "./compose-countdown";
+import * as template from "./template-spec";
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+
+function labelWithUnit(input: sketch.SketchInput, lowercase: (value: string) => string): string {
+    let unit: string = decode.trim(input.unit);
+    if (source.isTime(input.measure)) { unit = input.measure; }
+    if (str.length(unit) === 0 || str.contains(lowercase(input.label), lowercase(unit))) { return input.label; }
+    return input.label + " (" + unit + ")";
+}
+export function inputsPart(comp: state.Composition, fields: source.Field[], numberText: (value: number) => string,
+    lowercase: (value: string) => string): template.Fragment {
+    let functions: string[] = []; let controls: string[] = [];
+    for (let input of comp.inputs) {
+        let widget: string = source.named(comp.widgets, input.id); let replaced: template.Entry[] = [];
+        let type: string = "number"; let field: string = input.id;
+        if (input.kind === "toggle") { type = "boolean"; }
+        else if (input.kind === "text") { type = "string"; }
+        else if (input.kind === "choice") { field = field + "Index"; }
+        else if (widget === "typed_number") { field = field + "Text"; type = "string"; }
+        template.set(replaced, field, "value");
+        if (comp.sketch.hasCountdown && decode.includes(countdown.dependsOn(comp.bindings, comp.countdownFrom), input.id)) {
+            template.set(replaced, "elapsedMs", "0"); template.set(replaced, "running", "false"); template.set(replaced, "finished", "false");
+        }
+        functions[functions.length] = "function set_" + input.id + "(state: AppState, value: " + type + "): AppState {\n  return " + source.changed(fields, replaced) + ";\n}";
+        let handler: string = source.quote("set_" + input.id); let control: string = "";
+        if (widget === "select") {
+            let labels: string[] = []; for (let option of input.options) { labels[labels.length] = source.quote(option.label); }
+            control = "ui.Select(\"default\", " + source.quote(input.label) + ", [" + source.join(labels, ", ") + "], state." + input.id + "Index, " + handler + ")";
+        } else if (widget === "text_field" || widget === "time_field" || widget === "switch") {
+            let component: string = "TextField"; if (widget === "time_field") { component = "TimeField"; } if (widget === "switch") { component = "Toggle"; }
+            control = "ui." + component + "(\"default\", " + source.quote(input.label) + ", state." + input.id + ", " + handler + ")";
+        } else if (widget === "typed_number") {
+            control = "ui.TextField(\"default\", " + source.quote(labelWithUnit(input, lowercase)) + ", state." + input.id + "Text, " + handler + ", \"number\")";
+        } else if (widget === "slider") {
+            let label: string = source.quote(input.label);
+            if (input.kind === "percent") { label = source.quote(input.label + " ") + " + ui.numberToString(state." + input.id + ") + \"%\""; }
+            control = "ui.Slider(\"accent\", " + label + ", state." + input.id + ", " + source.numberLiteral(input.min, numberText) + ", " + source.numberLiteral(input.max, numberText) + ", " + handler + ")";
+        } else {
+            control = "ui.NumberField(\"default\", " + source.quote(labelWithUnit(input, lowercase)) + ", state." + input.id + ", " + source.numberLiteral(input.min, numberText) + ", " + source.numberLiteral(input.max, numberText) + ", " + handler + ")";
+        }
+        controls[controls.length] = control;
+    }
+    let view: string[] = [];
+    if (comp.widget) { for (let control of controls) { view[view.length] = "sets.push(" + control + ");"; } }
+    else if (controls.length > 0) { view[view.length] = "sections.push(ui.Section(\"content\", \"\", \"\", [" + source.join(controls, ", ") + "]));"; }
+    let part: template.Fragment = source.part("inputs", source.inputFields(comp, numberText), functions, view, "", "");
+    for (let input of comp.inputs) {
+        if (input.kind === "choice" || source.named(comp.widgets, input.id) === "typed_number") { continue; }
+        let type: string = "number"; if (input.kind === "text") { type = "string"; } if (input.kind === "toggle") { type = "boolean"; }
+        part.ports[part.ports.length] = {dir: "writes", name: input.id, type: type, ref: input.id, fallback: "", computed: false, optional: false};
+    }
+    return part;
+}

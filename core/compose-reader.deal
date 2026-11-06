@@ -1,0 +1,180 @@
+import * as state from "./compose-state";
+import * as sketch from "./sketch";
+import * as bindings from "./compose-bindings";
+import * as events from "./compose-events";
+import * as parts from "./compose-parts";
+import * as countdown from "./compose-countdown";
+import * as sections from "./compose-sections";
+import * as pruning from "./compose-pruning";
+import * as answers from "./compose-answers";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+import * as json from "std/json";
+
+function scene(need: string): boolean { return strings.startsWith(need, "a scene the app draws itself: "); }
+function numeric(kind: string): boolean { return kind !== "text" && kind !== "toggle"; }
+function words(text: string, lower: (text: string) => string, utf16Length: (text: string) => number): string[] {
+    let result: string[] = [];
+    for (let part of strings.split(lower(text), " ")) {
+        let word: string = decode.trim(part);
+        if (utf16Length(word) >= 3) { result[result.length] = word; }
+    }
+    return result;
+}
+function keptForCustom(comp: state.Composition, input: sketch.SketchInput, lower: (text: string) => string, tools: bindings.Primitives): boolean {
+    let label: string = lower(input.label);
+    for (let need of comp.custom) {
+        if (!strings.startsWith(need, "shows ") && strings.contains(lower(need), label)) { return true; }
+    }
+    let list: sketch.SketchList | null = comp.sketch.list;
+    if (list !== null && (input.kind === "choice" || numeric(input.kind))) {
+        let own: string[] = words(input.label, lower, tools.utf16Length);
+        for (let field of (list as sketch.SketchList).fields) {
+            if (field.kind !== "number") { continue; }
+            for (let word of words(field.label, lower, tools.utf16Length)) { if (decode.includes(own, word)) { return false; } }
+        }
+    }
+    for (let replaced of comp.replaced) { if (decode.includes(["record_log", "reminders"], replaced.kind)) { return false; } }
+    return true;
+}
+export function readComposition(body: string, value: sketch.Sketch, widget: boolean, effects: events.Effect[],
+    customEnabled: boolean, tools: bindings.Primitives, lower: (text: string) => string): state.Composition {
+    let comp: state.Composition = state.create(value, widget);
+    let received: Record<string, unknown> = {};
+    try {
+        let parsed: Record<string, unknown> = json.parse(body);
+        let found: unknown = parsed.answers;
+        if (found !== null && found !== undefined) { received = decode.fields(found); }
+    } catch (caught) {
+        let error: Error = caught as Error;
+        if (error.code !== "INVALID_JSON" && error.code !== "E8001") { throw error; }
+        comp.unbound[comp.unbound.length] = "no answer from Jev"; return comp;
+    }
+    let theme: string = answers.answerOf(received, "theme", ["clean", "soft", "expressive", "technical", "playful"], comp.answers, 0.25, tools.fixedTwo);
+    if (strings.length(theme) > 0) { comp.theme = theme; }
+    let served: string[] = [];
+    let index: number = 0;
+    for (let ready of value.ready) {
+        let key: string = decode.integerText(index); index = index + 1;
+        let kind: string = answers.answerOf(received, "ready." + key, ["checklist", "key_facts", "trend_chart", "spotlight", "search_list", "data_table", "timeline", "bar_chart", "itinerary", "live_facts"], comp.answers, 0.5, tools.fixedTwo);
+        let own: boolean = answers.answerOf(received, "whose." + key, ["own"], comp.answers, 0.2, tools.fixedTwo) === "own";
+        let readyKind: string = kind;
+        if (own) { readyKind = ""; }
+        comp.readyKinds[comp.readyKinds.length] = readyKind;
+        if (own && customEnabled) {
+            comp.custom[comp.custom.length] = ready + " -- these are the person's own: they add, change and remove them; the list starts empty and the app never makes any up";
+        } else if (own) { comp.unbound[comp.unbound.length] = "the person's own records, which no section can make up: " + ready; }
+        else if (strings.length(kind) > 0) { comp.blocks[comp.blocks.length] = kind; served[served.length] = "ready." + key; }
+        else if (customEnabled) { comp.custom[comp.custom.length] = ready; }
+        else { comp.unbound[comp.unbound.length] = "no section for: " + ready; }
+    }
+    if (comp.blocks.length > 0) { comp.realData = answers.answerOf(received, "real_data", ["true"], comp.answers, 0.35, tools.fixedTwo) === "true"; }
+    for (let input of value.inputs) {
+        let allowed: string[] = [];
+        for (let control of parts.widgets()) { if (decode.includes(control.kinds, input.kind)) { allowed[allowed.length] = control.id; } }
+        let picked: string = "";
+        if (allowed.length === 1) { picked = allowed[0]; }
+        else { picked = answers.answerOf(received, "widget." + input.id, allowed, comp.answers, 0.25, tools.fixedTwo); }
+        if (strings.length(picked) === 0) { picked = allowed[0]; }
+        state.setNamed(comp.widgets, input.id, picked);
+    }
+    let selected: bindings.ValueBindings = bindings.bindValues(value, received, served, comp.blocks.length > 0, tools);
+    comp.bindings = selected.bindings; state.append(comp.answers, selected.answers);
+    let clock: countdown.Countdown = countdown.readCountdown(comp.sketch, comp.bindings, received, tools.numberText, tools.fixedTwo);
+    comp.countdownFrom = clock.from; comp.countdownUnit = clock.unit;
+    state.append(comp.answers, clock.answers); state.append(comp.defaulted, clock.defaulted);
+    let added: sketch.SketchInput | null = clock.input;
+    if (added !== null) { comp.sketch.inputs[comp.sketch.inputs.length] = added as sketch.SketchInput; state.setNamed(comp.widgets, clock.from, clock.widget); }
+    let eventResult: events.EventResult = events.readEvents(value, effects, received, served, widget, customEnabled, tools.numberText, tools.fixedTwo);
+    comp.events = eventResult.events; comp.customEffects = eventResult.customEffects;
+    state.append(comp.answers, eventResult.answers); state.append(comp.dropped, eventResult.dropped); state.append(comp.claimed, eventResult.claimed);
+    state.append(comp.custom, eventResult.custom); state.append(comp.phoneNeeds, eventResult.phoneNeeds);
+    state.append(comp.unbound, eventResult.unbound); state.append(comp.unboundNeeds, eventResult.unboundNeeds);
+    sections.chooseSections(comp, received, customEnabled, tools);
+    let partIds: string[] = [];
+    for (let part of parts.partsOf(value)) { partIds[partIds.length] = part.key; }
+    index = 0;
+    for (let other of value.other) {
+        let key: string = decode.integerText(index); index = index + 1;
+        if (scene(other)) {
+            if (customEnabled) { comp.custom[comp.custom.length] = other; }
+            else { comp.unbound[comp.unbound.length] = "not in the vocabulary: " + other; }
+            continue;
+        }
+        let within: string = answers.answerOf(received, "within.other." + key, served, comp.answers, 0.5, tools.fixedTwo);
+        if (strings.length(within) > 0) { comp.claimed[comp.claimed.length] = other; continue; }
+        let covered: string = answers.answerOf(received, "covers." + key, partIds, comp.answers, 0.25, tools.fixedTwo);
+        let raw: Record<string, unknown> = {};
+        let cover: unknown = received["covers." + key];
+        if (cover !== null && cover !== undefined) { raw = decode.fields(cover); }
+        let confidence: number = 0;
+        if (typeof raw.confidence === "number") { confidence = raw.confidence as number; }
+        if (strings.length(covered) > 0 && confidence >= 0.5) {
+            let named: string[] = strings.split(covered, ".");
+            if (named[0] === "widget") { state.setNamed(comp.widgets, named[1], named[2]); }
+            if (named.length > 1) {
+                let binding: bindings.Binding | null = state.bindingOf(comp, named[1]);
+                if (named[0] === "bar" && binding !== null) { (binding as bindings.Binding).show = "progress"; }
+            }
+            if (named[0] === "figures") { comp.figures = true; }
+        } else if (answers.answerOf(received, "asked.other." + key, ["added"], comp.answers, 0.7, tools.fixedTwo) === "added") {
+            comp.dropped[comp.dropped.length] = "\"" + other + "\": not asked for, and nothing does it";
+        } else if (widget && answers.answerOf(received, "detail." + key, ["detail"], comp.answers, 0.7, tools.fixedTwo) === "detail") {
+            comp.dropped[comp.dropped.length] = "\"" + other + "\": a detail of how the widget looks or is worked";
+        } else if (customEnabled) { comp.custom[comp.custom.length] = other; }
+        else { comp.unbound[comp.unbound.length] = "not in the vocabulary: " + other; }
+    }
+    let list: sketch.SketchList | null = comp.sketch.list;
+    if (list !== null) {
+        let used: string[] = [];
+        for (let event of comp.events) {
+            for (let arg of event.args) { if (strings.startsWith(arg.source, "entry.")) { used[used.length] = strings.substring(arg.source, 6, strings.length(arg.source)); } }
+        }
+        let kept: sketch.ListField[] = [];
+        let firstText: boolean = true; let firstNumber: boolean = true;
+        for (let field of list.fields) {
+            let shown: boolean = false;
+            if (field.kind === "text" && firstText) { shown = true; firstText = false; }
+            if (field.kind === "number" && firstNumber) { shown = true; firstNumber = false; }
+            let extra: boolean = answers.answerOf(received, "asked.field." + field.id, ["added"], comp.answers, 0.5, tools.fixedTwo) === "added";
+            if (extra && !shown && !decode.includes(used, field.id)) { comp.dropped[comp.dropped.length] = "field \"" + field.label + "\": not asked for, and nothing reads it"; }
+            else { kept[kept.length] = field; }
+        }
+        if (kept.length < (list as sketch.SketchList).fields.length) {
+            let trimmed: sketch.SketchList = {label: (list as sketch.SketchList).label, fields: kept};
+            comp.sketch = state.withList(comp.sketch, trimmed);
+        }
+    }
+    pruning.dropValues(comp, received, selected.failed, served, selected.shownBySection, customEnabled, tools);
+    let read: string[] = [comp.countdownFrom];
+    for (let binding of comp.bindings) { read[read.length] = binding.a; read[read.length] = binding.b; state.append(read, binding.reads); }
+    for (let event of comp.events) {
+        for (let arg of event.args) { if (strings.startsWith(arg.source, "input.")) { read[read.length] = strings.substring(arg.source, 6, strings.length(arg.source)); } }
+    }
+    for (let input of comp.sketch.inputs) {
+        if (decode.includes(read, input.id) || decode.includes(comp.customReads, input.id)) { comp.inputs[comp.inputs.length] = input; continue; }
+        let extra: boolean = numeric(input.kind) && answers.answerOf(received, "asked." + input.id, ["added"], comp.answers, 0.5, tools.fixedTwo) === "added";
+        if (extra) { comp.dropped[comp.dropped.length] = "input \"" + input.label + "\": not asked for, and nothing reads it"; }
+        else if (decode.includes(eventResult.sectionInputs, input.id) || strings.length(answers.answerOf(received, "within.input." + input.id, served, comp.answers, 0.5, tools.fixedTwo)) > 0) {
+            comp.dropped[comp.dropped.length] = "input \"" + input.label + "\": a section does it";
+            if (!decode.includes(eventResult.sectionInputs, input.id)) { comp.claimed[comp.claimed.length] = "the person sets " + input.label; }
+        } else if (comp.custom.length > 0 && keptForCustom(comp, input, lower, tools)) {
+            comp.inputs[comp.inputs.length] = input; comp.customReads[comp.customReads.length] = input.id;
+        } else { comp.dropped[comp.dropped.length] = "input \"" + input.label + "\": nothing on the screen uses it"; }
+    }
+    sections.showEntryTotalsAsNumbers(comp);
+    let sure: number = 0;
+    for (let figure of comp.sketch.values) {
+        if (figure.format !== "clock" || state.bindingOf(comp, figure.id) === null) { continue; }
+        if (answers.answerOf(received, "deadline." + figure.id, ["yes"], comp.answers, 0.4, tools.fixedTwo) !== "yes") { continue; }
+        let raw: Record<string, unknown> = decode.fields(received["deadline." + figure.id]);
+        let confidence: number = 1;
+        if (typeof raw.confidence === "number") { confidence = raw.confidence as number; }
+        if (confidence > sure) { sure = confidence; comp.deadline = figure.id; }
+    }
+    if (value.values.length === 0 && !value.hasCountdown && !value.hasStopwatch && value.list === null && comp.events.length === 0 && comp.blocks.length === 0 && comp.custom.length === 0) {
+        comp.unbound[comp.unbound.length] = "nothing uses the inputs";
+    }
+    return comp;
+}
+export function main(): null { return null; }

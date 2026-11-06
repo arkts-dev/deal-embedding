@@ -1,0 +1,50 @@
+import * as template from "./template-spec";
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+
+// Each row is one regex match including its captured groups, in match order.
+// Hosts execute regexes only; target authority and declined-need decisions
+// remain in this module.
+export class Match { groups: string[]; }
+export class Primitives { matches: (pattern: string, text: string) => Match[]; }
+function join(values: string[], separator: string): string {
+    let out: string = ""; let i: number = 0;
+    for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; }
+    return out;
+}
+export function foundTargets(phone: string, tools: Primitives): string[] {
+    let out: string[] = [];
+    let patterns: string[] = ["sdk\\.call\\(\\\\?\"([^\"\\\\]+)\\\\?\"", "\"target\"\\s*:\\s*\"([^\"]+)\""];
+    for (let pattern of patterns) {
+        for (let match of tools.matches(pattern, phone)) {
+            let target: string = match.groups[1]; if (!decode.includes(out, target)) { out[out.length] = target; }
+        }
+    }
+    return out;
+}
+export function callProblem(reply: string, found: string[], tools: Primitives): string {
+    let calls: number = 0; let i: number = 0;
+    while (i + 9 <= str.length(reply)) {
+        if (str.substring(reply, i, i + 9) === "sdk.call(") { calls = calls + 1; i = i + 9; }
+        else { i = i + 1; }
+    }
+    if (calls === 0) { return ""; }
+    if (found.length === 0) { return "The section calls sdk.call, which it never may: write it without phone calls."; }
+    let named: number = 0;
+    for (let match of tools.matches("sdk\\.call\\(\\s*\"([^\"]+)\"", reply)) {
+        named = named + 1; let target: string = match.groups[1];
+        if (!decode.includes(found, target)) {
+            return "The section calls \"" + target + "\", which is not one of the phone functions found. Call only those, copied exactly:\n" + join(found, "\n");
+        }
+    }
+    if (named === calls) { return ""; }
+    return "Every sdk.call names its target as a string literal copied from the phone functions found.";
+}
+export function declinedNeeds(reply: string, needs: string[], tools: Primitives): template.Entry[] {
+    let out: template.Entry[] = [];
+    for (let match of tools.matches("<cannot\\s+need\\s*=\\s*\"([^\"]*)\"\\s*>([\\s\\S]*?)</cannot>", reply)) {
+        let need: string = decode.trim(match.groups[1]); let why: string = decode.trim(match.groups[2]);
+        if (decode.includes(needs, need) && str.length(why) > 0) { template.set(out, need, why); }
+    }
+    return out;
+}

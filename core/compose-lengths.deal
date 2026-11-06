@@ -1,0 +1,30 @@
+import * as sketch from "./sketch";
+import * as choice from "./needs-choice";
+
+function numeric(kind: string): boolean { return kind !== "toggle" && kind !== "text"; }
+function isTime(unit: string): boolean { return unit === "seconds" || unit === "minutes"; }
+export function lengthChoice(input: sketch.SketchInput): boolean {
+    return input.kind === "choice" && !isTime(input.measure) && input.measure !== "money" && input.measure !== "percent";
+}
+export function lengthSources(value: sketch.Sketch, numberText: (value: number) => string): choice.Criterion[] {
+    let result: choice.Criterion[] = [];
+    for (let input of value.inputs) {
+        if (numeric(input.kind) && isTime(input.measure)) {
+            result[result.length] = {key: input.id, description: choice.describeInput(input, numberText) + ", in " + input.measure};
+        } else if (lengthChoice(input)) { result[result.length] = {key: input.id, description: choice.describeInput(input, numberText)}; }
+    }
+    for (let constant of value.constants) {
+        if (isTime(constant.measure) && constant.value > 0) {
+            let text: string = "0";
+            if (constant.value - constant.value === 0) { text = numberText(constant.value); }
+            result[result.length] = {key: constant.id, description: "the fixed " + constant.label + ", " + text + " " + constant.measure};
+        }
+    }
+    for (let figure of value.values) {
+        if (isTime(figure.format)) {
+            result[result.length] = {key: figure.id, description: "the worked-out \"" + figure.label + "\": " + figure.means + ", in " + figure.format};
+        }
+    }
+    return result;
+}
+export function main(): null { return null; }

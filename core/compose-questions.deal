@@ -1,0 +1,189 @@
+import * as sketch from "./sketch";
+import * as parts from "./compose-parts";
+import * as lengths from "./compose-lengths";
+import * as choice from "./needs-choice";
+import * as expr from "./compose-expressions";
+import * as formula from "./compose-formula";
+import * as events from "./compose-events";
+import * as decode from "./plan-decoding";
+import * as strings from "std/string";
+import * as json from "std/json";
+import * as table from "std/table";
+
+export class Section {
+    question: string;
+    kind: string;
+    owns: string;
+}
+function join(values: string[], separator: string): string {
+    let result: string = "";
+    let index: number = 0;
+    for (let value of values) {
+        if (index > 0) { result = result + separator; }
+        result = result + value; index = index + 1;
+    }
+    return result;
+}
+function planQuestions(value: sketch.Sketch): string {
+    if (value.questions.length === 0) { return ""; }
+    let words: string[] = [];
+    for (let question of value.questions) { words[words.length] = "\"" + question.ask + "\" (" + join(question.options, " / ") + ")"; }
+    return " The plan also asked the person: " + join(words, "; ") + ".";
+}
+function numeric(kind: string): boolean { return kind !== "toggle" && kind !== "text"; }
+function isTime(unit: string): boolean { return unit === "seconds" || unit === "minutes"; }
+function numberLiteral(number: number, numberText: (value: number) => string): string {
+    if (number - number !== 0) { return "0"; }
+    return numberText(number);
+}
+export function formulaWords(node: formula.ExprNode, value: sketch.Sketch, numberText: (value: number) => string): string {
+    if (node.kind === "num") { return numberLiteral(node.value, numberText); }
+    if (node.kind === "id") {
+        let label: string = choice.labelOf(value, node.name);
+        if (strings.length(label) === 0) {
+            for (let operand of expr.operandList(value, value.values.length, numberText)) {
+                if (operand.id === node.name && strings.length(label) === 0) { label = operand.label; }
+            }
+        }
+        if (strings.length(label) === 0) { label = node.name; }
+        return "\"" + label + "\"";
+    }
+    if (node.kind === "neg") { return "-" + formulaWords(node.args[0], value, numberText); }
+    if (node.kind === "call") {
+        let args: string[] = [];
+        for (let arg of node.args) { args[args.length] = formulaWords(arg, value, numberText); }
+        return node.name + "(" + join(args, ", ") + ")";
+    }
+    if (node.kind === "cmp") {
+        let words: string = node.op;
+        if (words === "<") { words = "is less than"; }
+        else if (words === "<=") { words = "is at most"; }
+        else if (words === ">") { words = "is more than"; }
+        else if (words === ">=") { words = "is at least"; }
+        else if (words === "==") { words = "equals"; }
+        else if (words === "!=") { words = "differs from"; }
+        return "(1 if " + formulaWords(node.args[0], value, numberText) + " " + words + " " + formulaWords(node.args[1], value, numberText) + ", else 0)";
+    }
+    let op: string = node.op;
+    if (op === "*") { op = "x"; }
+    return "(" + formulaWords(node.args[0], value, numberText) + " " + op + " " + formulaWords(node.args[1], value, numberText) + ")";
+}
+function detailQuestion(item: string): Record<string, unknown> {
+    return choice.choice("In a widget for this request, what is \"" + item + "\"?", [
+        {key: "core", description: "something the widget must work out, show, keep or do for the request to be served: a figure, a table, a chart or picture of data, a list, a timer, a game, a phone action, data from outside the phone, or what a button does when that is more than calculating, resetting or clearing (choosing at random, playing, sending)"},
+        {key: "detail", description: "a detail of how the widget looks or is worked: layout, labels, units, number formatting, a note, message or reference line, a validation message, a button that only calculates, resets or clears, or updating as inputs change"}
+    ]);
+}
+function merge(target: Record<string, unknown>, source: Record<string, unknown>): void {
+    for (let key of table.keys(source)) { target[key] = source[key]; }
+}
+function numbersOf(input: sketch.SketchInput, numberText: (value: number) => string): string {
+    if (input.kind === "choice") {
+        let parts: string[] = [];
+        for (let option of input.options) { parts[parts.length] = option.label + " = " + numberLiteral(option.value, numberText); }
+        return join(parts, ", ");
+    }
+    let suffix: string = "";
+    if (strings.length(input.unit) > 0) { suffix = ", unit " + input.unit; }
+    return numberLiteral(input.min, numberText) + " to " + numberLiteral(input.max, numberText) + ", starting at " + numberLiteral(input.value, numberText) + suffix;
+}
+function unitQuestion(label: string, numbers: string): string {
+    return "Going by the request and these labels, is the number of \"" + label + "\" (" + numbers + ") a number of seconds or of minutes?";
+}
+export function buildComposeRequest(prompt: string, value: sketch.Sketch, widget: boolean, settled: string[], sections: Section[],
+    catalogue: choice.Catalogue, effects: events.Effect[], utf16Length: (text: string) => number, numberText: (value: number) => string): string {
+    let questions: Record<string, unknown> = {};
+    questions.theme = choice.choice("Which overall look fits this app best?", [
+        {key: "clean", description: "restrained and neutral"}, {key: "soft", description: "calm and friendly"},
+        {key: "expressive", description: "bold and atmospheric"}, {key: "technical", description: "precise, for numbers and tools"},
+        {key: "playful", description: "light and fun"}
+    ]);
+    let asked: choice.Criterion[] = [{key: "asked", description: "the request asks for it or clearly needs it"},
+        {key: "added", description: "the request neither asks for it nor needs it"}];
+    for (let input of value.inputs) {
+        let options: choice.Criterion[] = [];
+        for (let control of parts.widgets()) {
+            if (decode.includes(control.kinds, input.kind)) { options[options.length] = {key: control.id, description: control.describe}; }
+        }
+        if (options.length > 1) { questions["widget." + input.id] = choice.choice("How should the person set \"" + input.label + "\"? Follow the request where it names a control.", options); }
+        if (numeric(input.kind)) { questions["asked." + input.id] = choice.choice("Does the request ask for the person to set \"" + input.label + "\"?" + planQuestions(value), asked); }
+    }
+    let index: number = 0;
+    for (let figure of value.values) {
+        questions["asked.value." + figure.id] = choice.choice("Does the request ask to see \"" + figure.label + "\" (" + figure.means + ")?" + planQuestions(value), asked);
+        let names: string[] = [];
+        for (let operand of expr.operandList(value, index, numberText)) { if (!decode.includes(names, operand.id)) { names[names.length] = operand.id; } }
+        let parsed: formula.ParsedExpr = formula.parseFormula(figure.formula, names, utf16Length);
+        let node: formula.ExprNode | null = parsed.node;
+        if (node !== null) {
+            questions["written." + figure.id] = choice.choice("Going by the request, is \"" + figure.label + "\" (" + figure.means + ") worked out as " + formulaWords(node as formula.ExprNode, value, numberText) + "?", [
+                {key: "right", description: "yes: exactly that, with the right numbers, operations and units"},
+                {key: "wrong", description: "no: it uses a wrong number, operation or unit, or works out something else"}
+            ]);
+        }
+        merge(questions, expr.expressionQuestions(value, index, numberText)); index = index + 1;
+    }
+    if (value.hasCountdown) {
+        let sources: choice.Criterion[] = lengths.lengthSources(value, numberText);
+        if (sources.length > 0) { questions["countdown.length"] = choice.choice("What sets how many seconds the countdown \"" + value.countdown + "\" runs?", sources); }
+        let units: choice.Criterion[] = [{key: "seconds", description: "a number of seconds"}, {key: "minutes", description: "a number of minutes"}, {key: "neither", description: "not a length of time"}];
+        for (let input of value.inputs) {
+            if (numeric(input.kind) && (isTime(input.measure) || lengths.lengthChoice(input))) { questions["unit." + input.id] = choice.choice(unitQuestion(input.label, numbersOf(input, numberText)), units); }
+        }
+        for (let constant of value.constants) {
+            if (isTime(constant.measure)) { questions["unit." + constant.id] = choice.choice(unitQuestion(constant.label, "fixed at " + numberLiteral(constant.value, numberText)), units); }
+        }
+    }
+    let list: sketch.SketchList | null = value.list;
+    if (list !== null) {
+        for (let field of list.fields) {
+            questions["asked.field." + field.id] = choice.choice("Does the request ask the person to fill in \"" + field.label + "\" for each entry of " + (list as sketch.SketchList).label + "?" + planQuestions(value), asked);
+        }
+    }
+    merge(questions, events.eventQuestions(value, effects, numberText));
+    index = 0;
+    for (let other of value.other) {
+        let key: string = decode.integerText(index); index = index + 1;
+        if (strings.startsWith(other, "a scene the app draws itself: ")) { continue; }
+        let options: choice.Criterion[] = parts.partsOf(value);
+        options[options.length] = {key: "none", description: "none of these: it needs something the app does not have"};
+        questions["covers." + key] = choice.choice("The request also asks for \"" + other + "\". Is that exactly what one of these parts of the app already does?", options);
+        questions["asked.other." + key] = choice.choice("Is \"" + other + "\" something the person wants?" + planQuestions(value), [
+            {key: "asked", description: "the request names it, or is about what it does or shows, or clearly needs it, or one of the plan's questions to the person concerns it"},
+            {key: "added", description: "the plan's own addition: the request is not about it and no question to the person concerns it"}
+        ]);
+        if (widget) { questions["detail." + key] = detailQuestion(other); }
+    }
+    choice.askReady(value, questions, catalogue);
+    if (value.ready.length > 0) {
+        for (let figure of value.values) {
+            if (figure.format === "clock") { questions["deadline." + figure.id] = choice.choice("Is \"" + figure.label + "\" (" + figure.means + ") the time of day by which the list of places or steps has to be over (the latest time that a flight, a train or a closing time allows)?", [
+                {key: "yes", description: "yes: the places or steps have to be over by this time"}, {key: "no", description: "no: it is some other time"}
+            ]); }
+        }
+        let needs: choice.Criterion[] = [];
+        index = 0;
+        for (let ready of value.ready) {
+            let key: string = "ready." + decode.integerText(index); index = index + 1;
+            let suffix: string = "";
+            for (let section of sections) {
+                if (section.question === key && strings.length(section.owns) > 0) { suffix = " (the section already has: " + section.owns + ")"; }
+            }
+            needs[needs.length] = {key: key, description: "part of the ready-made section for: " + ready + suffix};
+        }
+        needs[needs.length] = {key: "none", description: "no: something of its own, apart from all of these"};
+        for (let event of value.events) { questions["within.event." + event.id] = choice.choice("Is \"" + event.when + ": " + event.what + "\" part of one of these?", needs); }
+        for (let input of value.inputs) { questions["within.input." + input.id] = choice.choice("Is setting \"" + input.label + "\" part of one of these?", needs); }
+        for (let figure of value.values) { questions["within.value." + figure.id] = choice.choice("Is showing \"" + figure.label + "\" (" + figure.means + ") part of one of these?", needs); }
+        index = 0;
+        for (let other of value.other) {
+            let key: string = decode.integerText(index); index = index + 1;
+            if (!strings.startsWith(other, "a scene the app draws itself: ")) { questions["within.other." + key] = choice.choice("Is \"" + other + "\" part of one of these?", needs); }
+        }
+    }
+    if (widget) { for (let event of value.events) { questions["detail.event." + event.id] = detailQuestion(event.when + ": " + event.what); } }
+    let kept: Record<string, unknown> = {};
+    for (let key of table.keys(questions)) { if (!decode.includes(settled, key)) { kept[key] = questions[key]; } }
+    return json.stringify({model: "jev-latest", state: "Request: " + prompt + "\nThe app has:\n" + choice.describeSketch(value, numberText), questions: kept}) as string;
+}
+export function main(): null { return null; }

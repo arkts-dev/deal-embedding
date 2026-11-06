@@ -1,0 +1,85 @@
+import * as record from "./composition-record";
+import * as catalogue from "./catalogue-contracts";
+import * as layouts from "./catalogue-layouts";
+import * as text from "./catalogue-content-text";
+import * as slots from "./catalogue-slots";
+import * as choice from "./needs-choice";
+import * as template from "./template-spec";
+import * as decode from "./plan-decoding";
+import * as json from "std/json";
+
+export class Edit { op: string; target: string; kind: string; note: string; }
+export function create(): Edit { return {op: "none", target: "", kind: "", note: ""}; }
+export function defaultValues(spec: catalogue.CatalogueEntry): template.Entry[] {
+    let out: template.Entry[] = []; for (let slot of spec.slots) { template.set(out, slot.token, slot.values[0]); }
+    for (let field of spec.contentFields) { template.set(out, field.token, field.fallback); } return out;
+}
+export function applyEdit(comp: record.Composition, edit: Edit, values: template.Entry[] | null,
+    specs: catalogue.CatalogueEntry[], layoutData: layouts.Layout[], tools: text.Primitives): record.Composition | null {
+    let out: record.Composition = record.copy(comp); let kinds: string[] = record.kinds(out);
+    let target: number = -1; let i: number = 0; for (let kind of kinds) { if (kind === edit.target) { target = i; break; } i = i + 1; }
+    let spec: catalogue.CatalogueEntry | null = catalogue.find(specs, edit.kind);
+    if (edit.op === "add_block" || edit.op === "replace_block") {
+        if (spec === null || decode.includes(kinds, edit.kind)) { return null; }
+        let next: template.Entry[] = defaultValues(spec as catalogue.CatalogueEntry); if (values !== null) { next = values as template.Entry[]; }
+        let block: record.Block = {kind: edit.kind, values: next, holes: [], literal: null};
+        if (edit.op === "add_block") {
+            if (record.catalogueCount(out) >= 6) { return null; } out.blocks[out.blocks.length] = block;
+        } else { if (target < 0) { return null; } out.blocks[target] = block; }
+    } else if (edit.op === "remove_block") {
+        if (target < 0 || kinds.length <= 1) { return null; }
+        let blocks: record.Block[] = []; i = 0; for (let block of out.blocks) { if (i !== target) { blocks[blocks.length] = block; } i = i + 1; } out.blocks = blocks;
+    } else if (edit.op === "move_to_top" || edit.op === "move_to_bottom") {
+        if (target < 0 || out.layout !== "stack") { return null; } let moved: record.Block = out.blocks[target]; let blocks: record.Block[] = [];
+        if (edit.op === "move_to_top") { blocks[blocks.length] = moved; }
+        i = 0; for (let block of out.blocks) { if (i !== target) { blocks[blocks.length] = block; } i = i + 1; }
+        if (edit.op === "move_to_bottom") { blocks[blocks.length] = moved; } out.blocks = blocks;
+    } else { return null; }
+    if (out.layout !== "stack") {
+        let order: number[] | null = layouts.arrangeInLayout(layoutData, out.layout, record.kinds(out));
+        // Reference structural edit behavior only; never a generation layout fallback.
+        if (order === null) { out.layout = "stack"; }
+        else { let blocks: record.Block[] = []; for (let at of order as number[]) { blocks[blocks.length] = out.blocks[at]; } out.blocks = blocks; }
+    } return out;
+}
+export function buildEditRequest(request: string, comp: record.Composition, specs: catalogue.CatalogueEntry[]): string {
+    let present: string[] = record.targetKinds(comp); let kinds: choice.Criterion[] = []; let targets: choice.Criterion[] = [];
+    for (let entry of specs) { let spec: template.Fragment = entry.fragment; kinds[kinds.length] = {key: spec.kind, description: spec.criteria};
+        if (decode.includes(present, spec.kind)) { targets[targets.length] = {key: spec.kind, description: spec.criteria}; } }
+    for (let block of comp.blocks) { if (block.literal !== null && decode.includes(present, block.kind)) {
+        let description: string = (block.literal as template.Fragment).criteria; let found: boolean = false;
+        for (let target of targets) { if (target.key === block.kind) { target.description = description; found = true; break; } }
+        if (!found) { targets[targets.length] = {key: block.kind, description: description}; }
+    } }
+    kinds[kinds.length] = {key: "none", description: "no new part is needed"}; targets[targets.length] = {key: "none", description: "the request does not point at one of the existing parts"};
+    let questions: Record<string, unknown> = {};
+    questions["edit.op"] = choice.choice("The person is changing a screen that is already built. Does the change add, remove, replace or move a whole part of the screen? " +
+        "Answer none when it only changes what an existing part says or does.", [
+        {key: "add_block", description: "the request asks for a whole new part to be added to the screen, such as a filter, a chart, a summary or a list"},
+        {key: "remove_block", description: "the request asks for a whole part of the screen to be taken away"},
+        {key: "replace_block", description: "the request asks for one part of the screen to be swapped for a different kind of part, such as a list for a table"},
+        {key: "move_to_top", description: "the request asks for a whole part to be moved above everything else"},
+        {key: "move_to_bottom", description: "the request asks for a whole part to be moved below everything else"},
+        {key: "none", description: "the request changes the wording, numbers, items, look or behaviour of what is already there, or is anything else"}]);
+    questions["edit.target"] = choice.choice("Which existing part of the screen does the change point at (the part to remove, replace or move)?", targets);
+    questions["edit.kind"] = choice.choice("Which kind of part should be added, or put in place of the one being replaced?", kinds);
+    return json.stringify({model: "jev-latest", state: request, questions: questions}) as string;
+}
+export function readEditAnswer(body: string, comp: record.Composition, specs: catalogue.CatalogueEntry[]): Edit {
+    let edit: Edit = create(); let answers: Record<string, unknown> = {};
+    try {
+        let found: unknown = json.parse(body).answers; if (found === null || found === undefined) { edit.note = "edit=none(no answers)"; return edit; }
+        answers = found as Record<string, unknown>;
+    } catch (caught) { let error: Error = caught as Error; if (error.code !== "INVALID_JSON" && error.code !== "E8001") { throw error; } edit.note = "edit=none(unreadable)"; return edit; }
+    let present: string[] = record.targetKinds(comp); present[present.length] = "none"; let all: string[] = ["none"];
+    for (let spec of specs) { all[all.length] = spec.fragment.kind; }
+    let op: string = slots.readChoiceValue(answers, "edit.op", ["none", "add_block", "remove_block", "replace_block", "move_to_top", "move_to_bottom"], 0.6, "none");
+    let target: string = slots.readChoiceValue(answers, "edit.target", present, 0.6, "none"); let kind: string = slots.readChoiceValue(answers, "edit.kind", all, 0.6, "none");
+    let needsTarget: boolean = op === "remove_block" || op === "replace_block" || op === "move_to_top" || op === "move_to_bottom";
+    let needsKind: boolean = op === "add_block" || op === "replace_block";
+    if (op === "none" || (needsTarget && target === "none") || (needsKind && kind === "none")) {
+        edit.note = "edit=none"; if (op !== "none") { edit.note = edit.note + "(" + op + " unsure)"; } return edit;
+    }
+    edit.op = op; if (needsTarget) { edit.target = target; } if (needsKind) { edit.kind = kind; }
+    edit.note = "edit=" + op; if (edit.target !== "") { edit.note = edit.note + " target=" + edit.target; } if (edit.kind !== "") { edit.note = edit.note + " kind=" + edit.kind; } return edit;
+}

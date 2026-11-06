@@ -1,0 +1,169 @@
+import * as state from "./compose-state";
+import * as sketch from "./sketch";
+import * as source from "./compose-source";
+import * as events from "./compose-events";
+import * as bindings from "./compose-bindings";
+import * as template from "./template-spec";
+import * as decode from "./plan-decoding";
+import * as str from "std/string";
+
+export class Figures {
+    heroes: string[]; bars: string[]; stats: string[]; table: string;
+    clockLabel: string; clockShown: string; clockButtons: string;
+}
+function hasClock(comp: state.Composition): boolean { return comp.sketch.hasCountdown || comp.sketch.hasStopwatch; }
+export function hasLaps(comp: state.Composition, effects: events.Effect[], lowercase: (value: string) => string): boolean {
+    let list: sketch.SketchList | null = comp.sketch.list;
+    if (!comp.sketch.hasStopwatch || list === null || str.length(source.entryAnswerEvent(comp, effects)) > 0) { return false; }
+    for (let word of str.split(lowercase((list as sketch.SketchList).label + " " + comp.sketch.stopwatch), " ")) {
+        if (decode.includes(["lap", "laps", "split", "splits", "round", "rounds"], decode.trim(word))) { return true; }
+    }
+    return false;
+}
+function required(comp: state.Composition, id: string): bindings.Binding {
+    let selected: bindings.Binding | null = state.bindingOf(comp, id);
+    if (selected === null) { throw {code: "COMPOSE_BINDING", message: "Missing emitted value binding"}; }
+    return selected as bindings.Binding;
+}
+function isEntryAverage(comp: state.Composition, value: sketch.SketchValue, binding: bindings.Binding,
+    lowercase: (value: string) => string): boolean {
+    if (comp.sketch.list === null || (binding.b !== "entryCount" && !decode.includes(binding.reads, "entryCount"))) { return false; }
+    let words: string = lowercase(value.label + " " + value.means);
+    return str.contains(words, "average") || str.contains(words, "mean") || str.contains(words, "avg");
+}
+export function statColumns(stats: string[]): number {
+    let count: number = 0; for (let stat of stats) { if (!str.startsWith(stat, "ui.When(entryCount === 0,")) { count = count + 1; } } return count;
+}
+export function barFraction(value: sketch.SketchValue): string {
+    if (value.format === "fraction") { return value.id; } if (value.format === "percent") { return "(" + value.id + " / 100)"; } return "";
+}
+export function figuresOf(comp: state.Composition, effects: events.Effect[], numberText: (value: number) => string,
+    lowercase: (value: string) => string): Figures {
+    let out: Figures = {heroes: [], bars: [], stats: [], table: "", clockLabel: "", clockShown: "", clockButtons: ""};
+    let stats: string[] = []; let leading: string[] = [];
+    for (let value of comp.sketch.values) {
+        let binding: bindings.Binding = required(comp, value.id); if (value.hidden) { continue; }
+        if (binding.show === "hero" && comp.widget) { leading[leading.length] = source.statFor(value, value.id, numberText); }
+        else if (binding.show === "hero") { out.heroes[out.heroes.length] = value.id; }
+        else if (binding.show === "progress" && str.length(barFraction(value)) > 0) {
+            out.bars[out.bars.length] = "ui.Progress(\"accent\", " + source.quote(value.label) + ", math.round(math.min(math.max(" + barFraction(value) + ", 0), 1) * 1000), 1000)";
+        } else if (comp.provisional && str.length(binding.formula) === 0) {
+            stats[stats.length] = "ui.Stat(\"default\", " + source.quote(value.label) + ", \"—\", \"\", \"chart\")";
+        } else if (isEntryAverage(comp, value, binding, lowercase)) {
+            stats[stats.length] = "ui.When(entryCount > 0, " + source.statFor(value, value.id, numberText) + ")";
+            stats[stats.length] = "ui.When(entryCount === 0, ui.Stat(\"default\", " + source.quote(value.label) + ", \"—\", \"\", \"chart\"))";
+        } else { stats[stats.length] = source.statFor(value, value.id, numberText); }
+    }
+    let joined: string[] = []; state.append(joined, leading); state.append(joined, stats); stats = joined;
+    let displayOnly: boolean = comp.inputs.length === 0 && comp.sketch.list === null && !hasClock(comp);
+    let givens: sketch.SketchValue[] = [];
+    if (comp.figures || displayOnly) {
+        let read: string[] = [];
+        for (let binding of comp.bindings) { read[read.length] = binding.a; read[read.length] = binding.b; state.append(read, binding.reads); }
+        let currency: string = "";
+        for (let value of comp.sketch.values) { if (value.format === "money" && str.length(currency) === 0) { currency = value.unit; } }
+        for (let constant of comp.sketch.constants) {
+            if (!decode.includes(read, constant.id)) { continue; }
+            let format: string = constant.measure; if (format === "number") { format = "plain"; }
+            let unit: string = ""; if (constant.measure === "money") { unit = currency; }
+            givens[givens.length] = {id: constant.id, label: constant.label, means: "", format: format, unit: unit, decimals: -1,
+                formula: "", given: [], result: 0, hidden: false};
+        }
+    }
+    let rows: string[] = [];
+    if (comp.figures) {
+        for (let given of givens) { rows[rows.length] = source.figureRow(given, given.id, numberText); }
+        for (let value of comp.sketch.values) {
+            let binding: bindings.Binding = required(comp, value.id);
+            if (value.hidden || (binding.show === "progress" && str.length(barFraction(value)) > 0) || decode.includes(out.heroes, value.id)) { continue; }
+            rows[rows.length] = source.figureRow(value, value.id, numberText);
+        }
+        stats = [];
+    } else if (displayOnly) {
+        let fixed: string[] = []; for (let given of givens) { fixed[fixed.length] = source.statFor(given, given.id, numberText); }
+        state.append(fixed, stats); stats = fixed;
+    }
+    out.stats = stats; if (rows.length > 0) { out.table = "ui.ListGroup(\"default\", \"\", [" + source.join(rows, ", ") + "])"; }
+    out.clockLabel = comp.sketch.stopwatch; if (comp.sketch.hasCountdown) { out.clockLabel = comp.sketch.countdown; }
+    let time: string = "math.floor(elapsed)"; if (comp.sketch.hasCountdown) { time = "math.ceil(remaining)"; }
+    out.clockShown = "ui.durationToString(" + time + ")";
+    let lap: string = ""; if (hasLaps(comp, effects, lowercase)) { lap = "ui.Button(\"secondary\", \"Lap\", \"lapEntry\", 0, state.running), "; }
+    out.clockButtons = "ui.ActionBar(\"spread\", [ui.Button(\"primary\", \"Start\", \"onStart\", 0, !state.running), " +
+        "ui.Button(\"secondary\", \"Stop\", \"onStop\", 0, state.running), " + lap + "ui.Button(\"secondary\", \"Reset\", \"onReset\", 0, true)])";
+    return out;
+}
+export function figureLocals(comp: state.Composition, upto: number, numberText: (value: number) => string): string[] {
+    let view: string[] = source.inputLocals(comp, numberText);
+    if (comp.sketch.hasCountdown) {
+        state.append(view, ["  let duration: number = countdownSeconds(state);", "  let elapsed: number = math.min(state.elapsedMs / 1000, duration);", "  let remaining: number = duration - elapsed;"]);
+    } else if (comp.sketch.hasStopwatch) { view[view.length] = "  let elapsed: number = state.elapsedMs / 1000;"; }
+    let list: sketch.SketchList | null = comp.sketch.list;
+    if (list !== null) {
+        state.append(view, ["  let entryCount: number = state.entries.length();", "  let entryTotal: number = 0;"]);
+        for (let field of (list as sketch.SketchList).fields) { if (field.kind === "number") {
+            view[view.length] = "  for (let e: LogEntry of state.entries) { entryTotal = entryTotal + e." + field.id + "; }"; break;
+        } }
+    }
+    let i: number = 0;
+    for (let value of comp.sketch.values) {
+        if (upto >= 0 && i > upto) { break; }
+        view[view.length] = "  let " + value.id + ": number = " + source.formulaExpr(required(comp, value.id)) + ";"; i = i + 1;
+    }
+    return view;
+}
+export function figuresPart(comp: state.Composition, effects: events.Effect[], reads: boolean, numberText: (value: number) => string): template.Fragment {
+    let functions: string[] = ["function share(a: number, b: number): number {\n  if (b === 0) { return 0; }\n  return a / b;\n}"];
+    let compares: boolean = false; for (let binding of comp.bindings) { if (str.contains(binding.expr, "whether(")) { compares = true; } }
+    if (compares) { functions[functions.length] = "function whether(holds: boolean): number {\n  if (holds) { return 1; }\n  return 0;\n}"; }
+    let view: string[] = figureLocals(comp, -1, numberText);
+    if (source.hasBanner(comp, effects)) { state.append(view, ["  let effectNote: string = \"Phone: \" + state.effectStatus;", "  if (state.effectStatus === \"pending\") { effectNote = \"Asking the phone...\"; }"]); }
+    if (comp.widget) { state.append(view, ["  let shows: ui.View[] = [];", "  let sets: ui.View[] = [];"]); }
+    let spec: template.Fragment = source.part("figures", [], functions, view, "", "");
+    if (reads) {
+        let i: number = 0;
+        for (let value of comp.sketch.values) {
+            if (state.bindingOf(comp, value.id) !== null) {
+                let body: string[] = ["function port_" + value.id + "(state: AppState): number {"];
+                state.append(body, figureLocals(comp, i, numberText)); state.append(body, ["  return " + value.id + ";", "}"]);
+                spec.functions = spec.functions + "\n\n" + source.join(body, "\n");
+                spec.ports[spec.ports.length] = {dir: "writes", name: value.id, type: "number", ref: "port_" + value.id + "(state)", fallback: "", computed: true, optional: false};
+                if (value.id === comp.deadline) { spec.ports[spec.ports.length] = {dir: "writes", name: "deadline", type: "number", ref: "port_" + value.id + "(state)", fallback: "", computed: true, optional: false}; }
+            }
+            i = i + 1;
+        }
+    }
+    return spec;
+}
+export function heroPart(comp: state.Composition, figures: Figures, numberText: (value: number) => string): template.Fragment {
+    let view: string[] = []; let children: string[] = []; state.append(children, figures.bars);
+    if (hasClock(comp)) { children[children.length] = figures.clockButtons; }
+    if (comp.widget) {
+        for (let bar of figures.bars) { view[view.length] = "shows.push(" + bar + ");"; }
+        let hero: boolean = false; for (let value of comp.sketch.values) { if (required(comp, value.id).show === "hero") { hero = true; } }
+        if (hasClock(comp) && !hero) { view[view.length] = "shows.push(ui.Stat(\"default\", " + source.quote(figures.clockLabel) + ", " + figures.clockShown + ", \"\", \"clock\"));"; }
+        if (figures.stats.length > 0) {
+            let columns: number = statColumns(figures.stats); if (columns > 2) { columns = 2; }
+            view[view.length] = "shows.push(ui.MetricGroup(\"default\", " + numberText(columns) + ", [" + source.join(figures.stats, ", ") + "]));";
+        }
+        if (str.length(figures.table) > 0) { view[view.length] = "shows.push(" + figures.table + ");"; }
+        if (hasClock(comp)) { view[view.length] = "shows.push(" + figures.clockButtons + ");"; }
+    } else if (figures.heroes.length > 0) {
+        for (let value of comp.sketch.values) { if (value.id === figures.heroes[0]) {
+            view[view.length] = "sections.push(ui.Section(\"hero\", \"\", \"\", [ui.Hero(\"accent\", " + source.quote(value.label) + ", " + source.heroText(value, value.id, numberText) + ", \"\", [" + source.join(children, ", ") + "])]));"; break;
+        } }
+    } else if (hasClock(comp)) {
+        view[view.length] = "sections.push(ui.Section(\"hero\", \"\", \"\", [ui.Hero(\"accent\", " + source.quote(figures.clockLabel) + ", " + figures.clockShown + ", \"\", [" + source.join(children, ", ") + "])]));";
+    } else if (children.length > 0) { view[view.length] = "sections.push(ui.Section(\"content\", \"\", \"\", [" + source.join(children, ", ") + "]));"; }
+    return source.part("hero", [], [], view, "", "");
+}
+export function summaryPart(comp: state.Composition, figures: Figures, numberText: (value: number) => string): template.Fragment {
+    let view: string[] = [];
+    if (!comp.widget) {
+        if (str.length(figures.table) > 0) { view[view.length] = "sections.push(ui.Section(\"summary\", \"\", \"\", [" + figures.table + "]));"; }
+        if (figures.stats.length > 0) {
+            let columns: number = statColumns(figures.stats); if (columns > 3) { columns = 3; }
+            view[view.length] = "sections.push(ui.Section(\"summary\", \"\", \"\", [ui.MetricGroup(\"default\", " + numberText(columns) + ", [" + source.join(figures.stats, ", ") + "])]));";
+        }
+    }
+    return source.part("summary", [], [], view, "", "");
+}

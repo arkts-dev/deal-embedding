@@ -1,0 +1,84 @@
+import * as repairText from "./provisional-repair-text";
+import * as writer from "./custom-writer";
+import * as str from "std/string";
+
+export class Compiled { identity: string; diagnostics: string; }
+export class Mechanisms {
+    compile: (source: string) => Compiled;
+    smoke: (identity: string) => string;
+    now: () => number; numberText: (value: number) => string;
+}
+export class Repaired { source: string; executable: string; rounds: number; failed: string; ms: number; }
+export class Settled { source: string; executable: string; errors: string; repair: Repaired | null; checkMs: number; note: string; }
+export class Host {
+    language: string; askCode: ((system: string, user: string, tokens: number, think: boolean) => Promise<string | null>) | null;
+    cancelled: () => boolean; status: (text: string) => void;
+}
+export function checkProgram(source: string, tools: Mechanisms): string {
+    let compiled: Compiled = tools.compile(source); if (compiled.diagnostics !== "") { return compiled.diagnostics; }
+    return tools.smoke(compiled.identity);
+}
+// Only in-memory construction candidates enter this function. Once canonical
+// identity exists the caller must use source-repair's exact revision-bound ABI.
+export async function repairProvisionalProgram(source: string, errors: string, prompt: string, language: string,
+    ask: (system: string, user: string, tokens: number, think: boolean) => Promise<string | null>, tools: Mechanisms): Promise<Repaired> {
+    return await repairProvisionalWithLimit(source, errors, prompt, language, ask, tools, 2);
+}
+export async function repairProvisionalWithLimit(source: string, errors: string, prompt: string, language: string,
+    ask: (system: string, user: string, tokens: number, think: boolean) => Promise<string | null>, tools: Mechanisms, rounds: number): Promise<Repaired> {
+    let out: Repaired = {source: "", executable: "", rounds: 0, failed: "", ms: 0};
+    let started: number = tools.now(); let current: string = source; let problem: string = errors; let round: number = 0;
+    while (round < rounds && problem !== "") {
+        out.rounds = round + 1;
+        let reply: string | null = await ask(language, "The program:\n" + current + "\n\n" +
+            repairText.repairPrompt("Request: " + prompt, problem, current, tools.numberText), 2000, false);
+        if (reply === null) { problem = "no answer for the repair"; break; }
+        let applied: repairText.Applied = repairText.applyProvisionalRepair(current, reply as string, tools.numberText);
+        if (applied.source === "") { problem = "the edits did not apply: " + applied.error; round = round + 1; continue; }
+        current = applied.source; problem = checkProgram(current, tools); round = round + 1;
+    }
+    out.ms = tools.now() - started;
+    if (problem !== "") { out.failed = str.split(problem, "\n")[0]; return out; }
+    out.source = current; let compiled: Compiled = tools.compile(current);
+    if (compiled.diagnostics !== "") { throw {code: "COMPILER_CHANGED", message: "Checked source no longer compiles"}; }
+    out.executable = compiled.identity; return out;
+}
+export async function settleProvisionalProgram(source: string, prompt: string, host: Host, tools: Mechanisms): Promise<Settled> {
+    return await settleWithLimit(source, prompt, host, tools, 2);
+}
+export async function settleBudgetedProgram(source: string, prompt: string, host: Host, tools: Mechanisms,
+    identities: string[], budget: writer.Budget): Promise<Settled> {
+    let rounds: number = budget.remaining(identities); if (rounds > 2) { rounds = 2; }
+    let bounded: Host = {language: host.language, cancelled: host.cancelled, status: host.status, askCode: null};
+    let ask: ((system: string, user: string, tokens: number, think: boolean) => Promise<string | null>) | null = host.askCode;
+    if (ask !== null) {
+        if (identities.length === 0) { throw {code: "HOLE_IDENTITY", message: "Original construction identities required for program repair"}; }
+        for (let identity of identities) { if (identity === "") { throw {code: "HOLE_IDENTITY", message: "Empty construction identity"}; } }
+        bounded.askCode = async function(system: string, user: string, tokens: number, think: boolean): Promise<string | null> {
+            let remaining: number = budget.remaining(identities); if (remaining <= 0) { return null; }
+            if (remaining === 1) { think = true; tokens = tokens * 3; } budget.charge(identities);
+            return await (ask as (system: string, user: string, tokens: number, think: boolean) => Promise<string | null>)(system, user, tokens, think);
+        };
+    }
+    return await settleWithLimit(source, prompt, bounded, tools, rounds);
+}
+async function settleWithLimit(source: string, prompt: string, host: Host, tools: Mechanisms, rounds: number): Promise<Settled> {
+    let out: Settled = {source: source, executable: "", errors: "", repair: null, checkMs: 0, note: ""};
+    let started: number = tools.now(); out.errors = checkProgram(source, tools); out.checkMs = tools.now() - started;
+    let ask: ((system: string, user: string, tokens: number, think: boolean) => Promise<string | null>) | null = host.askCode;
+    if (out.errors !== "" && ask !== null && host.language !== "" && !host.cancelled() && rounds > 0) {
+        host.status("Repairing the program...");
+        let repaired: Repaired = await repairProvisionalWithLimit(source, out.errors, prompt, host.language,
+            ask as (system: string, user: string, tokens: number, think: boolean) => Promise<string | null>, tools, rounds);
+        out.repair = repaired;
+        if (repaired.source !== "") {
+            out.source = repaired.source; out.executable = repaired.executable; out.errors = "";
+            out.note = "; repaired by edits in " + tools.numberText(repaired.rounds) + " round(s)";
+        } else { out.note = "; repair: " + repaired.failed; }
+    }
+    if (out.errors === "" && out.executable === "") {
+        let compiled: Compiled = tools.compile(out.source);
+        if (compiled.diagnostics !== "") { throw {code: "COMPILER_CHANGED", message: "Checked source no longer compiles"}; }
+        out.executable = compiled.identity;
+    } return out;
+}

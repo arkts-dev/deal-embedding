@@ -1,0 +1,56 @@
+import * as drawing from "./needs-drawing";
+import * as filtering from "./needs-filtering";
+import * as starting from "./needs-start";
+import * as needs from "./needs-plan";
+import * as sketch from "./sketch";
+import * as choice from "./needs-choice";
+import * as flow from "./compose-flow";
+import * as state from "./compose-state";
+import * as questions from "./compose-questions";
+import * as bindings from "./compose-bindings";
+import * as events from "./compose-events";
+import * as decode from "./plan-decoding";
+
+// Complete NeedsChoose orchestration; callers supply mechanisms/catalogue data,
+// not decisions about filtering, preliminary answers, or composition retries.
+export async function composeNeeds(prompt: string, system: string, widget: boolean, scene: string, sceneAllowed: boolean,
+    draw: drawing.DrawingTools, filter: filtering.TextTools,
+    askChoices: (body: string) => Promise<string>, catalogue: choice.Catalogue, sectionData: questions.Section[],
+    effects: events.Effect[], custom: boolean, tools: bindings.Primitives, lowercase: (value: string) => string,
+    now: () => number, assemble: (comp: state.Composition) => string): Promise<flow.ComposeResult> {
+    let result: flow.ComposeResult = flow.create(); let started: number = now();
+    let measured: drawing.DrawingTools = {ask: draw.ask, preview: draw.preview, head: draw.head,
+        review: async function(value: sketch.Sketch): Promise<string> {
+            result.sketchMs = now() - started;
+            let reply: string = await draw.review(value); started = now(); return reply;
+        }};
+    let reviewed: drawing.ReviewedDrawing = await drawing.drawReviewed(system, prompt, widget, scene, measured);
+    result.sketchMs = result.sketchMs + now() - started; result.planTries = reviewed.tries; result.replanned = reviewed.replanned;
+    if (reviewed.drawing.plan === null || reviewed.drawing.sketch === null) { result.note = reviewed.note; return result; }
+    result.sketch = reviewed.drawing.text;
+    let plan: needs.NeedsPlan = reviewed.drawing.plan as needs.NeedsPlan;
+    let parsed: sketch.Sketch = reviewed.drawing.sketch as sketch.Sketch;
+    let filtered: filtering.FilteredPlan = filtering.filterPlan(plan, parsed, reviewed.prompt, sceneAllowed, widget, filter);
+    parsed = filtered.sketch;
+    let startedOn: string = starting.startOnRequested(parsed, reviewed.prompt, tools.numberText);
+    let request: choice.ChooseRequest = choice.buildChooseRequest(reviewed.prompt, plan, parsed, catalogue, tools.numberText);
+    started = now(); let selected: choice.ChoiceAnswers = await choice.choose(request, askChoices);
+    if (request.body !== "") { result.jevMs = now() - started; }
+    let pre: Record<string, unknown> | null = null;
+    if (selected.answers !== null) { pre = selected.answers as Record<string, unknown>; }
+    result = await flow.composeFromSketch(result, reviewed.prompt, parsed, askChoices, widget, pre, selected.settled,
+        catalogue, sectionData, effects, custom, tools, lowercase, now, assemble);
+    if (startedOn !== "") { result.note = result.note + "; " + startedOn + ", as the request says"; }
+    if (filtered.unscened > 0) { result.note = result.note + "; no scene: the request asks for nothing drawn, so " + tools.numberText(filtered.unscened) + " is built as any other need"; }
+    if (filtered.unasked.length > 0) {
+        result.note = result.note + "; not in the request, so not built: " + join(filtered.unasked);
+        for (let words of filtered.unasked) { result.dropped[result.dropped.length] = "not in the request: " + words; }
+    }
+    if (filtered.cut.length > 0) {
+        result.note = result.note + "; no room in a widget, so not built: " + join(filtered.cut);
+        for (let words of filtered.cut) { result.dropped[result.dropped.length] = "no room in a widget: " + words; }
+    } return result;
+}
+function join(values: string[]): string {
+    let out: string = ""; let i: number = 0; for (let value of values) { if (i > 0) { out = out + "; "; } out = out + value; i = i + 1; } return out;
+}

@@ -1,0 +1,49 @@
+import * as sketch from "./sketch";
+import * as choice from "./needs-choice";
+import * as decode from "./plan-decoding";
+
+export class Widget {
+    id: string;
+    kinds: string[];
+    describe: string;
+}
+export function widgets(): Widget[] {
+    return [
+        {id: "typed_number", kinds: ["amount", "count", "percent"], describe: "a text field the person types a number into"},
+        {id: "stepper", kinds: ["count", "percent"], describe: "a whole number set with - and + buttons, one step at a time"},
+        {id: "slider", kinds: ["percent", "count", "amount"], describe: "a slider across a range, for a percentage or a level"},
+        {id: "select", kinds: ["choice"], describe: "a drop-down of the named options"},
+        {id: "switch", kinds: ["toggle"], describe: "an on/off switch"},
+        {id: "text_field", kinds: ["text"], describe: "a text field for words"},
+        {id: "time_field", kinds: ["time"], describe: "a time picker for a time of day"}
+    ];
+}
+export function partsOf(value: sketch.Sketch): choice.Criterion[] {
+    let result: choice.Criterion[] = [];
+    for (let input of value.inputs) {
+        for (let widget of widgets()) {
+            if (decode.includes(widget.kinds, input.kind)) {
+                result[result.length] = {key: "widget." + input.id + "." + widget.id, description: widget.describe + ", for \"" + input.label + "\""};
+            }
+        }
+    }
+    for (let figure of value.values) {
+        result[result.length] = {key: "value." + figure.id, description: "the figure \"" + figure.label + "\", shown as a number: " + figure.means};
+        if (figure.format === "fraction") {
+            result[result.length] = {key: "bar." + figure.id, description: "a progress bar that fills as \"" + figure.label + "\" goes from 0 to 1: " + figure.means};
+        }
+    }
+    if (value.hasCountdown) { result[result.length] = {key: "countdown", description: "the countdown: the time left, shown as minutes and seconds such as 5:30 and counting down each second, with Start, Stop and Reset buttons"}; }
+    if (value.hasStopwatch) { result[result.length] = {key: "stopwatch", description: "the stopwatch: the time passed, shown as minutes and seconds such as 5:30 and counting up each second, with Start, Stop and Reset buttons"}; }
+    let list: sketch.SketchList | null = value.list;
+    if (list !== null) { result[result.length] = {key: "list", description: choice.describeList(list as sketch.SketchList)}; }
+    if (value.values.length > 0 && list === null) {
+        result[result.length] = {key: "figures", description: "a table or list of the figures, one row each: the fixed numbers they are worked out from, then each worked-out figure, with its label and its value"};
+    }
+    for (let event of value.events) {
+        if (event.asked) { result[result.length] = {key: "event." + event.id, description: "when " + event.when + ", the phone will " + event.what}; }
+    }
+    result[result.length] = {key: "state", description: "the app keeps everything between visits: what the person set or added is saved and is there when the app opens again"};
+    return result;
+}
+export function main(): null { return null; }
