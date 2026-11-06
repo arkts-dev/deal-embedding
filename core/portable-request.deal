@@ -1,0 +1,68 @@
+import * as agent from "./portable-agent";
+import * as route from "./portable-build-route";
+import * as surface from "./agent-surface";
+import * as writer from "./custom-writer";
+import * as calls from "./custom-calls";
+import * as identities from "./construction-identities";
+import * as checking from "./custom-check";
+import * as settlement from "./program-settlement";
+import * as screen from "./screen-plan";
+import * as holes from "./hole-settlement";
+import * as catalogue from "./catalogue-holes";
+import * as person from "./agent-questions";
+import * as sketch from "./sketch";
+import * as decode from "./plan-decoding";
+import * as data from "./portable-request-data";
+import * as runtime from "portable/runtime";
+import * as json from "std/json";
+
+export class Input { request: route.Request; data: agent.Data; originals: string[]; language: string; guide: string; surfaceCatalogue: string; }
+export async function build(input: string, owner: string): Promise<string> {
+    let invoke: (operation: string, input: unknown) => string = function(operation: string, input: unknown): string { return runtime.call(owner, operation, json.stringify(input) as string); };
+    let numberText: (value: number) => string = function(value: number): string { return invoke("numberText", {value: value}); };
+    let now: () => number = function(): number { return json.parse(invoke("now", {})).value as number; };
+    let lower: (value: string) => string = function(value: string): string { return invoke("lowercase", {value: value}); };
+    let slice: (value: string, start: number, end: number) => string = function(value: string, start: number, end: number): string { return invoke("slice", {value: value, start: start, end: end}); };
+    let utf16Length: (value: string) => number = function(value: string): number { return json.parse(invoke("length", {value: value})).value as number; };
+    let matches: (value: string, pattern: string, flags: string) => string[] = function(value: string, pattern: string, flags: string): string[] { let raw: Record<string, unknown> = json.parse(invoke("matches", {value: value, pattern: pattern, flags: flags})); let out: string[] = []; for (let item of decode.arrayOrEmpty(raw.values)) { out[out.length] = item as string; } return out; };
+    let test: (pattern: string, flags: string, value: string) => boolean = function(pattern: string, flags: string, value: string): boolean { return json.parse(invoke("test", {pattern: pattern, flags: flags, value: value})).value as boolean; };
+    let compile: (source: string) => checking.Compiled = function(source: string): checking.Compiled { let raw: Record<string, unknown> = json.parse(invoke("compile", {source: source})); let unread: string[] = []; for (let item of decode.arrayOrEmpty(raw.unreadFields)) { unread[unread.length] = item as string; } return {identity: raw.identity as string, diagnostics: raw.diagnostics as string, unreadFields: unread}; };
+    let smoke: (identity: string) => string = function(identity: string): string { return invoke("smoke", {identity: identity}); };
+    let play: (identity: string, fingers: boolean, buttons: boolean) => string = function(identity: string, fingers: boolean, buttons: boolean): string { return invoke("play", {identity: identity, fingers: fingers, buttons: buttons}); };
+    let cancelled: () => boolean = function(): boolean { return json.parse(invoke("cancelled", {})).value as boolean; };
+    let status: (text: string) => void = function(text: string): void { invoke("status", {text: text}); };
+    let askJev: (body: string) => Promise<string> = async function(body: string): Promise<string> { return invoke("jev", {body: body}); };
+    let askCode: (system: string, user: string, tokens: number, think: boolean) => Promise<string | null> = async function(system: string, user: string, tokens: number, think: boolean): Promise<string | null> { return invoke("code", {system: system, user: user, tokens: tokens, think: think}); };
+    let askPlan: (system: string, user: string, partial: (text: string) => void, think: boolean) => Promise<string | null> = async function(system: string, user: string, partial: (text: string) => void, think: boolean): Promise<string | null> { return invoke("plan", {system: system, user: user, think: think}); };
+    let raw: Record<string, unknown> = json.parse(input); let request: Record<string, unknown> = raw.request as Record<string, unknown>;
+    let asked: agent.Request | null = null; if (request.agent !== null) { let item: Record<string, unknown> = request.agent as Record<string, unknown>; asked = {prompt: item.prompt as string, widget: item.widget as boolean, scene: item.scene as string, sceneAllowed: item.sceneAllowed as boolean}; }
+    let value: Input = {request: {agent: asked, mode: request.mode as string, wholeEnabled: request.wholeEnabled as boolean, surfaceEnabled: request.surfaceEnabled as boolean}, data: data.data(raw.data as Record<string, unknown>), originals: data.strings(raw.originals), language: raw.language as string, guide: raw.guide as string, surfaceCatalogue: raw.surfaceCatalogue as string};
+    let registry: identities.Registry = identities.create(value.originals); let budget: writer.Budget = writer.createBudget();
+    let checkingTools: checking.Mechanisms = {compile: compile, smoke: smoke, play: play, numberText: numberText, numberOf: function(text: string): number { return json.parse(invoke("numberOf", {value: text})).value as number; }};
+    let settlementTools: settlement.Mechanisms = {compile: function(source: string): settlement.Compiled { let checked: checking.Compiled = compile(source); return {identity: checked.identity, diagnostics: checked.diagnostics}; }, smoke: smoke, now: now, numberText: numberText};
+    let host: agent.Host = {askJev: askJev, ask: async function(question: person.Question): Promise<unknown> { return json.parse(invoke("question", {question: question})).value; },
+        cancelled: cancelled, status: status, preview: function(identity: string): void { invoke("preview", {identity: identity}); },
+        toolCount: function(): number { return json.parse(invoke("toolCount", {})).value as number; }, toolSpanSince: function(start: number): number { return json.parse(invoke("toolSpan", {start: start})).value as number; }, constructionIdentities: registry.all,
+        holes: {language: value.language, askCode: askCode, askJev: askJev, lookup: async function(needs: string[]): Promise<string[]> { let out: string[] = []; for (let item of decode.arrayOrEmpty(json.parse(invoke("lookup", {needs: needs})).values)) { out[out.length] = item as string; } return out; },
+            looked: [], cannot: [], budget: budget, identity: function(slot: screen.PlanSlot): string { return registry.issue("slot:" + slot.id, invoke("original", {key: "slot:" + slot.id})); }, onHole: function(record: holes.HoleRecord): void { invoke("hole", {record: record}); }},
+        filling: {search: async function(query: string, chars: number): Promise<string> { return invoke("search", {query: query, chars: chars}); },
+            content: async function(system: string, user: string, tokens: number): Promise<string | null> { return invoke("content", {system: system, user: user, tokens: tokens}); },
+            hole: async function(system: string, user: string, think: boolean): Promise<string | null> { return invoke("code", {system: system, user: user, think: think}); },
+            sdkContext: async function(prompt: string): Promise<string> { return invoke("sdk", {prompt: prompt}); }, status: status, cancelled: cancelled, now: now,
+            compile: function(source: string): catalogue.Diagnostic[] { let raw: Record<string, unknown> = json.parse(invoke("holeCompile", {source: source})); let out: catalogue.Diagnostic[] = []; for (let item of decode.arrayOrEmpty(raw.values)) { let entry: Record<string, unknown> = item as Record<string, unknown>; out[out.length] = {line: entry.line as number, message: entry.message as string}; } return out; },
+            identity: function(instance: catalogue.Instance): string { return registry.issue("catalogue:" + instance.key, invoke("original", {key: "catalogue:" + instance.key})); }, budget: budget},
+        settling: {language: value.language, askCode: askCode, cancelled: cancelled, status: status}};
+    let tools: agent.Mechanisms = {
+        drawing: {ask: askPlan, preview: function(value: sketch.Sketch): void {}, review: async function(value: sketch.Sketch): Promise<string> { return ""; }, head: function(text: string, units: number): string { return slice(text, 0, units); }},
+        filtering: {normalize: function(text: string): string { return invoke("normalize", {value: text}); }, units: function(text: string): number[] { let out: number[] = []; for (let item of decode.arrayOrEmpty(json.parse(invoke("units", {value: text})).values)) { out[out.length] = item as number; } return out; }, matches: function(pattern: string, text: string): boolean { return test(pattern, "", text); }},
+        bindings: {utf16Length: utf16Length, numberText: numberText, fixedTwo: function(number: number): string { return invoke("fixed", {value: number, places: 2}); }, power: function(a: number, b: number): number { return json.parse(invoke("power", {a: a, b: b})).value as number; }, remainder: function(a: number, b: number): number { return json.parse(invoke("remainder", {a: a, b: b})).value as number; }, matches: function(pattern: string, text: string): string[] { return matches(text, pattern, ""); }},
+        content: {utf16Length: utf16Length, slice: slice, replaceRegex: function(text: string, pattern: string, flags: string, replacement: string): string { return invoke("replace", {value: text, pattern: pattern, flags: flags, replacement: replacement}); }, matches: matches, parseNumber: checkingTools.numberOf, numberText: numberText},
+        emission: {numberText: numberText, upperFirst: function(text: string): string { return invoke("upperFirst", {value: text}); }, first14: function(text: string): string { return slice(text, 0, 14); }},
+        writer: {matches: function(pattern: string, text: string): calls.Match[] { let out: calls.Match[] = []; for (let item of decode.arrayOrEmpty(json.parse(invoke("groups", {pattern: pattern, value: text})).values)) { let groups: string[] = []; for (let group of (item as unknown[])) { groups[groups.length] = group as string; } out[out.length] = {groups: groups}; } return out; }, lowercase: lower, numberText: numberText, now: now, checking: checkingTools},
+        notices: {sentenceEnd: function(text: string): number { return json.parse(invoke("sentenceEnd", {value: text})).value as number; }, utf16Length: utf16Length, first137: function(text: string): string { return slice(text, 0, 137); }},
+        settlement: settlementTools, first8000: function(text: string): string { return slice(text, 0, 8000); }};
+    let surfaceHost: surface.Host = {language: value.language, guide: value.guide, askCode: askCode, askPlan: askPlan, cancelled: cancelled, status: status, identities: value.originals, budget: budget};
+    let outcome: route.Outcome = await route.buildScreen(value.request, host, value.data, tools, surfaceHost, {test: test, checking: settlementTools, play: function(identity: string): string { return play(identity, true, true); }}, value.surfaceCatalogue);
+    return json.stringify(outcome) as string;
+}
+export function main(): null { return null; }

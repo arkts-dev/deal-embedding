@@ -1,0 +1,37 @@
+import * as smoke from "./program-smoke";
+import * as runtime from "portable/runtime";
+import * as json from "std/json";
+import * as decode from "./plan-decoding";
+
+// Independent compilation keeps validation out of the orchestration JVM class.
+function trap(value: unknown): smoke.Trap | null {
+    if (value === null) { return null; } let raw: Record<string, unknown> = value as Record<string, unknown>;
+    return {code: raw.code as string, message: raw.message as string, line: raw.line as number, loopLine: raw.loopLine as number};
+}
+function nodes(values: unknown[]): smoke.Node[] {
+    let out: smoke.Node[] = []; for (let value of values) { let raw: Record<string, unknown> = value as Record<string, unknown>;
+        out[out.length] = {kind: raw.kind as string, label: raw.label as string, children: nodes(decode.arrayOrEmpty(raw.children))};
+    } return out;
+}
+export function run(identity: string, owner: string): string {
+    let invoke: (operation: string, input: unknown) => string = function(operation: string, input: unknown): string { return runtime.call(owner, operation, json.stringify(input) as string); };
+    let opened: Record<string, unknown> = json.parse(invoke("open", {identity: json.parse(identity).identity as string})); let machine: string = opened.machine as string;
+    let handlers: smoke.Handler[] = []; for (let value of decode.arrayOrEmpty(opened.handlers)) { let raw: Record<string, unknown> = value as Record<string, unknown>; handlers[handlers.length] = {name: raw.name as string, kind: raw.kind as string}; }
+    let tools: smoke.Mechanisms = {
+        execute: function(name: string, args: string[]): smoke.Executed { let raw: Record<string, unknown> = json.parse(invoke("execute", {machine: machine, name: name, args: args})); return {value: raw.value as string, trap: trap(raw.trap)}; },
+        decodeUi: function(value: string): smoke.Decoded { let raw: Record<string, unknown> = json.parse(invoke("decodeUi", {machine: machine, value: value})); return {nodes: nodes(decode.arrayOrEmpty(raw.nodes)), trap: trap(raw.trap)}; },
+        decodeGfx: function(value: string): smoke.Trap | null { return trap(json.parse(invoke("decodeGfx", {machine: machine, value: value})).trap); },
+        numberValue: function(value: number): string { return invoke("value", {machine: machine, value: value}); },
+        stringValue: function(value: string): string { return invoke("value", {machine: machine, value: value}); },
+        booleanValue: function(value: boolean): string { return invoke("value", {machine: machine, value: value}); },
+        pointerValue: function(kind: string, id: number, x: number, y: number): string { return invoke("pointer", {machine: machine, kind: kind, id: id, x: x, y: y}); },
+        effectsAllowed: function(allowed: boolean): void { invoke("effects", {machine: machine, allowed: allowed}); },
+        clearEffects: function(): void { invoke("clearEffects", {machine: machine}); },
+        numberText: function(value: number): string { return invoke("numberText", {value: value}); }
+    };
+    let result: string = "";
+    try { result = smoke.smokeRun(handlers, true, tools); }
+    catch (caught) { invoke("close", {machine: machine}); throw (caught as Error); }
+    invoke("close", {machine: machine}); return result;
+}
+export function main(): null { return null; }

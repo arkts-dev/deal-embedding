@@ -89,6 +89,10 @@ export function lower(source: string, inspect: (source: string) => string): Pair
             let formatted: Record<string, unknown> = {source: field(args[3], "source") + " + presentation.formatNumber(" + field(args[2], "source") + ", " + field(args[8], "source") + ") + " + field(args[4], "source")};
             return "ui.Metric(label: " + prop(args[1], "string") + ", value: " + prop(formatted, "string") + ")\n";
         }
+        if (component === "Stat") {
+            if (args.length !== 5 || field(args[3], "source") !== "\"\"" || field(args[4], "source") !== "\"chart\"") { fail("Stat decoration not yet lowered"); }
+            return "ui.Metric(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "string") + ")\n";
+        }
         if (component === "Text") { return "ui.Text(value: " + prop(args[1], "string") + ")\n"; }
         if (component === "TextField") {
             if (args.length > 4 && field(args[4], "source") !== "\"number\"") { fail("TextField validation not yet lowered"); }
@@ -128,7 +132,17 @@ export function lower(source: string, inspect: (source: string) => string): Pair
         let fields: string = "value: " + action.type + ";"; let argument: string = "action.value";
         logic = logic + "export class " + action.name + " {" + fields + "}\n// @ui-update\nexport function update" + action.name + "(state: PortableState, action: " + action.name + "): PortableState { return project(" + action.handler + "(state.app, " + argument + ")); }\n";
     }
-    logic = logic + "export function main(): null { return null; }\n";
+    let handlers: unknown[] = [];
+    for (let declaration of declarations) {
+        if (field(declaration, "kind") !== "FunctionDeclaration") { continue; }
+        let params: Record<string, unknown>[] = records(declaration, "parameters");
+        if (params.length !== 2 || field(params[0], "type") !== "AppState" || field(declaration, "result") !== "AppState") { continue; }
+        let type: string = field(params[1], "type"); if (type !== "number" && type !== "string" && type !== "boolean") { continue; }
+        let wrapper: string = "portableHandler" + literals.decimal(handlers.length);
+        handlers[handlers.length] = {name: field(declaration, "name"), kind: type, wrapper: wrapper};
+        logic = logic + "export function " + wrapper + "(state: PortableState, value: " + type + "): PortableState { return project(" + field(declaration, "name") + "(state.app, value)); }\n";
+    }
+    logic = logic + "export function portableHandlers(): string { return " + literals.quote(json.stringify(handlers) as string) + "; }\nexport function main(): null { return null; }\n";
     return {deal: logic, dealui: "import * as app from \"./experience\";\nimport * as ui from \"./platform.dealui-pack\";\n// @ui-root\nexport view Experience(state: app.PortableState): View { ui.Column() {\n" + tree + "}\n}\n"};
 }
 export function main(): null { return null; }

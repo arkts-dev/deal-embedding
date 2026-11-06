@@ -1,0 +1,3 @@
+// Request-local compiler/VM, text primitives and model transport mechanisms.
+// No operation publishes a candidate or chooses validation/recovery outcomes.
+export function call(owner: string, operation: string, input: string): string;

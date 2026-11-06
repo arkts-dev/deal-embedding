@@ -45,13 +45,25 @@ for entry in execution compose fragments view-binding lowering; do
     javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$source"
 done
 javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$ROOT/tools/EmbeddingSyntax.java" "$ROOT/tools/CompositionBridge.java" "$ROOT/tools/PortableSyntax.java"
-mkdir -p "$OUTPUT_DIR/portable/src"
-cp "$ROOT/core/portable-backend.deal" "$ROOT/core/portable-source-lowering.deal" "$ROOT/core/plan-decoding.deal" "$ROOT/core/source-literals.deal" "$OUTPUT_DIR/portable/src/"
+mkdir -p "$OUTPUT_DIR/portable/src/lowering"
+cp "$ROOT/core/portable-backend.deal" "$ROOT/core/portable-source-lowering.deal" "$ROOT/core/plan-decoding.deal" "$ROOT/core/source-literals.deal" "$OUTPUT_DIR/portable/src/lowering/"
 cp "$ROOT/core/backend/syntax.d.deal" "$OUTPUT_DIR/portable/portable-syntax.d.deal"
 printf '%s' '{"languageVersion":"1.5","backend":"jvm","moduleRoots":["src"],"externals":{"portable/syntax":{"declaration":"portable-syntax.d.deal"}}}' > "$OUTPUT_DIR/portable/deal.json"
-java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/portable/src/portable-backend.deal" --backend jvm --output "$OUTPUT_DIR/portable/java"
-python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text("package dev.deal.embedding.portable; "+p.read_text())' "$OUTPUT_DIR/portable/java/Portable_backend.java"
-javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$OUTPUT_DIR/portable/java/Portable_backend.java" "$ROOT/tools/PortableBackendBridge.java"
+java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/portable/src/lowering/portable-backend.deal" --backend jvm --output "$OUTPUT_DIR/portable/java"
+python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text("package dev.deal.embedding.portable; "+p.read_text())' "$OUTPUT_DIR/portable/java/LoweringPortable_backend.java"
+javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$OUTPUT_DIR/portable/java/LoweringPortable_backend.java" "$ROOT/tools/PortableBackendBridge.java"
+mkdir -p "$OUTPUT_DIR/portable-route/src"
+cp "$ROOT/core/backend/runtime.d.deal" "$OUTPUT_DIR/portable-route/runtime.d.deal"
+printf '%s' '{"languageVersion":"1.5","backend":"jvm","moduleRoots":["src"],"externals":{"portable/runtime":{"declaration":"runtime.d.deal"}}}' > "$OUTPUT_DIR/portable-route/deal.json"
+for entry in request validation; do
+    mkdir -p "$OUTPUT_DIR/portable-route/src/$entry"
+    cp "$ROOT/core/"*.deal "$OUTPUT_DIR/portable-route/src/$entry/"
+    java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/portable-route/src/$entry/portable-$entry.deal" --backend jvm --output "$OUTPUT_DIR/portable-route/$entry-java"
+    source="$OUTPUT_DIR/portable-route/$entry-java/${entry^}Portable_$entry.java"
+    python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text("package dev.deal.embedding.portable."+sys.argv[2]+"; "+p.read_text())' "$source" "$entry"
+    javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$source"
+done
+javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$ROOT/tools/PortableRuntime.java" "$ROOT/tools/PortableRequestBridge.java"
 python3 "$ROOT/tools/theme-build.py" "$ROOT/ui/theme.json" "$OUTPUT_DIR/generated/PackTheme.kt"
 "$KOTLIN_HOME/bin/kotlinc" "$OUTPUT_DIR/generated/PackTheme.kt" "$OUTPUT_DIR/generated/CapabilityApi.kt" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect \
     -classpath "$ANDROID_JAR:$OUTPUT_DIR/classes:$RUNTIME_CP" -d "$OUTPUT_DIR/classes" $(find "$ROOT/android/src" -name '*.kt' | sort)

@@ -23,7 +23,12 @@ internal class ExperienceCompiler(private val context: Context, private val conf
         val pair = lowerPortable(source)
         return compile(pair.deal, pair.ui)
     }
-    fun compile(dealSource: String, uiSource: String): File {
+    fun compilePortableValidation(source: String): File {
+        val pair = lowerPortable(source)
+        return compilePair(pair.deal, pair.ui, true)
+    }
+    fun compile(dealSource: String, uiSource: String): File = compilePair(dealSource, uiSource, false)
+    private fun compilePair(dealSource: String, uiSource: String, validation: Boolean): File {
         StagingReclamation.retry(context)
         val distribution = storage.distribution()
         System.setProperty("deal.home", distribution.absolutePath)
@@ -50,7 +55,21 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             app.writeText(deal.ui.UiSourceGenerator.compilerSource(dealSource) + generated.augmentation())
             // The entry must not share a name with the application module: the entry imports the
             // app module, so writing both to one path makes the view resolve the entry's exports.
-            val entry = File(sources, ENTRY_NAME + ".deal").apply { writeText(generated.source()) }
+            val validationBridge = if (validation) {
+                val handlers = JSONObject(PortableSyntax.inspect(deal.ui.UiSourceGenerator.compilerSource(dealSource))).getJSONArray("statements")
+                buildString {
+                    append("\nexport function portableMachineHandlers(): string { return app.portableHandlers(); }\n")
+                    append("export function portableMachineView(state: app.PortableState): ViewNode { return view_Experience(\"Experience\", state); }\n")
+                    for (i in 0 until handlers.length()) {
+                        val declaration = handlers.getJSONObject(i)
+                        if (declaration.optString("kind") != "FunctionDeclaration" || !declaration.getString("name").matches(Regex("portableHandler[0-9]+"))) continue
+                        val name = declaration.getString("name")
+                        val type = declaration.getJSONArray("parameters").getJSONObject(1).getString("type")
+                        append("export function $name(state: app.PortableState, value: $type): app.PortableState { return app.$name(state, value); }\n")
+                    }
+                }
+            } else ""
+            val entry = File(sources, ENTRY_NAME + ".deal").apply { writeText(generated.source() + validationBridge) }
             val externals = JSONObject()
             File(distribution,"portable/numbers.d.deal").copyTo(File(project,"portable-numbers.d.deal"),overwrite=true)
             externals.put("portable/numbers",JSONObject().put("declaration","portable-numbers.d.deal"))

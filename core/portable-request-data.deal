@@ -1,0 +1,37 @@
+import * as agent from "./portable-agent";
+import * as catalogue from "./catalogue-contracts";
+import * as template from "./template-spec";
+import * as events from "./compose-events";
+import * as decode from "./plan-decoding";
+export function strings(raw: unknown): string[] { let out: string[] = []; for (let item of decode.arrayOrEmpty(raw)) { out[out.length] = item as string; } return out; }
+function records(raw: unknown): Record<string, unknown>[] { let out: Record<string, unknown>[] = []; for (let item of decode.arrayOrEmpty(raw)) { out[out.length] = item as Record<string, unknown>; } return out; }
+function numbers(raw: unknown): number[] { let out: number[] = []; for (let item of decode.arrayOrEmpty(raw)) { out[out.length] = item as number; } return out; }
+function entries(raw: unknown): template.Entry[] { let out: template.Entry[] = []; for (let item of records(raw)) { out[out.length] = {key: item.key as string, value: item.value as string}; } return out; }
+function fragment(raw: Record<string, unknown>): template.Fragment {
+    let fields: template.StateField[] = []; for (let item of records(raw.stateFields)) { fields[fields.length] = {name: item.name as string, type: item.type as string}; }
+    let ports: template.Port[] = []; for (let item of records(raw.ports)) { ports[ports.length] = {dir: item.dir as string, name: item.name as string, type: item.type as string, ref: item.ref as string, fallback: item.fallback as string, computed: item.computed as boolean, optional: item.optional as boolean}; }
+    let holes: template.Hole[] = []; for (let item of records(raw.holes)) { holes[holes.length] = {key: item.key as string, token: item.token as string, signature: item.signature as string, purpose: item.purpose as string, defaultBody: item.defaultBody as string, when: item.when as string, byModel: item.byModel as boolean, usesSdk: item.usesSdk as boolean, slot: item.slot as string}; }
+    return {kind: raw.kind as string, criteria: raw.criteria as string, supportClass: raw.supportClass as string, stateFields: fields, initStatements: raw.initStatements as string, initEntries: raw.initEntries as string, functions: raw.functions as string, viewBlock: raw.viewBlock as string, imports: strings(raw.imports), ports: ports, holes: holes, indexed: raw.indexed as boolean, owns: raw.owns as string, tab: raw.tab as string};
+}
+function entry(raw: Record<string, unknown>): catalogue.CatalogueEntry {
+    let slots: catalogue.Slot[] = []; for (let item of records(raw.slots)) { slots[slots.length] = {token: item.token as string, values: strings(item.values), kind: item.kind as string, instructions: item.instructions as string, criteria: entries(item.criteria), above: item.above as number, provides: strings(item.provides)}; }
+    let fields: catalogue.ContentField[] = []; for (let item of records(raw.contentFields)) { fields[fields.length] = {token: item.token as string, key: item.key as string, fallback: item.fallback as string, hint: item.hint as string, maxLength: item.maxLength as number, numeric: item.numeric as boolean}; }
+    let lists: catalogue.ListField[] = []; for (let item of records(raw.listFields)) { let rows: string[][] = []; for (let row of decode.arrayOrEmpty(item.fallbackRows)) { rows[rows.length] = strings(row); }
+        lists[lists.length] = {token: item.token as string, key: item.key as string, hint: item.hint as string, columnHints: strings(item.columnHints), columnMax: numbers(item.columnMax), rowTemplate: item.rowTemplate as string, separator: item.separator as string, minRows: item.minRows as number, maxRows: item.maxRows as number, fallbackRows: rows, numericColumns: numbers(item.numericColumns), columnChecks: strings(item.columnChecks)}; }
+    return {fragment: fragment(raw.fragment as Record<string, unknown>), slots: slots, contentFields: fields, listFields: lists, covers: strings(raw.covers), coversIf: strings(raw.coversIf)};
+}
+export function data(raw: Record<string, unknown>): agent.Data {
+    let out: agent.Data = {planLanguage: raw.planLanguage as string, catalogue: [], choices: {sections: [], realDataInstructions: "", realDataCriteria: []}, sections: [], effects: [], readyKinds: strings(raw.readyKinds), layouts: [], banner: raw.banner as string, sceneGuide: raw.sceneGuide as string, sceneTokens: raw.sceneTokens as number, custom: raw.custom as boolean, planEnabled: raw.planEnabled as boolean, alignEnabled: raw.alignEnabled as boolean, alignment: {wide: false, custom: false, readyKinds: [], realData: null}};
+    for (let item of records(raw.catalogue)) { out.catalogue[out.catalogue.length] = entry(item); }
+    let choices: Record<string, unknown> = raw.choices as Record<string, unknown>; out.choices.realDataInstructions = choices.realDataInstructions as string;
+    for (let item of records(choices.sections)) { out.choices.sections[out.choices.sections.length] = {key: item.key as string, description: item.description as string}; }
+    for (let item of records(choices.realDataCriteria)) { out.choices.realDataCriteria[out.choices.realDataCriteria.length] = {key: item.key as string, description: item.description as string}; }
+    for (let item of records(raw.sections)) { out.sections[out.sections.length] = {question: item.question as string, kind: item.kind as string, owns: item.owns as string}; }
+    for (let item of records(raw.effects)) { let params: events.EffectParam[] = []; for (let param of records(item.params)) { params[params.length] = {name: param.name as string, kind: param.kind as string, key: param.key as string, describe: param.describe as string}; }
+        out.effects[out.effects.length] = {id: item.id as string, describe: item.describe as string, target: item.target as string, fixed: strings(item.fixed), params: params, done: item.done as string, mode: item.mode as string, button: item.button as string}; }
+    for (let item of records(raw.layouts)) { let slots: template.LayoutSlot[] = []; for (let slot of records(item.slots)) { slots[slots.length] = {accepts: strings(slot.accepts)}; } out.layouts[out.layouts.length] = {id: item.id as string, slots: slots}; }
+    let alignment: Record<string, unknown> = raw.alignment as Record<string, unknown>; out.alignment.wide = alignment.wide as boolean; out.alignment.custom = alignment.custom as boolean; out.alignment.readyKinds = strings(alignment.readyKinds);
+    if (alignment.realData !== null) { let real: Record<string, unknown> = alignment.realData as Record<string, unknown>; out.alignment.realData = {instructions: real.instructions as string, criteria: entries(real.criteria)}; }
+    return out;
+}
+export function main(): null { return null; }

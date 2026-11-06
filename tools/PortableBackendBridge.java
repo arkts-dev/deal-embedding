@@ -1,5 +1,5 @@
 import deal.codegen.jvm.JvmRuntime;
-import dev.deal.embedding.portable.Portable_backend;
+import dev.deal.embedding.portable.LoweringPortable_backend;
 
 /** Data-only bridge to the independently compiled portable source lowering. */
 public final class PortableBackendBridge {
@@ -7,8 +7,8 @@ public final class PortableBackendBridge {
     private static final class Owner {
         static final JvmRuntime.FunctionValue LOWER=initialize();
         private static JvmRuntime.FunctionValue initialize() {
-            Portable_backend.dealMain();
-            return (JvmRuntime.FunctionValue) JvmRuntime.exportSurface("portable-backend").read("lowerJson");
+            LoweringPortable_backend.dealMain();
+            return (JvmRuntime.FunctionValue) JvmRuntime.exportSurface("lowering.portable-backend").read("lowerJson");
         }
     }
     public static synchronized String lower(String source) {
