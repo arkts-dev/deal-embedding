@@ -156,7 +156,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
     private fun source(s:Source)=JSONObject().put("deal",s.deal).put("dealui",s.dealui)
     private fun health()=embedding.health().let{JSONObject().put("incomplete",it.incomplete).put("active",it.active).put("code",it.code).put("lost",it.lost)}
     private fun error(e:Throwable):JSONObject=FailureEvidence.encode(e,::failureCode)
-    private fun failureCode(e:Throwable):String=when(e){is ProtocolFailure->e.code;is CancellationException->"CANCELLED";is GenerationRejected->"GENERATION_${e.reason.name}";is java.net.SocketTimeoutException->"MODEL_TIMEOUT";is java.net.ConnectException->"GATEWAY_UNREACHABLE";is CandidateRejected->"CANDIDATE_REJECTED";is IllegalArgumentException->"INVALID_ARGUMENT";else->"EMBEDDING_FAILED"}
+    private fun failureCode(e:Throwable):String=when(e){is ProtocolFailure->e.code;is deal.codegen.jvm.JvmRuntime.DealError->e.code;is CancellationException->"CANCELLED";is GenerationRejected->"GENERATION_${e.reason.name}";is java.net.SocketTimeoutException->"MODEL_TIMEOUT";is java.net.ConnectException->"GATEWAY_UNREACHABLE";is CandidateRejected->"CANDIDATE_REJECTED";is IllegalArgumentException->"INVALID_ARGUMENT";else->"EMBEDDING_FAILED"}
     override fun close(){
         if(ended)return
         var failure:Throwable?=null

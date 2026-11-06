@@ -50,6 +50,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
         val program = SandboxProgram(engine, 512 * 1024)
         var originalFailure:Throwable?=null
         var accepted:CheckedCandidate?=null
+        var portableBackend:PortableRequestBackend?=null
         fun eval(s: String) = program.evaluate(s)
         try {
             val input = JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map { it.json() }))
@@ -67,7 +68,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                     val result = snapshot.getJSONObject("result")
                     val id = result.getString("candidateId")
                     cancellation.check()
-                    log.event("route", if (result.getBoolean("usedFallback")) "source" else "template", candidate = id)
+                    log.event("route", if (result.getBoolean("usedFallback")) "whole-screen" else "portable", candidate = id)
                     val candidate = checked.remove(id) ?: run {
                         val diagnostics = result.optString("diagnostics")
                         val reason = when {
@@ -81,7 +82,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                     log.event("candidate", "accepted", candidate = id)
                     log.event("request", "completed", candidate = id)
                     telemetry.end("source_checked")
-                    return CheckedCandidate(context,candidate.first, candidate.second, revision, result.getInt("attempts"), log, id, if (result.getBoolean("usedFallback")) WorkspaceOrigin.AI_SOURCE else WorkspaceOrigin.CATALOGUE).also{accepted=it}
+                    return CheckedCandidate(context,candidate.first, candidate.second, revision, attempts, log, id, if (result.getBoolean("generated")) WorkspaceOrigin.AI_SOURCE else WorkspaceOrigin.CATALOGUE).also{accepted=it}
                 }
                 val requests = JSONArray(program.evaluateString("dealCapabilities.take()"))
                 for (i in 0 until requests.length()) {
@@ -123,6 +124,42 @@ internal class ExperienceGenerator(private val context: Context, private val con
                                 log.event("composition", "rejected", detail = error.message)
                                 JSONObject().put("accepted", false).put("source", JSONObject()).put("diagnostics", "COMPACT_PLAN: ${error.message}").toString()
                             }
+                        }
+                        "embedding/portable" -> when(request.getString("function")) {
+                            "configuration" -> context.assets.open("ui/portable-catalogue.json").bufferedReader().use { it.readText() }
+                            "lower" -> {
+                                val pair=ExperienceCompiler(context,config,log).lowerPortable(args.getString(0))
+                                JSONObject().put("deal",pair.deal).put("dealui",pair.ui).toString()
+                            }
+                            "build" -> {
+                                check(portableBackend==null) { "Portable route already entered" }
+                                val backend=PortableRequestBackend(context,config,engine,log) { operation, payload ->
+                                    cancellation.check()
+                                    when(operation) {
+                                        "plan", "code", "content", "jev" -> {
+                                            attempts++
+                                            telemetry.modelStart("", "")
+                                            try {
+                                                log.operation(operation,operation=attempts.toString(),detail=payload.toString()) { child ->
+                                                    model.complete(payload.getString("body"),"","",cancellation,child).also { raw ->
+                                                        cancellation.check(); telemetry.modelEnd(raw); child.event(operation,"response",detail=raw)
+                                                    }
+                                                }
+                                            } catch(error:Throwable) { telemetry.modelEnd(""); throw error }
+                                        }
+                                        "cancelled" -> { cancellation.check(); "{\"value\":false}" }
+                                        "status" -> { progress(payload.getString("text")); "" }
+                                        "preview" -> { log.event("portable-preview","checked",candidate=payload.getString("identity")); "" }
+                                        "original" -> throw UnsupportedOperationException("PORTABLE_UNSUPPORTED: original-need provenance")
+                                        "toolCount", "toolSpan" -> "{\"value\":0}"
+                                        "hole" -> { log.event("composition","hole",detail=payload.toString()); "" }
+                                        else -> throw UnsupportedOperationException("PORTABLE_UNSUPPORTED: $operation")
+                                    }
+                                }
+                                portableBackend=backend
+                                backend.build(args.getString(0)).put("attempts",attempts).toString()
+                            }
+                            else -> error("Unknown portable mechanism")
                         }
                         "embedding/discovery" -> log.stage("discovery") { catalog }
                         "embedding/protocol" -> when(request.getString("function")) {
@@ -244,6 +281,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
             fun clean(block:()->Unit){try{block()}catch(error:Throwable){if(cleanup==null)cleanup=error else cleanup!!.addSuppressed(error)}}
             log.event("generation-bridge","completed",target=program.metrics().toString())
             clean{program.close()}
+            clean{portableBackend?.close()}
             checked.values.forEach { clean{StagingReclamation.remove(context,it.second.parentFile)} }
             cleanup?.let{error->
                 accepted?.let{candidate->runCatching{candidate.close()}.onFailure{error.addSuppressed(it)}}

@@ -1,0 +1,13 @@
+import * as json from "std/json";
+import * as decode from "./plan-decoding";
+
+// Provider-neutral operation framing. The gateway transports the core's exact
+// system/user/question payloads; it does not select retry or fallback policy.
+export function completion(operation: string, system: string, user: string, thinking: boolean): string {
+    return system + "\n\nUSER INTENT\n" + user + "\nPORTABLE COMPLETION\n" + (json.stringify({operation: operation, thinking: thinking}) as string);
+}
+export function choice(body: string): string {
+    let request: Record<string, unknown> = json.parse(body);
+    return "\nPORTABLE CHOICE\n" + (json.stringify(request) as string);
+}
+export function main(): null { return null; }

@@ -12,9 +12,10 @@ internal class PortableRequestBackend(
     private val context: Context,
     private val config: RuntimeConfig,
     private val engine: JavaScriptSandbox,
+    private val log: EmbeddingLog = EmbeddingLog(context),
     private val transport: (String, JSONObject) -> String
 ) : AutoCloseable {
-    private val compiler = ExperienceCompiler(context, config)
+    private val compiler = ExperienceCompiler(context, config, log)
     private val outputs = linkedMapOf<String, File>()
     private val machines = linkedMapOf<String, SandboxProgram>()
     private val primitives = SandboxProgram(engine, 256 * 1024)
@@ -72,6 +73,7 @@ internal class PortableRequestBackend(
                 val identity = "program-${++sequence}"; outputs[identity] = output
                 JSONObject().put("identity", identity).put("diagnostics", "").put("unreadFields", JSONArray()).toString()
             } catch (error: CandidateRejected) {
+                if(error.suppressed.isNotEmpty())throw error
                 JSONObject().put("identity", "").put("diagnostics", error.diagnostics).put("unreadFields", JSONArray()).toString()
             }
         }
@@ -93,8 +95,10 @@ internal class PortableRequestBackend(
         "value" -> machine(input).evaluateString("portableMachine.value(($input).value)")
         "effects", "clearEffects" -> { machine(input).evaluate("portableMachine.clear()"); "" }
         "close" -> {
-            val program = checkNotNull(machines.remove(input.getString("machine")))
-            try { program.evaluate("portableMachine.close()") } finally { program.close(); closedMachines++ }; ""
+            val identity=input.getString("machine")
+            val program = checkNotNull(machines[identity])
+            teardown({program.evaluate("portableMachine.close()");Unit},{program.close()})
+            machines.remove(identity);closedMachines++; ""
         }
         // Unsupported execution mechanisms are operational, never successful
         // dummy graphics/play/unread-state answers or model repair authority.
@@ -106,8 +110,8 @@ internal class PortableRequestBackend(
     override fun close() {
         var failure: Throwable? = null
         fun attempt(body: () -> Unit) { try { body() } catch (error: Throwable) { if (failure == null) failure = error else failure!!.addSuppressed(error) } }
-        machines.values.forEach { program -> attempt { program.close() } }; machines.clear()
-        outputs.values.forEach { output -> attempt { StagingReclamation.remove(context, output.parentFile) } }; outputs.clear()
+        machines.entries.toList().forEach { (identity,program) -> attempt { program.close();machines.remove(identity) } }
+        outputs.entries.toList().forEach { (identity,output) -> attempt { StagingReclamation.remove(context, output.parentFile);outputs.remove(identity) } }
         attempt { primitives.close() }; failure?.let { throw it }
     }
 }

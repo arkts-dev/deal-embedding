@@ -18,10 +18,26 @@ public final class PortableRequestBridge {
     // state lives here. Mechanisms and all accumulated artifacts belong to caller.
     public static synchronized String build(String input, BiFunction<String,String,String> mechanisms) {
         String owner = java.util.UUID.randomUUID().toString();
-        return PortableRuntime.scoped(owner, (operation, encoded) -> {
-            if (operation.equals("smoke")) return (String) Owner.SMOKE.fn.invoke(new Object[]{encoded, owner});
-            return mechanisms.apply(operation, encoded);
-        }, () -> (String) Owner.BUILD.fn.invoke(new Object[]{input, owner}));
+        var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        try {
+            return PortableRuntime.scoped(owner, (operation, encoded) -> {
+                try {
+                    if (operation.equals("smoke")) return (String) Owner.SMOKE.fn.invoke(new Object[]{encoded, owner});
+                    return mechanisms.apply(operation, encoded);
+                } catch (RuntimeException | Error error) {
+                    failure.compareAndSet(null, error);
+                    throw error;
+                }
+            }, () -> (String) Owner.BUILD.fn.invoke(new Object[]{input, owner}));
+        } catch (RuntimeException | Error boundary) {
+            // Generated reflection maps foreign exceptions to E8010. Preserve
+            // the initiating transport/cancellation/cleanup failure at this
+            // native boundary, without teaching DEAL to repair host defects.
+            Throwable original = failure.get();
+            if (original instanceof RuntimeException error) throw error;
+            if (original instanceof Error error) throw error;
+            throw boundary;
+        }
     }
 
 }

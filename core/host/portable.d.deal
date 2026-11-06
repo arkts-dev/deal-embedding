@@ -1,0 +1,4 @@
+// Trusted request-local compiler/VM/transport binding for the shared DEAL route.
+export function configuration(): Promise<string>;
+export function build(input: string): Promise<string>;
+export function lower(source: string): Promise<string>;

@@ -13,6 +13,7 @@ import * as person from "./agent-questions";
 import * as sketch from "./sketch";
 import * as decode from "./plan-decoding";
 import * as data from "./portable-request-data";
+import * as transport from "./portable-transport";
 import * as runtime from "portable/runtime";
 import * as json from "std/json";
 
@@ -31,9 +32,9 @@ export async function build(input: string, owner: string): Promise<string> {
     let play: (identity: string, fingers: boolean, buttons: boolean) => string = function(identity: string, fingers: boolean, buttons: boolean): string { return invoke("play", {identity: identity, fingers: fingers, buttons: buttons}); };
     let cancelled: () => boolean = function(): boolean { return json.parse(invoke("cancelled", {})).value as boolean; };
     let status: (text: string) => void = function(text: string): void { invoke("status", {text: text}); };
-    let askJev: (body: string) => Promise<string> = async function(body: string): Promise<string> { return invoke("jev", {body: body}); };
-    let askCode: (system: string, user: string, tokens: number, think: boolean) => Promise<string | null> = async function(system: string, user: string, tokens: number, think: boolean): Promise<string | null> { return invoke("code", {system: system, user: user, tokens: tokens, think: think}); };
-    let askPlan: (system: string, user: string, partial: (text: string) => void, think: boolean) => Promise<string | null> = async function(system: string, user: string, partial: (text: string) => void, think: boolean): Promise<string | null> { return invoke("plan", {system: system, user: user, think: think}); };
+    let askJev: (body: string) => Promise<string> = async function(body: string): Promise<string> { return invoke("jev", {body: transport.choice(body)}); };
+    let askCode: (system: string, user: string, tokens: number, think: boolean) => Promise<string | null> = async function(system: string, user: string, tokens: number, think: boolean): Promise<string | null> { return invoke("code", {body: transport.completion("code", system, user, think), tokens: tokens, think: think}); };
+    let askPlan: (system: string, user: string, partial: (text: string) => void, think: boolean) => Promise<string | null> = async function(system: string, user: string, partial: (text: string) => void, think: boolean): Promise<string | null> { return invoke("plan", {body: transport.completion("plan", system, user, think), think: think}); };
     let raw: Record<string, unknown> = json.parse(input); let request: Record<string, unknown> = raw.request as Record<string, unknown>;
     let asked: agent.Request | null = null; if (request.agent !== null) { let item: Record<string, unknown> = request.agent as Record<string, unknown>; asked = {prompt: item.prompt as string, widget: item.widget as boolean, scene: item.scene as string, sceneAllowed: item.sceneAllowed as boolean}; }
     let value: Input = {request: {agent: asked, mode: request.mode as string, wholeEnabled: request.wholeEnabled as boolean, surfaceEnabled: request.surfaceEnabled as boolean}, data: data.data(raw.data as Record<string, unknown>), originals: data.strings(raw.originals), language: raw.language as string, guide: raw.guide as string, surfaceCatalogue: raw.surfaceCatalogue as string};
@@ -46,8 +47,8 @@ export async function build(input: string, owner: string): Promise<string> {
         holes: {language: value.language, askCode: askCode, askJev: askJev, lookup: async function(needs: string[]): Promise<string[]> { let out: string[] = []; for (let item of decode.arrayOrEmpty(json.parse(invoke("lookup", {needs: needs})).values)) { out[out.length] = item as string; } return out; },
             looked: [], cannot: [], budget: budget, identity: function(slot: screen.PlanSlot): string { return registry.issue("slot:" + slot.id, invoke("original", {key: "slot:" + slot.id})); }, onHole: function(record: holes.HoleRecord): void { invoke("hole", {record: record}); }},
         filling: {search: async function(query: string, chars: number): Promise<string> { return invoke("search", {query: query, chars: chars}); },
-            content: async function(system: string, user: string, tokens: number): Promise<string | null> { return invoke("content", {system: system, user: user, tokens: tokens}); },
-            hole: async function(system: string, user: string, think: boolean): Promise<string | null> { return invoke("code", {system: system, user: user, think: think}); },
+            content: async function(system: string, user: string, tokens: number): Promise<string | null> { return invoke("content", {body: transport.completion("content", system, user, false), tokens: tokens}); },
+            hole: async function(system: string, user: string, think: boolean): Promise<string | null> { return invoke("code", {body: transport.completion("code", system, user, think), think: think}); },
             sdkContext: async function(prompt: string): Promise<string> { return invoke("sdk", {prompt: prompt}); }, status: status, cancelled: cancelled, now: now,
             compile: function(source: string): catalogue.Diagnostic[] { let raw: Record<string, unknown> = json.parse(invoke("holeCompile", {source: source})); let out: catalogue.Diagnostic[] = []; for (let item of decode.arrayOrEmpty(raw.values)) { let entry: Record<string, unknown> = item as Record<string, unknown>; out[out.length] = {line: entry.line as number, message: entry.message as string}; } return out; },
             identity: function(instance: catalogue.Instance): string { return registry.issue("catalogue:" + instance.key, invoke("original", {key: "catalogue:" + instance.key})); }, budget: budget},

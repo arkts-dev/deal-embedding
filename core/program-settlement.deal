@@ -52,9 +52,9 @@ export async function settleBudgetedProgram(source: string, prompt: string, host
     let bounded: Host = {language: host.language, cancelled: host.cancelled, status: host.status, askCode: null};
     let ask: ((system: string, user: string, tokens: number, think: boolean) => Promise<string | null>) | null = host.askCode;
     if (ask !== null) {
-        if (identities.length === 0) { throw {code: "HOLE_IDENTITY", message: "Original construction identities required for program repair"}; }
         for (let identity of identities) { if (identity === "") { throw {code: "HOLE_IDENTITY", message: "Empty construction identity"}; } }
         bounded.askCode = async function(system: string, user: string, tokens: number, think: boolean): Promise<string | null> {
+            if (identities.length === 0) { throw {code: "HOLE_IDENTITY", message: "Original construction identities required for program repair"}; }
             let remaining: number = budget.remaining(identities); if (remaining <= 0) { return null; }
             if (remaining === 1) { think = true; tokens = tokens * 3; } budget.charge(identities);
             return await (ask as (system: string, user: string, tokens: number, think: boolean) => Promise<string | null>)(system, user, tokens, think);
