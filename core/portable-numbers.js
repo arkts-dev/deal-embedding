@@ -4,3 +4,4 @@
 exports.parseDecimal = value => Number(value);
 exports.fixed = (value, places) => value.toFixed(places);
 exports.numberText = value => String(value);
+exports.remainder = (value, divisor) => value % divisor;

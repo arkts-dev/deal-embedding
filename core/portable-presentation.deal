@@ -29,4 +29,34 @@ export function formatNumber(value: number, decimals: number): string {
     }
     if (value < 0 && numbers.parseDecimal(text) !== 0) { text = "-" + text; } return text;
 }
+// Reference numeric/display operations; no provider or travel calculation.
+export function floor(value: number): number { return math.floor(value); }
+export function ceil(value: number): number { return math.ceil(value); }
+export function abs(value: number): number { return math.absNumber(value); }
+export function min(a: number, b: number): number {
+    if (a === 0 && b === 0 && 1 / a < 0) { return a; }
+    if (a < b || a !== a) { return a; } return b;
+}
+export function max(a: number, b: number): number {
+    if (a === 0 && b === 0 && 1 / a > 0) { return a; }
+    if (a > b || a !== a) { return a; } return b;
+}
+export function round(value: number): number {
+    if (value - value !== 0 || value === 0) { return value; }
+    let lower: number = math.floor(value); if (value - lower >= 0.5) { lower = lower + 1; }
+    if (lower === 0 && value < 0) { return -0; } return lower;
+}
+export function numberToString(value: number): string { return formatNumber(value, -1); }
+function two(value: number): string { if (value < 10) { return "0" + numbers.numberText(value); } return numbers.numberText(value); }
+export function clockToString(total: number): string {
+    let minutes: number = 0;
+    if (total - total === 0 && total > 0) { minutes = math.floor(total); minutes = numbers.remainder(minutes, 1440); }
+    return two(math.floor(minutes / 60)) + ":" + two(numbers.remainder(minutes, 60));
+}
+export function durationToString(seconds: number): string {
+    let value: number = 0; if (seconds - seconds === 0 && seconds > 0) { value = math.floor(seconds); }
+    let hours: number = math.floor(value / 3600); let minutes: number = math.floor(numbers.remainder(value, 3600) / 60);
+    let tail: string = ":" + two(numbers.remainder(value, 60));
+    if (hours === 0) { return numbers.numberText(minutes) + tail; } return numbers.numberText(hours) + ":" + two(minutes) + tail;
+}
 export function main(): null { return null; }

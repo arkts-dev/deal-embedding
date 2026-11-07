@@ -27,15 +27,39 @@ export function parserSource(source: string): string {
 function join(values: string[], separator: string): string {
     let out: string = ""; let i: number = 0; for (let value of values) { if (i > 0) { out = out + separator; } out = out + value; i = i + 1; } return out;
 }
+function presentationSource(source: string, syntax: Record<string, unknown>): string {
+    let edits: Record<string, unknown>[] = [];
+    for (let member of records(syntax, "members")) {
+        let owner: string = field(member, "owner"); let name: string = field(member, "name"); let replacement: string = "";
+        if (owner === "ui" && decode.includes(["formatNumber", "numberToString", "clockToString", "durationToString"], name)) { replacement = "presentation." + name; }
+        if (owner === "math") {
+            if (!decode.includes(["floor", "ceil", "round", "abs", "min", "max"], name)) { fail("Numeric operation not yet lowered: " + name); }
+            replacement = "presentation." + name;
+        }
+        if (replacement !== "") { edits[edits.length] = {start: member.start as number, end: member.end as number, replacement: replacement}; }
+    }
+    let out: string = ""; let at: number = 0; let remaining: number = edits.length;
+    while (remaining > 0) {
+        let next: Record<string, unknown> | null = null;
+        for (let edit of edits) { if ((edit.start as number) >= at && (next === null || (edit.start as number) < ((next as Record<string, unknown>).start as number))) { next = edit; } }
+        if (next === null) { fail("Overlapping presentation syntax"); }
+        let edit: Record<string, unknown> = next as Record<string, unknown>;
+        out = out + str.substring(source, at, edit.start as number) + field(edit, "replacement"); at = edit.end as number; remaining = remaining - 1;
+    }
+    return out + str.substring(source, at, str.length(source));
+}
 export function lower(source: string, inspect: (source: string) => string): Pair {
     let parsed: string = parserSource(source); let syntax: Record<string, unknown> = json.parse(inspect(parsed));
     if (field(syntax, "diagnostics") !== "") { throw {code: "PORTABLE_SYNTAX", message: field(syntax, "diagnostics")}; }
+    parsed = presentationSource(parsed, syntax); syntax = json.parse(inspect(parsed));
+    if (field(syntax, "diagnostics") !== "") { fail("Presentation syntax projection changed parsing"); }
     let declarations: Record<string, unknown>[] = records(syntax, "statements");
     let functions: Record<string, unknown> = {}; let logic: string = ""; let view: Record<string, unknown> | null = null;
     for (let declaration of declarations) {
         let kind: string = field(declaration, "kind");
         if (kind === "ImportDeclaration") {
-            if (field(declaration, "module") !== "std/ui") { fail("Import not yet lowered: " + field(declaration, "module")); }
+            let module: string = field(declaration, "module"); let alias: string = field(declaration, "alias");
+            if ((module !== "std/ui" || alias !== "ui") && (module !== "std/math" || alias !== "math")) { fail("Import not yet lowered: " + module + " as " + alias); }
         } else if (kind === "FunctionDeclaration") {
             let name: string = field(declaration, "name"); functions[name] = declaration;
             if (name === "view") { view = declaration; } else { logic = logic + field(declaration, "source") + "\n"; }
@@ -95,13 +119,17 @@ export function lower(source: string, inspect: (source: string) => string): Pair
             return "ui.Metric(label: " + prop(args[1], "string") + ", value: " + prop(formatted, "string") + ")\n";
         }
         if (component === "Stat") {
-            if (args.length !== 5 || field(args[3], "source") !== "\"\"" || field(args[4], "source") !== "\"chart\"") { fail("Stat decoration not yet lowered"); }
+            if (args.length !== 5 || field(args[3], "source") !== "\"\"" || (field(args[4], "source") !== "\"chart\"" && field(args[4], "source") !== "\"clock\"")) { fail("Stat decoration not yet lowered"); }
             return "ui.Metric(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "string") + ")\n";
         }
         if (component === "Text") { return "ui.Text(value: " + prop(args[1], "string") + ")\n"; }
         if (component === "TextField") {
             if (args.length > 4 && field(args[4], "source") !== "\"number\"") { fail("TextField validation not yet lowered"); }
             return "ui.TextField(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "string") + ", onChange: " + event(args[3], "string", "") + ")\n";
+        }
+        if (component === "TimeField") {
+            if (args.length !== 4) { fail("Expected TimeField style, label, value and handler"); }
+            return "ui.TimeField(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "number") + ", onChange: " + event(args[3], "number", "") + ")\n";
         }
         if (component === "NumberField") { return "ui.IntField(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "number") + ", minimum: " + prop(args[3], "number") + ", maximum: " + prop(args[4], "number") + ", onChange: " + event(args[5], "number", "") + ")\n"; }
         if (component === "Button") { return "ui.Button(text: " + prop(args[1], "string") + ", enabled: " + prop(args[4], "boolean") + ", onClick: " + event(args[2], "number", field(args[3], "source")) + ")\n"; }

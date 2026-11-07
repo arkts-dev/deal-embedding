@@ -34,6 +34,41 @@ public final class PortableSyntax {
         else if(node instanceof VariableDeclaration v)out.put("source","let "+v.name()+v.typeAnnotation().map(t->": "+slice(source,t.span())).orElse("")+" = "+slice(source,v.initializer().span())+";");
         return out;
     }
+    // Syntactic member locations only. Shared DEAL decides which operations
+    // have compatible implementations; literals/comments never enter this list.
+    private static void members(Object node, List<Object> out) {
+        if (node instanceof MemberAccessExpr m) {
+            if (m.object() instanceof IdentifierExpr id)
+                out.add(object("owner",id.name(),"name",m.field(),"start",m.span().startScalarOffset(),"end",m.span().endScalarOffset()));
+            members(m.object(),out);
+        } else if (node instanceof CallExpr n) {members(n.callee(),out);n.args().forEach(v->members(v,out));}
+        else if (node instanceof BinaryExpr n) {members(n.left(),out);members(n.right(),out);}
+        else if (node instanceof UnaryExpr n) members(n.expr(),out);
+        else if (node instanceof AssertionExpr n) members(n.value(),out);
+        else if (node instanceof InstanceofExpr n) members(n.value(),out);
+        else if (node instanceof AssignmentExpr n) {members(n.target(),out);members(n.value(),out);}
+        else if (node instanceof AwaitExpression n) members(n.callee(),out);
+        else if (node instanceof IndexExpr n) {members(n.array(),out);members(n.index(),out);}
+        else if (node instanceof ArrayLiteralExpr n) n.elements().forEach(v->members(v,out));
+        else if (node instanceof ObjectLiteralExpr n) n.properties().forEach(v->members(v.value(),out));
+        else if (node instanceof FunctionExpr n) members(n.body(),out);
+        else if (node instanceof HasExpr n) {members(n.object(),out);members(n.key(),out);}
+        else if (node instanceof TemplateLiteralExpr n) n.parts().forEach(v->members(v,out));
+        else if (node instanceof Block n) n.statements().forEach(v->members(v,out));
+        else if (node instanceof FunctionDeclaration n) members(n.body(),out);
+        else if (node instanceof ExportDeclaration n) members(n.declaration(),out);
+        else if (node instanceof ExpressionStatement n) members(n.expr(),out);
+        else if (node instanceof VariableDeclaration n) members(n.initializer(),out);
+        else if (node instanceof ReturnStatement n) n.expr().ifPresent(v->members(v,out));
+        else if (node instanceof IfStatement n) {
+            members(n.condition(),out);members(n.thenBlock(),out);
+            n.elseBranch().ifPresent(v->{if(v instanceof Either.Left<IfStatement,Block> l)members(l.value(),out);else if(v instanceof Either.Right<IfStatement,Block> r)members(r.value(),out);});
+        } else if (node instanceof WhileStatement n) {members(n.condition(),out);members(n.body(),out);}
+        else if (node instanceof ForOfStatement n) {members(n.iterable(),out);members(n.body(),out);}
+        else if (node instanceof TryStatement n) {members(n.tryBlock(),out);members(n.catchBlock(),out);}
+        else if (node instanceof ThrowStatement n) members(n.expr(),out);
+        else if (node instanceof DeleteStatement n) members(n.target(),out);
+    }
     public static String inspect(String source) {
         var lexed=new Lexer(source,"portable-source.deal").tokenize();
         var parsed=new Parser(lexed.tokens(),"portable-source.deal",lexed.directiveEvents()).parse();
@@ -52,9 +87,12 @@ public final class PortableSyntax {
             else if(node instanceof FunctionDeclaration f){out.put("source",source.substring(source.offsetByCodePoints(0,f.span().startScalarOffset()),source.offsetByCodePoints(0,f.body().span().endScalarOffset())));out.put("name",f.name());out.put("body",statement(f.body(),source));out.put("parameters",f.params().stream().map(p->object("name",p.name(),"type",slice(source,p.type().span()))).toList());out.put("result",slice(source,f.returnType().span()));}
             statements.add(out);
         }
-        return json(object("statements",statements,"diagnostics",""));
+        var references=new ArrayList<Object>();
+        parsed.program().statements().forEach(v->members(v,references));
+        return json(object("statements",statements,"members",references,"diagnostics",""));
     }
     private static String json(Object value) {
+        if(value instanceof Integer n)return n.toString();
         if(value instanceof String s)return "\""+JvmJson.escapeString(s)+"\"";
         if(value instanceof Map<?,?> m)return m.entrySet().stream().map(e->json(e.getKey())+":"+json(e.getValue())).collect(java.util.stream.Collectors.joining(",","{","}"));
         if(value instanceof List<?> l)return l.stream().map(PortableSyntax::json).collect(java.util.stream.Collectors.joining(",","[","]"));
