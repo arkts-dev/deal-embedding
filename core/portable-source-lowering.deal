@@ -81,8 +81,13 @@ export function lower(source: string, inspect: (source: string) => string): Pair
         if (component === "Section") { return "ui.Section(title: " + prop(args[1], "string") + ", summary: " + prop(args[2], "string") + ") {\n" + children(3) + "}\n"; }
         if (component === "Column" || component === "ActionBar") { return "ui.Column() {\n" + children(1) + "}\n"; }
         if (component === "MetricGroup") {
-            if (field(args[1], "source") !== "1") { fail("Multi-column MetricGroup not yet lowered"); }
-            return "ui.Column() {\n" + children(2) + "}\n";
+            if (args.length !== 3) { fail("Expected MetricGroup style, column count and children"); }
+            let columns: string = field(args[1], "source");
+            if (columns !== "1" && columns !== "2" && columns !== "3") { fail("MetricGroup column count not yet lowered: " + columns); }
+            if (columns === "1") { return "ui.Column() {\n" + children(2) + "}\n"; }
+            // Current Deal UI owns adaptive metric sizing; do not build another
+            // native layout policy for the reference's column-count hint.
+            return "ui.MetricGroup() {\n" + children(2) + "}\n";
         }
         if (component === "NumberStat") {
             if (args.length !== 9 || field(args[5], "source") !== "1" || field(args[6], "source") !== "\"\"" || field(args[7], "source") !== "\"chart\"" || field(args[4], "source") !== "\"\"") { fail("NumberStat decoration/units not yet lowered"); }
