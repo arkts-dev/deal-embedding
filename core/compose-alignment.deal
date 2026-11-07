@@ -120,7 +120,7 @@ export function applyAlignment(comp: state.Composition, result: Result, specs: c
             if (comp.sketch.list !== null && sections.canReplaceList(comp, aligned.kind)) { sections.replaceList(comp, aligned.kind, custom); }
             else { comp.blocks[comp.blocks.length] = aligned.kind; } result.added[result.added.length] = aligned.kind;
         }
-        result.taken[result.taken.length] = aligned.need; comp.custom = without(comp.custom, aligned.need);
+        result.taken[result.taken.length] = aligned.need; state.removeCustom(comp, aligned.need);
         comp.phoneNeeds = without(comp.phoneNeeds, aligned.need); comp.unboundNeeds = without(comp.unboundNeeds, aligned.need);
     }
     if (result.taken.length > 0 && comp.custom.length === 0 && comp.customReads.length > 0) {

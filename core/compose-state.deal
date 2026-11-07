@@ -34,6 +34,7 @@ export class Composition {
     readyKinds: string[];
     realData: boolean;
     custom: string[];
+    customOrigins: string[];
     customReads: string[];
     phoneNeeds: string[];
     customEffects: events.CustomEffect[];
@@ -55,8 +56,22 @@ export function create(value: sketch.Sketch, widget: boolean): Composition {
     copy.inputs = inputs;
     return {sketch: copy, deadline: "", theme: "clean", widgets: [], bindings: [], countdownFrom: "", countdownUnit: "seconds",
         events: [], dropped: [], defaulted: [], inputs: [], unbound: [], unboundNeeds: [], answers: [], provisional: false,
-        widget: widget, figures: false, blocks: [], readyKinds: [], realData: false, custom: [], customReads: [], phoneNeeds: [],
+        widget: widget, figures: false, blocks: [], readyKinds: [], realData: false, custom: [], customOrigins: [], customReads: [], phoneNeeds: [],
         customEffects: [], claimed: [], replaced: []};
+}
+// Record the planning key when construction work is issued, before any
+// presentation wording, grouping or removal changes its slot index.
+export function addCustom(comp: Composition, need: string, origin: string): void {
+    if (origin === "") { throw {code: "HOLE_IDENTITY", message: "Original planning key required"}; }
+    comp.custom[comp.custom.length] = need; comp.customOrigins[comp.customOrigins.length] = origin;
+}
+export function removeCustom(comp: Composition, need: string): void {
+    if (comp.custom.length !== comp.customOrigins.length) { throw {code: "HOLE_IDENTITY", message: "Custom provenance inventory mismatch"}; }
+    let needs: string[] = []; let origins: string[] = []; let i: number = 0;
+    for (let item of comp.custom) {
+        if (item !== need) { needs[needs.length] = item; origins[origins.length] = comp.customOrigins[i]; } i = i + 1;
+    }
+    comp.custom = needs; comp.customOrigins = origins;
 }
 export function setNamed(values: Named[], id: string, value: string): void {
     let index: number = 0;

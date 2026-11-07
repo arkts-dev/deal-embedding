@@ -10,7 +10,7 @@ internal class ExperienceCompiler(private val context: Context, private val conf
     // Provisional reference-source boundary. Shared DEAL performs the lowering;
     // its resulting pair also compiles through ordinary saved-source admission.
     fun lowerPortable(source: String): ExperienceSource {
-        val pair = try { JSONObject(PortableBackendBridge.lower(source)) }
+        val pair = try { JSONObject(PortableBackendBridge.lower(source, JSONObject().put("modules",JSONArray(config.contracts.map{it.json()})).toString())) }
         catch (error: deal.codegen.jvm.JvmRuntime.DealError) {
             // A missing lowering implementation is not a bad model candidate.
             // Propagate it operationally; never repair/fallback around it.

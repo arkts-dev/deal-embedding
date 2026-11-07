@@ -107,7 +107,7 @@ export function dropValues(comp: state.Composition, received: Record<string, unk
                 state.addDefault(comp, failure.id, figure.label, measure, figure.result, tools.numberText);
                 leaving[leaving.length] = failure.id; written[written.length] = failure.id; continue;
             }
-            comp.custom[comp.custom.length] = "the figure \"" + figure.label + "\": " + figure.means + figureForm(figure, tools.numberText);
+            state.addCustom(comp, "the figure \"" + figure.label + "\": " + figure.means + figureForm(figure, tools.numberText), "value." + figure.id);
             for (let input of value.inputs) {
                 if (tools.matches("\\b" + input.id + "\\b", figure.formula).length > 0) { comp.customReads[comp.customReads.length] = input.id; }
             }

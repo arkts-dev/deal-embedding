@@ -24,6 +24,17 @@ public final class PortableSyntax {
         else if(node instanceof IdentifierExpr i)out.put("name",i.name());
         else if(node instanceof LiteralExpr l && l.value() instanceof LiteralValue.StringLiteral s)out.put("text",s.value());
         else if(node instanceof ArrayLiteralExpr a)out.put("items",a.elements().stream().map(v->expression(v,source)).toList());
+        else if(node instanceof ObjectLiteralExpr o)out.put("properties",o.properties().stream().map(p->object("name",p.name(),"value",expression(p.value(),source))).toList());
+        else if(node instanceof BinaryExpr b){out.put("left",expression(b.left(),source));out.put("right",expression(b.right(),source));}
+        else if(node instanceof UnaryExpr u)out.put("value",expression(u.expr(),source));
+        else if(node instanceof AwaitExpression a)out.put("value",expression(a.callee(),source));
+        else if(node instanceof AssertionExpr a)out.put("value",expression(a.value(),source));
+        else if(node instanceof InstanceofExpr a)out.put("value",expression(a.value(),source));
+        else if(node instanceof IndexExpr i){out.put("object",expression(i.array(),source));out.put("index",expression(i.index(),source));}
+        else if(node instanceof AssignmentExpr a){out.put("target",expression(a.target(),source));out.put("value",expression(a.value(),source));}
+        else if(node instanceof FunctionExpr f)out.put("body",statement(f.body(),source));
+        else if(node instanceof HasExpr h){out.put("object",expression(h.object(),source));out.put("key",expression(h.key(),source));}
+        else if(node instanceof TemplateLiteralExpr t)out.put("items",t.parts().stream().map(v->expression(v,source)).toList());
         return out;
     }
     private static Object statement(StatementNode node,String source) {
@@ -31,7 +42,13 @@ public final class PortableSyntax {
         if(node instanceof Block b)out.put("statements",b.statements().stream().map(v->statement(v,source)).toList());
         else if(node instanceof ExpressionStatement e)out.put("expression",expression(e.expr(),source));
         else if(node instanceof ReturnStatement r)r.expr().ifPresent(e->{out.put("expression",expression(e,source));out.put("source","return "+slice(source,e.span())+";");});
-        else if(node instanceof VariableDeclaration v)out.put("source","let "+v.name()+v.typeAnnotation().map(t->": "+slice(source,t.span())).orElse("")+" = "+slice(source,v.initializer().span())+";");
+        else if(node instanceof VariableDeclaration v){out.put("source","let "+v.name()+v.typeAnnotation().map(t->": "+slice(source,t.span())).orElse("")+" = "+slice(source,v.initializer().span())+";");out.put("expression",expression(v.initializer(),source));}
+        else if(node instanceof IfStatement i){out.put("condition",expression(i.condition(),source));out.put("then",statement(i.thenBlock(),source));i.elseBranch().ifPresent(v->{if(v instanceof Either.Left<IfStatement,Block> l)out.put("else",statement(l.value(),source));else if(v instanceof Either.Right<IfStatement,Block> r)out.put("else",statement(r.value(),source));});}
+        else if(node instanceof WhileStatement w){out.put("condition",expression(w.condition(),source));out.put("body",statement(w.body(),source));}
+        else if(node instanceof ForOfStatement f){out.put("expression",expression(f.iterable(),source));out.put("body",statement(f.body(),source));}
+        else if(node instanceof TryStatement t){out.put("body",statement(t.tryBlock(),source));out.put("catch",statement(t.catchBlock(),source));}
+        else if(node instanceof ThrowStatement t)out.put("expression",expression(t.expr(),source));
+        else if(node instanceof DeleteStatement d)out.put("expression",expression(d.target(),source));
         return out;
     }
     // Syntactic member locations only. Shared DEAL decides which operations

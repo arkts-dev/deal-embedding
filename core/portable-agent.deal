@@ -53,6 +53,7 @@ export class Host {
     // Original identities of all issued construction work. Whole-program
     // provisional repairs can alter any of them and must charge all of them.
     constructionIdentities: () => string[];
+    issuePlanning?: (keys: string[]) => void;
     toolCount: () => number; toolSpanSince: (start: number) => number;
 }
 export class Result {
@@ -141,6 +142,22 @@ export async function runAgent(request: Request, host: Host, data: Data, tools: 
         draw, tools.filtering, host.askJev, data.choices, data.sections, data.effects, data.custom, tools.bindings, tools.writer.lowercase,
         tools.writer.now, function(comp: state.Composition): string { return assembleProgram(comp, [], data, tools); });
     result.composed = composed; result.note = composed.note;
+    let issuePlanning: ((keys: string[]) => void) | undefined = host.issuePlanning;
+    if (composed.composition !== null && issuePlanning !== undefined) {
+        let comp: state.Composition = composed.composition as state.Composition;
+        let keys: string[] = [];
+        let planned: sketch.Sketch = comp.sketch;
+        if (composed.parsed !== null) { planned = composed.parsed as sketch.Sketch; }
+        for (let input of planned.inputs) { keys[keys.length] = "input." + input.id; }
+        for (let item of planned.values) { keys[keys.length] = "value." + item.id; }
+        for (let event of planned.events) { keys[keys.length] = "event." + event.id; }
+        if (planned.hasCountdown || planned.hasStopwatch) { keys[keys.length] = "clock"; }
+        if (planned.list !== null) { keys[keys.length] = "list"; }
+        let index: number = 0; for (let ready of planned.ready) { keys[keys.length] = "ready." + tools.bindings.numberText(index); index = index + 1; }
+        index = 0; for (let other of planned.other) { keys[keys.length] = "other." + tools.bindings.numberText(index); index = index + 1; }
+        for (let key of comp.customOrigins) { keys[keys.length] = key; }
+        (issuePlanning as (keys: string[]) => void)(keys);
+    }
     let planning: number = tools.writer.now() - started; let waited: number = waitedMs(result);
     stages.add(result.stages, "Plan of needs", "Model", composed.sketchMs, "the request as a list of needs");
     stages.add(result.stages, "Choosing parts and sections", "Jev", composed.jevMs, "");

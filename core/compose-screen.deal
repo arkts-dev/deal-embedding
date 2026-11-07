@@ -114,8 +114,10 @@ export function screenPlan(comp: state.Composition, parts: template.Fragment[], 
         add(slot, "block", block, ""); block = block + 1;
     }
     i = 0;
+    if (comp.custom.length !== comp.customOrigins.length) { throw {code: "HOLE_IDENTITY", message: "Custom provenance inventory mismatch"}; }
     for (let need of comp.custom) {
         let slot: screen.PlanSlot = screen.slot("custom." + numberText(i), need);
+        slot.original = comp.customOrigins[i];
         for (let name of comp.customReads) { slot.reads[slot.reads.length] = name; }
         slot.phone = has(comp.phoneNeeds, need);
         if (custom !== null) { add(slot, "hole", plan.components.length - 1, ""); } else { add(slot, "open", -1, "to be written"); }

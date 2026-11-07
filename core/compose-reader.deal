@@ -62,10 +62,10 @@ export function readComposition(body: string, value: sketch.Sketch, widget: bool
         if (own) { readyKind = ""; }
         comp.readyKinds[comp.readyKinds.length] = readyKind;
         if (own && customEnabled) {
-            comp.custom[comp.custom.length] = ready + " -- these are the person's own: they add, change and remove them; the list starts empty and the app never makes any up";
+            state.addCustom(comp, ready + " -- these are the person's own: they add, change and remove them; the list starts empty and the app never makes any up", "ready." + key);
         } else if (own) { comp.unbound[comp.unbound.length] = "the person's own records, which no section can make up: " + ready; }
         else if (strings.length(kind) > 0) { comp.blocks[comp.blocks.length] = kind; served[served.length] = "ready." + key; }
-        else if (customEnabled) { comp.custom[comp.custom.length] = ready; }
+        else if (customEnabled) { state.addCustom(comp, ready, "ready." + key); }
         else { comp.unbound[comp.unbound.length] = "no section for: " + ready; }
     }
     if (comp.blocks.length > 0) { comp.realData = answers.answerOf(received, "real_data", ["true"], comp.answers, 0.35, tools.fixedTwo) === "true"; }
@@ -88,7 +88,7 @@ export function readComposition(body: string, value: sketch.Sketch, widget: bool
     let eventResult: events.EventResult = events.readEvents(value, effects, received, served, widget, customEnabled, tools.numberText, tools.fixedTwo);
     comp.events = eventResult.events; comp.customEffects = eventResult.customEffects;
     state.append(comp.answers, eventResult.answers); state.append(comp.dropped, eventResult.dropped); state.append(comp.claimed, eventResult.claimed);
-    state.append(comp.custom, eventResult.custom); state.append(comp.phoneNeeds, eventResult.phoneNeeds);
+    state.append(comp.custom, eventResult.custom); state.append(comp.customOrigins, eventResult.customOrigins); state.append(comp.phoneNeeds, eventResult.phoneNeeds);
     state.append(comp.unbound, eventResult.unbound); state.append(comp.unboundNeeds, eventResult.unboundNeeds);
     sections.chooseSections(comp, received, customEnabled, tools);
     let partIds: string[] = [];
@@ -97,7 +97,7 @@ export function readComposition(body: string, value: sketch.Sketch, widget: bool
     for (let other of value.other) {
         let key: string = decode.integerText(index); index = index + 1;
         if (scene(other)) {
-            if (customEnabled) { comp.custom[comp.custom.length] = other; }
+            if (customEnabled) { state.addCustom(comp, other, "other." + key); }
             else { comp.unbound[comp.unbound.length] = "not in the vocabulary: " + other; }
             continue;
         }
@@ -121,7 +121,7 @@ export function readComposition(body: string, value: sketch.Sketch, widget: bool
             comp.dropped[comp.dropped.length] = "\"" + other + "\": not asked for, and nothing does it";
         } else if (widget && answers.answerOf(received, "detail." + key, ["detail"], comp.answers, 0.7, tools.fixedTwo) === "detail") {
             comp.dropped[comp.dropped.length] = "\"" + other + "\": a detail of how the widget looks or is worked";
-        } else if (customEnabled) { comp.custom[comp.custom.length] = other; }
+        } else if (customEnabled) { state.addCustom(comp, other, "other." + key); }
         else { comp.unbound[comp.unbound.length] = "not in the vocabulary: " + other; }
     }
     let list: sketch.SketchList | null = comp.sketch.list;

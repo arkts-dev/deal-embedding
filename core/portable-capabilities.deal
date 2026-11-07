@@ -1,0 +1,22 @@
+import * as json from "std/json";
+import * as decode from "./plan-decoding";
+
+// Request-local disclosed inventory. Enumeration is not semantic selection:
+// the shared writer chooses a target; runtime grants remain authoritative.
+export function lookup(modules: unknown[]): string {
+    let targets: unknown[] = [];
+    for (let item of modules) {
+        let module: Record<string, unknown> = item as Record<string, unknown>;
+        for (let entry of decode.arrayOrEmpty(module.functions)) {
+            let fn: Record<string, unknown> = entry as Record<string, unknown>;
+            targets[targets.length] = {target: (module.module as string) + "." + (fn.name as string),
+                module: module.module, function: fn, description: module.description};
+        }
+    }
+    if (targets.length === 0) { return ""; }
+    return "Disclosed capability targets (no execution or grant implied). sdk.call uses these exact targets; " +
+        "its name/value pairs are parameter names and JSON-encoded values matching each parameter type; " +
+        "the answer handler receives JSON-encoded result, or an error/declined prefix on failure.\n" +
+        (json.stringify(targets) as string);
+}
+export function main(): null { return null; }

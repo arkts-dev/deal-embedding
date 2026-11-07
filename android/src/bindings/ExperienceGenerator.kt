@@ -150,7 +150,6 @@ internal class ExperienceGenerator(private val context: Context, private val con
                                         "cancelled" -> { cancellation.check(); "{\"value\":false}" }
                                         "status" -> { progress(payload.getString("text")); "" }
                                         "preview" -> { log.event("portable-preview","checked",candidate=payload.getString("identity")); "" }
-                                        "original" -> throw ProtocolFailure("PORTABLE_UNSUPPORTED", "Original-need provenance is not installed")
                                         "toolCount", "toolSpan" -> "{\"value\":0}"
                                         "hole" -> { log.event("composition","hole",detail=payload.toString()); "" }
                                         else -> throw UnsupportedOperationException("PORTABLE_UNSUPPORTED: $operation")

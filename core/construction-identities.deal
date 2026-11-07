@@ -5,6 +5,26 @@ export class Registry {
     issue: (key: string, original: string) => string;
     all: () => string[];
 }
+export class Planning {
+    issue: (keys: string[]) => void;
+    resolve: (key: string) => string;
+    all: () => string[];
+}
+// Only the accepted composition issues planning keys. Resolution cannot mint a
+// new allowance when a hole is renamed, compacted, split or re-entered.
+export function planning(): Planning {
+    let keys: string[] = []; let registry: Registry = create([]);
+    return {issue: function(issued: string[]): void {
+        for (let key of issued) {
+            if (key === "") { throw {code: "HOLE_IDENTITY", message: "Empty planning key"}; }
+            let found: boolean = false; for (let before of keys) { if (before === key) { found = true; } }
+            if (!found) { keys[keys.length] = key; registry.issue(key, key); }
+        }
+    }, resolve: function(key: string): string {
+        for (let before of keys) { if (before === key) { return key; } }
+        throw {code: "HOLE_IDENTITY", message: "Unissued original planning key: " + key};
+    }, all: registry.all};
+}
 export function create(originals: string[]): Registry {
     let names: string[] = []; let keys: string[] = []; let values: string[] = [];
     let add: (identity: string) => void = function(identity: string): void {

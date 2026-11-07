@@ -1,6 +1,7 @@
 import * as lowering from "./portable-source-lowering";
 import * as syntax from "portable/syntax";
 import * as json from "std/json";
+import * as reads from "./portable-state-reads";
 
 // Independent compilation unit for native compiler integration. This boundary
 // does not publish candidates or choose validation/recovery outcomes.
@@ -8,4 +9,10 @@ export function lowerJson(source: string): string {
     let pair: lowering.Pair = lowering.lower(source, syntax.inspect);
     return json.stringify({deal: pair.deal, dealui: pair.dealui}) as string;
 }
+export function lowerConfiguredJson(source: string, encoded: string): string {
+    let modules: unknown[] = json.parse(encoded).modules as unknown[];
+    let pair: lowering.Pair = lowering.lowerConfigured(source, syntax.inspect, modules);
+    return json.stringify({deal: pair.deal, dealui: pair.dealui}) as string;
+}
+export function unreadJson(source: string): string { return json.stringify({fields: reads.unread(syntax.inspect(lowering.parserSource(source)))}) as string; }
 export function main(): null { return null; }

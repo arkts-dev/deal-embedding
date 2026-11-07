@@ -9,6 +9,7 @@ import * as literals from "./source-literals";
 export class Pair { deal: string; dealui: string; }
 class Property { name: string; type: string; expression: string; }
 class Action { name: string; handler: string; type: string; argument: string; }
+class Call { function: string; target: string; args: string; answer: string; channel: string; }
 function fail(message: string): void { throw {code: "PORTABLE_UNSUPPORTED", message: message}; }
 function field(raw: Record<string, unknown>, key: string): string { return raw[key] as string; }
 function records(raw: Record<string, unknown>, key: string): Record<string, unknown>[] {
@@ -48,13 +49,69 @@ function presentationSource(source: string, syntax: Record<string, unknown>): st
     }
     return out + str.substring(source, at, str.length(source));
 }
-export function lower(source: string, inspect: (source: string) => string): Pair {
+export function lower(source: string, inspect: (source: string) => string): Pair { return lowerConfigured(source, inspect, []); }
+export function lowerConfigured(source: string, inspect: (source: string) => string, modules: unknown[]): Pair {
     let parsed: string = parserSource(source); let syntax: Record<string, unknown> = json.parse(inspect(parsed));
     if (field(syntax, "diagnostics") !== "") { throw {code: "PORTABLE_SYNTAX", message: field(syntax, "diagnostics")}; }
     parsed = presentationSource(parsed, syntax); syntax = json.parse(inspect(parsed));
     if (field(syntax, "diagnostics") !== "") { fail("Presentation syntax projection changed parsing"); }
     let declarations: Record<string, unknown>[] = records(syntax, "statements");
     let functions: Record<string, unknown> = {}; let logic: string = ""; let view: Record<string, unknown> | null = null;
+    let calls: Call[] = []; let imports: string = "";
+    for (let declaration of declarations) {
+        if (field(declaration, "kind") !== "FunctionDeclaration") { continue; }
+        let name: string = field(declaration, "name"); let call: Call | null = null; let body: string = "";
+        for (let statement of records(declaration.body as Record<string, unknown>, "statements")) {
+            let found: boolean = false;
+            if (field(statement, "kind") === "ExpressionStatement") {
+                let expression: Record<string, unknown> = statement.expression as Record<string, unknown>;
+                if (field(expression, "kind") === "CallExpr" && field(expression.callee as Record<string, unknown>, "source") === "sdk.call") {
+                    if (call !== null) { fail("Multiple SDK calls per handler not yet lowered"); }
+                    if (body !== "") { fail("SDK calls after local statements not yet lowered"); }
+                    let args: Record<string, unknown>[] = records(expression, "args");
+                    if (args.length !== 3 || !Object.hasOwn(args[0], "text") || !Object.hasOwn(args[2], "text") || field(args[1], "kind") !== "ArrayLiteralExpr") { fail("Expected literal SDK target, name/value pairs and answer handler"); }
+                    let target: string = field(args[0], "text"); let bound: boolean = false;
+                    for (let item of modules) {
+                        let module: Record<string, unknown> = item as Record<string, unknown>;
+                        for (let item of decode.arrayOrEmpty(module.functions)) {
+                            let fn: Record<string, unknown> = item as Record<string, unknown>;
+                            if (target !== (module.module as string) + "." + (fn.name as string)) { continue; }
+                            let pairs: Record<string, unknown>[] = records(args[1], "items");
+                            let params: unknown[] = decode.arrayOrEmpty(fn.parameters);
+                            if (pairs.length !== params.length * 2) { fail("SDK argument inventory mismatch"); }
+                            let values: string[] = [];
+                            for (let item of params) {
+                                let param: Record<string, unknown> = item as Record<string, unknown>; let value: string = ""; let count: number = 0; let at: number = 0;
+                                while (at < pairs.length) {
+                                    if (Object.hasOwn(pairs[at], "text") && field(pairs[at], "text") === (param.name as string)) { value = field(pairs[at + 1], "source"); count = count + 1; } at = at + 2;
+                                }
+                                if (count !== 1) { fail("Expected one SDK value for parameter: " + (param.name as string)); }
+                                let type: string = (param.type as Record<string, unknown>).kind as string;
+                                if (!decode.includes(["number", "string", "boolean"], type)) { fail("SDK parameter type not yet lowered: " + type); }
+                                values[values.length] = "(json.parse(\"{\\\"value\\\":\" + (" + value + ") + \"}\").value as " + type + ")";
+                            }
+                            let alias: string = "portableCapability" + literals.decimal(calls.length);
+                            imports = imports + "import * as " + alias + " from " + literals.quote(module.module as string) + ";\n";
+                            let answer: string = field(args[2], "text"); let channel: string = literals.decimal(calls.length);
+                            for (let prior of calls) { if (prior.answer === answer) { channel = prior.channel; } }
+                            call = {function: name, target: alias + "." + (fn.name as string), args: join(values, ", "), answer: answer, channel: channel}; bound = true;
+                        }
+                    }
+                    if (!bound) { fail("SDK target is not disclosed: " + target); } found = true;
+                }
+            }
+            if (!found) { body = body + field(statement, "source") + "\n"; }
+        }
+        if (call !== null) {
+            let params: Record<string, unknown>[] = records(declaration, "parameters");
+            if (params.length !== 2 || field(params[0], "name") !== "state" || field(params[1], "name") !== "value" || field(params[0], "type") !== "AppState" || field(declaration, "result") !== "AppState") { fail("SDK handler signature not yet lowered"); }
+            declaration.source = "function " + name + "(state: AppState, " + field(params[1], "name") + ": " + field(params[1], "type") + "): AppState {\n" + body + "}\n";
+            calls[calls.length] = call as Call;
+        }
+    }
+    let sdkMembers: number = 0;
+    for (let member of records(syntax, "members")) { if (field(member, "owner") === "sdk") { if (field(member, "name") !== "call") { fail("Unknown SDK operation"); } sdkMembers = sdkMembers + 1; } }
+    if (sdkMembers !== calls.length) { fail("SDK calls require supported direct handler statements"); }
     for (let declaration of declarations) {
         let kind: string = field(declaration, "kind");
         if (kind === "ImportDeclaration") {
@@ -158,13 +215,35 @@ export function lower(source: string, inspect: (source: string) => string): Pair
         } return out;
     };
     let tree: string = walk((view as Record<string, unknown>).body as Record<string, unknown>);
-    let fields: string = ""; let values: string[] = ["app: state"];
+    let fields: string = ""; let values: string[] = ["app: state"]; let channels: string[] = [];
+    for (let call of calls) {
+        if (decode.includes(channels, call.channel)) { continue; } channels[channels.length] = call.channel;
+        fields = fields + "sdkVersion" + call.channel + ": number; sdkState" + call.channel + ": AppState;\n";
+        prologue = prologue + "let sdkVersion" + call.channel + ": number = 0; let sdkState" + call.channel + ": AppState = state;\nif (previous !== null) { sdkVersion" + call.channel + " = previous.sdkVersion" + call.channel + "; sdkState" + call.channel + " = previous.sdkState" + call.channel + "; }\n";
+        values[values.length] = "sdkVersion" + call.channel + ": sdkVersion" + call.channel;
+        values[values.length] = "sdkState" + call.channel + ": sdkState" + call.channel;
+    }
     for (let property of properties) { fields = fields + property.name + ": " + property.type + ";\n"; values[values.length] = property.name + ": " + property.expression; }
-    logic = "import * as strings from \"./portable-presentation\";\nimport * as presentation from \"./portable-presentation\";\n" + logic + "export class PortableState { app: AppState;\n" + fields + "}\nfunction project(state: AppState): PortableState {\n" + prologue + "return {" + join(values, ", ") + "};\n}\nexport function initialState(): PortableState { return project(init()); }\n";
+    logic = imports + "import * as json from \"std/json\";\nimport * as strings from \"./portable-presentation\";\nimport * as presentation from \"./portable-presentation\";\n" + logic + "export class PortableState { app: AppState;\n" + fields + "}\nfunction project(state: AppState, previous: PortableState | null): PortableState {\n" + prologue + "return {" + join(values, ", ") + "};\n}\nexport function initialState(): PortableState { return project(init(), null); }\n";
     for (let action of actions) {
         let fields: string = "value: " + action.type + ";"; let argument: string = "action.value";
-        logic = logic + "export class " + action.name + " {" + fields + "}\n// @ui-update\nexport function update" + action.name + "(state: PortableState, action: " + action.name + "): PortableState { return project(" + action.handler + "(state.app, " + argument + ")); }\n";
+        let update: string = "return project(" + action.handler + "(state.app, " + argument + "), state);";
+        for (let call of calls) { if (call.function === action.handler) { update = "let next: PortableState = project(" + action.handler + "(state.app, " + argument + "), state); next.sdkVersion" + call.channel + " = state.sdkVersion" + call.channel + " + 1; next.sdkState" + call.channel + " = state.app; return next;"; } }
+        logic = logic + "export class " + action.name + " {" + fields + "}\n// @ui-update\nexport function update" + action.name + "(state: PortableState, action: " + action.name + "): PortableState { " + update + " }\n";
     }
+    for (let action of actions) {
+        for (let call of calls) {
+            if (call.function !== action.handler) { continue; }
+            if (!Object.hasOwn(functions, call.answer)) { fail("Unknown SDK answer handler: " + call.answer); }
+            let answer: Record<string, unknown> = functions[call.answer] as Record<string, unknown>;
+            let params: Record<string, unknown>[] = records(answer, "parameters");
+            if (params.length !== 2 || field(params[0], "type") !== "AppState" || field(params[1], "type") !== "string" || field(answer, "result") !== "AppState") { fail("SDK answer signature not yet lowered"); }
+            let done: string = action.name + "Done";
+            logic = logic + "export class " + done + " { value: string; version: number; }\n// @ui-effect\nexport async function effect" + action.name + "(current: PortableState, action: " + action.name + "): Promise<" + done + "> {\nlet state: AppState = current.sdkState" + call.channel + "; let value: " + action.type + " = action.value;\ntry { let result = await " + call.target + "(" + call.args + "); return {value: json.stringify(result) as string, version: current.sdkVersion" + call.channel + "}; } catch (caught) { let error: Error = caught as Error; return {value: \"error: \" + error.code + \": \" + error.message, version: current.sdkVersion" + call.channel + "}; }\n}\n// @ui-update\nexport function finish" + action.name + "(state: PortableState, action: " + done + "): PortableState { if (action.version !== state.sdkVersion" + call.channel + ") { return state; } return project(" + call.answer + "(state.app, action.value), state); }\n";
+        }
+    }
+    // Nested SDK calls or non-action entry points must never disappear silently.
+    for (let call of calls) { let reached: boolean = false; for (let action of actions) { if (action.handler === call.function) { reached = true; } } if (!reached) { fail("SDK handler has no supported action entry"); } }
     let handlers: unknown[] = [];
     for (let declaration of declarations) {
         if (field(declaration, "kind") !== "FunctionDeclaration") { continue; }
@@ -173,7 +252,7 @@ export function lower(source: string, inspect: (source: string) => string): Pair
         let type: string = field(params[1], "type"); if (type !== "number" && type !== "string" && type !== "boolean") { continue; }
         let wrapper: string = "portableHandler" + literals.decimal(handlers.length);
         handlers[handlers.length] = {name: field(declaration, "name"), kind: type, wrapper: wrapper};
-        logic = logic + "export function " + wrapper + "(state: PortableState, value: " + type + "): PortableState { return project(" + field(declaration, "name") + "(state.app, value)); }\n";
+        logic = logic + "export function " + wrapper + "(state: PortableState, value: " + type + "): PortableState { return project(" + field(declaration, "name") + "(state.app, value), state); }\n";
     }
     logic = logic + "export function portableHandlers(): string { return " + literals.quote(json.stringify(handlers) as string) + "; }\nexport function main(): null { return null; }\n";
     return {deal: logic, dealui: "import * as app from \"./experience\";\nimport * as ui from \"./platform.dealui-pack\";\n// @ui-root\nexport view Experience(state: app.PortableState): View { ui.Column() {\n" + tree + "}\n}\n"};

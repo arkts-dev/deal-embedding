@@ -1,0 +1,49 @@
+import * as json from "std/json";
+import * as decode from "./plan-decoding";
+
+// Pinned unreadStateFields policy over compiler-projected syntax. Copying
+// every state field under its own name is passthrough, not a meaningful read.
+export function unread(syntax: string): string[] {
+    let parsed: Record<string, unknown> = json.parse(syntax);
+    if ((parsed.diagnostics as string) !== "") { throw {code: "PORTABLE_SYNTAX", message: parsed.diagnostics as string}; }
+    let fields: string[] = []; let stateName: string = ""; let reads: string[] = [];
+    let declarations: unknown[] = decode.arrayOrEmpty(parsed.statements);
+    for (let item of declarations) {
+        let node: Record<string, unknown> = item as Record<string, unknown>;
+        if ((node.kind as string) === "FunctionDeclaration" && (node.name as string) === "init") { stateName = node.result as string; }
+    }
+    for (let item of declarations) {
+        let node: Record<string, unknown> = item as Record<string, unknown>;
+        if ((node.kind as string) === "ClassDeclaration" && (node.name as string) === stateName) {
+            for (let item of decode.arrayOrEmpty(node.fields)) { fields[fields.length] = (item as Record<string, unknown>).name as string; }
+        }
+    }
+    // Iterative traversal also avoids recursive JVM helper-slot re-entry
+    // clobbering the parent's projected node during child visitation.
+    let pending: Record<string, unknown>[] = [];
+    let enqueue: (node: Record<string, unknown>) => void = function(node: Record<string, unknown>): void { pending[pending.length] = node; };
+    for (let item of declarations) { let node: Record<string, unknown> = item as Record<string, unknown>; if ((node.kind as string) === "FunctionDeclaration") { enqueue(node.body as Record<string, unknown>); } }
+    let at: number = 0;
+    while (at < pending.length) {
+        let node: Record<string, unknown> = pending[at]; at = at + 1;
+        if ((node.kind as string) === "MemberAccessExpr") { reads[reads.length] = node.field as string; }
+        if ((node.kind as string) === "ObjectLiteralExpr") {
+            let properties: unknown[] = decode.arrayOrEmpty(node.properties); let isState: boolean = properties.length === fields.length;
+            for (let item of properties) { if (!decode.includes(fields, (item as Record<string, unknown>).name as string)) { isState = false; } }
+            for (let item of properties) {
+                let prop: Record<string, unknown> = item as Record<string, unknown>; let value: Record<string, unknown> = prop.value as Record<string, unknown>;
+                if (isState && (value.kind as string) === "MemberAccessExpr" && (value.field as string) === (prop.name as string)) { enqueue(value.object as Record<string, unknown>); }
+                else { enqueue(value); }
+            }
+            continue;
+        }
+        for (let key of ["object", "left", "right", "value", "callee", "index", "target", "key", "expression", "condition", "then", "else", "body", "catch"]) {
+            if (Object.hasOwn(node, key)) { enqueue(node[key] as Record<string, unknown>); }
+        }
+        for (let key of ["args", "items", "statements"]) {
+            if (Object.hasOwn(node, key)) { for (let item of (node[key] as unknown[])) { enqueue(item as Record<string, unknown>); } }
+        }
+    }
+    let out: string[] = []; for (let field of fields) { if (!decode.includes(reads, field)) { out[out.length] = field; } } return out;
+}
+export function main(): null { return null; }

@@ -59,19 +59,10 @@ internal class PortableRequestBackend(
             compileCount++
             try {
                 val source = input.getString("source")
-                // Unread custom-state analysis is not installed yet. Do not
-                // return an invented empty analysis for custom sections.
-                val declarations = JSONObject(PortableSyntax.inspect(deal.ui.UiSourceGenerator.compilerSource(compiler.lowerPortable(source).deal))).getJSONArray("statements")
-                for (i in 0 until declarations.length()) {
-                    val declaration = declarations.getJSONObject(i)
-                    if (declaration.optString("kind") != "ClassDeclaration") continue
-                    val fields = declaration.getJSONArray("fields")
-                    for (j in 0 until fields.length()) if (fields.getJSONObject(j).getString("name").startsWith("c_"))
-                        throw UnsupportedOperationException("PORTABLE_UNSUPPORTED: custom unread-state analysis")
-                }
+                val unread = JSONObject(PortableBackendBridge.unread(source)).getJSONArray("fields")
                 val output = compiler.compilePortableValidation(source)
                 val identity = "program-${++sequence}"; outputs[identity] = output
-                JSONObject().put("identity", identity).put("diagnostics", "").put("unreadFields", JSONArray()).toString()
+                JSONObject().put("identity", identity).put("diagnostics", "").put("unreadFields", unread).toString()
             } catch (error: CandidateRejected) {
                 if(error.suppressed.isNotEmpty())throw error
                 JSONObject().put("identity", "").put("diagnostics", error.diagnostics).put("unreadFields", JSONArray()).toString()
@@ -81,7 +72,7 @@ internal class PortableRequestBackend(
             smokeCount++
             val program = SandboxProgram(engine, 256 * 1024)
             try {
-                val handlers = JSONArray(program.evaluateString("eval(" + JSONObject.quote(SandboxBundle.build(context, listOf("portable-machine.js"), "configureDealCapabilities([]);",
+                val handlers = JSONArray(program.evaluateString("eval(" + JSONObject.quote(SandboxBundle.build(context, listOf("portable-machine.js"), "configureDealCapabilities(${JSONArray(config.contracts.map{it.json()})});",
                     "(() => { globalThis.portableMachine=openPortableMachine(factories); return JSON.stringify(portableMachine.handlers); })()", output = output(input.getString("identity")))) + ")"))
                 val identity = "machine-${++sequence}"; machines[identity] = program
                 JSONObject().put("machine", identity).put("handlers", handlers).toString()

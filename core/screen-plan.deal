@@ -5,6 +5,8 @@ export class StateItem { name: string; role: string; type: string; label: string
 export class PlanSlot {
     id: string; need: string; reads: string[]; writes: string[]; when: string;
     phone: boolean; accepts: string[]; asked: boolean; fill: string; by: number; detail: string;
+    // Issued planning key, independent of mutable slot id/display wording.
+    original?: string;
 }
 export class PlanComponent { fill: string; spec: template.Fragment | null; values: template.Entry[]; }
 export class ScreenPlan {

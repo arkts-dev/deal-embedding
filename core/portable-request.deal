@@ -14,6 +14,7 @@ import * as sketch from "./sketch";
 import * as decode from "./plan-decoding";
 import * as data from "./portable-request-data";
 import * as transport from "./portable-transport";
+import * as capabilities from "./portable-capabilities";
 import * as runtime from "portable/runtime";
 import * as json from "std/json";
 
@@ -38,20 +39,26 @@ export async function build(input: string, owner: string): Promise<string> {
     let raw: Record<string, unknown> = json.parse(input); let request: Record<string, unknown> = raw.request as Record<string, unknown>;
     let asked: agent.Request | null = null; if (request.agent !== null) { let item: Record<string, unknown> = request.agent as Record<string, unknown>; asked = {prompt: item.prompt as string, widget: item.widget as boolean, scene: item.scene as string, sceneAllowed: item.sceneAllowed as boolean}; }
     let value: Input = {request: {agent: asked, mode: request.mode as string, wholeEnabled: request.wholeEnabled as boolean, surfaceEnabled: request.surfaceEnabled as boolean}, data: data.data(raw.data as Record<string, unknown>), originals: data.strings(raw.originals), language: raw.language as string, guide: raw.guide as string, surfaceCatalogue: raw.surfaceCatalogue as string};
-    let registry: identities.Registry = identities.create(value.originals); let budget: writer.Budget = writer.createBudget();
+    let disclosed: unknown[] = decode.arrayOrEmpty(raw.capabilities);
+    let lookup: () => string = function(): string { return capabilities.lookup(disclosed); };
+    let planning: identities.Planning = identities.planning(); let budget: writer.Budget = writer.createBudget();
     let checkingTools: checking.Mechanisms = {compile: compile, smoke: smoke, play: play, numberText: numberText, numberOf: function(text: string): number { return json.parse(invoke("numberOf", {value: text})).value as number; }};
     let settlementTools: settlement.Mechanisms = {compile: function(source: string): settlement.Compiled { let checked: checking.Compiled = compile(source); return {identity: checked.identity, diagnostics: checked.diagnostics}; }, smoke: smoke, now: now, numberText: numberText};
     let host: agent.Host = {askJev: askJev, ask: async function(question: person.Question): Promise<unknown> { return json.parse(invoke("question", {question: question})).value; },
         cancelled: cancelled, status: status, preview: function(identity: string): void { invoke("preview", {identity: identity}); },
-        toolCount: function(): number { return json.parse(invoke("toolCount", {})).value as number; }, toolSpanSince: function(start: number): number { return json.parse(invoke("toolSpan", {start: start})).value as number; }, constructionIdentities: registry.all,
-        holes: {language: value.language, askCode: askCode, askJev: askJev, lookup: async function(needs: string[]): Promise<string[]> { let out: string[] = []; for (let item of decode.arrayOrEmpty(json.parse(invoke("lookup", {needs: needs})).values)) { out[out.length] = item as string; } return out; },
-            looked: [], cannot: [], budget: budget, identity: function(slot: screen.PlanSlot): string { return registry.issue("slot:" + slot.id, invoke("original", {key: "slot:" + slot.id})); }, onHole: function(record: holes.HoleRecord): void { invoke("hole", {record: record}); }},
+        toolCount: function(): number { return json.parse(invoke("toolCount", {})).value as number; }, toolSpanSince: function(start: number): number { return json.parse(invoke("toolSpan", {start: start})).value as number; }, constructionIdentities: planning.all, issuePlanning: planning.issue,
+        holes: {language: value.language, askCode: askCode, askJev: askJev, lookup: async function(needs: string[]): Promise<string[]> { let out: string[] = []; let text: string = lookup(); for (let need of needs) { out[out.length] = text; } return out; },
+            looked: [], cannot: [], budget: budget, identity: function(slot: screen.PlanSlot): string {
+                let original: string | undefined = slot.original;
+                if (original === undefined) { throw {code: "HOLE_IDENTITY", message: "Original planning provenance missing for slot: " + slot.id}; }
+                return planning.resolve(original as string);
+            }, onHole: function(record: holes.HoleRecord): void { invoke("hole", {record: record}); }},
         filling: {search: async function(query: string, chars: number): Promise<string> { return invoke("search", {query: query, chars: chars}); },
             content: async function(system: string, user: string, tokens: number): Promise<string | null> { return invoke("content", {body: transport.completion("content", system, user, false), tokens: tokens}); },
             hole: async function(system: string, user: string, think: boolean): Promise<string | null> { return invoke("code", {body: transport.completion("code", system, user, think), think: think}); },
             sdkContext: async function(prompt: string): Promise<string> { return invoke("sdk", {prompt: prompt}); }, status: status, cancelled: cancelled, now: now,
             compile: function(source: string): catalogue.Diagnostic[] { let raw: Record<string, unknown> = json.parse(invoke("holeCompile", {source: source})); let out: catalogue.Diagnostic[] = []; for (let item of decode.arrayOrEmpty(raw.values)) { let entry: Record<string, unknown> = item as Record<string, unknown>; out[out.length] = {line: entry.line as number, message: entry.message as string}; } return out; },
-            identity: function(instance: catalogue.Instance): string { return registry.issue("catalogue:" + instance.key, invoke("original", {key: "catalogue:" + instance.key})); }, budget: budget},
+            identity: function(instance: catalogue.Instance): string { throw {code: "PORTABLE_UNSUPPORTED", message: "Catalogue original-need provenance is not installed"}; }, budget: budget},
         settling: {language: value.language, askCode: askCode, cancelled: cancelled, status: status}};
     let tools: agent.Mechanisms = {
         drawing: {ask: askPlan, preview: function(value: sketch.Sketch): void {}, review: async function(value: sketch.Sketch): Promise<string> { return ""; }, head: function(text: string, units: number): string { return slice(text, 0, units); }},

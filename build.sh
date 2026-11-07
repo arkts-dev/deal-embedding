@@ -46,7 +46,7 @@ for entry in execution compose fragments view-binding lowering; do
 done
 javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$ROOT/tools/EmbeddingSyntax.java" "$ROOT/tools/CompositionBridge.java" "$ROOT/tools/PortableSyntax.java"
 mkdir -p "$OUTPUT_DIR/portable/src/lowering"
-cp "$ROOT/core/portable-backend.deal" "$ROOT/core/portable-source-lowering.deal" "$ROOT/core/plan-decoding.deal" "$ROOT/core/source-literals.deal" "$OUTPUT_DIR/portable/src/lowering/"
+cp "$ROOT/core/portable-backend.deal" "$ROOT/core/portable-source-lowering.deal" "$ROOT/core/portable-state-reads.deal" "$ROOT/core/plan-decoding.deal" "$ROOT/core/source-literals.deal" "$OUTPUT_DIR/portable/src/lowering/"
 cp "$ROOT/core/backend/syntax.d.deal" "$OUTPUT_DIR/portable/portable-syntax.d.deal"
 printf '%s' '{"languageVersion":"1.5","backend":"jvm","moduleRoots":["src"],"externals":{"portable/syntax":{"declaration":"portable-syntax.d.deal"}}}' > "$OUTPUT_DIR/portable/deal.json"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/portable/src/lowering/portable-backend.deal" --backend jvm --output "$OUTPUT_DIR/portable/java"

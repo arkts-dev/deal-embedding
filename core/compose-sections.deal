@@ -90,7 +90,7 @@ export function replaceList(comp: state.Composition, kind: string, customEnabled
     for (let figure of gone) {
         let shown: string = "shows " + figure.label;
         if (strings.length(figure.means) > 0) { shown = shown + ": " + figure.means; }
-        if (customEnabled) { comp.custom[comp.custom.length] = shown; } else { comp.unbound[comp.unbound.length] = shown; }
+        if (customEnabled) { state.addCustom(comp, shown, "value." + figure.id); } else { comp.unbound[comp.unbound.length] = shown; }
         comp.dropped[comp.dropped.length] = "value \"" + figure.label + "\": left to what the section that keeps the entries publishes";
     }
     comp.blocks[comp.blocks.length] = kind;

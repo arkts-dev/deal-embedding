@@ -41,6 +41,7 @@ export class EventResult {
     dropped: string[];
     claimed: string[];
     custom: string[];
+    customOrigins: string[];
     phoneNeeds: string[];
     unboundNeeds: string[];
     customEffects: CustomEffect[];
@@ -150,7 +151,7 @@ function keys(options: choice.Criterion[]): string[] {
 }
 export function readEvents(value: sketch.Sketch, effects: Effect[], received: Record<string, unknown>, served: string[],
     widget: boolean, customEnabled: boolean, numberText: (value: number) => string, fixedTwo: (value: number) => string): EventResult {
-    let result: EventResult = {events: [], sectionInputs: [], dropped: [], claimed: [], custom: [], phoneNeeds: [],
+    let result: EventResult = {events: [], sectionInputs: [], dropped: [], claimed: [], custom: [], customOrigins: [], phoneNeeds: [],
         unboundNeeds: [], customEffects: [], unbound: [], answers: []};
     let effectIds: string[] = [];
     for (let effect of effects) { effectIds[effectIds.length] = effect.id; }
@@ -212,6 +213,7 @@ export function readEvents(value: sketch.Sketch, effects: Effect[], received: Re
         } else if (event.asked && customEnabled) {
             let need: string = event.what + " (" + event.when + ")";
             result.custom[result.custom.length] = need;
+            result.customOrigins[result.customOrigins.length] = "event." + event.id;
             result.phoneNeeds[result.phoneNeeds.length] = need;
             result.unboundNeeds[result.unboundNeeds.length] = need;
             if (strings.length(picked) > 0) {
