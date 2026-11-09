@@ -102,29 +102,6 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             else log.event("policy", if (args.getString(1) == "issued") "issued" else "validated", code = code)
                             JSONObject.NULL
                         }
-                        "embedding/composer" -> {
-                            try {
-                                val plan = JSONObject(args.getString(0))
-                                val custom = plan.has("custom")
-                                val source = log.stage("composition-assemble") {
-                                    BehaviorCandidate(config.contracts, custom, timing = { phase, nanos ->
-                                        log.event("composition-$phase", "completed", durationMs = nanos / 1_000_000)
-                                    }).assemble(plan)
-                                }
-                                val inventory=plan.optJSONArray("fragments") ?: plan.optJSONArray("behaviors") ?: if(plan.has("kind"))JSONArray().put(plan)else plan.getJSONArray("nodes")
-                                val operations=(0 until inventory.length()).map{inventory.getJSONObject(it).getString(if(plan.has("fragments")||plan.has("behaviors")||plan.has("kind"))"kind" else "op")}
-                                val operationCounts=JSONObject();operations.groupingBy{it}.eachCount().forEach{(op,count)->operationCounts.put(op,count)}
-                                val route=JSONObject().put("route",if(custom)"custom-section" else "maintained-only")
-                                    .put("operations",operationCounts)
-                                    .put("customCharacters",if(custom)(0 until plan.getJSONArray("custom").length()).sumOf{plan.getJSONArray("custom").getJSONObject(it).getString("body").length}else 0)
-                                    .put("reason",plan.optString("reason"))
-                                log.event("composition", "assembled", target=route.toString(), detail=JSONObject(route.toString()).put("source",source).toString())
-                                JSONObject().put("accepted", true).put("source", source).put("diagnostics", "").toString()
-                            } catch (error: BehaviorCandidate.Rejected) {
-                                log.event("composition", "rejected", detail = error.message)
-                                JSONObject().put("accepted", false).put("source", JSONObject()).put("diagnostics", "COMPACT_PLAN: ${error.message}").toString()
-                            }
-                        }
                         "embedding/portable" -> when(request.getString("function")) {
                             "configuration" -> context.assets.open("ui/portable-catalogue.json").bufferedReader().use { it.readText() }
                             "lower" -> {

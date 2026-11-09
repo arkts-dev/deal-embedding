@@ -9,7 +9,7 @@ ROOT=$(cd "$(dirname "$0")" && pwd)
 : "${OUTPUT_DIR:?Set OUTPUT_DIR to an absolute output directory}"
 KOTLIN_HOME=${KOTLIN_HOME:-/snap/kotlin/current}
 mkdir -p "$OUTPUT_DIR"
-rm -rf "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar" "$OUTPUT_DIR/generation" "$OUTPUT_DIR/logging"
+rm -rf "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar" "$OUTPUT_DIR/generation" "$OUTPUT_DIR/logging" "$OUTPUT_DIR/generated"
 mkdir -p "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar/assets/distribution/deal" "$OUTPUT_DIR/aar/assets/distribution/std" "$OUTPUT_DIR/native-tools"
 find "$DEAL_ROOT/deal" -name '*.java' | sort > "$OUTPUT_DIR/sources.txt"
 for source in UiModel UiParser UiDiagnostic UiChecker UiBorrowedValueChecker UiDealGenerator UiSourceGenerator DealUiDealSource; do
@@ -24,27 +24,7 @@ find "$OUTPUT_DIR/generated" -name '*.java' >> "$OUTPUT_DIR/sources.txt"
 javac --release 21 -cp "$ANDROID_JAR" -proc:none -d "$OUTPUT_DIR/classes" @"$OUTPUT_DIR/sources.txt"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/native-tools" "$ROOT/tools/CapabilityApi.java"
 java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/native-tools" CapabilityApi "$ROOT/api/embedding.d.deal" "$OUTPUT_DIR/generated/CapabilityApi.kt"
-javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/native-tools" "$ROOT/tools/FragmentAssets.java"
-java -cp "$OUTPUT_DIR/native-tools" FragmentAssets "$ROOT/ui/fragments" "$OUTPUT_DIR/generated/AuthoredFragments.java"
-javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$OUTPUT_DIR/generated/AuthoredFragments.java" "$ROOT/tools/FragmentStructure.java" "$ROOT/tools/FragmentSyntax.java"
-mkdir -p "$OUTPUT_DIR/composition/core/composition" "$OUTPUT_DIR/composition/ui/fragments/support"
-cp -r "$ROOT/core/composition/." "$OUTPUT_DIR/composition/core/composition/"
-cp "$ROOT/core/decoded.deal" "$ROOT/core/section-contract.deal" "$OUTPUT_DIR/composition/core/"
-cp -r "$ROOT/ui/fragments/." "$OUTPUT_DIR/composition/ui/fragments/"
-# Separate compiled closures must not overwrite one another's module exports.
-python3 -c 'import pathlib,sys; pathlib.Path(sys.argv[2]).write_text(pathlib.Path(sys.argv[1]).read_text().replace("\"../decoded\"", "\"../../../core/decoded\""))' "$ROOT/core/composition/formula.deal" "$OUTPUT_DIR/composition/ui/fragments/support/formula.deal"
-cp "$ROOT/core/composition/execution.deal" "$OUTPUT_DIR/composition/core/composition/lowering-execution.generated.deal"
-python3 "$ROOT/tools/composition-schema.py" "$ROOT/ui/fragment-contract.json" "$OUTPUT_DIR/composition/core/composition/validation.generated.deal"
-printf '%s' '{"languageVersion":"1.5","backend":"jvm","moduleRoots":["core","ui"],"externals":{"embedding/syntax":{"declaration":"core/composition/lowering-syntax.d.deal"}}}' > "$OUTPUT_DIR/composition/deal.json"
-for entry in execution compose fragments view-binding lowering; do
-    java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/composition/core/composition/$entry.deal" --backend jvm --output "$OUTPUT_DIR/composition/$entry-java"
-    source="$OUTPUT_DIR/composition/$entry-java/Composition$(case "$entry" in execution) echo Execution;; compose) echo Compose;; fragments) echo Fragments;; view-binding) echo View_binding;; lowering) echo Lowering;; esac).java"
-    # Package each independent generated JVM program with its own private host-ABI scope.
-    # This changes only Java linkage, never authored DEAL or emitted behavior.
-        python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text("package dev.deal.embedding.composition."+sys.argv[2].replace("-","_")+"; "+p.read_text())' "$source" "$entry"
-    javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$source"
-done
-javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$ROOT/tools/EmbeddingSyntax.java" "$ROOT/tools/CompositionBridge.java" "$ROOT/tools/PortableSyntax.java"
+javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$ROOT/tools/PortableSyntax.java"
 mkdir -p "$OUTPUT_DIR/portable/src/lowering"
 cp "$ROOT/core/portable-backend.deal" "$ROOT/core/portable-source-lowering.deal" "$ROOT/core/portable-state-reads.deal" "$ROOT/core/plan-decoding.deal" "$ROOT/core/source-literals.deal" "$OUTPUT_DIR/portable/src/lowering/"
 cp "$ROOT/core/backend/syntax.d.deal" "$OUTPUT_DIR/portable/portable-syntax.d.deal"
@@ -73,10 +53,9 @@ java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/guidance-tools" GenerationGuidance \
     "$ROOT/ui/platform.dealui-pack" "$ROOT/ui/generation-guidance.md" \
     "$DEAL_ROOT/skills/write-deal/references" "$ROOT/core/generation-guidance.generated.deal" "$ROOT/ui"
 cp -r "$ROOT/core/." "$OUTPUT_DIR/generation/src/"
-python3 "$ROOT/tools/composition-schema.py" "$ROOT/ui/fragment-contract.json" "$OUTPUT_DIR/generation/src/composition/validation.generated.deal"
 cp "$ROOT/core/host/"*.d.deal "$OUTPUT_DIR/generation/"
 cp -r "$DEAL_UI_ROOT/ui" "$OUTPUT_DIR/generation/ui"
-printf '%s' '{"languageVersion":"1.5","backend":"js","moduleRoots":["src","ui"],"externals":{"embedding/portable":{"declaration":"portable.d.deal"},"embedding/composer":{"declaration":"composer.d.deal"},"embedding/discovery":{"declaration":"discovery.d.deal"},"embedding/model":{"declaration":"model.d.deal"},"embedding/checker":{"declaration":"checker.d.deal"},"embedding/chooser":{"declaration":"chooser.d.deal"},"embedding/policy-data":{"declaration":"policy-data.d.deal"},"embedding/observer":{"declaration":"observer.d.deal"},"embedding":{"declaration":"embedding.d.deal"},"catalogue-policy":{"declaration":"catalogue-policy.d.deal"},"embedding/protocol":{"declaration":"protocol.d.deal"}}}' > "$OUTPUT_DIR/generation/deal.json"
+printf '%s' '{"languageVersion":"1.5","backend":"js","moduleRoots":["src","ui"],"externals":{"embedding/portable":{"declaration":"portable.d.deal"},"embedding/discovery":{"declaration":"discovery.d.deal"},"embedding/model":{"declaration":"model.d.deal"},"embedding/checker":{"declaration":"checker.d.deal"},"embedding/chooser":{"declaration":"chooser.d.deal"},"embedding/policy-data":{"declaration":"policy-data.d.deal"},"embedding/observer":{"declaration":"observer.d.deal"},"embedding":{"declaration":"embedding.d.deal"},"catalogue-policy":{"declaration":"catalogue-policy.d.deal"},"embedding/protocol":{"declaration":"protocol.d.deal"}}}' > "$OUTPUT_DIR/generation/deal.json"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/generation/src/generation.deal" --backend js --output "$OUTPUT_DIR/aar/assets/generation"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/generation/src/discovery.deal" --backend js --output "$OUTPUT_DIR/aar/assets/discovery"
 mkdir -p "$OUTPUT_DIR/logging/src"
