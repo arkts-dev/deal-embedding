@@ -56,9 +56,13 @@ export async function build(input: string, owner: string): Promise<string> {
         filling: {search: async function(query: string, chars: number): Promise<string> { return invoke("search", {query: query, chars: chars}); },
             content: async function(system: string, user: string, tokens: number): Promise<string | null> { return invoke("content", {body: transport.completion("content", system, user, false), tokens: tokens}); },
             hole: async function(system: string, user: string, think: boolean): Promise<string | null> { return invoke("code", {body: transport.completion("code", system, user, think), think: think}); },
-            sdkContext: async function(prompt: string): Promise<string> { return invoke("sdk", {prompt: prompt}); }, status: status, cancelled: cancelled, now: now,
+            sdkContext: async function(prompt: string): Promise<string> { return lookup(); }, status: status, cancelled: cancelled, now: now,
             compile: function(source: string): catalogue.Diagnostic[] { let raw: Record<string, unknown> = json.parse(invoke("holeCompile", {source: source})); let out: catalogue.Diagnostic[] = []; for (let item of decode.arrayOrEmpty(raw.values)) { let entry: Record<string, unknown> = item as Record<string, unknown>; out[out.length] = {line: entry.line as number, message: entry.message as string}; } return out; },
-            identity: function(instance: catalogue.Instance): string { throw {code: "PORTABLE_UNSUPPORTED", message: "Catalogue original-need provenance is not installed"}; }, budget: budget},
+            identity: function(instance: catalogue.Instance): string[] {
+                let originals: string[] | undefined = instance.originals;
+                if (originals === undefined) { throw {code: "HOLE_IDENTITY", message: "Catalogue planning provenance required"}; }
+                let out: string[] = []; for (let key of (originals as string[])) { out[out.length] = planning.resolve(key); } return out;
+            }, budget: budget},
         settling: {language: value.language, askCode: askCode, cancelled: cancelled, status: status}};
     let tools: agent.Mechanisms = {
         drawing: {ask: askPlan, preview: function(value: sketch.Sketch): void {}, review: async function(value: sketch.Sketch): Promise<string> { return ""; }, head: function(text: string, units: number): string { return slice(text, 0, units); }},

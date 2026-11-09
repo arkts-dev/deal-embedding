@@ -114,12 +114,13 @@ export function readAlignment(body: string, needs: string[], result: Result, kin
 function without(values: string[], remove: string): string[] { let out: string[] = []; for (let value of values) { if (value !== remove) { out[out.length] = value; } } return out; }
 export function applyAlignment(comp: state.Composition, result: Result, specs: catalogue.CatalogueEntry[], custom: boolean): void {
     for (let aligned of result.asked) {
-        if (aligned.kind === "") { continue; }
+        if (aligned.kind === "" || decode.includes(result.taken, aligned.need)) { continue; }
         if (decode.includes(comp.blocks, aligned.kind) && !decode.includes(result.added, aligned.kind)) { continue; }
         if (!decode.includes(result.added, aligned.kind)) {
             if (comp.sketch.list !== null && sections.canReplaceList(comp, aligned.kind)) { sections.replaceList(comp, aligned.kind, custom); }
-            else { comp.blocks[comp.blocks.length] = aligned.kind; } result.added[result.added.length] = aligned.kind;
+            else { state.addBlock(comp, aligned.kind, state.customOriginals(comp, aligned.need), false); } result.added[result.added.length] = aligned.kind;
         }
+        state.addBlock(comp, aligned.kind, state.customOriginals(comp, aligned.need), true);
         result.taken[result.taken.length] = aligned.need; state.removeCustom(comp, aligned.need);
         comp.phoneNeeds = without(comp.phoneNeeds, aligned.need); comp.unboundNeeds = without(comp.unboundNeeds, aligned.need);
     }

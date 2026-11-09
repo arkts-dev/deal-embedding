@@ -91,9 +91,35 @@ internal class PortableRequestBackend(
             teardown({program.evaluate("portableMachine.close()");Unit},{program.close()})
             machines.remove(identity);closedMachines++; ""
         }
+        "holeCompile" -> {
+            // Compile the complete provisional source; shared DEAL maps only
+            // structured source diagnostics into catalogue hole spans.
+            try {
+                val source=input.getString("source")
+                val syntax=JSONObject(PortableBackendBridge.syntax(source))
+                if(syntax.getString("diagnostics").isNotEmpty()) {
+                    JSONObject().put("values",syntax.getJSONArray("locations")).toString()
+                } else {
+                val output=compiler.compilePortableValidation(source)
+                val identity="catalogue-${++sequence}";outputs[identity]=output
+                StagingReclamation.remove(context,output.parentFile);outputs.remove(identity)
+                "{\"values\":[]}"
+                }
+            } catch(error:CandidateRejected) {
+                if(error.suppressed.isNotEmpty())throw error
+                val values=JSONArray();val diagnostics=JSONArray(error.diagnostics)
+                for(i in 0 until diagnostics.length()) {
+                    val diagnostic=diagnostics.getJSONObject(i)
+                    // Lowered compiler locations are not reference-source spans.
+                    // Until mapped, report outside holes rather than repair a neighbor.
+                    values.put(JSONObject().put("line",0).put("message",diagnostic.getString("message")))
+                }
+                JSONObject().put("values",values).toString()
+            }
+        }
         // Unsupported execution mechanisms are operational, never successful
         // dummy graphics/play/unread-state answers or model repair authority.
-        "pointer", "decodeGfx", "play", "holeCompile" -> throw UnsupportedOperationException("PORTABLE_UNSUPPORTED: $operation")
+        "pointer", "decodeGfx", "play" -> throw UnsupportedOperationException("PORTABLE_UNSUPPORTED: $operation")
         "numberText", "now", "lowercase", "upperFirst", "slice", "length", "normalize", "units", "test", "matches", "replace", "fixed", "numberOf", "power", "remainder", "groups", "sentenceEnd" ->
             primitives.evaluateString("portablePrimitive(${JSONObject.quote(operation)},$input)")
         else -> transport(operation, input)

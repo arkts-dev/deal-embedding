@@ -14,5 +14,6 @@ export function lowerConfiguredJson(source: string, encoded: string): string {
     let pair: lowering.Pair = lowering.lowerConfigured(source, syntax.inspect, modules);
     return json.stringify({deal: pair.deal, dealui: pair.dealui}) as string;
 }
+export function syntaxJson(source: string): string { return syntax.inspect(lowering.parserSource(source)); }
 export function unreadJson(source: string): string { return json.stringify({fields: reads.unread(syntax.inspect(lowering.parserSource(source)))}) as string; }
 export function main(): null { return null; }

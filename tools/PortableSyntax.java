@@ -93,7 +93,10 @@ public final class PortableSyntax {
             var diagnostics=new ArrayList<String>();
             lexed.diagnostics().forEach(d->diagnostics.add(d.toString()));
             parsed.diagnostics().forEach(d->diagnostics.add(d.toString()));
-            return json(object("statements",List.of(),"diagnostics",String.join("\n",diagnostics)));
+            var locations=new ArrayList<Object>();
+            lexed.diagnostics().forEach(d->locations.add(object("line",d.line(),"message",d.toString())));
+            parsed.diagnostics().forEach(d->locations.add(object("line",d.line(),"message",d.toString())));
+            return json(object("statements",List.of(),"diagnostics",String.join("\n",diagnostics),"locations",locations));
         }
         var statements=new ArrayList<Object>();
         for(var item:parsed.program().statements()) {

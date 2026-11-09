@@ -20,6 +20,9 @@ export function parserSource(source: string): string {
     for (let line of str.split(source, "\n")) {
         let trimmed: string = decode.trim(line);
         if (trimmed === "@jsonable") { out = out + "\n"; continue; }
+        // Reference construction markers are comments, not DEAL directives.
+        // Preserve line count so catalogue diagnostics retain original spans.
+        if (str.startsWith(trimmed, "//@hole ")) { line = "// hole " + str.substring(trimmed, 8, str.length(trimmed)); }
         if (str.startsWith(trimmed, "import ") && !str.endsWith(trimmed, ";")) { line = line + ";"; }
         out = out + line + "\n";
     }
@@ -190,6 +193,14 @@ export function lowerConfigured(source: string, inspect: (source: string) => str
             // Current Deal UI owns adaptive metric sizing; do not build another
             // native layout policy for the reference's column-count hint.
             return "ui.MetricGroup() {\n" + children(2) + "}\n";
+        }
+        if (component === "KeyValueGroup") {
+            if (args.length !== 3 || (field(args[1], "source") !== "1" && field(args[1], "source") !== "2")) { fail("KeyValueGroup columns not yet lowered"); }
+            return "ui.MetricGroup() {\n" + children(2) + "}\n";
+        }
+        if (component === "KeyValueItem") {
+            if (args.length !== 4 || field(args[3], "source") !== "\"\"") { fail("KeyValueItem decoration not yet lowered"); }
+            return "ui.Metric(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "string") + ")\n";
         }
         if (component === "NumberStat") {
             if (args.length !== 9 || field(args[5], "source") !== "1" || field(args[6], "source") !== "\"\"" || field(args[7], "source") !== "\"chart\"" || field(args[4], "source") !== "\"\"") { fail("NumberStat decoration/units not yet lowered"); }

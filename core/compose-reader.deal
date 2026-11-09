@@ -64,7 +64,7 @@ export function readComposition(body: string, value: sketch.Sketch, widget: bool
         if (own && customEnabled) {
             state.addCustom(comp, ready + " -- these are the person's own: they add, change and remove them; the list starts empty and the app never makes any up", "ready." + key);
         } else if (own) { comp.unbound[comp.unbound.length] = "the person's own records, which no section can make up: " + ready; }
-        else if (strings.length(kind) > 0) { comp.blocks[comp.blocks.length] = kind; served[served.length] = "ready." + key; }
+        else if (strings.length(kind) > 0) { state.addBlock(comp, kind, ["ready." + key], false); served[served.length] = "ready." + key; }
         else if (customEnabled) { state.addCustom(comp, ready, "ready." + key); }
         else { comp.unbound[comp.unbound.length] = "no section for: " + ready; }
     }

@@ -66,7 +66,7 @@ export function replaceClock(comp: state.Composition, tools: bindings.Primitives
     comp.sketch.countdown = ""; comp.sketch.hasCountdown = false;
     comp.sketch.stopwatch = ""; comp.sketch.hasStopwatch = false;
     comp.countdownFrom = "";
-    comp.blocks[comp.blocks.length] = "timer";
+    state.addBlock(comp, "timer", ["clock"], false);
     let detail: string = "";
     let claim: string = need;
     if (strings.length(length) > 0) { detail = "counts down " + length + " (its first preset)"; claim = need + ", counting down " + length; }
@@ -93,7 +93,7 @@ export function replaceList(comp: state.Composition, kind: string, customEnabled
         if (customEnabled) { state.addCustom(comp, shown, "value." + figure.id); } else { comp.unbound[comp.unbound.length] = shown; }
         comp.dropped[comp.dropped.length] = "value \"" + figure.label + "\": left to what the section that keeps the entries publishes";
     }
-    comp.blocks[comp.blocks.length] = kind;
+    state.addBlock(comp, kind, ["list"], false);
     comp.replaced[comp.replaced.length] = {kind: kind, need: list.label, detail: ""};
     comp.dropped[comp.dropped.length] = "\"" + list.label + "\": a section does it, not a part";
 }

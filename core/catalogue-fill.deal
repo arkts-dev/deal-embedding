@@ -11,6 +11,7 @@ import * as str from "std/string";
 export class Request {
     kinds: string[]; prompt: string; work: string; mode: string; realData: boolean; offset: number;
     slotValues: template.Entry[][]; globals: template.Entry[];
+    originals?: string[][];
     compose: (values: template.Entry[][], globals: template.Entry[]) => string;
 }
 export class Calls {
@@ -19,7 +20,7 @@ export class Calls {
     hole: (system: string, user: string, think: boolean) => Promise<string | null>;
     sdkContext: (prompt: string) => Promise<string>;
     status: (text: string) => void; cancelled: () => boolean; now: () => number;
-    compile: (source: string) => holes.Diagnostic[]; identity: (hole: holes.Instance) => string;
+    compile: (source: string) => holes.Diagnostic[]; identity: (hole: holes.Instance) => string[];
     budget: writer.Budget;
 }
 export class Filled {
@@ -84,7 +85,16 @@ export async function fillSections(request: Request, calls: Calls, specs: catalo
             let filled: holes.Filled = await holes.fillHoles(work, kinds, specs, padded, context, calls.hole,
                 function(bodies: template.Entry[]): string {
                     return request.compose(mergedValues(values, after(holes.holeValues(kinds, bodies, specs, tools.numberText, true), request.offset)), fill.globals);
-                }, calls.compile, calls.identity, calls.budget, tools.numberText, tools.utf16Length);
+                }, calls.compile, function(instance: holes.Instance): string[] {
+                    let inventory: string[][] | undefined = request.originals;
+                    if (inventory === undefined) { throw {code: "HOLE_IDENTITY", message: "Catalogue planning provenance required"}; }
+                    let index: number = -1; let at: number = 0;
+                    for (let kind of request.kinds) { if (instance.instance === tools.numberText(at + request.offset + 1)) { index = at; } at = at + 1; }
+                    let origins: string[][] = inventory as string[][];
+                    if (index < 0 || index >= origins.length || origins.length !== request.kinds.length) { throw {code: "HOLE_IDENTITY", message: "Catalogue provenance inventory mismatch"}; }
+                    let bound: holes.Instance = {key: instance.key, spec: instance.spec, instance: instance.instance, originals: origins[index]};
+                    return calls.identity(bound);
+                }, calls.budget, tools.numberText, tools.utf16Length);
             values = mergedValues(values, after(holes.holeValues(kinds, filled.bodies, specs, tools.numberText, true), request.offset));
             fill.holeBodies = filled.bodies; fill.holesMs = calls.now() - start; fill.holesNote = filled.note;
             if (calls.cancelled()) { fill.cancelled = true; }

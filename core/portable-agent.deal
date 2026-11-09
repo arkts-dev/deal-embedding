@@ -180,7 +180,7 @@ export async function runAgent(request: Request, host: Host, data: Data, tools: 
             let prompt: string = request.prompt; if (fixed.length > 0) { prompt = prompt + "\n\nThe plan fixes: " + join(fixed, "; "); }
             if (comp.sketch.ready.length > 0) { prompt = prompt + "\n\nThe plan says the sections are for: " + join(comp.sketch.ready, " | "); }
             let blockRequest: fill.Request = {kinds: comp.blocks, prompt: prompt, work: "", mode: "deepseek", realData: comp.realData, offset: partCount(comp, data, tools),
-                slotValues: [], globals: [], compose: function(filled: template.Entry[][], globals: template.Entry[]): string { return assembleProgram(comp, filled, data, tools); }};
+                slotValues: [], globals: [], originals: comp.blockOrigins, compose: function(filled: template.Entry[][], globals: template.Entry[]): string { return assembleProgram(comp, filled, data, tools); }};
             let hasSlots: boolean = false; for (let kind of comp.blocks) { let spec: catalogue.CatalogueEntry | null = catalogue.find(data.catalogue, kind); if (spec !== null && (spec as catalogue.CatalogueEntry).slots.length > 0) { hasSlots = true; } }
             if (hasSlots) {
                 let slotStart: number = tools.writer.now(); let body: string = await host.askJev(slots.buildSlotRequest(request.prompt, comp.blocks, data.catalogue, tools.bindings.numberText, tools.writer.lowercase));

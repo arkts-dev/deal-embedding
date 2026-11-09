@@ -31,6 +31,7 @@ export class Composition {
     widget: boolean;
     figures: boolean;
     blocks: string[];
+    blockOrigins: string[][];
     readyKinds: string[];
     realData: boolean;
     custom: string[];
@@ -56,7 +57,7 @@ export function create(value: sketch.Sketch, widget: boolean): Composition {
     copy.inputs = inputs;
     return {sketch: copy, deadline: "", theme: "clean", widgets: [], bindings: [], countdownFrom: "", countdownUnit: "seconds",
         events: [], dropped: [], defaulted: [], inputs: [], unbound: [], unboundNeeds: [], answers: [], provisional: false,
-        widget: widget, figures: false, blocks: [], readyKinds: [], realData: false, custom: [], customOrigins: [], customReads: [], phoneNeeds: [],
+        widget: widget, figures: false, blocks: [], blockOrigins: [], readyKinds: [], realData: false, custom: [], customOrigins: [], customReads: [], phoneNeeds: [],
         customEffects: [], claimed: [], replaced: []};
 }
 // Record the planning key when construction work is issued, before any
@@ -64,6 +65,24 @@ export function create(value: sketch.Sketch, widget: boolean): Composition {
 export function addCustom(comp: Composition, need: string, origin: string): void {
     if (origin === "") { throw {code: "HOLE_IDENTITY", message: "Original planning key required"}; }
     comp.custom[comp.custom.length] = need; comp.customOrigins[comp.customOrigins.length] = origin;
+}
+export function addBlock(comp: Composition, kind: string, origins: string[], merge: boolean): void {
+    if (origins.length === 0 || comp.blocks.length !== comp.blockOrigins.length) { throw {code: "HOLE_IDENTITY", message: "Catalogue provenance inventory mismatch"}; }
+    let at: number = comp.blocks.length; let i: number = 0;
+    if (merge) { for (let existing of comp.blocks) { if (existing === kind) { at = i; break; } i = i + 1; } }
+    if (at === comp.blocks.length) { comp.blocks[at] = kind; let empty: string[] = []; comp.blockOrigins[at] = empty; }
+    let saved: string[] = comp.blockOrigins[at];
+    for (let origin of origins) {
+        if (origin === "") { throw {code: "HOLE_IDENTITY", message: "Original catalogue planning key required"}; }
+        let found: boolean = false; for (let previous of saved) { if (previous === origin) { found = true; } }
+        if (!found) { saved[saved.length] = origin; }
+    }
+    comp.blockOrigins[at] = saved;
+}
+export function customOriginals(comp: Composition, need: string): string[] {
+    if (comp.custom.length !== comp.customOrigins.length) { throw {code: "HOLE_IDENTITY", message: "Custom provenance inventory mismatch"}; }
+    let out: string[] = []; let i: number = 0;
+    for (let item of comp.custom) { if (item === need) { out[out.length] = comp.customOrigins[i]; } i = i + 1; } return out;
 }
 export function removeCustom(comp: Composition, need: string): void {
     if (comp.custom.length !== comp.customOrigins.length) { throw {code: "HOLE_IDENTITY", message: "Custom provenance inventory mismatch"}; }

@@ -7,6 +7,7 @@ public final class PortableBackendBridge {
     private static final class Owner {
         static final JvmRuntime.FunctionValue LOWER=initialize();
         static final JvmRuntime.FunctionValue CONFIGURED=(JvmRuntime.FunctionValue) JvmRuntime.exportSurface("lowering.portable-backend").read("lowerConfiguredJson");
+        static final JvmRuntime.FunctionValue SYNTAX=(JvmRuntime.FunctionValue) JvmRuntime.exportSurface("lowering.portable-backend").read("syntaxJson");
         static final JvmRuntime.FunctionValue UNREAD=(JvmRuntime.FunctionValue) JvmRuntime.exportSurface("lowering.portable-backend").read("unreadJson");
         private static JvmRuntime.FunctionValue initialize() {
             LoweringPortable_backend.dealMain();
@@ -17,6 +18,7 @@ public final class PortableBackendBridge {
         return (String) Owner.LOWER.fn.invoke(new Object[]{source});
     }
     public static synchronized String lower(String source, String contracts) { return (String) Owner.CONFIGURED.fn.invoke(new Object[]{source,contracts}); }
+    public static synchronized String syntax(String source) { return (String) Owner.SYNTAX.fn.invoke(new Object[]{source}); }
     public static synchronized String unread(String source) { return (String) Owner.UNREAD.fn.invoke(new Object[]{source}); }
     public static void main(String[] args) throws Exception {
         if (args.length == 2 && args[0].equals("--unread")) System.out.print(unread(java.nio.file.Files.readString(java.nio.file.Path.of(args[1]))));

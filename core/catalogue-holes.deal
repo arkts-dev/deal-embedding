@@ -6,7 +6,7 @@ import * as budgetPolicy from "./custom-writer";
 import * as json from "std/json";
 import * as str from "std/string";
 
-export class Instance { key: string; spec: template.Hole; instance: string; }
+export class Instance { key: string; spec: template.Hole; instance: string; originals?: string[]; }
 export class Span { key: string; first: number; last: number; }
 export class HoleError { hole: string; message: string; }
 export class Diagnostic { line: number; message: string; }
@@ -142,12 +142,16 @@ export function buildRepairPrompt(prompt: string, holes: Instance[], bodies: tem
 export async function fillHoles(prompt: string, kinds: string[], specs: catalogue.CatalogueEntry[], values: template.Entry[][] | null,
     context: string, ask: (system: string, user: string, think: boolean) => Promise<string | null>,
     build: (bodies: template.Entry[]) => string, compile: (source: string) => Diagnostic[],
-    identity: (hole: Instance) => string, budget: budgetPolicy.Budget,
+    identity: (hole: Instance) => string[], budget: budgetPolicy.Budget,
     numberText: (value: number) => string, utf16Length: (value: string) => number): Promise<Filled> {
     let holes: Instance[] = []; let identities: string[] = [];
     for (let hole of holesOf(kinds, values, specs, numberText)) { if (hole.spec.byModel) {
-        let id: string = identity(hole); if (id === "") { throw {code: "HOLE_IDENTITY", message: "Stable catalogue hole identity required"}; }
-        holes[holes.length] = hole; identities[identities.length] = id;
+        let issued: string[] = identity(hole); if (issued.length === 0) { throw {code: "HOLE_IDENTITY", message: "Stable catalogue hole identities required"}; }
+        for (let id of issued) {
+            if (id === "") { throw {code: "HOLE_IDENTITY", message: "Stable catalogue hole identity required"}; }
+            if (!decode.includes(identities, id)) { identities[identities.length] = id; }
+        }
+        holes[holes.length] = hole;
     } }
     let empty: template.Entry[] = []; if (holes.length === 0) { return {bodies: empty, note: "", repairs: 0}; }
     if (budget.remaining(identities) <= 0) { return {bodies: empty, note: "holes=default(invocation budget exhausted)", repairs: 0}; }
