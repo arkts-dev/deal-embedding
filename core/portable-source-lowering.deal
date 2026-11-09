@@ -1,14 +1,11 @@
 import * as str from "std/string";
+import * as table from "std/table";
 import * as json from "std/json";
 import * as decode from "./plan-decoding";
 import * as literals from "./source-literals";
+import * as views from "./portable-view-lowering";
 
-// Backend lowering, not generation policy. The compiler projects syntax; DEAL
-// maps supported reference components and handler signatures into checked views.
-// Unsupported syntax/components fail explicitly, never disappear from the UI.
 export class Pair { deal: string; dealui: string; }
-class Property { name: string; type: string; expression: string; }
-class Action { name: string; handler: string; type: string; argument: string; completion?: boolean; channel?: string; }
 class Call { function: string; target: string; args: string; answer: string; channel: string; }
 function fail(message: string): void { throw {code: "PORTABLE_UNSUPPORTED", message: message}; }
 function field(raw: Record<string, unknown>, key: string): string { return raw[key] as string; }
@@ -20,8 +17,6 @@ export function parserSource(source: string): string {
     for (let line of str.split(source, "\n")) {
         let trimmed: string = decode.trim(line);
         if (trimmed === "@jsonable") { out = out + "\n"; continue; }
-        // Reference construction markers are comments, not DEAL directives.
-        // Preserve line count so catalogue diagnostics retain original spans.
         if (str.startsWith(trimmed, "//@hole ")) { line = "// hole " + str.substring(trimmed, 8, str.length(trimmed)); }
         if (str.startsWith(trimmed, "import ") && !str.endsWith(trimmed, ";")) { line = line + ";"; }
         out = out + line + "\n";
@@ -33,6 +28,16 @@ function join(values: string[], separator: string): string {
 }
 function presentationSource(source: string, syntax: Record<string, unknown>): string {
     let edits: Record<string, unknown>[] = [];
+    let classes: Record<string, unknown> = {};
+    for (let declaration of records(syntax, "statements")) { if (field(declaration, "kind") === "ClassDeclaration") { let fields: Record<string, unknown> = {}; for (let item of records(declaration, "fields")) { fields[field(item, "name")] = field(item, "type"); } classes[field(declaration, "name")] = fields; } }
+    let typeOf: (node: Record<string, unknown>, bindings: Record<string, unknown>) => string = function(node: Record<string, unknown>, bindings: Record<string, unknown>): string {
+        let members: string[] = []; let current: Record<string, unknown> = node;
+        while (field(current, "kind") === "MemberAccessExpr") { members[members.length] = field(current, "field"); current = current.object as Record<string, unknown>; }
+        if (field(current, "kind") !== "IdentifierExpr") { return ""; }
+        let type: string = decode.stringField(bindings, field(current, "name"), ""); let at: number = members.length;
+        while (at > 0) { at = at - 1; if (!Object.hasOwn(classes, type)) { return ""; } type = decode.stringField(classes[type] as Record<string, unknown>, members[at], ""); }
+        return type;
+    };
     for (let member of records(syntax, "members")) {
         let owner: string = field(member, "owner"); let name: string = field(member, "name"); let replacement: string = "";
         if (owner === "ui" && decode.includes(["formatNumber", "numberToString", "clockToString", "durationToString"], name)) { replacement = "presentation." + name; }
@@ -42,13 +47,45 @@ function presentationSource(source: string, syntax: Record<string, unknown>): st
         }
         if (replacement !== "") { edits[edits.length] = {start: member.start as number, end: member.end as number, replacement: replacement}; }
     }
+    // Known arrays use the language's read-only length property, preserving
+    // borrowed-state checking. Other carriers use the UTF-16 reference primitive.
+    let pending: Record<string, unknown>[] = records(syntax, "statements"); let index: number = 0;
+    while (index < pending.length) {
+        let node: Record<string, unknown> = pending[index]; index = index + 1;
+        let bindings: Record<string, unknown> = {}; if (Object.hasOwn(node, "bindings")) { bindings = node.bindings as Record<string, unknown>; }
+        if (field(node, "kind") === "FunctionDeclaration") { let fresh: Record<string, unknown> = {}; bindings = fresh; for (let param of records(node, "parameters")) { bindings[field(param, "name")] = field(param, "type"); } }
+        if (field(node, "kind") === "Block") { let scoped: Record<string, unknown> = {}; for (let key of table.keys(bindings)) { scoped[key] = bindings[key]; } for (let statement of records(node, "statements")) { if (field(statement, "kind") === "VariableDeclaration") { scoped[field(statement, "name")] = field(statement, "type"); } } bindings = scoped; }
+        if (field(node, "kind") === "CallExpr") {
+            let callee: Record<string, unknown> = node.callee as Record<string, unknown>;
+            if (field(callee, "kind") === "MemberAccessExpr" && field(callee, "field") === "push" && !Object.hasOwn(node, "viewSyntax") && records(node, "args").length === 1) {
+                let object: Record<string, unknown> = callee.object as Record<string, unknown>;
+                if (field(object, "kind") !== "IdentifierExpr") { fail("Array push receiver must be a local identifier"); }
+                // Statement-only append; expression-valued push is not emulated.
+                if (!Object.hasOwn(node, "appendStatement")) { fail("Expression-valued array push not yet lowered"); }
+                let arg: Record<string, unknown> = records(node, "args")[0];
+                edits[edits.length] = {start: object.end as number, end: arg.start as number, replacement: "[" + field(object, "source") + ".length] = "};
+                edits[edits.length] = {start: arg.end as number, end: node.end as number, replacement: ""};
+            }
+            if (field(callee, "kind") === "MemberAccessExpr" && field(callee, "field") === "length" && records(node, "args").length === 0) {
+                let object: Record<string, unknown> = callee.object as Record<string, unknown>;
+                if (str.endsWith(typeOf(object, bindings), "[]")) { edits[edits.length] = {start: object.end as number, end: node.end as number, replacement: ".length"}; }
+                else { edits[edits.length] = {start: callee.start as number, end: object.start as number, replacement: "presentation.length("}; edits[edits.length] = {start: object.end as number, end: node.end as number, replacement: ")"}; }
+            }
+        }
+        if (field(node, "kind") === "ExpressionStatement") { let expression: Record<string, unknown> = node.expression as Record<string, unknown>; expression.appendStatement = true; }
+        if (field(node, "kind") === "FunctionDeclaration" && field(node, "name") === "view") { node.viewSyntax = true; }
+        let enqueue: (child: Record<string, unknown>) => void = function(child: Record<string, unknown>): void { if (Object.hasOwn(node, "viewSyntax")) { child.viewSyntax = true; } child.bindings = bindings; pending[pending.length] = child; };
+        for (let key of ["object", "left", "right", "value", "callee", "index", "target", "expression", "condition", "then", "else", "body", "catch"]) { if (Object.hasOwn(node, key)) { enqueue(node[key] as Record<string, unknown>); } }
+        for (let key of ["args", "items", "statements"]) { if (Object.hasOwn(node, key)) { for (let item of records(node, key)) { enqueue(item); } } }
+        if (Object.hasOwn(node, "properties")) { for (let prop of records(node, "properties")) { enqueue(prop.value as Record<string, unknown>); } }
+    }
     let out: string = ""; let at: number = 0; let remaining: number = edits.length;
     while (remaining > 0) {
         let next: Record<string, unknown> | null = null;
-        for (let edit of edits) { if ((edit.start as number) >= at && (next === null || (edit.start as number) < ((next as Record<string, unknown>).start as number))) { next = edit; } }
+        for (let edit of edits) { if (!Object.hasOwn(edit, "used") && (edit.start as number) >= at && (next === null || (edit.start as number) < ((next as Record<string, unknown>).start as number))) { next = edit; } }
         if (next === null) { fail("Overlapping presentation syntax"); }
         let edit: Record<string, unknown> = next as Record<string, unknown>;
-        out = out + str.substring(source, at, edit.start as number) + field(edit, "replacement"); at = edit.end as number; remaining = remaining - 1;
+        out = out + str.substring(source, at, edit.start as number) + field(edit, "replacement"); at = edit.end as number; edit.used = true; remaining = remaining - 1;
     }
     return out + str.substring(source, at, str.length(source));
 }
@@ -79,24 +116,19 @@ export function lowerConfigured(source: string, inspect: (source: string) => str
                         for (let item of decode.arrayOrEmpty(module.functions)) {
                             let fn: Record<string, unknown> = item as Record<string, unknown>;
                             if (target !== (module.module as string) + "." + (fn.name as string)) { continue; }
-                            let pairs: Record<string, unknown>[] = records(args[1], "items");
-                            let params: unknown[] = decode.arrayOrEmpty(fn.parameters);
+                            let pairs: Record<string, unknown>[] = records(args[1], "items"); let params: unknown[] = decode.arrayOrEmpty(fn.parameters);
                             if (pairs.length !== params.length * 2) { fail("SDK argument inventory mismatch"); }
                             let values: string[] = [];
                             for (let item of params) {
                                 let param: Record<string, unknown> = item as Record<string, unknown>; let value: string = ""; let count: number = 0; let at: number = 0;
-                                while (at < pairs.length) {
-                                    if (Object.hasOwn(pairs[at], "text") && field(pairs[at], "text") === (param.name as string)) { value = field(pairs[at + 1], "source"); count = count + 1; } at = at + 2;
-                                }
+                                while (at < pairs.length) { if (Object.hasOwn(pairs[at], "text") && field(pairs[at], "text") === (param.name as string)) { value = field(pairs[at + 1], "source"); count = count + 1; } at = at + 2; }
                                 if (count !== 1) { fail("Expected one SDK value for parameter: " + (param.name as string)); }
                                 let type: string = (param.type as Record<string, unknown>).kind as string;
                                 if (!decode.includes(["number", "string", "boolean"], type)) { fail("SDK parameter type not yet lowered: " + type); }
                                 values[values.length] = "(json.parse(\"{\\\"value\\\":\" + (" + value + ") + \"}\").value as " + type + ")";
                             }
-                            let alias: string = "portableCapability" + literals.decimal(calls.length);
-                            imports = imports + "import * as " + alias + " from " + literals.quote(module.module as string) + ";\n";
-                            let answer: string = field(args[2], "text"); let channel: string = literals.decimal(calls.length);
-                            for (let prior of calls) { if (prior.answer === answer) { channel = prior.channel; } }
+                            let alias: string = "portableCapability" + literals.decimal(calls.length); imports = imports + "import * as " + alias + " from " + literals.quote(module.module as string) + ";\n";
+                            let answer: string = field(args[2], "text"); let channel: string = literals.decimal(calls.length); for (let prior of calls) { if (prior.answer === answer) { channel = prior.channel; } }
                             call = {function: name, target: alias + "." + (fn.name as string), args: join(values, ", "), answer: answer, channel: channel}; bound = true;
                         }
                     }
@@ -108,205 +140,72 @@ export function lowerConfigured(source: string, inspect: (source: string) => str
         if (call !== null) {
             let params: Record<string, unknown>[] = records(declaration, "parameters");
             if (params.length !== 2 || field(params[0], "name") !== "state" || field(params[1], "name") !== "value" || field(params[0], "type") !== "AppState" || field(declaration, "result") !== "AppState") { fail("SDK handler signature not yet lowered"); }
-            declaration.source = "function " + name + "(state: AppState, " + field(params[1], "name") + ": " + field(params[1], "type") + "): AppState {\n" + body + "}\n";
-            calls[calls.length] = call as Call;
+            declaration.source = "function " + name + "(state: AppState, value: " + field(params[1], "type") + "): AppState {\n" + body + "}\n"; calls[calls.length] = call as Call;
         }
     }
-    // A completion chain must terminate; cycles would dispatch without a new
-    // user action. Reject rather than silently dropping or bounding calls.
     for (let start of calls) {
         let visited: string[] = []; let next: string = start.function;
-        while (next !== "") {
-            if (decode.includes(visited, next)) { fail("Cyclic SDK answer chain"); } visited[visited.length] = next;
-            let found: string = ""; for (let call of calls) { if (call.function === next) { found = call.answer; } } next = found;
-        }
+        while (next !== "") { if (decode.includes(visited, next)) { fail("Cyclic SDK answer chain"); } visited[visited.length] = next; let found: string = ""; for (let call of calls) { if (call.function === next) { found = call.answer; } } next = found; }
     }
-    // Calls connected through answer handlers share one freshness epoch.
     let merged: boolean = true;
-    while (merged) {
-        merged = false;
-        for (let left of calls) { for (let right of calls) {
-            if ((left.answer === right.function || right.answer === left.function || left.answer === right.answer) && left.channel !== right.channel) {
-                let before: string = right.channel;
-                for (let call of calls) { if (call.channel === before) { call.channel = left.channel; } }
-                merged = true;
-            }
-        } }
-    }
-    let sdkMembers: number = 0;
-    for (let member of records(syntax, "members")) { if (field(member, "owner") === "sdk") { if (field(member, "name") !== "call") { fail("Unknown SDK operation"); } sdkMembers = sdkMembers + 1; } }
+    while (merged) { merged = false; for (let left of calls) { for (let right of calls) {
+        if ((left.answer === right.function || right.answer === left.function || left.answer === right.answer) && left.channel !== right.channel) { let before: string = right.channel; for (let call of calls) { if (call.channel === before) { call.channel = left.channel; } } merged = true; }
+    } } }
+    let sdkMembers: number = 0; for (let member of records(syntax, "members")) { if (field(member, "owner") === "sdk") { if (field(member, "name") !== "call") { fail("Unknown SDK operation"); } sdkMembers = sdkMembers + 1; } }
     if (sdkMembers !== calls.length) { fail("SDK calls require supported direct handler statements"); }
     for (let declaration of declarations) {
         let kind: string = field(declaration, "kind");
         if (kind === "ImportDeclaration") {
             let module: string = field(declaration, "module"); let alias: string = field(declaration, "alias");
-            if ((module !== "std/ui" || alias !== "ui") && (module !== "std/math" || alias !== "math") && (module !== "std/json" || alias !== "json")) { fail("Import not yet lowered: " + module + " as " + alias); }
-        } else if (kind === "FunctionDeclaration") {
-            let name: string = field(declaration, "name"); functions[name] = declaration;
-            if (name === "view") { view = declaration; } else { logic = logic + field(declaration, "source") + "\n"; }
-        } else if (kind === "ClassDeclaration") { logic = logic + field(declaration, "source") + "\n"; }
+            if ((module !== "std/ui" || alias !== "ui") && (module !== "std/math" || alias !== "math") && (module !== "std/json" || alias !== "json") && (module !== "std/strings" || alias !== "strings")) { fail("Import not yet lowered: " + module + " as " + alias); }
+        } else if (kind === "FunctionDeclaration") { let name: string = field(declaration, "name"); functions[name] = declaration; if (name === "view") { view = declaration; } else { logic = logic + field(declaration, "source") + "\n"; } }
+        else if (kind === "ClassDeclaration") { logic = logic + field(declaration, "source") + "\n"; }
         else { fail("Top-level syntax not yet lowered: " + kind); }
     }
     if (view === null || !Object.hasOwn(functions, "init")) { fail("Expected init and view functions"); }
-    let properties: Property[] = []; let actions: Action[] = []; let prologue: string = "";
-    let prop: (expression: Record<string, unknown>, type: string) => string = function(expression: Record<string, unknown>, type: string): string {
-        let name: string = "property" + literals.decimal(properties.length);
-        properties[properties.length] = {name: name, type: type, expression: field(expression, "source")}; return "state." + name;
-    };
-    let event: (expression: Record<string, unknown>, type: string, argument: string) => string = function(expression: Record<string, unknown>, type: string, argument: string): string {
-        if (field(expression, "kind") !== "LiteralExpr" || !Object.hasOwn(expression, "text")) { fail("Handler must be a literal issued function name"); }
-        let handler: string = field(expression, "text"); if (!Object.hasOwn(functions, handler)) { fail("Unknown handler: " + handler); }
-        let fn: Record<string, unknown> = functions[handler] as Record<string, unknown>; let params: Record<string, unknown>[] = records(fn, "parameters");
-        if (params.length !== 2 || field(params[0], "type") !== "AppState" || field(params[1], "type") !== type || field(fn, "result") !== "AppState") { fail("Handler signature not yet lowered: " + handler); }
-        let name: string = "Action" + literals.decimal(actions.length); let captured: string = argument;
-        if (argument !== "") { let expression: Record<string, unknown> = {source: argument}; captured = prop(expression, type); }
-        actions[actions.length] = {name: name, handler: handler, type: type, argument: captured};
-        if (captured !== "") { return "action app." + name + " {value: " + captured + "}"; }
-        return "action app." + name + " {value: payload}";
-    };
-    let render: (expression: Record<string, unknown>) => string = function(expression: Record<string, unknown>): string { fail("Uninitialized view lowering"); return ""; };
-    render = function(expression: Record<string, unknown>): string {
-        if (field(expression, "kind") !== "CallExpr") { fail("View expression not yet lowered: " + field(expression, "source")); }
-        let callee: Record<string, unknown> = expression.callee as Record<string, unknown>;
-        if (field(callee, "kind") !== "MemberAccessExpr" || field(callee.object as Record<string, unknown>, "source") !== "ui") { fail("Expected a ui component call"); }
-        let component: string = field(callee, "field"); let args: Record<string, unknown>[] = records(expression, "args");
-        if (args.length === 0) { fail("Missing component arguments: " + component); }
-        let style: string = field(args[0], "source");
-        if (style !== "\"default\"" && style !== "\"content\"" && style !== "\"summary\"") { fail("Component style not yet lowered: " + component + " " + style); }
-        let children: (at: number) => string = function(at: number): string {
-            if (at >= args.length || field(args[at], "kind") !== "ArrayLiteralExpr") { fail("Component children must be an explicit array: " + component); }
-            let out: string = ""; for (let child of records(args[at], "items")) { out = out + render(child); } return out;
-        };
-        if (component === "Header") {
-            if (args.length !== 5 || field(args[4], "source") !== "\"\"") { fail("Header icon not yet lowered"); }
-            let out: string = "ui.Heading(value: " + prop(args[1], "string") + ")\n";
-            if (args.length > 2) { out = out + "ui.Caption(value: " + prop(args[2], "string") + ")\n"; }
-            if (args.length > 3) { out = out + "ui.Text(value: " + prop(args[3], "string") + ")\n"; } return out;
-        }
-        if (component === "Section") { return "ui.Section(title: " + prop(args[1], "string") + ", summary: " + prop(args[2], "string") + ") {\n" + children(3) + "}\n"; }
-        if (component === "Column" || component === "ActionBar") { return "ui.Column() {\n" + children(1) + "}\n"; }
-        if (component === "MetricGroup") {
-            if (args.length !== 3) { fail("Expected MetricGroup style, column count and children"); }
-            let columns: string = field(args[1], "source");
-            if (columns !== "1" && columns !== "2" && columns !== "3") { fail("MetricGroup column count not yet lowered: " + columns); }
-            if (columns === "1") { return "ui.Column() {\n" + children(2) + "}\n"; }
-            // Current Deal UI owns adaptive metric sizing; do not build another
-            // native layout policy for the reference's column-count hint.
-            return "ui.MetricGroup() {\n" + children(2) + "}\n";
-        }
-        if (component === "KeyValueGroup") {
-            if (args.length !== 3 || (field(args[1], "source") !== "1" && field(args[1], "source") !== "2")) { fail("KeyValueGroup columns not yet lowered"); }
-            return "ui.MetricGroup() {\n" + children(2) + "}\n";
-        }
-        if (component === "KeyValueItem") {
-            if (args.length !== 4 || field(args[3], "source") !== "\"\"") { fail("KeyValueItem decoration not yet lowered"); }
-            return "ui.Metric(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "string") + ")\n";
-        }
-        if (component === "NumberStat") {
-            if (args.length !== 9 || field(args[5], "source") !== "1" || field(args[6], "source") !== "\"\"" || field(args[7], "source") !== "\"chart\"" || field(args[4], "source") !== "\"\"") { fail("NumberStat decoration/units not yet lowered"); }
-            let formatted: Record<string, unknown> = {source: field(args[3], "source") + " + presentation.formatNumber(" + field(args[2], "source") + ", " + field(args[8], "source") + ") + " + field(args[4], "source")};
-            return "ui.Metric(label: " + prop(args[1], "string") + ", value: " + prop(formatted, "string") + ")\n";
-        }
-        if (component === "Stat") {
-            if (args.length !== 5 || field(args[3], "source") !== "\"\"" || (field(args[4], "source") !== "\"chart\"" && field(args[4], "source") !== "\"clock\"")) { fail("Stat decoration not yet lowered"); }
-            return "ui.Metric(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "string") + ")\n";
-        }
-        if (component === "Text") { return "ui.Text(value: " + prop(args[1], "string") + ")\n"; }
-        if (component === "TextField") {
-            if (args.length > 4 && field(args[4], "source") !== "\"number\"") { fail("TextField validation not yet lowered"); }
-            return "ui.TextField(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "string") + ", onChange: " + event(args[3], "string", "") + ")\n";
-        }
-        if (component === "TimeField") {
-            if (args.length !== 4) { fail("Expected TimeField style, label, value and handler"); }
-            return "ui.TimeField(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "number") + ", onChange: " + event(args[3], "number", "") + ")\n";
-        }
-        if (component === "NumberField") { return "ui.IntField(label: " + prop(args[1], "string") + ", value: " + prop(args[2], "number") + ", minimum: " + prop(args[3], "number") + ", maximum: " + prop(args[4], "number") + ", onChange: " + event(args[5], "number", "") + ")\n"; }
-        if (component === "Button") { return "ui.Button(text: " + prop(args[1], "string") + ", enabled: " + prop(args[4], "boolean") + ", onClick: " + event(args[2], "number", field(args[3], "source")) + ")\n"; }
-        fail("Component not yet lowered: " + component); return "";
-    };
-    let walk: (body: Record<string, unknown>) => string = function(body: Record<string, unknown>): string { fail("Uninitialized statement lowering"); return ""; };
-    walk = function(body: Record<string, unknown>): string {
-        let out: string = "";
-        for (let statement of records(body, "statements")) {
-            let kind: string = field(statement, "kind");
-            if (kind === "Block") { out = out + walk(statement); }
-            else if (kind === "ExpressionStatement") {
-                let expression: Record<string, unknown> = statement.expression as Record<string, unknown>;
-                if (field(expression, "kind") !== "CallExpr") { fail("View statement not yet lowered"); }
-                let callee: Record<string, unknown> = expression.callee as Record<string, unknown>;
-                if (field(callee, "source") !== "sections.push") { fail("View mutation not yet lowered: " + field(callee, "source")); }
-                let args: Record<string, unknown>[] = records(expression, "args"); if (args.length !== 1) { fail("Expected one section per append"); } out = out + render(args[0]);
-            } else if (kind === "VariableDeclaration") {
-                if (!str.startsWith(decode.trim(field(statement, "source")), "let sections:")) { prologue = prologue + field(statement, "source") + "\n"; }
-            } else if (kind === "ReturnStatement") {
-                let expression: Record<string, unknown> = statement.expression as Record<string, unknown>;
-                if (field(expression, "kind") !== "CallExpr" || field(expression.callee as Record<string, unknown>, "source") !== "ui.AppTheme") { fail("Expected AppTheme root"); }
-                let args: Record<string, unknown>[] = records(expression, "args"); if (args.length !== 3 || field(args[2], "source") !== "sections") { fail("AppTheme children not yet lowered"); }
-                if (field(args[0], "source") !== "\"clean\"" || field(args[1], "source") !== "\"\"") { fail("AppTheme variant not yet lowered"); }
-            } else { fail("View control flow not yet lowered: " + kind); }
-        } return out;
-    };
-    let tree: string = walk((view as Record<string, unknown>).body as Record<string, unknown>);
-    let actionAt: number = 0;
+    let lowered: views.Result = views.lower((view as Record<string, unknown>).body as Record<string, unknown>, functions);
+    let actions: views.Action[] = lowered.actions; let actionAt: number = 0;
     while (actionAt < actions.length) {
-        let action: Action = actions[actionAt]; actionAt = actionAt + 1;
-        for (let call of calls) {
-            if (call.function !== action.handler) { continue; }
-            let chained: boolean = false; for (let next of calls) { if (next.function === call.answer) { chained = true; } }
-            if (!chained) { continue; }
+        let action: views.Action = actions[actionAt]; actionAt = actionAt + 1;
+        for (let call of calls) { if (call.function !== action.handler) { continue; } let chained: boolean = false; for (let next of calls) { if (next.function === call.answer) { chained = true; } } if (!chained) { continue; }
             let exists: boolean = false; for (let next of actions) { if (next.completion !== undefined && next.handler === call.answer) { exists = true; } }
             if (!exists) { actions[actions.length] = {name: "Action" + literals.decimal(actions.length), handler: call.answer, type: "string", argument: "", completion: true, channel: call.channel}; }
         }
     }
-    let fields: string = ""; let values: string[] = ["app: state"]; let channels: string[] = [];
-    for (let call of calls) {
-        if (decode.includes(channels, call.channel)) { continue; } channels[channels.length] = call.channel;
+    let fields: string = ""; let values: string[] = ["app: state"]; let channels: string[] = []; let prologue: string = lowered.prologue;
+    for (let call of calls) { if (decode.includes(channels, call.channel)) { continue; } channels[channels.length] = call.channel;
         fields = fields + "sdkVersion" + call.channel + ": number; sdkState" + call.channel + ": AppState;\n";
         prologue = prologue + "let sdkVersion" + call.channel + ": number = 0; let sdkState" + call.channel + ": AppState = state;\nif (previous !== null) { sdkVersion" + call.channel + " = previous.sdkVersion" + call.channel + "; sdkState" + call.channel + " = previous.sdkState" + call.channel + "; }\n";
-        values[values.length] = "sdkVersion" + call.channel + ": sdkVersion" + call.channel;
-        values[values.length] = "sdkState" + call.channel + ": sdkState" + call.channel;
+        values[values.length] = "sdkVersion" + call.channel + ": sdkVersion" + call.channel; values[values.length] = "sdkState" + call.channel + ": sdkState" + call.channel;
     }
-    for (let property of properties) { fields = fields + property.name + ": " + property.type + ";\n"; values[values.length] = property.name + ": " + property.expression; }
-    logic = imports + "import * as json from \"std/json\";\nimport * as strings from \"./portable-presentation\";\nimport * as presentation from \"./portable-presentation\";\n" + logic + "export class PortableState { app: AppState;\n" + fields + "}\nfunction project(state: AppState, previous: PortableState | null): PortableState {\n" + prologue + "return {" + join(values, ", ") + "};\n}\nexport function initialState(): PortableState { return project(init(), null); }\n";
+    for (let property of lowered.properties) { fields = fields + property.name + ": " + property.type + ";\n"; values[values.length] = property.name + ": " + property.expression; }
+    logic = imports + "import * as json from \"std/json\";\nimport * as strings from \"./portable-presentation\";\nimport * as presentation from \"./portable-presentation\";\n" + logic + lowered.classes + "export class PortableState { app: AppState;\n" + fields + "}\nfunction project(state: AppState, previous: PortableState | null): PortableState {\n" + prologue + "return {" + join(values, ", ") + "};\n}\nexport function initialState(): PortableState { return project(init(), null); }\n";
     for (let action of actions) {
-        let fields: string = "value: " + action.type + ";"; let argument: string = "action.value";
-        let update: string = "return project(" + action.handler + "(state.app, " + argument + "), state);";
-        for (let call of calls) { if (call.function === action.handler) {
-            let increment: string = " + 1"; if (action.completion !== undefined) { increment = ""; }
-            update = "let next: PortableState = project(" + action.handler + "(state.app, " + argument + "), state); next.sdkVersion" + call.channel + " = state.sdkVersion" + call.channel + increment + "; next.sdkState" + call.channel + " = state.app; return next;";
-        } }
+        let fields: string = "value: " + action.type + ";"; let update: string = "return project(" + action.handler + "(state.app, action.value), state);";
+        for (let call of calls) { if (call.function === action.handler) { let increment: string = " + 1"; if (action.completion !== undefined) { increment = ""; } update = "let next: PortableState = project(" + action.handler + "(state.app, action.value), state); next.sdkVersion" + call.channel + " = state.sdkVersion" + call.channel + increment + "; next.sdkState" + call.channel + " = state.app; return next;"; } }
         if (action.completion !== undefined) { fields = fields + "version: number;"; update = "if (action.version !== state.sdkVersion" + (action.channel as string) + ") { return state; } " + update; }
         logic = logic + "export class " + action.name + " {" + fields + "}\n// @ui-update\nexport function update" + action.name + "(state: PortableState, action: " + action.name + "): PortableState { " + update + " }\n";
     }
-    for (let action of actions) {
-        for (let call of calls) {
-            if (call.function !== action.handler) { continue; }
-            if (!Object.hasOwn(functions, call.answer)) { fail("Unknown SDK answer handler: " + call.answer); }
-            let answer: Record<string, unknown> = functions[call.answer] as Record<string, unknown>;
-            let params: Record<string, unknown>[] = records(answer, "parameters");
-            if (params.length !== 2 || field(params[0], "type") !== "AppState" || field(params[1], "type") !== "string" || field(answer, "result") !== "AppState") { fail("SDK answer signature not yet lowered"); }
-            let done: string = action.name + "Done"; let chain: boolean = false;
-            for (let next of actions) { if (next.completion !== undefined && next.handler === call.answer) { done = next.name; chain = true; } }
-            if (!chain) { logic = logic + "export class " + done + " { value: string; version: number; }\n"; }
-            let guard: string = "";
-            if (action.completion !== undefined) { guard = "if (action.version !== current.sdkVersion" + call.channel + ") { return {value: \"\", version: -1}; }\n"; }
-            logic = logic + "// @ui-effect\nexport async function effect" + action.name + "(current: PortableState, action: " + action.name + "): Promise<" + done + "> {\n" + guard + "let state: AppState = current.sdkState" + call.channel + "; let value: " + action.type + " = action.value;\ntry { let result = await " + call.target + "(" + call.args + "); return {value: json.stringify(result) as string, version: current.sdkVersion" + call.channel + "}; } catch (caught) { let error: Error = caught as Error; return {value: \"error: \" + error.code + \": \" + error.message, version: current.sdkVersion" + call.channel + "}; }\n}\n";
-            if (!chain) { logic = logic + "// @ui-update\nexport function finish" + action.name + "(state: PortableState, action: " + done + "): PortableState { if (action.version !== state.sdkVersion" + call.channel + ") { return state; } return project(" + call.answer + "(state.app, action.value), state); }\n"; }
-        }
-    }
-    // Nested SDK calls or non-action entry points must never disappear silently.
+    for (let action of actions) { for (let call of calls) {
+        if (call.function !== action.handler) { continue; } if (!Object.hasOwn(functions, call.answer)) { fail("Unknown SDK answer handler: " + call.answer); }
+        let answer: Record<string, unknown> = functions[call.answer] as Record<string, unknown>; let params: Record<string, unknown>[] = records(answer, "parameters");
+        if (params.length !== 2 || field(params[0], "type") !== "AppState" || field(params[1], "type") !== "string" || field(answer, "result") !== "AppState") { fail("SDK answer signature not yet lowered"); }
+        let done: string = action.name + "Done"; let chain: boolean = false; for (let next of actions) { if (next.completion !== undefined && next.handler === call.answer) { done = next.name; chain = true; } }
+        if (!chain) { logic = logic + "export class " + done + " { value: string; version: number; }\n"; }
+        let guard: string = ""; if (action.completion !== undefined) { guard = "if (action.version !== current.sdkVersion" + call.channel + ") { return {value: \"\", version: -1}; }\n"; }
+        logic = logic + "// @ui-effect\nexport async function effect" + action.name + "(current: PortableState, action: " + action.name + "): Promise<" + done + "> {\n" + guard + "let state: AppState = current.sdkState" + call.channel + "; let value: " + action.type + " = action.value;\ntry { let result = await " + call.target + "(" + call.args + "); return {value: json.stringify(result) as string, version: current.sdkVersion" + call.channel + "}; } catch (caught) { let error: Error = caught as Error; return {value: \"error: \" + error.code + \": \" + error.message, version: current.sdkVersion" + call.channel + "}; }\n}\n";
+        if (!chain) { logic = logic + "// @ui-update\nexport function finish" + action.name + "(state: PortableState, action: " + done + "): PortableState { if (action.version !== state.sdkVersion" + call.channel + ") { return state; } return project(" + call.answer + "(state.app, action.value), state); }\n"; }
+    } }
     for (let call of calls) { let reached: boolean = false; for (let action of actions) { if (action.handler === call.function) { reached = true; } } if (!reached) { fail("SDK handler has no supported action entry"); } }
     let handlers: unknown[] = [];
     for (let declaration of declarations) {
-        if (field(declaration, "kind") !== "FunctionDeclaration") { continue; }
-        let params: Record<string, unknown>[] = records(declaration, "parameters");
+        if (field(declaration, "kind") !== "FunctionDeclaration") { continue; } let params: Record<string, unknown>[] = records(declaration, "parameters");
         if (params.length !== 2 || field(params[0], "type") !== "AppState" || field(declaration, "result") !== "AppState") { continue; }
-        let type: string = field(params[1], "type"); if (type !== "number" && type !== "string" && type !== "boolean") { continue; }
-        let wrapper: string = "portableHandler" + literals.decimal(handlers.length);
-        handlers[handlers.length] = {name: field(declaration, "name"), kind: type, wrapper: wrapper};
+        let type: string = field(params[1], "type"); if (!decode.includes(["number", "string", "boolean"], type)) { continue; }
+        let wrapper: string = "portableHandler" + literals.decimal(handlers.length); handlers[handlers.length] = {name: field(declaration, "name"), kind: type, wrapper: wrapper};
         logic = logic + "export function " + wrapper + "(state: PortableState, value: " + type + "): PortableState { return project(" + field(declaration, "name") + "(state.app, value), state); }\n";
     }
     logic = logic + "export function portableHandlers(): string { return " + literals.quote(json.stringify(handlers) as string) + "; }\nexport function main(): null { return null; }\n";
-    return {deal: logic, dealui: "import * as app from \"./experience\";\nimport * as ui from \"./platform.dealui-pack\";\n// @ui-root\nexport view Experience(state: app.PortableState): View { ui.Column() {\n" + tree + "}\n}\n"};
+    return {deal: logic, dealui: "import * as app from \"./experience\";\nimport * as ui from \"./platform.dealui-pack\";\n// @ui-root\nexport view Experience(state: app.PortableState): View { ui.Column() {\n" + lowered.tree + "}\n}\n"};
 }
 export function main(): null { return null; }

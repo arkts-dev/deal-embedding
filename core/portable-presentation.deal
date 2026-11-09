@@ -59,4 +59,6 @@ export function durationToString(seconds: number): string {
     let tail: string = ":" + two(numbers.remainder(value, 60));
     if (hours === 0) { return numbers.numberText(minutes) + tail; } return numbers.numberText(hours) + ":" + two(minutes) + tail;
 }
+export function length(value: unknown): number { return numbers.referenceLength(value); }
+export function contains(value: string, part: string): boolean { return numbers.contains(value, part); }
 export function main(): null { return null; }

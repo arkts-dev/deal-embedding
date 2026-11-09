@@ -41,7 +41,7 @@ internal class PortableRequestBackend(
                 case 'matches': {const m=v.match(new RegExp(input.pattern,input.flags)); return JSON.stringify({values:m||[]});}
                 case 'replace': return v.replace(new RegExp(input.pattern,input.flags),input.replacement);
                 case 'fixed': return v.toFixed(input.places);
-                case 'numberOf': return JSON.stringify({value:Number(v)});
+                case 'numberOf': { const n=Number(v); return JSON.stringify({value:Number.isFinite(n)?n:0,special:Object.is(n,-0)?'-0':Number.isFinite(n)?'':String(n)}); }
                 case 'power': return JSON.stringify({value:Math.pow(input.a,input.b)});
                 case 'remainder': return JSON.stringify({value:input.a%input.b});
                 case 'groups': return JSON.stringify({values:[...v.matchAll(new RegExp(input.pattern,'g'))].map(m=>Array.from(m,x=>x===undefined?'':x))});
@@ -59,6 +59,12 @@ internal class PortableRequestBackend(
             compileCount++
             try {
                 val source = input.getString("source")
+                val syntax=JSONObject(PortableBackendBridge.syntax(source))
+                if(syntax.getString("diagnostics").isNotEmpty()) {
+                    val diagnostics=JSONArray();val locations=syntax.getJSONArray("locations")
+                    for(i in 0 until locations.length()) { val item=locations.getJSONObject(i); diagnostics.put(JSONObject().put("stage","parser").put("code","PORTABLE_SYNTAX").put("message",item.getString("message")).put("file","portable-source.deal").put("line",item.getInt("line")).put("column",0)) }
+                    throw CandidateRejected(diagnostics.toString())
+                }
                 val unread = JSONObject(PortableBackendBridge.unread(source)).getJSONArray("fields")
                 val output = compiler.compilePortableValidation(source)
                 val identity = "program-${++sequence}"; outputs[identity] = output

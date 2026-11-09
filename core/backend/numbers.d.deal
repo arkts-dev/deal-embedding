@@ -3,3 +3,6 @@ export function parseDecimal(value: string): number;
 export function fixed(value: number, places: number): string;
 export function numberText(value: number): string;
 export function remainder(value: number, divisor: number): number;
+// Reference length: UTF-16 strings or checked array carriers only.
+export function referenceLength(value: unknown): number;
+export function contains(value: string, part: string): boolean;

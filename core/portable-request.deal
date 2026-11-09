@@ -42,7 +42,7 @@ export async function build(input: string, owner: string): Promise<string> {
     let disclosed: unknown[] = decode.arrayOrEmpty(raw.capabilities);
     let lookup: () => string = function(): string { return capabilities.lookup(disclosed); };
     let planning: identities.Planning = identities.planning(); let budget: writer.Budget = writer.createBudget();
-    let checkingTools: checking.Mechanisms = {compile: compile, smoke: smoke, play: play, numberText: numberText, numberOf: function(text: string): number { return json.parse(invoke("numberOf", {value: text})).value as number; }};
+    let checkingTools: checking.Mechanisms = {compile: compile, smoke: smoke, play: play, numberText: numberText, numberOf: function(text: string): number { let raw: Record<string, unknown> = json.parse(invoke("numberOf", {value: text})); let special: string = decode.stringField(raw, "special", ""); if (special === "-0") { return -0; } if (special === "NaN") { return 0 / 0; } if (special === "Infinity") { return 1 / 0; } if (special === "-Infinity") { return -1 / 0; } return raw.value as number; }};
     let settlementTools: settlement.Mechanisms = {compile: function(source: string): settlement.Compiled { let checked: checking.Compiled = compile(source); return {identity: checked.identity, diagnostics: checked.diagnostics}; }, smoke: smoke, now: now, numberText: numberText};
     let host: agent.Host = {askJev: askJev, ask: async function(question: person.Question): Promise<unknown> { return json.parse(invoke("question", {question: question})).value; },
         cancelled: cancelled, status: status, preview: function(identity: string): void { invoke("preview", {identity: identity}); },

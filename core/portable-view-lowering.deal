@@ -1,0 +1,163 @@
+import * as str from "std/string";
+import * as decode from "./plan-decoding";
+import * as literals from "./source-literals";
+
+// Project reference view construction to typed data and ordinary Deal UI nodes.
+// No host-side view interpreter or request-specific component policy.
+export class Property { name: string; type: string; expression: string; }
+export class Action { name: string; handler: string; type: string; argument: string; completion?: boolean; channel?: string; }
+export class Result { properties: Property[]; actions: Action[]; prologue: string; tree: string; classes: string; }
+class List { name: string; row: string; properties: Property[]; variants: string[]; supplied: string[][]; }
+function fail(message: string): void { throw {code: "PORTABLE_UNSUPPORTED", message: message}; }
+function field(node: Record<string, unknown>, key: string): string { return node[key] as string; }
+function records(node: Record<string, unknown>, key: string): Record<string, unknown>[] {
+    let out: Record<string, unknown>[] = []; for (let item of (node[key] as unknown[])) { out[out.length] = item as Record<string, unknown>; } return out;
+}
+function join(values: string[]): string { let out: string = ""; for (let value of values) { if (out !== "") { out = out + ", "; } out = out + value; } return out; }
+export function lower(body: Record<string, unknown>, functions: Record<string, unknown>): Result {
+    let result: Result = {properties: [], actions: [], prologue: "", tree: "", classes: ""};
+    let lists: List[] = []; let active: List | null = null; let captured: Property[] = []; let assignments: string = ""; let declarations: string = "";
+    let property: (expression: Record<string, unknown>, type: string) => string = function(expression: Record<string, unknown>, type: string): string {
+        if (active !== null) {
+            let list: List = active as List; let name: string = "p" + literals.decimal(list.properties.length);
+            let value: Property = {name: name, type: type, expression: field(expression, "source")};
+            list.properties[list.properties.length] = value; captured[captured.length] = value; return "row." + name;
+        }
+        let name: string = "property" + literals.decimal(result.properties.length);
+        result.properties[result.properties.length] = {name: name, type: type, expression: name};
+        let initial: string = "0"; if (type === "string") { initial = "\"\""; } if (type === "boolean") { initial = "false"; }
+        declarations = declarations + "let " + name + ": " + type + " = " + initial + ";\n";
+        assignments = assignments + name + " = " + field(expression, "source") + ";\n"; return "state." + name;
+    };
+    let event: (expression: Record<string, unknown>, type: string, argument: string) => string = function(expression: Record<string, unknown>, type: string, argument: string): string {
+        if (!Object.hasOwn(expression, "text")) { fail("Handler must be a literal issued function name"); }
+        let handler: string = field(expression, "text"); if (!Object.hasOwn(functions, handler)) { fail("Unknown handler: " + handler); }
+        let fn: Record<string, unknown> = functions[handler] as Record<string, unknown>; let params: Record<string, unknown>[] = records(fn, "parameters");
+        if (params.length !== 2 || field(params[0], "type") !== "AppState" || field(params[1], "type") !== type || field(fn, "result") !== "AppState") { fail("Handler signature not yet lowered: " + handler); }
+        let name: string = "Action" + literals.decimal(result.actions.length); let value: string = "payload";
+        if (argument !== "") { let expression: Record<string, unknown> = {source: argument}; value = property(expression, type); }
+        result.actions[result.actions.length] = {name: name, handler: handler, type: type, argument: value};
+        return "action app." + name + " {value: " + value + "}";
+    };
+    let render: (expression: Record<string, unknown>) => string = function(expression: Record<string, unknown>): string { fail("Uninitialized view lowering"); return ""; };
+    let children: (expression: Record<string, unknown>) => string = function(expression: Record<string, unknown>): string {
+        if (field(expression, "kind") === "ArrayLiteralExpr") { let out: string = ""; for (let child of records(expression, "items")) { out = out + render(child); } return out; }
+        for (let list of lists) { if (list.name === field(expression, "source")) { assignments = assignments + "data" + list.row + " = " + list.name + ";\n"; return "@@LIST_" + list.row + "@@"; } }
+        fail("Component children must be an issued view array"); return "";
+    };
+    render = function(expression: Record<string, unknown>): string {
+        if (field(expression, "kind") !== "CallExpr") { fail("View expression not yet lowered: " + field(expression, "source")); }
+        let callee: Record<string, unknown> = expression.callee as Record<string, unknown>;
+        if (field(callee, "kind") !== "MemberAccessExpr" || field(callee.object as Record<string, unknown>, "source") !== "ui") { fail("Expected a ui component call"); }
+        let component: string = field(callee, "field"); let args: Record<string, unknown>[] = records(expression, "args");
+        if (component === "When") { if (args.length !== 2) { fail("Expected condition and child"); } return "When(" + property(args[0], "boolean") + ") {\n" + render(args[1]) + "}\n"; }
+        if (args.length === 0) { fail("Missing component arguments: " + component); }
+        let style: string = field(args[0], "source");
+        if (!decode.includes(["\"default\"", "\"content\"", "\"summary\"", "\"primary\"", "\"secondary\"", "\"supporting\"", "\"warning\"", "\"end\"", "\"spread\""], style)) { fail("Component style not yet lowered: " + component + " " + style); }
+        if (component === "Header") {
+            if (args.length !== 5 || field(args[4], "source") !== "\"\"") { fail("Header icon not yet lowered"); }
+            return "ui.Heading(value: " + property(args[1], "string") + ")\nui.Caption(value: " + property(args[2], "string") + ")\nui.Text(value: " + property(args[3], "string") + ")\n";
+        }
+        if (component === "Section") { return "ui.Section(title: " + property(args[1], "string") + ", summary: " + property(args[2], "string") + ") {\n" + children(args[3]) + "}\n"; }
+        if (component === "Column" || component === "ActionBar") { return "ui.Column() {\n" + children(args[1]) + "}\n"; }
+        if (component === "ListGroup") { if (args.length !== 3 || field(args[1], "source") !== "\"\"") { fail("ListGroup title not yet lowered"); } return "ui.Column() {\n" + children(args[2]) + "}\n"; }
+        if (component === "MetricGroup" || component === "KeyValueGroup") {
+            if (args.length !== 3) { fail("Expected MetricGroup style, column count and children"); }
+            let columns: string = field(args[1], "source"); if (!decode.includes(["1", "2", "3"], columns)) { fail("MetricGroup column count not yet lowered: " + columns); }
+            let name: string = "ui.MetricGroup"; if (columns === "1") { name = "ui.Column"; } return name + "() {\n" + children(args[2]) + "}\n";
+        }
+        if (component === "KeyValueItem") { if (args.length !== 4 || field(args[3], "source") !== "\"\"") { fail("KeyValueItem decoration not yet lowered"); } return "ui.Metric(label: " + property(args[1], "string") + ", value: " + property(args[2], "string") + ")\n"; }
+        if (component === "NumberStat") {
+            if ((args.length !== 8 && args.length !== 9) || field(args[5], "source") !== "1" || field(args[6], "source") !== "\"\"" || !decode.includes(["\"chart\"", "\"clock\"", "\"check\"", "\"list\""], field(args[7], "source"))) { fail("NumberStat decoration/units not yet lowered"); }
+            let decimals: string = "-1"; if (args.length === 9) { decimals = field(args[8], "source"); }
+            let formatted: Record<string, unknown> = {source: field(args[3], "source") + " + presentation.formatNumber(" + field(args[2], "source") + ", " + decimals + ") + " + field(args[4], "source")};
+            return "ui.Metric(label: " + property(args[1], "string") + ", value: " + property(formatted, "string") + ")\n";
+        }
+        if (component === "Stat") {
+            if (args.length !== 5 || field(args[3], "source") !== "\"\"" || !decode.includes(["\"chart\"", "\"clock\""], field(args[4], "source"))) { fail("Stat decoration not yet lowered"); }
+            return "ui.Metric(label: " + property(args[1], "string") + ", value: " + property(args[2], "string") + ")\n";
+        }
+        if (component === "ListItem") {
+            if (args.length !== 8) { fail("ListItem signature not yet lowered"); }
+            let out: string = "ui.Item(title: " + property(args[1], "string") + ", detail: " + property(args[2], "string") + ", trailing: " + property(args[3], "string") + ", meta: " + property(args[7], "string") + ") {\n";
+            if (field(args[4], "source") !== "\"\"") { out = out + "ui.Button(text: " + property(args[1], "string") + ", enabled: " + property(args[6], "boolean") + ", onClick: " + event(args[4], "number", field(args[5], "source")) + ")\n"; }
+            else if (field(args[6], "source") !== "false") { fail("ListItem enabled without handler"); }
+            return out + "}\n";
+        }
+        if (component === "EmptyState") {
+            if (args.length !== 6 || field(args[3], "source") !== "\"\"" || field(args[4], "source") !== "\"\"") { fail("EmptyState action not yet lowered"); }
+            return "ui.Heading(value: " + property(args[1], "string") + ")\nui.Text(value: " + property(args[2], "string") + ")\n";
+        }
+        if (component === "InsetBanner") {
+            if (args.length !== 6 || field(args[3], "source") !== "\"\"" || field(args[4], "source") !== "\"\"") { fail("InsetBanner action not yet lowered"); }
+            return "ui.Heading(value: " + property(args[1], "string") + ")\nui.Notice(text: " + property(args[2], "string") + ", tone: " + property(args[0], "string") + ")\n";
+        }
+        if (component === "Text") { return "ui.Text(value: " + property(args[1], "string") + ")\n"; }
+        if (component === "TextField") { if (args.length > 4 && field(args[4], "source") !== "\"number\"") { fail("TextField validation not yet lowered"); } return "ui.TextField(label: " + property(args[1], "string") + ", value: " + property(args[2], "string") + ", onChange: " + event(args[3], "string", "") + ")\n"; }
+        if (component === "TimeField") { if (args.length !== 4) { fail("Expected TimeField style, label, value and handler"); } return "ui.TimeField(label: " + property(args[1], "string") + ", value: " + property(args[2], "number") + ", onChange: " + event(args[3], "number", "") + ")\n"; }
+        if (component === "NumberField") { return "ui.IntField(label: " + property(args[1], "string") + ", value: " + property(args[2], "number") + ", minimum: " + property(args[3], "number") + ", maximum: " + property(args[4], "number") + ", onChange: " + event(args[5], "number", "") + ")\n"; }
+        if (component === "Button") { return "ui.Button(text: " + property(args[1], "string") + ", enabled: " + property(args[4], "boolean") + ", onClick: " + event(args[2], "number", field(args[3], "source")) + ")\n"; }
+        fail("Component not yet lowered: " + component); return "";
+    };
+    let walk: (node: Record<string, unknown>) => string = function(node: Record<string, unknown>): string {
+        let out: string = ""; let pending: Record<string, unknown>[] = []; let size: number = 0; let conditional: number = 0;
+        let pushBlock: (block: Record<string, unknown>, suffix: string) => void = function(block: Record<string, unknown>, suffix: string): void {
+            pending[size] = {kind: "Close", source: suffix}; size = size + 1; let statements: Record<string, unknown>[] = records(block, "statements"); let at: number = statements.length;
+            while (at > 0) { at = at - 1; pending[size] = statements[at]; size = size + 1; }
+        };
+        pushBlock(node, "");
+        while (size > 0) {
+            size = size - 1; let statement: Record<string, unknown> = pending[size];
+            let kind: string = field(statement, "kind");
+            if (kind === "Close") { out = out + field(statement, "source"); if (Object.hasOwn(statement, "conditional")) { conditional = conditional - 1; } }
+            else if (kind === "Block") { out = out + "{\n"; pushBlock(statement, "}\n"); }
+            else if (kind === "VariableDeclaration") {
+                let name: string = field(statement, "name"); let type: string = field(statement, "type");
+                if (type === "ui.View[]") {
+                    if (field(statement.expression as Record<string, unknown>, "source") !== "[]") { fail("View arrays must start empty"); }
+                    if (name !== "sections") { for (let prior of lists) { if (prior.name === name) { fail("Shadowed view array not yet lowered: " + name); } } let row: string = "PortableRow" + literals.decimal(lists.length); lists[lists.length] = {name: name, row: row, properties: [], variants: [], supplied: []}; declarations = declarations + "let data" + row + ": " + row + "[] = [];\n"; out = out + "let " + name + ": " + row + "[] = [];\n"; }
+                } else { out = out + field(statement, "source") + "\n"; }
+            } else if (kind === "IfStatement") {
+                conditional = conditional + 1; pending[size] = {kind: "Close", source: "", conditional: true}; size = size + 1;
+                out = out + "if (" + field(statement.condition as Record<string, unknown>, "source") + ") {\n";
+                if (Object.hasOwn(statement, "else")) { let other: Record<string, unknown> = statement.else as Record<string, unknown>; if (field(other, "kind") !== "Block") { fail("View else-if not yet lowered"); } pushBlock(other, "}\n"); pending[size] = {kind: "Close", source: "else {\n"}; size = size + 1; }
+                pushBlock(statement.then as Record<string, unknown>, "}\n");
+            } else if (kind === "WhileStatement") { conditional = conditional + 1; pending[size] = {kind: "Close", source: "", conditional: true}; size = size + 1; out = out + "while (" + field(statement.condition as Record<string, unknown>, "source") + ") {\n"; pushBlock(statement.body as Record<string, unknown>, "}\n"); }
+            else if (kind === "ExpressionStatement") {
+                let expression: Record<string, unknown> = statement.expression as Record<string, unknown>;
+                if (field(expression, "kind") !== "CallExpr") { out = out + field(statement, "source") + "\n"; continue; }
+                let callee: Record<string, unknown> = expression.callee as Record<string, unknown>; let target: string = field(callee, "source");
+                if (target === "sections.push") { if (conditional > 0) { fail("Conditional section construction requires an explicit When"); } assignments = ""; result.tree = result.tree + render(records(expression, "args")[0]); out = out + assignments; assignments = ""; }
+                else {
+                    let found: boolean = false;
+                    for (let list of lists) { if (target === list.name + ".push") {
+                        active = list; captured = []; let variant: number = list.variants.length;
+                        list.variants[list.variants.length] = render(records(expression, "args")[0]); active = null;
+                        let supplied: string[] = []; let names: string[] = []; for (let value of captured) { supplied[supplied.length] = value.name + ": " + value.expression; names[names.length] = value.name; } list.supplied[list.supplied.length] = names;
+                        out = out + list.name + "[" + list.name + ".length] = {id: " + list.name + ".length, tag: " + literals.decimal(variant) + ", " + join(supplied) + "@@DEFAULT_" + list.row + "_" + literals.decimal(variant) + "@@};\n"; found = true;
+                    } }
+                    if (!found) { out = out + field(statement, "source") + "\n"; }
+                }
+            } else if (kind === "ReturnStatement") {
+                let expression: Record<string, unknown> = statement.expression as Record<string, unknown>;
+                if (field(expression, "kind") !== "CallExpr" || field(expression.callee as Record<string, unknown>, "source") !== "ui.AppTheme") { fail("Expected AppTheme root"); }
+                let args: Record<string, unknown>[] = records(expression, "args");
+                if (args.length !== 3 || field(args[2], "source") !== "sections" || field(args[0], "source") !== "\"clean\"" || field(args[1], "source") !== "\"\"") { fail("AppTheme variant not yet lowered"); }
+            } else { fail("View control flow not yet lowered: " + kind); }
+        } return out;
+    };
+    result.prologue = walk(body); result.prologue = declarations + result.prologue;
+    for (let list of lists) {
+        result.classes = result.classes + "export class " + list.row + " { id: number; tag: number;\n";
+        for (let prop of list.properties) { result.classes = result.classes + prop.name + ": " + prop.type + ";\n"; }
+        result.classes = result.classes + "}\n";
+        let rendered: string = "ForEach(state.data" + list.row + ", row: app." + list.row + ", key: row.id) {\n"; let at: number = 0;
+        for (let variant of list.variants) { rendered = rendered + "When(row.tag === " + literals.decimal(at) + ") {\n" + variant + "}\n";
+            let defaults: string = ""; for (let prop of list.properties) { if (!decode.includes(list.supplied[at], prop.name)) { let initial: string = "0"; if (prop.type === "string") { initial = "\"\""; } if (prop.type === "boolean") { initial = "false"; } defaults = defaults + ", " + prop.name + ": " + initial; } }
+            result.prologue = str.replace(result.prologue, "@@DEFAULT_" + list.row + "_" + literals.decimal(at) + "@@", defaults); at = at + 1;
+        }
+        rendered = rendered + "}\n"; result.tree = str.replace(result.tree, "@@LIST_" + list.row + "@@", rendered);
+        result.properties[result.properties.length] = {name: "data" + list.row, type: list.row + "[]", expression: "data" + list.row};
+    }
+    return result;
+}

@@ -17,8 +17,12 @@ public final class PortableSyntax {
         int end=source.offsetByCodePoints(0,span.endScalarOffset());
         return source.substring(start,end);
     }
+    private static String type(TypeNode node, String source) {
+        if (node instanceof ArrayType a) return type(a.elementType(), source)+"[]";
+        return slice(source,node.span());
+    }
     private static Object expression(ExpressionNode node, String source) {
-        var out=object("kind",node.getClass().getSimpleName(),"source",slice(source,node.span()));
+        var out=object("kind",node.getClass().getSimpleName(),"source",slice(source,node.span()),"start",node.span().startScalarOffset(),"end",node.span().endScalarOffset());
         if(node instanceof CallExpr c) {out.put("callee",expression(c.callee(),source));out.put("args",c.args().stream().map(v->expression(v,source)).toList());}
         else if(node instanceof MemberAccessExpr m){out.put("object",expression(m.object(),source));out.put("field",m.field());}
         else if(node instanceof IdentifierExpr i)out.put("name",i.name());
@@ -38,14 +42,14 @@ public final class PortableSyntax {
         return out;
     }
     private static Object statement(StatementNode node,String source) {
-        var out=object("kind",node.getClass().getSimpleName(),"source",slice(source,node.span()));
+        var out=object("kind",node.getClass().getSimpleName(),"source",slice(source,node.span()),"start",node.span().startScalarOffset(),"end",node.span().endScalarOffset());
         if(node instanceof Block b)out.put("statements",b.statements().stream().map(v->statement(v,source)).toList());
-        else if(node instanceof ExpressionStatement e)out.put("expression",expression(e.expr(),source));
+        else if(node instanceof ExpressionStatement e){out.put("expression",expression(e.expr(),source));out.put("source",slice(source,e.expr().span())+";");}
         else if(node instanceof ReturnStatement r)r.expr().ifPresent(e->{out.put("expression",expression(e,source));out.put("source","return "+slice(source,e.span())+";");});
-        else if(node instanceof VariableDeclaration v){out.put("source","let "+v.name()+v.typeAnnotation().map(t->": "+slice(source,t.span())).orElse("")+" = "+slice(source,v.initializer().span())+";");out.put("expression",expression(v.initializer(),source));}
+        else if(node instanceof VariableDeclaration v){out.put("source","let "+v.name()+v.typeAnnotation().map(t->": "+type(t,source)).orElse("")+" = "+slice(source,v.initializer().span())+";");out.put("name",v.name());out.put("type",v.typeAnnotation().map(t->type(t,source)).orElse(""));out.put("expression",expression(v.initializer(),source));}
         else if(node instanceof IfStatement i){out.put("condition",expression(i.condition(),source));out.put("then",statement(i.thenBlock(),source));i.elseBranch().ifPresent(v->{if(v instanceof Either.Left<IfStatement,Block> l)out.put("else",statement(l.value(),source));else if(v instanceof Either.Right<IfStatement,Block> r)out.put("else",statement(r.value(),source));});}
         else if(node instanceof WhileStatement w){out.put("condition",expression(w.condition(),source));out.put("body",statement(w.body(),source));}
-        else if(node instanceof ForOfStatement f){out.put("expression",expression(f.iterable(),source));out.put("body",statement(f.body(),source));}
+        else if(node instanceof ForOfStatement f){out.put("name",f.varName());out.put("expression",expression(f.iterable(),source));out.put("body",statement(f.body(),source));}
         else if(node instanceof TryStatement t){out.put("body",statement(t.tryBlock(),source));out.put("catch",statement(t.catchBlock(),source));}
         else if(node instanceof ThrowStatement t)out.put("expression",expression(t.expr(),source));
         else if(node instanceof DeleteStatement d)out.put("expression",expression(d.target(),source));
@@ -103,8 +107,8 @@ public final class PortableSyntax {
             var node=item instanceof ExportDeclaration e?e.declaration():item;
             var out=object("kind",node.getClass().getSimpleName(),"source",slice(source,node.span()));
             if(node instanceof ImportDeclaration i){out.put("alias",i.alias());out.put("module",i.modulePath());}
-            else if(node instanceof ClassDeclaration c){out.put("name",c.name());out.put("fields",c.fields().stream().map(f->object("name",f.name(),"source",slice(source,f.span()))).toList());}
-            else if(node instanceof FunctionDeclaration f){out.put("source",source.substring(source.offsetByCodePoints(0,f.span().startScalarOffset()),source.offsetByCodePoints(0,f.body().span().endScalarOffset())));out.put("name",f.name());out.put("body",statement(f.body(),source));out.put("parameters",f.params().stream().map(p->object("name",p.name(),"type",slice(source,p.type().span()))).toList());out.put("result",slice(source,f.returnType().span()));}
+            else if(node instanceof ClassDeclaration c){out.put("name",c.name());out.put("fields",c.fields().stream().map(f->object("name",f.name(),"type",type(f.type(),source),"source",slice(source,f.span()))).toList());}
+            else if(node instanceof FunctionDeclaration f){out.put("source",source.substring(source.offsetByCodePoints(0,f.span().startScalarOffset()),source.offsetByCodePoints(0,f.body().span().endScalarOffset())));out.put("name",f.name());out.put("body",statement(f.body(),source));out.put("parameters",f.params().stream().map(p->object("name",p.name(),"type",type(p.type(),source))).toList());out.put("result",type(f.returnType(),source));}
             statements.add(out);
         }
         var references=new ArrayList<Object>();
