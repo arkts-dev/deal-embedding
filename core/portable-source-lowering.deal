@@ -8,7 +8,7 @@ import * as literals from "./source-literals";
 // Unsupported syntax/components fail explicitly, never disappear from the UI.
 export class Pair { deal: string; dealui: string; }
 class Property { name: string; type: string; expression: string; }
-class Action { name: string; handler: string; type: string; argument: string; }
+class Action { name: string; handler: string; type: string; argument: string; completion?: boolean; channel?: string; }
 class Call { function: string; target: string; args: string; answer: string; channel: string; }
 function fail(message: string): void { throw {code: "PORTABLE_UNSUPPORTED", message: message}; }
 function field(raw: Record<string, unknown>, key: string): string { return raw[key] as string; }
@@ -109,6 +109,27 @@ export function lowerConfigured(source: string, inspect: (source: string) => str
             calls[calls.length] = call as Call;
         }
     }
+    // A completion chain must terminate; cycles would dispatch without a new
+    // user action. Reject rather than silently dropping or bounding calls.
+    for (let start of calls) {
+        let visited: string[] = []; let next: string = start.function;
+        while (next !== "") {
+            if (decode.includes(visited, next)) { fail("Cyclic SDK answer chain"); } visited[visited.length] = next;
+            let found: string = ""; for (let call of calls) { if (call.function === next) { found = call.answer; } } next = found;
+        }
+    }
+    // Calls connected through answer handlers share one freshness epoch.
+    let merged: boolean = true;
+    while (merged) {
+        merged = false;
+        for (let left of calls) { for (let right of calls) {
+            if ((left.answer === right.function || right.answer === left.function || left.answer === right.answer) && left.channel !== right.channel) {
+                let before: string = right.channel;
+                for (let call of calls) { if (call.channel === before) { call.channel = left.channel; } }
+                merged = true;
+            }
+        } }
+    }
     let sdkMembers: number = 0;
     for (let member of records(syntax, "members")) { if (field(member, "owner") === "sdk") { if (field(member, "name") !== "call") { fail("Unknown SDK operation"); } sdkMembers = sdkMembers + 1; } }
     if (sdkMembers !== calls.length) { fail("SDK calls require supported direct handler statements"); }
@@ -116,7 +137,7 @@ export function lowerConfigured(source: string, inspect: (source: string) => str
         let kind: string = field(declaration, "kind");
         if (kind === "ImportDeclaration") {
             let module: string = field(declaration, "module"); let alias: string = field(declaration, "alias");
-            if ((module !== "std/ui" || alias !== "ui") && (module !== "std/math" || alias !== "math")) { fail("Import not yet lowered: " + module + " as " + alias); }
+            if ((module !== "std/ui" || alias !== "ui") && (module !== "std/math" || alias !== "math") && (module !== "std/json" || alias !== "json")) { fail("Import not yet lowered: " + module + " as " + alias); }
         } else if (kind === "FunctionDeclaration") {
             let name: string = field(declaration, "name"); functions[name] = declaration;
             if (name === "view") { view = declaration; } else { logic = logic + field(declaration, "source") + "\n"; }
@@ -215,6 +236,17 @@ export function lowerConfigured(source: string, inspect: (source: string) => str
         } return out;
     };
     let tree: string = walk((view as Record<string, unknown>).body as Record<string, unknown>);
+    let actionAt: number = 0;
+    while (actionAt < actions.length) {
+        let action: Action = actions[actionAt]; actionAt = actionAt + 1;
+        for (let call of calls) {
+            if (call.function !== action.handler) { continue; }
+            let chained: boolean = false; for (let next of calls) { if (next.function === call.answer) { chained = true; } }
+            if (!chained) { continue; }
+            let exists: boolean = false; for (let next of actions) { if (next.completion !== undefined && next.handler === call.answer) { exists = true; } }
+            if (!exists) { actions[actions.length] = {name: "Action" + literals.decimal(actions.length), handler: call.answer, type: "string", argument: "", completion: true, channel: call.channel}; }
+        }
+    }
     let fields: string = ""; let values: string[] = ["app: state"]; let channels: string[] = [];
     for (let call of calls) {
         if (decode.includes(channels, call.channel)) { continue; } channels[channels.length] = call.channel;
@@ -228,7 +260,11 @@ export function lowerConfigured(source: string, inspect: (source: string) => str
     for (let action of actions) {
         let fields: string = "value: " + action.type + ";"; let argument: string = "action.value";
         let update: string = "return project(" + action.handler + "(state.app, " + argument + "), state);";
-        for (let call of calls) { if (call.function === action.handler) { update = "let next: PortableState = project(" + action.handler + "(state.app, " + argument + "), state); next.sdkVersion" + call.channel + " = state.sdkVersion" + call.channel + " + 1; next.sdkState" + call.channel + " = state.app; return next;"; } }
+        for (let call of calls) { if (call.function === action.handler) {
+            let increment: string = " + 1"; if (action.completion !== undefined) { increment = ""; }
+            update = "let next: PortableState = project(" + action.handler + "(state.app, " + argument + "), state); next.sdkVersion" + call.channel + " = state.sdkVersion" + call.channel + increment + "; next.sdkState" + call.channel + " = state.app; return next;";
+        } }
+        if (action.completion !== undefined) { fields = fields + "version: number;"; update = "if (action.version !== state.sdkVersion" + (action.channel as string) + ") { return state; } " + update; }
         logic = logic + "export class " + action.name + " {" + fields + "}\n// @ui-update\nexport function update" + action.name + "(state: PortableState, action: " + action.name + "): PortableState { " + update + " }\n";
     }
     for (let action of actions) {
@@ -238,8 +274,13 @@ export function lowerConfigured(source: string, inspect: (source: string) => str
             let answer: Record<string, unknown> = functions[call.answer] as Record<string, unknown>;
             let params: Record<string, unknown>[] = records(answer, "parameters");
             if (params.length !== 2 || field(params[0], "type") !== "AppState" || field(params[1], "type") !== "string" || field(answer, "result") !== "AppState") { fail("SDK answer signature not yet lowered"); }
-            let done: string = action.name + "Done";
-            logic = logic + "export class " + done + " { value: string; version: number; }\n// @ui-effect\nexport async function effect" + action.name + "(current: PortableState, action: " + action.name + "): Promise<" + done + "> {\nlet state: AppState = current.sdkState" + call.channel + "; let value: " + action.type + " = action.value;\ntry { let result = await " + call.target + "(" + call.args + "); return {value: json.stringify(result) as string, version: current.sdkVersion" + call.channel + "}; } catch (caught) { let error: Error = caught as Error; return {value: \"error: \" + error.code + \": \" + error.message, version: current.sdkVersion" + call.channel + "}; }\n}\n// @ui-update\nexport function finish" + action.name + "(state: PortableState, action: " + done + "): PortableState { if (action.version !== state.sdkVersion" + call.channel + ") { return state; } return project(" + call.answer + "(state.app, action.value), state); }\n";
+            let done: string = action.name + "Done"; let chain: boolean = false;
+            for (let next of actions) { if (next.completion !== undefined && next.handler === call.answer) { done = next.name; chain = true; } }
+            if (!chain) { logic = logic + "export class " + done + " { value: string; version: number; }\n"; }
+            let guard: string = "";
+            if (action.completion !== undefined) { guard = "if (action.version !== current.sdkVersion" + call.channel + ") { return {value: \"\", version: -1}; }\n"; }
+            logic = logic + "// @ui-effect\nexport async function effect" + action.name + "(current: PortableState, action: " + action.name + "): Promise<" + done + "> {\n" + guard + "let state: AppState = current.sdkState" + call.channel + "; let value: " + action.type + " = action.value;\ntry { let result = await " + call.target + "(" + call.args + "); return {value: json.stringify(result) as string, version: current.sdkVersion" + call.channel + "}; } catch (caught) { let error: Error = caught as Error; return {value: \"error: \" + error.code + \": \" + error.message, version: current.sdkVersion" + call.channel + "}; }\n}\n";
+            if (!chain) { logic = logic + "// @ui-update\nexport function finish" + action.name + "(state: PortableState, action: " + done + "): PortableState { if (action.version !== state.sdkVersion" + call.channel + ") { return state; } return project(" + call.answer + "(state.app, action.value), state); }\n"; }
         }
     }
     // Nested SDK calls or non-action entry points must never disappear silently.
