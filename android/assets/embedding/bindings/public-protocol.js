@@ -33,7 +33,7 @@ globalThis.publicProtocol = (() => {
         case 'run':{const id=args[0].id,admission=protocolPlain(policy('beginRun',id));
           if(admission.phase==='live')result={id:admission.session};
           else if(admission.phase==='pending')result=starts.get(id);
-          else {result=native('run',[admission.experience]).then(s=>protocolPlain(policy('completeRun',id,s.id,s.trace)),error=>{policy('failedRun',id);throw error;}).finally(()=>starts.delete(id));starts.set(id,result);}break;}
+          else {result=Promise.resolve(policy('run',id)).then(protocolPlain).finally(()=>starts.delete(id));starts.set(id,result);}break;}
         case 'dispatch':policy(name,args[0].id,args[1]);result=native(name,args);break;
         case 'next':policy('session',args[0].id);result=native(name,args).then(update=>{policy('produced',args[0].id,update.snapshot.version);return update;});break;
         case 'published':policy(name,args[0].id,args[1]);control('published',args);result=null;break;

@@ -14,6 +14,7 @@ internal data class ExperienceSource(val deal: String, val ui: String)
 internal data class SavedWorkspace(val id: String, val title: String, val origin: WorkspaceOrigin, val attempts: Int)
 
 /** A live workspace: its own isolate and state, sharing the connected sandbox engine. */
+internal class PreparedWorkspace(val token:String, val live:LiveWorkspace, val candidate:CheckedCandidate, val snapshot:JSONObject, var persisted:Boolean=false)
 internal class LiveWorkspace internal constructor(val id: String, val title: String, internal val session: UiSession, internal val output: File, internal val source: ExperienceSource, val origin: WorkspaceOrigin, val attempts: Int)
 
 /**
@@ -55,7 +56,8 @@ internal class ExperienceRuntime(private val context: Context, private val capab
         return check(source, saved.origin, saved.attempts).use { mountWorkspace(id, saved.title, it,session) }
     }
     fun forgetWorkspace(id: String) { closeWorkspace(id); storage.forgetWorkspace(id); EmbeddingLog(context).event("storage", "deleted", workspace = id) }
-    private fun mountWorkspace(id: String, title: String, candidate: CheckedCandidate,session:String): Pair<LiveWorkspace, JSONObject> = guarded(live = false) {
+    private val prepared = mutableMapOf<String,PreparedWorkspace>()
+    internal fun prepareWorkspace(id:String,title:String,candidate:CheckedCandidate,session:String):PreparedWorkspace = guarded(live = false) {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
         val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config, candidate.log.bind(id,session), candidate.identity, id), candidate.output, candidate.source, candidate.origin, candidate.attempts)
         try {
@@ -63,11 +65,32 @@ internal class ExperienceRuntime(private val context: Context, private val capab
             val mountStarted=android.os.SystemClock.elapsedRealtime()
             val snapshot = try { candidate.log.stage("mount", candidate.identity, id) { live.session.mount(candidate.output, restored) }.also { candidate.log.generationTelemetry?.mounted(android.os.SystemClock.elapsedRealtime()-mountStarted,true) } }
                 catch(error:Throwable){candidate.log.generationTelemetry?.mounted(android.os.SystemClock.elapsedRealtime()-mountStarted,false);throw error}
-            storage.saveWorkspace(id, title, candidate.source, candidate.origin, candidate.attempts)
-            candidate.consumed = true
-            workspaces[id] = live
-            live to snapshot
+            PreparedWorkspace(UUID.randomUUID().toString(),live,candidate,snapshot).also{prepared[it.token]=it}
         } catch (error: Throwable) { runCatching{live.session.close()}.onFailure{error.addSuppressed(it)};throw error }
+    }
+    internal fun persistPrepared(token:String) {
+        val store=prepared[token] ?: throw ProtocolFailure("INVALID_HANDLE","Unknown prepared store")
+        val live=store.live
+        storage.saveWorkspace(live.id,live.title,live.source,live.origin,live.attempts)
+        store.persisted=true
+    }
+    internal fun activatePrepared(token:String):Pair<LiveWorkspace,JSONObject> {
+        val store=prepared[token] ?: throw ProtocolFailure("INVALID_HANDLE","Unknown prepared store")
+        check(store.persisted){"Prepared store has not been persisted"}
+        check(!workspaces.containsKey(store.live.id)){"Workspace already active"}
+        store.candidate.consumed=true
+        workspaces[store.live.id]=store.live
+        prepared.remove(token)
+        return store.live to store.snapshot
+    }
+    internal fun abortPrepared(token:String) {
+        val store=prepared.remove(token) ?: return
+        store.live.session.close()
+    }
+    private fun mountWorkspace(id:String,title:String,candidate:CheckedCandidate,session:String):Pair<LiveWorkspace,JSONObject> {
+        val store=prepareWorkspace(id,title,candidate,session)
+        try { persistPrepared(store.token); return activatePrepared(store.token) }
+        catch(error:Throwable){runCatching{abortPrepared(store.token)}.onFailure(error::addSuppressed);throw error}
     }
     /** Native host acknowledges publication separately from runtime snapshot production. */
     fun published(id: String, version: Int) {
@@ -105,6 +128,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
 
     override fun close() {
         var failure:Throwable?=null
+        prepared.keys.toList().forEach { try{abortPrepared(it)}catch(error:Throwable){if(failure==null)failure=error else failure!!.addSuppressed(error)} }
         workspaces.values.toList().forEach { try{closeWorkspace(it.id)}catch(error:Throwable){if(failure==null)failure=error else failure!!.addSuppressed(error)} }
         val active=engine;engine=null
         try{active?.let{SandboxEngine.release(it)}}catch(error:Throwable){if(failure==null)failure=error else failure!!.addSuppressed(error)}

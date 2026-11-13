@@ -64,7 +64,7 @@ globalThis.protocolHost = function(id, declarations, rt) {
     } else if(id==='embedding/controller-mechanisms') {
       if(name==='context')raw[name]=checkedContext;
       else if(name==='utf16Length')raw[name]=value=>value.length;
-      else throw Error('Unknown controller mechanism '+name);
+      else raw[name]=async(...args)=>{try{return record(spec.$d.slice(spec.$d.lastIndexOf('->')+2),await dealCapabilities.request('embedding',name,args.map(plain)));}catch(error){const translated=rt.errorValue(error.code||'HOST_FAILED',error.message||'Host operation failed');translated.suppressed=error.suppressed||[];throw translated;}};
     } else if(id==='embedding' && typeof publicProtocol !== 'undefined')raw[name]=(...args)=>publicProtocol.invoke(name,args.map(plain),value=>record(spec.$d.slice(spec.$d.lastIndexOf('->')+2),value));
     else if(id==='catalogue-policy') raw[name]=async(...args)=>globalThis.loadedAppPolicy[name].$f(...args);
     else if(id==='embedding' && name==='contextJson')raw[name]=context=>{if(!Object.hasOwn(protocolContexts,context.id))throw rt.errorValue('INVALID_HANDLE','Invalid context');return protocolContexts[context.id].value;};

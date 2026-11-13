@@ -139,7 +139,14 @@ class ProtocolController(private val context:Context, private val embedding:Embe
     private fun invoke(name:String,args:JSONArray,request:GenerationRequest?):Any=when(name){
         "generate"->prepared(embedding.generate(request!!)).also{it.put("trace",generatedTraces[args.getString(0)])}
         "load"->prepared(embedding.load(args.getString(0),args.getJSONObject(1).let{Source(it.getString("deal"),it.getString("dealui"))}))
-        "run"->embedding.run(ref(args.getJSONObject(0))).let{JSONObject().put("id",it.id).put("trace",embedding.sessionTrace(it))}
+        "prepareStart"->embedding.prepareStart(ref(args.getJSONObject(0)),args.getString(1))
+        "persistStart"->{embedding.persistStart(args.getJSONObject(0).getString("id"));JSONObject.NULL}
+        "activateStart"->{embedding.activateStart(args.getJSONObject(0).getString("id"));JSONObject.NULL}
+        "abortStart"->{
+            val primary=ProtocolFailure(args.getString(1),args.getString(2))
+            try{embedding.abortStart(args.getJSONObject(0).getString("id"))}catch(cleanup:Throwable){primary.addSuppressed(cleanup);throw primary}
+            JSONObject.NULL
+        }
         "dispatch"->{embedding.dispatch(Session(args.getJSONObject(0).getString("id")),args.getInt(1),if(args.isNull(2))null else args.getString(2));JSONObject.NULL}
         "close"->{embedding.close(Session(args.getJSONObject(0).getString("id")));JSONObject.NULL}
         "forget"->{embedding.forget(ref(args.getJSONObject(0)));JSONObject.NULL}
@@ -148,7 +155,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
         "artifact"->embedding.artifact(args.getString(0)).let{JSONObject().put("status",it.status).put("text",it.text)}
         "clearObservation"->{embedding.clearObservation();JSONObject.NULL}
         "shutdown"->{shutdownRequested=true;embedding.shutdown();JSONObject.NULL}
-        else->error("Unknown native mechanism")
+        else->error("Unknown native mechanism: $name")
     }
     private fun prepared(e:Experience)=JSONObject().put("experience",experience(e)).put("source",source(embedding.source(e)))
     private fun ref(v:JSONObject)=Experience(v.getString("id"),"","",0)

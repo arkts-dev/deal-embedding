@@ -105,6 +105,27 @@ class Embedding internal constructor(private val context: Context, internal val 
         candidates[experience.id]?.close();candidates.remove(experience.id)
         if(runtime.savedWorkspaces().none{it.id==experience.id})experiences.remove(experience.id)
     }
+    private val preparedStarts=mutableMapOf<String,Pair<String,String>>()
+    @Synchronized internal fun prepareStart(experience:Experience,session:String):JSONObject {
+        check(!stopped);val e=trusted(experience)
+        check(!sessions.containsKey(session)){"Session token already active"}
+        val candidate=candidates[e.id] ?: run {
+            val saved=runtime.savedWorkspaces().firstOrNull{it.id==e.id} ?: throw ProtocolFailure("INVALID_HANDLE","Saved Experience missing")
+            val source=ExperienceStorage(context,config.storageName).source(e.id) ?: throw ProtocolFailure("INVALID_HANDLE","Saved source missing")
+            runtime.check(source,saved.origin,saved.attempts).also{candidates[e.id]=it}
+        }
+        val store=runtime.prepareWorkspace(e.id,e.title,candidate,session)
+        preparedStarts[store.token]=e.id to session
+        return JSONObject().put("id",store.token).put("session",session).put("trace",store.live.session.logTrace())
+    }
+    @Synchronized internal fun persistStart(token:String) { check(preparedStarts.containsKey(token));runtime.persistPrepared(token) }
+    @Synchronized internal fun activateStart(token:String) {
+        val (experience,session)=preparedStarts[token] ?: throw ProtocolFailure("INVALID_HANDLE","Unknown prepared start")
+        val mounted=runtime.activatePrepared(token)
+        deliveries[session]=Delivery(UiSnapshot.parse(mounted.second));sessions[session]=experience
+        candidates.remove(experience);preparedStarts.remove(token)
+    }
+    @Synchronized internal fun abortStart(token:String) { runtime.abortPrepared(token);preparedStarts.remove(token) }
     @Synchronized fun run(experience:Experience):Session {
         check(!stopped);val e=trusted(experience)
         sessions.entries.firstOrNull{it.value==e.id}?.let{if(runtime.workspace(e.id)!=null)return Session(it.key);sessions.remove(it.key)}

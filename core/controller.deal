@@ -34,8 +34,7 @@ export class Controller {
   source: (id: string) => embedding.Source;
   release: (id: string) => embedding.Experience;
   beginRun: (id: string) => RunAdmission;
-  completeRun: (id: string, session: string, trace: string) => embedding.Session;
-  failedRun: (id: string) => null;
+  run: (id: string) => Promise<embedding.Session>;
   session: (id: string) => null;
   dispatch: (id: string, slot: number) => null;
   eventLimit: (limit: number) => null;
@@ -167,17 +166,32 @@ export function create(seed: string, initialContracts: embedding.CapabilityContr
       entry.starting = true;
       return {experience:entry.metadata,phase:"start",session:""};
     },
-    completeRun:function(id: string, sessionId: string, trace: string): embedding.Session {
+    run:async function(id: string): Promise<embedding.Session> {
       active();
       let entry: ExperienceEntry = experience(id);
       require(entry.starting,"INVALID_ARGUMENT","Unissued Session start");
-      for (let other of sessions) { require(other.id !== sessionId,"INVALID_HANDLE","Duplicate Session identity"); }
-      if (entry.session !== "") { removeSession(entry.session); }
-      sessions[sessions.length] = {id:sessionId,experience:id,trace:trace,version:-1,live:true};
-      entry.session = sessionId; entry.starting = false; entry.saved = true;
-      return {id:sessionId};
+      let sessionId: string = nextId();
+      let prepared: mechanism.PreparedStart | null = null;
+      try {
+        let store: mechanism.PreparedStart = await mechanism.prepareStart(entry.metadata,sessionId);
+        prepared = store;
+        active();
+        await mechanism.persistStart(store);
+        active();
+        await mechanism.activateStart(store);
+        active();
+        if (entry.session !== "") { removeSession(entry.session); }
+        sessions[sessions.length] = {id:sessionId,experience:id,trace:store.trace,version:-1,live:true};
+        entry.session = sessionId; entry.starting = false; entry.saved = true;
+        return {id:sessionId};
+      } catch (errorUnknown) {
+        let error: Error = errorUnknown as Error;
+        entry.starting = false;
+        let store: mechanism.PreparedStart | null = prepared;
+        if (store !== null) { await mechanism.abortStart(store,error.code,error.message); }
+        throw error;
+      }
     },
-    failedRun:function(id: string): null { experience(id).starting = false; return null; },
     session:function(id: string): null { active(); session(id); return null; },
     dispatch:function(id: string, slot: number): null {
       active(); session(id);
