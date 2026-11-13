@@ -166,15 +166,9 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             val raw = try { log.operation("source", operation = request.getInt("id").toString(), detail = args.toString()) { child ->
                                 model.complete(args.getString(0), args.getString(1), args.getString(2), cancellation, child).also { child.event("source", "response", detail = it) }
                             } } catch(error:Exception) {
-                                cancellation.check()
-                                val code=when(error){is ProtocolFailure->error.code;is java.io.IOException->"PROVIDER_UNREACHABLE";else->""}
-                                if(code !in setOf("PROVIDER_HTTP","MODEL_TIMEOUT","PROVIDER_UNREACHABLE","GATEWAY_FAILURE","HTTP_429","HTTP_502","HTTP_503","HTTP_504"))throw error
                                 telemetry.modelEnd("")
-                                log.event("source","recovering",code=code)
-                                eval("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id",request.getInt("id")).put("ok",false).put("error",JSONObject().put("code","MODEL_RECOVERABLE").put("message",code)))})")
-                                // Cancellation-aware backoff prevents a provider outage from becoming a tight loop.
-                                repeat(10){cancellation.check();Thread.sleep(100)}
-                                continue
+                                cancellation.check()
+                                throw error
                             }
                             telemetry.modelEnd(raw)
                             raw

@@ -61,12 +61,8 @@ async function workspace(input: string, diagnostic: string, pair: Record<string,
         if (!compact) { instruction = guidance.sourceGuidance() + "\nCreate both missing files using paired write_file calls. Once files exist use one operation per turn; repair with exact edit_sources, never overwrite. read_file supports inclusive ranges; both null reads full source. check_sources checks the complete pair."; }
         if (!initialWrites) { instruction = guidance.sourceGuidance() + "\nThe canonical source pair already exists. Use exact edit_sources, read_file or check_sources only. No plan regeneration or source overwrite. Read relevant ranges; numbers are metadata, not search text." + await feedback.patchInstruction(previous, diagnostic); }
         let prompt: string = input + "\nSOURCE OPERATION\n" + operation + "\n" + instruction + "\nNATIVE TOOL TURN\n" + (json.stringify({ messages: history, initialWrites: initialWrites, compact: compact && initialWrites }) as string);
-        let raw: string = "";
-        try { raw = await model.complete(prompt, previous, diagnostic); }
-        catch (errorUnknown) { let error: Error = errorUnknown as Error;
-            if (error.code !== "MODEL_RECOVERABLE") { throw error; }
-            await observer.record("recovery", "model", error.message); continue;
-        }
+        // Operational failures end this dispatch unchanged; they are not source feedback.
+        let raw: string = await model.complete(prompt, previous, diagnostic);
         let message: Record<string, unknown> = {}; let calls: Record<string, unknown>[] = [];
         try {
             message = await data.parse(raw); calls = decoded.records(message.tool_calls);
