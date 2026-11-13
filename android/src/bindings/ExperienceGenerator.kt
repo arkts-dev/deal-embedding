@@ -47,7 +47,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
         val catalog = canonicalCatalog(config)
         val checked = mutableMapOf<String, Pair<ExperienceSource, File>>()
         log.event("request", "started", detail = JSONObject().put("intent", intent).put("context", disclosedContext).put("catalog", catalog).toString())
-        val program = SandboxProgram(engine, 512 * 1024)
+        val program = SandboxProgram(engine, 512 * 1024, config.execution)
         var originalFailure:Throwable?=null
         var accepted:CheckedCandidate?=null
         fun eval(s: String) = program.evaluate(s)

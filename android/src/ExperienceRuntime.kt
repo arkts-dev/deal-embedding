@@ -8,7 +8,7 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-internal data class RuntimeConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val policyAssets: String = "", val retainState: Boolean = false, val candidateTest: ((CandidateTestSession) -> String)? = null) {
+internal data class RuntimeConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val policyAssets: String = "", val retainState: Boolean = false, val candidateTest: ((CandidateTestSession) -> String)? = null, val execution: ExecutionLimits = ExecutionLimits()) {
 }
 internal data class ExperienceSource(val deal: String, val ui: String)
 internal data class SavedWorkspace(val id: String, val title: String, val origin: WorkspaceOrigin, val attempts: Int)
@@ -28,7 +28,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     internal fun sandbox(): JavaScriptSandbox = engine ?: SandboxEngine.acquire(context).also { engine = it }
     private fun <T> guarded(live: Boolean = true, operation: () -> T): T = try { operation() } catch (error: Exception) {
         if (generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException || it is androidx.javascriptengine.MemoryLimitExceededException || (live && (it is java.util.concurrent.TimeoutException || it is androidx.javascriptengine.IsolateTerminatedException || it is ClosedSandboxProgram)) }) {
-            val sandboxDead = generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException }
+            val sandboxDead = generateSequence<Throwable>(error) { it.cause }.any { it is androidx.javascriptengine.SandboxDeadException || it is androidx.javascriptengine.MemoryLimitExceededException }
             val active=engine;engine=null
             runCatching{active?.let { SandboxEngine.release(it, dead = sandboxDead) }}.onFailure{error.addSuppressed(it)}
             runCatching{close()}.onFailure{error.addSuppressed(it)}

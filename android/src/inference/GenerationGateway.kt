@@ -10,35 +10,51 @@ import java.net.SocketTimeoutException
 class GenerationGatewayConfig(
     val endpoint: String,
     val backend: String,
-    val connectTimeoutMs: Int = -1,
-    val readTimeoutMs: Int = -1
+    val connectTimeoutMs: Int = 15_000,
+    val readTimeoutMs: Int = 180_000,
+    val deadlineMs: Int = 240_000,
+    val requestBytes: Int = 16 * 1024 * 1024,
+    val responseBytes: Int = 16 * 1024 * 1024
 ) {
     init {
         val uri = URI(endpoint)
         require(uri.isAbsolute && !uri.host.isNullOrEmpty() && uri.rawUserInfo == null && uri.rawFragment == null) { "Invalid generation gateway endpoint" }
         require(uri.scheme == "https" || uri.scheme == "http" && uri.host in setOf("127.0.0.1", "localhost", "[::1]")) { "Generation gateway requires HTTPS or loopback HTTP" }
         require(backend.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}"))) { "Invalid generation backend" }
-        require((connectTimeoutMs == -1 || connectTimeoutMs > 0) && (readTimeoutMs == -1 || readTimeoutMs > 0)) { "Gateway timeouts must be -1 (unlimited) or positive" }
+        require(connectTimeoutMs > 0 && readTimeoutMs > 0 && deadlineMs > 0 && requestBytes > 0 && responseBytes > 0) { "Gateway limits must be positive" }
     }
 }
 
 /** Implements core/host/model.complete for the existing compiled generate path. No retries or redirects. */
 internal class GatewayModelClient(private val config: GenerationGatewayConfig) : ModelClient {
+    companion object {
+        private val deadlines = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { task ->
+            Thread(task, "embedding-inference-deadline").apply { isDaemon = true }
+        }
+    }
     override fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog): String {
         cancellation.check()
         val capture = log.capturesContent
         val body = JSONObject().put("input", input).put("previous", previous).put("diagnostics", diagnostics).put("capture", capture).toString().toByteArray(Charsets.UTF_8)
+        if (body.size > config.requestBytes) throw ProtocolFailure("GATEWAY_REQUEST_LIMIT", "Generation request exceeds configured byte limit")
         val connection = URI(config.endpoint).toURL().openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
         connection.instanceFollowRedirects = false
-        connection.connectTimeout = if(config.connectTimeoutMs == -1)0 else config.connectTimeoutMs
-        connection.readTimeout = if(config.readTimeoutMs == -1)0 else config.readTimeoutMs
+        connection.connectTimeout = minOf(config.connectTimeoutMs, config.deadlineMs)
+        connection.readTimeout = minOf(config.readTimeoutMs, config.deadlineMs)
         connection.doOutput = true
         connection.setRequestProperty("Content-Type", "application/json")
         connection.setRequestProperty("X-Deal-Generation-Backend", config.backend)
         // Fixed-length streaming writes the entire request before awaiting a reply.
         connection.setFixedLengthStreamingMode(body.size)
+        val expired = java.util.concurrent.atomic.AtomicBoolean(false)
+        val started = System.nanoTime()
+        val deadline = deadlines.schedule({ expired.set(true); connection.disconnect() }, config.deadlineMs.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
         val registration = cancellation.onCancel { connection.disconnect() }
+        fun checkDeadline() {
+            cancellation.check()
+            if (expired.get() || (System.nanoTime() - started) / 1_000_000 >= config.deadlineMs) throw ProtocolFailure("MODEL_TIMEOUT", "Generation gateway deadline exceeded")
+        }
         try {
             cancellation.check()
             connection.outputStream.use { it.write(body) }
@@ -47,17 +63,19 @@ internal class GatewayModelClient(private val config: GenerationGatewayConfig) :
             log.event("transport", "response", target = "generation gateway", code = "HTTP_$status")
             val stream = if (status == 200) connection.inputStream else connection.errorStream
             val payload = stream?.use { source ->
+                if (connection.contentLengthLong > config.responseBytes) throw ProtocolFailure("GATEWAY_RESPONSE_LIMIT", "Generation response exceeds configured byte limit")
                 val output = ByteArrayOutputStream()
                 val chunk = ByteArray(8192)
                 while (true) {
-                    cancellation.check()
+                    checkDeadline()
                     val count = source.read(chunk)
                     if (count < 0) break
+                    if (count > config.responseBytes - output.size()) throw ProtocolFailure("GATEWAY_RESPONSE_LIMIT", "Generation response exceeds configured byte limit")
                     output.write(chunk, 0, count)
                 }
                 output.toByteArray()
             } ?: ByteArray(0)
-            cancellation.check()
+            checkDeadline()
             if (status != 200) {
                 val error = runCatching { JSONObject(payload.toString(Charsets.UTF_8)).getJSONObject("error") }.getOrNull()
                 val code = error?.optString("code")?.takeIf { it in setOf("AUDIT_LIMIT", "BACKEND_UNAVAILABLE", "PROVIDER_HTTP", "MODEL_TIMEOUT", "PROVIDER_UNREACHABLE", "GATEWAY_FAILURE") } ?: "HTTP_$status"
@@ -84,7 +102,7 @@ internal class GatewayModelClient(private val config: GenerationGatewayConfig) :
             }
             return content
         } catch (error: Exception) {
-            cancellation.check()
+            checkDeadline()
             when (error) {
                 is ProtocolFailure -> throw error
                 is SocketTimeoutException -> throw ProtocolFailure("MODEL_TIMEOUT", "Generation gateway timed out")
@@ -92,6 +110,7 @@ internal class GatewayModelClient(private val config: GenerationGatewayConfig) :
                 else -> throw error
             }
         } finally {
+            deadline.cancel(false)
             registration.close()
             connection.disconnect()
         }

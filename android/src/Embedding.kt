@@ -19,7 +19,7 @@ class Embedding internal constructor(private val context: Context, internal val 
             var mechanisms: Embedding? = null
             try {
                 val owner = Embedding(application,registry,model,RuntimeConfig("experience",emptyList(),config.storageName,
-                    policyAssets=config.policy?.assetNamespace.orEmpty(),retainState=config.retainState))
+                    policyAssets=config.policy?.assetNamespace.orEmpty(),retainState=config.retainState,execution=config.execution))
                 mechanisms = owner
                 return ApplicationProtocol(application,owner,config.discovery)
             } catch (error: Throwable) {
@@ -28,6 +28,7 @@ class Embedding internal constructor(private val context: Context, internal val 
             }
         }
     }
+    internal val executionLimits get() = config.execution
     private val config=bootstrap.copy(contracts=bootstrap.contracts.map{CapabilityContract.parse(it.json().toString())})
     private data class RequestState(val title:String,val intent:String,val context:GenerationContext,val contracts:List<CapabilityContract>,val cancellation:GenerationCancellation,val log:EmbeddingLog,var used:Boolean=false)
     private val contexts=mutableMapOf<String,Pair<WireType,String>>()

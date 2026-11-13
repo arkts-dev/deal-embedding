@@ -11,7 +11,7 @@ internal object SandboxEngine {
     private var engine: JavaScriptSandbox? = null
     private var leases = 0
     @Synchronized fun acquire(context: Context): JavaScriptSandbox {
-        val active = engine ?: JavaScriptSandbox.createConnectedInstanceAsync(context.applicationContext).get().also { engine = it }
+        val active = engine ?: JavaScriptSandbox.createConnectedInstanceAsync(context.applicationContext).get(30, TimeUnit.SECONDS).also { engine = it }
         leases++; return active
     }
     @Synchronized fun release(active: JavaScriptSandbox, dead: Boolean = false) {
@@ -23,8 +23,9 @@ internal object SandboxEngine {
 
 /** Only execution mechanics are shared. Callers select their own bindings and authority. */
 internal class ClosedSandboxProgram:IllegalStateException("Sandbox program is closed")
-internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : AutoCloseable {
+internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int, private val limits: ExecutionLimits = ExecutionLimits()) : AutoCloseable {
     private val isolate: JavaScriptIsolate
+    private val chunkUnits = minOf(16384, maxOf(1, (returnLimit - 128) / 6))
     private var closed = false
     private var calls=0L; private var elapsedNanos=0L; private var inputBytes=0L; private var outputBytes=0L
     @Synchronized internal fun metrics()=JSONObject().put("calls",calls).put("elapsedMs",elapsedNanos/1e6).put("inputBytes",inputBytes).put("outputBytes",outputBytes)
@@ -32,14 +33,21 @@ internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : Aut
         listOf(JavaScriptSandbox.JS_FEATURE_PROMISE_RETURN, JavaScriptSandbox.JS_FEATURE_ISOLATE_TERMINATION, JavaScriptSandbox.JS_FEATURE_ISOLATE_MAX_HEAP_SIZE).forEach {
             check(engine.isFeatureSupported(it)) { "Missing sandbox feature: $it" }
         }
-        isolate = engine.createIsolate(IsolateStartupParameters().apply { setMaxEvaluationReturnSizeBytes(returnLimit) })
+        require(returnLimit >= 256)
+        isolate = engine.createIsolate(IsolateStartupParameters().apply {
+            setMaxHeapSizeBytes(limits.heapBytes)
+            setMaxEvaluationReturnSizeBytes(returnLimit)
+        })
     }
     @Synchronized fun evaluate(source: String): String {
         if(closed)throw ClosedSandboxProgram()
-        val started=System.nanoTime();calls++;inputBytes+=source.toByteArray(Charsets.UTF_8).size
-        try { return isolate.evaluateJavaScriptAsync(source).get().also{outputBytes+=it.toByteArray(Charsets.UTF_8).size} }
+        val size = source.toByteArray(Charsets.UTF_8).size
+        if (size > limits.inputBytes) throw ProtocolFailure("EXECUTION_INPUT_LIMIT", "Sandbox input exceeds configured byte limit")
+        val started=System.nanoTime();calls++;inputBytes+=size
+        try { return isolate.evaluateJavaScriptAsync(source).get(limits.evaluationTimeoutMs, TimeUnit.MILLISECONDS).also{outputBytes+=it.toByteArray(Charsets.UTF_8).size} }
         catch(error:IllegalStateException){if(error.message?.startsWith("Calling evaluateJavaScriptAsync() when ")==true){closed=true;throw ClosedSandboxProgram()};throw error}
-        catch (error: java.util.concurrent.TimeoutException) { close(); throw error }
+        catch (error: java.util.concurrent.TimeoutException) { runCatching { close() }.onFailure(error::addSuppressed); throw error }
+        catch (error: InterruptedException) { runCatching { close() }.onFailure(error::addSuppressed); Thread.currentThread().interrupt(); throw error }
         finally { elapsedNanos+=System.nanoTime()-started }
     }
     /** Evaluate once, then drain a lossless string result below the bridge return-size bound.
@@ -47,20 +55,35 @@ internal class SandboxProgram(engine: JavaScriptSandbox, returnLimit: Int) : Aut
      * Do not re-evaluate destructive operations (e.g. take()) for subsequent pages.
      */
     @Synchronized fun evaluateString(source: String): String {
-        val header=JSONObject(evaluate("(() => { globalThis.__embeddingTransfer = String($source); if (__embeddingTransfer.length <= 16384) { const text=__embeddingTransfer; delete globalThis.__embeddingTransfer; return JSON.stringify({text}); } return JSON.stringify({length:__embeddingTransfer.length}); })()"))
-        if(header.has("text"))return header.getString("text")
+        val header=JSONObject(evaluate("(() => { globalThis.__embeddingTransfer = String($source); if (__embeddingTransfer.length > ${limits.transferBytes}) { delete globalThis.__embeddingTransfer; return JSON.stringify({overflow:true}); } if (__embeddingTransfer.length <= $chunkUnits) { const text=__embeddingTransfer; delete globalThis.__embeddingTransfer; return JSON.stringify({text}); } return JSON.stringify({length:__embeddingTransfer.length}); })()"))
+        if (header.optBoolean("overflow")) throw ProtocolFailure("EXECUTION_TRANSFER_LIMIT", "Sandbox result exceeds configured byte limit")
+        if(header.has("text"))return header.getString("text").also { checkTransfer(it.toByteArray(Charsets.UTF_8).size.toLong()) }
         val length=header.getInt("length")
+        var failure: Throwable? = null
         try {
             val result = StringBuilder(length)
             var offset = 0
+            var bytes = 0L
             while (offset < length) {
-                val end = minOf(offset.toLong() + 16384, length.toLong()).toInt()
+                val end = minOf(offset.toLong() + chunkUnits, length.toLong()).toInt()
                 val chunk = evaluate("JSON.stringify({text:__embeddingTransfer.slice($offset,$end)})")
-                result.append(JSONObject(chunk).getString("text"))
+                val text = JSONObject(chunk).getString("text")
+                result.append(text)
+                // Count the joined prefix to preserve scalar pairs split across chunk boundaries.
+                if (offset > 0 && result[offset - 1].isHighSurrogate() && text.firstOrNull()?.isLowSurrogate() == true) bytes += 2
+                bytes += text.toByteArray(Charsets.UTF_8).size
+                checkTransfer(bytes)
                 offset = end
             }
             return result.toString()
-        } finally { evaluate("delete globalThis.__embeddingTransfer; ''") }
+        } catch (error: Throwable) { failure = error; throw error }
+        finally {
+            if (!closed) try { evaluate("delete globalThis.__embeddingTransfer; ''") }
+            catch (cleanup: Throwable) { if (failure != null) failure.addSuppressed(cleanup) else throw cleanup }
+        }
+    }
+    private fun checkTransfer(bytes: Long) {
+        if (bytes > limits.transferBytes) throw ProtocolFailure("EXECUTION_TRANSFER_LIMIT", "Sandbox result exceeds configured byte limit")
     }
     @Synchronized override fun close() { if (!closed) { closed = true; isolate.close() } }
 }

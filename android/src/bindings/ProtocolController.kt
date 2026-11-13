@@ -18,7 +18,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
         return try { block() } finally { startupTimings.put(name,JSONObject().put("elapsedMs",(System.nanoTime()-start)/1e6).put("cpuMs",(android.os.Debug.threadCpuTimeNanos()-cpu)/1e6)) }
     }
     private val engine=startup("sandbox-connect"){SandboxEngine.acquire(context)}
-    private val program=startup("isolate-create"){SandboxProgram(engine,1024*1024)}
+    private val program=startup("isolate-create"){SandboxProgram(engine,1024*1024,embedding.executionLimits)}
     private val workers=Executors.newCachedThreadPool()
     private val serial=Executors.newSingleThreadExecutor()
     private val driving=Executors.newSingleThreadScheduledExecutor()
