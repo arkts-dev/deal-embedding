@@ -30,10 +30,41 @@ globalThis.protocolHost = function(id, declarations, rt) {
     return value;
   }
   globalThis.protocolPlain=plain;
+  function checkedContext(schema, text, maximumBytes, maximumDepth, maximumFields, maximumLength) {
+    const fail=(code,message)=>{throw rt.errorValue(code,message);};
+    const need=(condition,message)=>{if(!condition)fail('INVALID_ARGUMENT',message);};
+    const validText=value=>{let bytes=0;for(const ch of value){const cp=ch.codePointAt(0);need(cp<0xd800||cp>0xdfff,'Invalid Unicode encoding');bytes+=cp<0x80?1:cp<0x800?2:cp<0x10000?3:4;}return bytes;};
+    need(validText(text)<=maximumBytes,'Context UTF-8 byte bound');
+    const ancestors=new Set();
+    function checkSchema(t,depth){
+      need(depth<=maximumDepth&&!ancestors.has(t),'Schema depth/cycle');ancestors.add(t);
+      need(['number','string','boolean','null','record','array'].includes(t.kind),'Wire kind');
+      need(Number.isInteger(t.maximum)&&t.maximum>=0&&t.maximum<=maximumLength&&Number.isFinite(t.minimumNumber)&&Number.isFinite(t.maximumNumber)&&t.minimumNumber<=t.maximumNumber,'Wire bounds');
+      need(Array.isArray(t.fields)&&t.fields.length<=maximumFields&&(t.kind==='record'||t.fields.length===0)&&(t.kind==='array')===(t.element!==null),'Wire metadata');
+      const names=new Set();for(const f of t.fields){need(/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(f.name)&&!names.has(f.name)&&typeof f.optional==='boolean','Wire field');names.add(f.name);checkSchema(f.type,depth+1);}
+      if(t.element!==null)checkSchema(t.element,depth+1);ancestors.delete(t);
+    }
+    function checkValue(t,v){
+      if(t.kind==='number')need(typeof v==='number'&&Number.isFinite(v)&&v>=t.minimumNumber&&v<=t.maximumNumber,'Numeric value');
+      else if(t.kind==='string'){need(typeof v==='string'&&v.length<=t.maximum,'String value');validText(v);}
+      else if(t.kind==='boolean')need(typeof v==='boolean','Boolean value');
+      else if(t.kind==='null')need(v===null,'Null value');
+      else if(t.kind==='array'){need(Array.isArray(v)&&v.length<=t.maximum,'Array value');for(const item of v)checkValue(t.element,item);}
+      else {need(v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).every(k=>t.fields.some(f=>f.name===k)),'Closed record');for(const f of t.fields){if(Object.hasOwn(v,f.name))checkValue(f.type,v[f.name]);else need(f.optional,'Required field');}}
+    }
+    const plainSchema=plain(schema);checkSchema(plainSchema,0);
+    let value;try{value=rt.jsonParseText(text);}catch(error){fail('INVALID_JSON','Context JSON: '+error.message);}
+    checkValue(plainSchema,value);
+    return record('@$external/embedding/controller-mechanisms/ContextValue',{schema:plainSchema,json:JSON.stringify(value)});
+  }
   const raw={};
   for(const [name,spec]of Object.entries(declarations)) {
     if(spec.$k==='class') {
       raw[name]={$kind:'class',$classname:spec.$d};
+    } else if(id==='embedding/controller-mechanisms') {
+      if(name==='context')raw[name]=checkedContext;
+      else if(name==='utf16Length')raw[name]=value=>value.length;
+      else throw Error('Unknown controller mechanism '+name);
     } else if(id==='embedding' && typeof publicProtocol !== 'undefined')raw[name]=(...args)=>publicProtocol.invoke(name,args.map(plain),value=>record(spec.$d.slice(spec.$d.lastIndexOf('->')+2),value));
     else if(id==='catalogue-policy') raw[name]=async(...args)=>globalThis.loadedAppPolicy[name].$f(...args);
     else if(id==='embedding' && name==='contextJson')raw[name]=context=>{if(!Object.hasOwn(protocolContexts,context.id))throw rt.errorValue('INVALID_HANDLE','Invalid context');return protocolContexts[context.id].value;};

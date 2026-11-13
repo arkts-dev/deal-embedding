@@ -7,7 +7,8 @@ import shutil
 shutil.copytree(ui/'ui',stage/'src/ui',dirs_exist_ok=True)
 for p in (root/'api').glob('*.d.deal'):shutil.copy(p,stage/'src'/p.name)
 for p in (root/'core/host').glob('*.d.deal'):shutil.copy(p,stage/'src'/p.name)
-modules={'embedding':'embedding.d.deal','catalogue-policy':'catalogue-policy.d.deal','embedding/protocol':'protocol.d.deal','embedding/policy-data':'policy-data.d.deal'}
+shutil.copy(root/'tools/controller-mechanisms.d.deal',stage/'src/controller-mechanisms.d.deal')
+modules={'embedding':'embedding.d.deal','catalogue-policy':'catalogue-policy.d.deal','embedding/protocol':'protocol.d.deal','embedding/policy-data':'policy-data.d.deal','embedding/controller-mechanisms':'controller-mechanisms.d.deal'}
 (stage/'deal.json').write_text(json.dumps({'languageVersion':'1.5','backend':'js','moduleRoots':['src'],'externals':{k:{'declaration':'src/'+v} for k,v in modules.items()}}))
 (stage/'src/main.deal').write_text('\n'.join('import * as m'+str(i)+' from "'+m+'";' for i,m in enumerate(modules))+'\nexport function main(): null { return null; }')
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(compiler),'deal.Main','compile',str(stage/'src/main.deal'),'--backend','js','--output',str(stage/'js')],check=True)
@@ -21,6 +22,9 @@ for m in modules:
 target=out/'aar/assets/embedding/bindings/protocol-contracts.js'
 target.parent.mkdir(parents=True,exist_ok=True)
 target.write_text('globalThis.protocolDeclarations={'+','.join(entries)+'};\n')
+# Compile controller policy once; install it in both trusted consumer bundles.
+shutil.copy(root/'core/controller.deal',stage/'src/controller.deal')
+subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(compiler),'deal.Main','compile',str(stage/'src/controller.deal'),'--backend','js','--output',str(stage/'controller')],check=True)
 # Production application linkage is separate from the assertion-bearing test consumer.
 shutil.copy(root/'tools/application-consumer.deal',stage/'src/application.deal')
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(compiler),'deal.Main','compile',str(stage/'src/application.deal'),'--backend','js','--output',str(stage/'application')],check=True)
@@ -29,6 +33,8 @@ shutil.copytree(stage/'application',out/'aar/assets/protocol-application',dirs_e
 shutil.copy(root/'tools/protocol-consumer.deal',stage/'src/consumer.deal')
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(compiler),'deal.Main','compile',str(stage/'src/consumer.deal'),'--backend','js','--output',str(stage/'consumer')],check=True)
 shutil.copytree(stage/'consumer',out/'aar/assets/protocol-consumer',dirs_exist_ok=True)
+for bundle in ('protocol-application','protocol-consumer'):
+    shutil.copytree(stage/'controller',out/'aar/assets'/bundle,dirs_exist_ok=True)
 shutil.copytree(stage/'js/ui',out/'aar/assets/generation/ui',dirs_exist_ok=True)
 # Deliberately invalid catalogue source: exercises the real checker and template-stop rule.
 (stage/'src/invalid-policy.deal').write_text('''import * as embedding from "embedding";

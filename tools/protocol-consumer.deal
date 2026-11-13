@@ -1,5 +1,6 @@
 import * as embedding from "embedding";
 import * as strings from "std/string";
+import * as json from "std/json";
 
 function insist(value:boolean, message:string):null { if(!value){throw {code:"PROOF_FAILED",message:message};}return null; }
 export function contexts():string {
@@ -17,6 +18,13 @@ export function contexts():string {
     let bad:embedding.WireField={name:"bad",type:{kind:"",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional:true};let badFields:embedding.WireField[]=[bad];
     rejected=false;try{embedding.snapshot({kind:"record",fields:badFields,element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"{}");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=true;}insist(rejected,"Invalid absent schema");
     rejected=false;try{embedding.snapshot({kind:"string",maximum:1,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"\"😀\"");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=true;}insist(rejected,"UTF16 bound");
+    rejected=false;try{embedding.snapshot(second,"{\"name\":\"Ada\",\"name\":\"Ada\"}");}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.code==="INVALID_JSON";}insist(rejected,"Duplicate JSON key");
+    let tooLarge:string="";let i:number=0;while(i<5000){tooLarge=tooLarge+"é";i=i+1;}
+    rejected=false;try{embedding.snapshot({kind:"string",maximum:8192,fields:[],element:null,minimumNumber:-1.7976931348623157e308,maximumNumber:1.7976931348623157e308},json.stringify(tooLarge) as string);}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.code==="INVALID_ARGUMENT";}insist(rejected,"Context UTF-8 bytes");
+    let title:string="";i=0;while(i<121){title=title+"t";i=i+1;}
+    rejected=false;try{embedding.request(title,"Intent",context);}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.code==="INVALID_ARGUMENT";}insist(rejected,"Request title bound");
+    let intent:string="";i=0;while(i<4097){intent=intent+"i";i=i+1;}
+    rejected=false;try{embedding.request("Title",intent,context);}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.code==="INVALID_ARGUMENT";}insist(rejected,"Request intent bound");
     let pending:embedding.GenerationRequest=embedding.request("Proof","An authored test workflow",context);
     insist(embedding.requestTrace(pending)!=="","Request trace");
     embedding.cancel(pending);return pending.id;

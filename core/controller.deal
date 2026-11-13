@@ -1,0 +1,111 @@
+import * as embedding from "embedding";
+import * as mechanism from "embedding/controller-mechanisms";
+import * as strings from "std/string";
+import * as json from "std/json";
+
+class ContextEntry { id: string; schema: embedding.WireType; json: string; }
+class RequestEntry {
+  id: string; title: string; intent: string; context: ContextEntry;
+  contracts: embedding.CapabilityContract[]; trace: string; used: boolean; cancelled: boolean;
+}
+class Permission { module: string; epoch: string; granted: boolean; }
+export class Work {
+  title: string; intent: string; schema: embedding.WireType; json: string;
+  contracts: embedding.CapabilityContract[]; trace: string;
+}
+export class Controller {
+  snapshot: (schema: embedding.WireType, valueJson: string) => embedding.GenerationContext;
+  contextSchema: (id: string) => embedding.WireType;
+  contextJson: (id: string) => string;
+  request: (title: string, intent: string, contextId: string) => embedding.GenerationRequest;
+  requestTrace: (id: string) => string;
+  consume: (id: string) => Work;
+  cancel: (id: string) => null;
+  admissible: (id: string) => boolean;
+  refresh: (contracts: embedding.CapabilityContract[]) => null;
+  permission: (module: string, granted: boolean) => null;
+  permitted: (module: string) => string | null;
+  check: () => null;
+  stop: () => null;
+}
+function require(condition: boolean, code: string, message: string): null {
+  if (!condition) { throw {code:code,message:message}; }
+  return null;
+}
+export function create(seed: string, initialContracts: embedding.CapabilityContract[]): Controller {
+  let sequence: number = 0;
+  let stopped: boolean = false;
+  let contexts: ContextEntry[] = [];
+  let requests: RequestEntry[] = [];
+  let permissions: Permission[] = [];
+  let contracts: embedding.CapabilityContract[] = initialContracts;
+  let nextId: () => string = function(): string {
+    sequence = sequence + 1;
+    return seed + "-" + (json.stringify(sequence) as string);
+  };
+  let active: () => null = function(): null {
+    return require(!stopped,"STOPPED","Embedding instance is stopped");
+  };
+  let context: (id: string) => ContextEntry = function(id: string): ContextEntry {
+    for (let entry of contexts) { if (entry.id === id) { return entry; } }
+    throw {code:"INVALID_HANDLE",message:"Unissued context"};
+  };
+  let request: (id: string) => RequestEntry = function(id: string): RequestEntry {
+    for (let entry of requests) { if (entry.id === id) { return entry; } }
+    throw {code:"INVALID_HANDLE",message:"Unissued request"};
+  };
+  return {
+    snapshot:function(schema: embedding.WireType, valueJson: string): embedding.GenerationContext {
+      active();
+      let checked: mechanism.ContextValue = mechanism.context(schema,valueJson,8192,8,32,8192);
+      let id: string = nextId();
+      contexts[contexts.length] = {id:id,schema:checked.schema,json:checked.json};
+      return {id:id};
+    },
+    contextSchema:function(id: string): embedding.WireType { active(); return context(id).schema; },
+    contextJson:function(id: string): string { active(); return context(id).json; },
+    request:function(title: string, intent: string, contextId: string): embedding.GenerationRequest {
+      active();
+      require(strings.trim(title) !== "" && mechanism.utf16Length(title) <= 120,"INVALID_ARGUMENT","Request title");
+      require(strings.trim(intent) !== "" && mechanism.utf16Length(intent) <= 4096,"INVALID_ARGUMENT","Request intent");
+      let facts: ContextEntry = context(contextId);
+      let id: string = nextId();
+      requests[requests.length] = {id:id,title:title,intent:intent,context:facts,contracts:contracts,trace:nextId(),used:false,cancelled:false};
+      return {id:id};
+    },
+    requestTrace:function(id: string): string { active(); return request(id).trace; },
+    consume:function(id: string): Work {
+      active();
+      let entry: RequestEntry = request(id);
+      require(!entry.used,"INVALID_ARGUMENT","Request is single use");
+      entry.used = true;
+      require(!entry.cancelled,"CANCELLED","Generation cancelled");
+      return {title:entry.title,intent:entry.intent,schema:entry.context.schema,json:entry.context.json,contracts:entry.contracts,trace:entry.trace};
+    },
+    cancel:function(id: string): null { active(); request(id).cancelled = true; return null; },
+    admissible:function(id: string): boolean { return !stopped && !request(id).cancelled; },
+    refresh:function(value: embedding.CapabilityContract[]): null { active(); contracts = value; return null; },
+    permission:function(module: string, granted: boolean): null {
+      active();
+      let known: boolean = false;
+      for (let contract of contracts) { if (contract.module === module) { known = true; } }
+      require(known,"INVALID_ARGUMENT","Unknown module");
+      let epoch: string = nextId();
+      for (let permission of permissions) {
+        if (permission.module === module) { permission.epoch = epoch; permission.granted = granted; return null; }
+      }
+      permissions[permissions.length] = {module:module,epoch:epoch,granted:granted};
+      return null;
+    },
+    permitted:function(module: string): string | null {
+      if (!stopped) { for (let permission of permissions) { if (permission.module === module && permission.granted) { return permission.epoch; } } }
+      return null;
+    },
+    check:active,
+    stop:function(): null {
+      if (!stopped) { stopped = true; for (let entry of requests) { entry.cancelled = true; } }
+      return null;
+    }
+  };
+}
+export function main(): null { return null; }
