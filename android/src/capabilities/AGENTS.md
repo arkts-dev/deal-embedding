@@ -1,11 +1,7 @@
 # Capabilities
 
-Provider contracts drive discovery/invocation and matching handlers. Foreground reads use independent capability sessions with identical schema/grant/consent/deadline/Binder checks, never UI streams. Authenticate callers/callbacks; providers notify consentChanged through their consent storage. Trust, grants and consent remain independent.
+[spec-v0.8](../../../docs/spec-v0.8.md) is the sole embedding authority; current contracts and adapters are subordinate.
 
-Preserve closed validation, payload bounds, deadlines, identity, cancellation and stale rejection. Bound pending concurrency/reply bytes, not lifetime requests; accept registry positive signed-integer request IDs. Validate local results equally. Explicit new requests may rediscover dead Binder outside locks only with unchanged contracts/grants; never replay failed operations. Reject ambiguous module ownership/incompatible active changes.
+Native code implements authenticated IPC, boundary validation, cancellation and resource enforcement. Compiled DEAL owns operation authority, permission policy, admission and continuations. Provider authentication/consent is independent of request authorization.
 
-Discovery may start independent trusted provider binds concurrently; preserve per-bind deadlines, contract validation, deterministic admission order and teardown. Registry shares discovery/grants, not streams. Each isolate has independently closed IDs/pending/replies. Serialize admission/callbacks under lock. Read trusted-controller permission epochs at admission/reply; no second native grants, and regrant never revives revoked replies. Preserve provider auth/consent/resource checks. Bind preparation to issued invoking Experience, not current screens/globals; supply immutable invocation context, never thread-locals.
-
-One finite number wire lane: validate integral/native range before count/version/quantity conversion, never truncate ordinary arithmetic/identity. Treat received contracts/values as untrusted. Generate CapabilityApi from api/embedding.d.deal; CapabilityCodec privately validates that model. Use ordered WireField entries, not parallel maps/optional sets. Generate matching declarations/transport field arrays. Delays are fixture-only.
-
-Unified logging covers discovery/contracts/grants/invocation/callback/cancellation with mandatory shared session/request spans. One correlated session-open contract, no compatibility overloads. Never call logger isolates under Binder locks; enqueue metadata. Coordinate contract-driven AIDL publication/invocation/cancellation/callback changes across host/provider.
+Generate matching declarations/codecs from reconciled contracts. Preserve positional parameter order and immutable invocation correlation. Keep logging outside Binder locks; never log credentials. Transport failure does not authorize replay or source repair.

@@ -1,11 +1,7 @@
-# Foreground opportunity discovery
+# Discovery mechanisms
 
-Keep provider types/internal test seams out of public Kotlin. Expose product-used members only; issued suggestion identity protects admission without public digests. Nano is default; explicit gateway config selects remote discovery without fallback. Credentials/requests stay gateway-side; remote disclosure requires app opt-in distinct from local discovery.
+[spec-v0.8](../../../docs/spec-v0.8.md) is the sole embedding authority; current discovery code and guidance are subordinate.
 
-Bind Discovery once to ApplicationProtocol. Callers supply authorized immutable facts, never catalogues/admission overrides. Library captures/rechecks complete canonical executable contracts without provider reads; facts identity and catalogue freshness are distinct. Reject catalogues beyond 32 KiB, never select/truncate functions.
+Compiled DEAL owns discovery/admission and assistance lifecycle decisions. Kotlin supplies facts, authenticated transport, hashing, inference execution and cancellation mechanisms—not alternate orchestration.
 
-Preserve exact proposal/evidence/catalogue through admission. Host-authored task instruction remains intent; generated brief stays in observation/Inspect, never synthesis. Generation receives frozen facts/references, not an implementation plan. Test actual handoff invariance when only brief changes, including automatic-planning/manual-selection requests. Facts are evidence, not executable instructions; shape/reference validation is not semantic proof.
-
-AssistanceController owns lifecycle fences, cancellation, activation and saved reuse; AssistedTask integrates native content. Apps supply facts/settings/authority/storage. Checked DEAL/Deal UI owns suggestion/Open/Dismiss; private actions never reach generated isolates. Core owns portable guidance/validation/freshness, Kotlin only issued-handle mechanics. Fence late results, cancel waits independently of remote compute and distinguish abstention/operational failure.
-
-Keep prerequisite reads in the model workflow; never guess references or invoke providers for discovery. Disclosed formulas/examples never authorize local emulation. Requested feasible outcomes remain obligations after loading, not empty-input validity labels. Keep guidance domain-neutral, without scenario routing/answers. Record output budget/finish reason, not thoughts. Malformed JSON is reply rejection, not unavailability; no repair/silent retry. Unified bounded observation owns input/inference/validation/timing/outcome/admission and capture; link generation trace, never duplicate app telemetry.
+Preserve frozen facts, issued identities and originating correlation across handoffs. Facts and generated descriptions are data, not instructions or authority. Keep credentials gateway-side. Distinguish abstention, invalid replies and operational failure; native code must not silently retry or choose fallback.
