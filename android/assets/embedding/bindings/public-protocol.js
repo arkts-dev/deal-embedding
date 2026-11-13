@@ -1,22 +1,20 @@
 "use strict";
 // Trusted consumer bridge, never supplied to generated UI.
-// Context/request/permission policy executes in compiled controller.deal.
-// Experience/Session lifecycle migration is a separate implementation slice.
+// Issued-resource and lifecycle policy executes in compiled controller.deal.
+// This adapter holds only callback/Promise transport handles.
 globalThis.publicProtocol = (() => {
-  let controller, saved=[], observation={incomplete:false,active:false,code:'',lost:0};
-  const waits=new Map(), experiences=new Map(), sessions=new Map();
+  let controller, observation={incomplete:false,active:false,code:'',lost:0};
+  const waits=new Map(), starts=new Map();
   const policy=(name,...args)=>controller[name].$f(...args);
   const copy=v=>JSON.parse(JSON.stringify(v));
   const fail=(code,message)=>{throw publicRuntime.errorValue(code,message);};
-  const need=(condition,message)=>{if(!condition)fail('INVALID_ARGUMENT',message);};
   const active=()=>policy('check');
-  const lookup=(map,ref)=>{const value=map.get(ref.id);if(!value)fail('INVALID_HANDLE','Unissued or expired handle');return value;};
   const control=(name,args)=>dealCapabilities.notify('embedding/control',name,args);
   async function native(name,args){try{return await dealCapabilities.request('embedding',name,args);}catch(e){const translated=publicRuntime.errorValue(e.code||'EMBEDDING_FAILED',e.message||'Native mechanism failed');translated.suppressed=e.suppressed||[];throw translated;}}
-  function retain(e,source,isSaved=false){experiences.set(e.id,{metadata:copy(e),source:copy(source),saved:isSaved,session:null,starting:null});return copy(e);}
+  function retain(e,source,isSaved=false){return protocolPlain(policy('retain',protocolRecord('@$external/embedding/Experience',e),protocolRecord('@$external/embedding/Source',source),isSaved));}
   async function prepared(name,args){const result=await native(name,args);try{active();}catch(error){control('release',[result.experience]);throw error;}return retain(result.experience,result.source);}
   return {
-    bootstrap(input,compiled){controller=compiled;observation=copy(input.health);for(const item of input.saved){retain(item.experience,item.source,true);saved.push(item.experience.id);}},
+    bootstrap(input,compiled){controller=compiled;observation=copy(input.health);for(const item of input.saved)retain(item.experience,item.source,true);},
     invoke(name,args,convert){
       active();let result;
       switch(name){
@@ -29,24 +27,27 @@ globalThis.publicProtocol = (() => {
         case 'generate': {const ref=args[0],work=protocolPlain(policy('consume',ref.id));
           result=new Promise((resolve,reject)=>{waits.set(ref.id,reject);
             native('generate',[ref.id,{title:work.title,intent:work.intent,context:{schema:work.schema,json:work.json},contracts:work.contracts,trace:work.trace}]).then(answer=>{if(!policy('admissible',ref.id)){control('release',[answer.experience]);reject(publicRuntime.errorValue('CANCELLED','Generation cancelled'));}else resolve(retain(answer.experience,answer.source));},reject).finally(()=>{waits.delete(ref.id);});});break;}
-        case 'load':result=prepared('load',args);break;
-        case 'source':result=copy(lookup(experiences,args[0]).source);break;
-        case 'release':{const e=lookup(experiences,args[0]);need(!e.session&&!e.starting,'Experience is live');control('release',[e.metadata]);if(!e.saved)experiences.delete(e.metadata.id);result=null;break;}
-        case 'run':{const e=lookup(experiences,args[0]);if(!e.starting)e.starting=native('run',[e.metadata]).then(s=>{if(e.session&&e.session.id!==s.id)sessions.delete(e.session.id);e.session={id:s.id};if(!sessions.has(s.id))sessions.set(s.id,{experience:e,trace:s.trace,version:-1});if(!e.saved){e.saved=true;saved.push(e.metadata.id);}return {id:s.id};}).finally(()=>{e.starting=null;});result=e.starting;break;}
-        case 'dispatch':lookup(sessions,args[0]);need(Number.isSafeInteger(args[1])&&args[1]>=0&&args[1]<=2147483647,'Action slot');result=native(name,args);break;
-        case 'next':{const s=lookup(sessions,args[0]);result=native(name,args).then(update=>{s.version=Math.max(s.version,update.snapshot.version);return update;});break;}
-        case 'published':{const s=lookup(sessions,args[0]);need(Number.isSafeInteger(args[1])&&args[1]>=0&&args[1]<=s.version,'Unproduced snapshot version');s.published=args[1];control('published',args);result=null;break;}
-        case 'sessionTrace':result=lookup(sessions,args[0]).trace;break;
-        case 'close':{const s=lookup(sessions,args[0]);result=native('close',args).then(()=>{sessions.delete(args[0].id);s.experience.session=null;return null;});break;}
-        case 'saved':result=saved.map(key=>copy(experiences.get(key).metadata));break;
-        case 'forget':{const e=lookup(experiences,args[0]);result=native('forget',[e.metadata]).then(()=>{if(e.session)sessions.delete(e.session.id);experiences.delete(e.metadata.id);saved=saved.filter(key=>key!==e.metadata.id);return null;});break;}
+        case 'load':policy('title',args[0]);result=prepared('load',args);break;
+        case 'source':result=protocolPlain(policy(name,args[0].id));break;
+        case 'release':control('release',[protocolPlain(policy(name,args[0].id))]);result=null;break;
+        case 'run':{const id=args[0].id,admission=protocolPlain(policy('beginRun',id));
+          if(admission.phase==='live')result={id:admission.session};
+          else if(admission.phase==='pending')result=starts.get(id);
+          else {result=native('run',[admission.experience]).then(s=>protocolPlain(policy('completeRun',id,s.id,s.trace)),error=>{policy('failedRun',id);throw error;}).finally(()=>starts.delete(id));starts.set(id,result);}break;}
+        case 'dispatch':policy(name,args[0].id,args[1]);result=native(name,args);break;
+        case 'next':policy('session',args[0].id);result=native(name,args).then(update=>{policy('produced',args[0].id,update.snapshot.version);return update;});break;
+        case 'published':policy(name,args[0].id,args[1]);control('published',args);result=null;break;
+        case 'sessionTrace':result=policy(name,args[0].id);break;
+        case 'close':policy('session',args[0].id);result=native('close',args).then(()=>policy('closed',args[0].id));break;
+        case 'saved':result=protocolPlain(policy(name));break;
+        case 'forget':result=native(name,[protocolPlain(policy('experience',args[0].id))]).then(()=>policy('forgotten',args[0].id));break;
         case 'refresh':result=native(name,args).then(c=>{policy('refresh',protocolRecord('[@$external/embedding/CapabilityContract]',c));return copy(c);});break;
         case 'grant':case 'revoke':result=policy('permission',args[0],name==='grant');break;
         case 'health':result=copy(observation);break;
         case 'capture':result=null;break; // Controller synchronously persists the shared private choice.
-        case 'events':need(Number.isInteger(args[2])&&args[2]>=1&&args[2]<=200,'Event limit');result=native(name,args);break;
+        case 'events':policy('eventLimit',args[2]);result=native(name,args);break;
         case 'artifact':case 'clearObservation':result=native(name,args);break;
-        case 'shutdown':policy('stop');for(const [key,reject]of waits){reject(publicRuntime.errorValue('CANCELLED','Generation cancelled'));control('cancel',[key]);}result=native(name,args).then(()=>{sessions.clear();experiences.clear();saved=[];return null;});break;
+        case 'shutdown':policy('stop');for(const [key,reject]of waits){reject(publicRuntime.errorValue('CANCELLED','Generation cancelled'));control('cancel',[key]);}result=native(name,args);break;
         default:fail('UNKNOWN_EXPORT',name);
       }
       // Async declarations always return an operation, including a cached live Session.
@@ -54,7 +55,7 @@ globalThis.publicProtocol = (() => {
       return convert(result);
     },
     permitted(module){return policy('permitted',module);},
-    liveSessions(ids){for(const [key,s]of sessions){if(!ids.includes(key)){s.experience.session=null;}}},
+    liveSessions(ids){policy('liveSessions',publicRuntime.admitHostArray('[string]',ids));},
     observed(health){observation=copy(health);}
   };
 })();

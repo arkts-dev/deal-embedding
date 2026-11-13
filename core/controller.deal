@@ -2,6 +2,7 @@ import * as embedding from "embedding";
 import * as mechanism from "embedding/controller-mechanisms";
 import * as strings from "std/string";
 import * as json from "std/json";
+import * as math from "std/math";
 
 class ContextEntry { id: string; schema: embedding.WireType; json: string; }
 class RequestEntry {
@@ -9,6 +10,9 @@ class RequestEntry {
   contracts: embedding.CapabilityContract[]; trace: string; used: boolean; cancelled: boolean;
 }
 class Permission { module: string; epoch: string; granted: boolean; }
+class ExperienceEntry { metadata: embedding.Experience; source: embedding.Source; saved: boolean; session: string; starting: boolean; }
+class SessionEntry { id: string; experience: string; trace: string; version: number; live: boolean; }
+export class RunAdmission { experience: embedding.Experience; phase: string; session: string; }
 export class Work {
   title: string; intent: string; schema: embedding.WireType; json: string;
   contracts: embedding.CapabilityContract[]; trace: string;
@@ -25,6 +29,24 @@ export class Controller {
   refresh: (contracts: embedding.CapabilityContract[]) => null;
   permission: (module: string, granted: boolean) => null;
   permitted: (module: string) => string | null;
+  title: (value: string) => null;
+  retain: (metadata: embedding.Experience, source: embedding.Source, saved: boolean) => embedding.Experience;
+  source: (id: string) => embedding.Source;
+  release: (id: string) => embedding.Experience;
+  beginRun: (id: string) => RunAdmission;
+  completeRun: (id: string, session: string, trace: string) => embedding.Session;
+  failedRun: (id: string) => null;
+  session: (id: string) => null;
+  dispatch: (id: string, slot: number) => null;
+  eventLimit: (limit: number) => null;
+  produced: (id: string, version: number) => null;
+  published: (id: string, version: number) => null;
+  sessionTrace: (id: string) => string;
+  closed: (id: string) => null;
+  saved: () => embedding.Experience[];
+  experience: (id: string) => embedding.Experience;
+  forgotten: (id: string) => null;
+  liveSessions: (ids: string[]) => null;
   check: () => null;
   stop: () => null;
 }
@@ -38,6 +60,8 @@ export function create(seed: string, initialContracts: embedding.CapabilityContr
   let contexts: ContextEntry[] = [];
   let requests: RequestEntry[] = [];
   let permissions: Permission[] = [];
+  let experiences: ExperienceEntry[] = [];
+  let sessions: SessionEntry[] = [];
   let contracts: embedding.CapabilityContract[] = initialContracts;
   let nextId: () => string = function(): string {
     sequence = sequence + 1;
@@ -53,6 +77,23 @@ export function create(seed: string, initialContracts: embedding.CapabilityContr
   let request: (id: string) => RequestEntry = function(id: string): RequestEntry {
     for (let entry of requests) { if (entry.id === id) { return entry; } }
     throw {code:"INVALID_HANDLE",message:"Unissued request"};
+  };
+  let experience: (id: string) => ExperienceEntry = function(id: string): ExperienceEntry {
+    for (let entry of experiences) { if (entry.metadata.id === id) { return entry; } }
+    throw {code:"INVALID_HANDLE",message:"Unissued or expired Experience"};
+  };
+  let session: (id: string) => SessionEntry = function(id: string): SessionEntry {
+    for (let entry of sessions) { if (entry.id === id) { return entry; } }
+    throw {code:"INVALID_HANDLE",message:"Unissued or closed Session"};
+  };
+  let title: (value: string) => null = function(value: string): null {
+    return require(strings.trim(value) !== "" && mechanism.utf16Length(value) <= 120,"INVALID_ARGUMENT","Experience title");
+  };
+  let removeSession: (id: string) => null = function(id: string): null {
+    let retained: SessionEntry[] = [];
+    for (let entry of sessions) { if (entry.id !== id) { retained[retained.length] = entry; } }
+    sessions = retained;
+    return null;
   };
   return {
     snapshot:function(schema: embedding.WireType, valueJson: string): embedding.GenerationContext {
@@ -99,6 +140,89 @@ export function create(seed: string, initialContracts: embedding.CapabilityContr
     },
     permitted:function(module: string): string | null {
       if (!stopped) { for (let permission of permissions) { if (permission.module === module && permission.granted) { return permission.epoch; } } }
+      return null;
+    },
+    title:function(value: string): null { active(); return title(value); },
+    retain:function(metadata: embedding.Experience, source: embedding.Source, saved: boolean): embedding.Experience {
+      active();
+      for (let entry of experiences) { require(entry.metadata.id !== metadata.id,"INVALID_HANDLE","Duplicate Experience identity"); }
+      experiences[experiences.length] = {metadata:metadata,source:source,saved:saved,session:"",starting:false};
+      return metadata;
+    },
+    source:function(id: string): embedding.Source { active(); return experience(id).source; },
+    release:function(id: string): embedding.Experience {
+      active();
+      let entry: ExperienceEntry = experience(id);
+      require(!entry.saved && entry.session === "" && !entry.starting,"INVALID_ARGUMENT","Experience is saved or live");
+      let retained: ExperienceEntry[] = [];
+      for (let other of experiences) { if (other.metadata.id !== id) { retained[retained.length] = other; } }
+      experiences = retained;
+      return entry.metadata;
+    },
+    beginRun:function(id: string): RunAdmission {
+      active();
+      let entry: ExperienceEntry = experience(id);
+      if (entry.session !== "" && session(entry.session).live) { return {experience:entry.metadata,phase:"live",session:entry.session}; }
+      if (entry.starting) { return {experience:entry.metadata,phase:"pending",session:""}; }
+      entry.starting = true;
+      return {experience:entry.metadata,phase:"start",session:""};
+    },
+    completeRun:function(id: string, sessionId: string, trace: string): embedding.Session {
+      active();
+      let entry: ExperienceEntry = experience(id);
+      require(entry.starting,"INVALID_ARGUMENT","Unissued Session start");
+      for (let other of sessions) { require(other.id !== sessionId,"INVALID_HANDLE","Duplicate Session identity"); }
+      if (entry.session !== "") { removeSession(entry.session); }
+      sessions[sessions.length] = {id:sessionId,experience:id,trace:trace,version:-1,live:true};
+      entry.session = sessionId; entry.starting = false; entry.saved = true;
+      return {id:sessionId};
+    },
+    failedRun:function(id: string): null { experience(id).starting = false; return null; },
+    session:function(id: string): null { active(); session(id); return null; },
+    dispatch:function(id: string, slot: number): null {
+      active(); session(id);
+      return require(slot >= 0 && slot <= 2147483647 && math.floor(slot) === slot,"INVALID_ARGUMENT","Action slot");
+    },
+    eventLimit:function(limit: number): null {
+      active();
+      return require(limit >= 1 && limit <= 200 && math.floor(limit) === limit,"INVALID_ARGUMENT","Event limit");
+    },
+    produced:function(id: string, version: number): null {
+      let entry: SessionEntry = session(id);
+      if (version > entry.version) { entry.version = version; }
+      return null;
+    },
+    published:function(id: string, version: number): null {
+      active();
+      require(version >= 0 && version <= session(id).version && math.floor(version) === version,"INVALID_ARGUMENT","Unproduced snapshot version");
+      return null;
+    },
+    sessionTrace:function(id: string): string { active(); return session(id).trace; },
+    closed:function(id: string): null {
+      let entry: SessionEntry = session(id);
+      let owner: ExperienceEntry = experience(entry.experience);
+      if (owner.session === id) { owner.session = ""; }
+      removeSession(id); return null;
+    },
+    saved:function(): embedding.Experience[] {
+      active(); let result: embedding.Experience[] = [];
+      for (let entry of experiences) { if (entry.saved) { result[result.length] = entry.metadata; } }
+      return result;
+    },
+    experience:function(id: string): embedding.Experience { active(); return experience(id).metadata; },
+    forgotten:function(id: string): null {
+      let entry: ExperienceEntry = experience(id);
+      if (entry.session !== "") { removeSession(entry.session); }
+      let retained: ExperienceEntry[] = [];
+      for (let other of experiences) { if (other.metadata.id !== id) { retained[retained.length] = other; } }
+      experiences = retained; return null;
+    },
+    liveSessions:function(ids: string[]): null {
+      for (let entry of sessions) {
+        let found: boolean = false;
+        for (let id of ids) { if (id === entry.id) { found = true; } }
+        if (!found) { entry.live = false; }
+      }
       return null;
     },
     check:active,
