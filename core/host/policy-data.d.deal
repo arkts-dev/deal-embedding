@@ -12,6 +12,5 @@ export function parse(input: string): Promise<Record<string, unknown>> ;
 // Unicode string primitive; no catalogue or source policy in the host.
 export function lowercase(input: string): Promise<string> ;
 // Wire bounds count UTF-16 code units (including each surrogate), not Unicode scalars.
-export function utf16Length(input: string): Promise<number> ;
 // Digest mechanism; repair base identity and edit decisions stay in core.
 export function sha256(input: string): Promise<string> ;

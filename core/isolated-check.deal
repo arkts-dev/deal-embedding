@@ -2,11 +2,10 @@ import * as host from "embedding/checker";
 import * as decoded from "./decoded";
 import * as s from "./construction-schema";
 import * as graphics from "./graphics";
-import * as json from "std/json";
 import * as strings from "std/string";
 
 export class Result { accepted: boolean; candidateId: string; diagnostics: string; }
-function tree(report: Record<string, unknown>): Record<string, unknown> { return json.parse(report.tree as string); }
+function tree(report: Record<string, unknown>): Record<string, unknown> { return JSON.parse(report.tree as string); }
 function surfaces(node: Record<string, unknown>, result: Record<string, unknown>[]): null {
   if (strings.endsWith(node.component as string,".Surface") || (node.component as string) === "Surface") { result[result.length] = node; }
   for (let child of decoded.records(node.children)) { surfaces(child,result); } return null;
@@ -14,7 +13,7 @@ function surfaces(node: Record<string, unknown>, result: Record<string, unknown>
 function prop(node: Record<string, unknown>, name: string): Record<string, unknown> | null { for (let value of decoded.records(node.props)) { if ((value.name as string) === name) { return value; } } return null; }
 function numeric(node: Record<string, unknown>, name: string): number { let value = prop(node,name); if (value === null) { s.reject("Missing Surface "+name); } return s.finite((value as Record<string, unknown>).numberValue); }
 function slot(node: Record<string, unknown>, name: string): number { let value = prop(node,name); if (value === null) { return -1; } return s.integral((value as Record<string, unknown>).actionSlot); }
-function picture(node: Record<string, unknown>): string { let value = prop(node,"shapes"); if (value === null) { s.reject("Missing Surface shapes"); } let text: string = (value as Record<string, unknown>).stringValue as string; let wrapped: Record<string, unknown> = json.parse("{\"shapes\":"+text+"}"); graphics.surface(numeric(node,"width"),numeric(node,"height"),decoded.records(wrapped.shapes)); return text; }
+function picture(node: Record<string, unknown>): string { let value = prop(node,"shapes"); if (value === null) { s.reject("Missing Surface shapes"); } let text: string = (value as Record<string, unknown>).stringValue as string; const shapes: Record<string, unknown>[] = JSON.parse(text); graphics.surface(numeric(node,"width"),numeric(node,"height"),shapes); return text; }
 function validate(report: Record<string, unknown>): string {
   if (!(report.ok as boolean)) { return report.diagnostics as string; }
   if ((report.providerCalls as number) !== 0) { return "CHECK_PROVIDER: provider access during checking"; }
@@ -65,13 +64,13 @@ async function execute(id: string): Promise<Result> {
       }
       let final: Record<string, unknown>[] = []; surfaces(tree(report),final);
       let present: boolean = false; let blank: boolean = false;
-      for (let node of final) { if (sameNode(node,target)) { present = true; let value = prop(node,"shapes") as Record<string, unknown>; let decodedValue: Record<string, unknown> = json.parse("{\"shapes\":"+(value.stringValue as string)+"}"); blank = decoded.records(decodedValue.shapes).length === 0; } }
+      for (let node of final) { if (sameNode(node,target)) { present = true; let value = prop(node,"shapes") as Record<string, unknown>; const shapes: Record<string, unknown>[] = JSON.parse(value.stringValue as string); blank = shapes.length === 0; } }
       if (!present || blank || slot(target,"onFrame") >= 0 && !changed) { return {accepted:false,candidateId:"",diagnostics:"CHECK_SURFACE: missing, blank or unchanged frame scene"}; }
     }
     return {accepted:true,candidateId:id,diagnostics:""};
   } catch (unknownError) {
     let error: Error = unknownError as Error;
-    if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8010"],error.code)) { throw error; }
+    if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8007","E8010"],error.name)) { throw error; }
     return {accepted:false,candidateId:"",diagnostics:"CHECK_TREE: "+error.message};
   }
 }
@@ -86,7 +85,7 @@ export async function prepare(id: string): Promise<Result> {
 function admission(manifest: Record<string, unknown>): string {
   let providers: string[] = decoded.strings(manifest.providers);
   for (let module of decoded.strings(manifest.imports)) {
-    if (!s.contains(["std/json","std/math","std/string","std/table","std/time","embedding/graphics"],module) && !s.contains(providers,module)) { return "ADMISSION_IMPORT: unissued module"; }
+    if (!s.contains(["std/math","std/string","std/table","std/time","embedding/graphics"],module) && !s.contains(providers,module)) { return "ADMISSION_IMPORT: unissued module"; }
   }
   for (let digest of decoded.strings(manifest.packDigests)) { if (digest !== (manifest.issuedPackDigest as string)) { return "ADMISSION_PACK: compiler pack digest mismatch"; } }
   for (let version of decoded.strings(manifest.packVersions)) { if (version !== (manifest.issuedPackVersion as string)) { return "ADMISSION_PACK: compiler pack version mismatch"; } }

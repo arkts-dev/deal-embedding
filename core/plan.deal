@@ -1,4 +1,3 @@
-import * as json from "std/json";
 import * as tables from "std/table";
 import * as math from "std/math";
 import * as s from "./construction-schema";
@@ -16,10 +15,15 @@ function numericKind(kind: string, value: unknown): number {
   if (kind === "time" && (number < 0 || number > 1439)) { s.reject("Minute-of-day outside domain"); }
   return number;
 }
-function input(raw: Record<string, unknown>): Input {
-  s.closed(raw,["id","label","kind","measure","value"],["unit","min","max","options","setting"]);
+class WireInput { id:string; label:string; kind:string; measure:string; value:unknown; unit?:string; min?:number; max?:number; options?:Record<string, unknown>[]; setting?:boolean; }
+class WireConstant { id:string; label:string; measure:string; value:number; unit?:string; }
+class WireNeed { id:string; type:string; words:string; spec:Record<string, unknown>; quote?:string; reads?:string[]; required?:boolean; }
+class WireRequirement { id:string; text:string; sources?:string[]; needs?:string[]; }
+class WireQuestion { id:string; text:string; default:string; options?:Record<string, unknown>[]; }
+class WirePlan { title:string; eyebrow?:string; subtitle?:string; inputs?:WireInput[]; constants?:WireConstant[]; needs?:WireNeed[]; requirements?:WireRequirement[]; questions?:WireQuestion[]; }
+function input(raw: WireInput): Input {
   let kind: string = s.oneOf(raw.kind,["amount","percent","count","choice","toggle","text","time","date"]);
-  let result: Input = {id:s.identifier(raw.id),label:s.nonblank(raw.label),kind:kind,measure:measure(raw.measure),unit:s.optionalText(raw,"unit"),value:raw.value,options:s.records(raw,"options"),setting:s.optionalBoolean(raw,"setting",false)};
+  let result: Input = {id:s.identifier(raw.id),label:s.nonblank(raw.label),kind:kind,measure:measure(raw.measure),unit:raw.unit ?? "",value:raw.value,options:raw.options ?? [],setting:raw.setting ?? false};
   if (kind === "text") { let text: string = raw.value as string; }
   else if (kind === "toggle") { let checked: boolean = raw.value as boolean; }
   else { let value: number = numericKind(kind,raw.value);
@@ -36,10 +40,9 @@ function input(raw: Record<string, unknown>): Input {
   return result;
 }
 function decimals(raw: Record<string, unknown>): void { if (Object.hasOwn(raw,"decimals")) { let n: number = s.integral(raw.decimals); if (n < -1 || n > 6) { s.reject("Invalid decimals"); } } else { raw.decimals = -1; } }
-function need(raw: Record<string, unknown>): Need {
-  s.closed(raw,["id","type","words","spec"],["quote","reads","required"]);
+function need(raw: WireNeed): Need {
   let kind: string = s.oneOf(raw.type,["figure","live","countdown","stopwatch","entries","content","action","scene","other"]);
-  let reads: string[] = []; if (Object.hasOwn(raw,"reads")) { reads = s.stringArray(raw.reads); }
+  const reads: string[] = raw.reads ?? [];
   let spec: Record<string, unknown> = raw.spec as Record<string, unknown>;
   if (kind === "figure") {
     s.closed(spec,["label","format","unit","formula","example"],["decimals","shown"]); s.nonblank(spec.label); s.text(spec.unit); s.text(spec.formula);
@@ -68,7 +71,7 @@ function need(raw: Record<string, unknown>): Need {
       for (let field of fields) { let id: string = field.id as string; let fk: string = field.kind as string; if (fk === "text") { s.text(values[id]); } else if (fk === "toggle") { let value: boolean = values[id] as boolean; } else { numericKind(fk,values[id]); } }
     }
   } else { s.closed(spec,[],[]); }
-  return {id:s.identifier(raw.id),type:kind,words:s.nonblank(raw.words),quote:s.optionalText(raw,"quote"),reads:reads,required:s.optionalBoolean(raw,"required",true),spec:spec};
+  return {id:s.identifier(raw.id),type:kind,words:s.nonblank(raw.words),quote:raw.quote ?? "",reads:reads,required:raw.required ?? true,spec:spec};
 }
 function visit(id: string, needs: Need[], path: string[]): void {
   if (s.contains(path,id)) { s.reject("Dependency cycle: "+id); }
@@ -76,23 +79,22 @@ function visit(id: string, needs: Need[], path: string[]): void {
   for (let entry of needs) { if (entry.id === id) { for (let read of entry.reads) { visit(read,needs,next); } } }
 }
 export function decode(raw: string, factIds: string[], issuedSourceIds: string[]): Plan {
-  let value: Record<string, unknown> = json.parse(raw);
-  s.closed(value,["title"],["eyebrow","subtitle","inputs","constants","requirements","needs","questions"]);
-  let result: Plan = {title:s.nonblank(value.title),eyebrow:s.optionalText(value,"eyebrow"),subtitle:s.optionalText(value,"subtitle"),inputs:[],constants:[],requirements:[],needs:[],questions:[]};
+  const value: WirePlan = JSON.parse(raw);
+  let result: Plan = {title:s.nonblank(value.title),eyebrow:value.eyebrow ?? "",subtitle:value.subtitle ?? "",inputs:[],constants:[],requirements:[],needs:[],questions:[]};
   let ids: string[] = []; let sourceIds: string[] = []; let needIds: string[] = [];
   for (let sourceId of issuedSourceIds) { s.unique(sourceIds,s.identifier(sourceId)); }
-  for (let item of s.records(value,"inputs")) { let entry: Input = input(item); s.unique(ids,entry.id); s.unique(sourceIds,entry.id); result.inputs[result.inputs.length] = entry; }
-  for (let item of s.records(value,"constants")) { s.closed(item,["id","label","measure","value"],["unit"]); let entry: Constant = {id:s.identifier(item.id),label:s.nonblank(item.label),measure:measure(item.measure),unit:s.optionalText(item,"unit"),value:s.finite(item.value)}; s.unique(ids,entry.id); s.unique(sourceIds,entry.id); result.constants[result.constants.length] = entry; }
-  for (let item of s.records(value,"needs")) { let entry: Need = need(item); s.unique(ids,entry.id); needIds[needIds.length] = entry.id; s.unique(sourceIds,entry.id); result.needs[result.needs.length] = entry; }
-  for (let item of s.records(value,"requirements")) {
-    s.closed(item,["id","text"],["sources","needs"]); let sources: string[] = []; let covers: string[] = [];
-    if (Object.hasOwn(item,"sources")) { sources = s.stringArray(item.sources); } if (Object.hasOwn(item,"needs")) { covers = s.stringArray(item.needs); }
+  const inputs: WireInput[] = value.inputs ?? []; const constants: WireConstant[] = value.constants ?? []; const needs: WireNeed[] = value.needs ?? []; const requirements: WireRequirement[] = value.requirements ?? []; const questions: WireQuestion[] = value.questions ?? [];
+  for (let item of inputs) { let entry: Input = input(item); s.unique(ids,entry.id); s.unique(sourceIds,entry.id); result.inputs[result.inputs.length] = entry; }
+  for (let item of constants) { let entry: Constant = {id:s.identifier(item.id),label:s.nonblank(item.label),measure:measure(item.measure),unit:item.unit ?? "",value:s.finite(item.value)}; s.unique(ids,entry.id); s.unique(sourceIds,entry.id); result.constants[result.constants.length] = entry; }
+  for (let item of needs) { let entry: Need = need(item); s.unique(ids,entry.id); needIds[needIds.length] = entry.id; s.unique(sourceIds,entry.id); result.needs[result.needs.length] = entry; }
+  for (let item of requirements) {
+    const sources: string[] = item.sources ?? []; const covers: string[] = item.needs ?? [];
     for (let origin of sources) { if (origin !== "request" && !s.contains(factIds,origin)) { s.reject("Unissued requirement source: "+origin); } }
     for (let target of covers) { if (!s.contains(needIds,target)) { s.reject("Unknown requirement need: "+target); } }
     let entry: Requirement = {id:s.identifier(item.id),text:s.nonblank(item.text),sources:sources,needs:covers}; s.unique(ids,entry.id); result.requirements[result.requirements.length] = entry;
   }
-  for (let item of s.records(value,"questions")) {
-    s.closed(item,["id","text","default"],["options"]); let options: Record<string, unknown>[] = s.records(item,"options"); let choices: string[] = [];
+  for (let item of questions) {
+    const options: Record<string, unknown>[] = item.options ?? []; let choices: string[] = [];
     for (let option of options) { s.closed(option,["id","label"],[]); s.unique(choices,s.identifier(option.id)); s.nonblank(option.label); }
     let defaultId: string = item.default as string; if (!s.contains(choices,defaultId)) { s.reject("Question default not issued"); }
     let entry: HumanQuestion = {id:s.identifier(item.id),text:s.nonblank(item.text),options:options,default:defaultId}; s.unique(ids,entry.id); result.questions[result.questions.length] = entry;
@@ -100,4 +102,4 @@ export function decode(raw: string, factIds: string[], issuedSourceIds: string[]
   for (let entry of result.needs) { for (let read of entry.reads) { if (!s.contains(sourceIds,read)) { s.reject("Unissued dependency: "+read); } } visit(entry.id,result.needs,[]); }
   return result;
 }
-export function main(): null { return null; }
+export function main(): void { return; }

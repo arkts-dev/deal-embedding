@@ -2,7 +2,7 @@
 
 ## Scope and responsibilities
 
-DEAL embedding constructs/checks/stores/runs interactive experiences from requests/data/capability contracts. [DEAL v1.5](../../deal/docs/spec-v1.5.md) and [Deal UI](../../deal-ui/docs/deal-ui-framework-design.md) semantics apply unchanged.
+DEAL embedding constructs/checks/stores/runs interactive experiences from requests/data/capability contracts. [DEAL v1.6](../../deal/docs/spec-v1.6.md) and [Deal UI](../../deal-ui/docs/deal-ui-framework-design.md) semantics apply unchanged.
 
 Dependencies flow **applications → embedding → Deal UI → DEAL**. Libraries build without application source, provider names or scenario fixtures.
 
@@ -348,7 +348,7 @@ Assembly:
 - Stable instance IDs; AST-qualify private names `f_<id>_<name>`, never substitute text. Deduplicate resolved imports and declarations.
 - Export merged AppState separating authoritative inputs, drafts, operations and results from derived presentation. Seed validated context and configuration; provider results start unavailable. Access application stores only via providers.
 - Root invokes views in screen order.
-- Deterministic UTF-8 without BOM, LF, two-space indentation; order declarations by instance, fields by declaration, imports by module and alias. Preserve Unicode scalars; use DEAL escapes, not JSON `\\u`. Unsupported controls use a JSON-encoded string inside an escaped object literal, then `std/json.parse` and checked string extraction; never execute data.
+- Deterministic UTF-8 without BOM, LF, two-space indentation; order declarations by instance, fields by declaration, imports by module and alias. Preserve UTF-16 code units using DEAL v1.6 string escapes, including control characters and lone surrogates; never reconstruct literals by executing JSON-decoding expressions.
 
 `Connection { readerInstance: string; readerPort: string; writerInstance: string; writerPort: string }` resolves exact nominal type and requested dependency. Catalogue alignment without explicit connection takes first other exact-name/type publisher in screen order. Required missing publishers fail; optional fallbacks are empty currency/query and unavailable itinerary start/deadline, never factual coverage. Reject cycles.
 
@@ -682,7 +682,7 @@ Card components: AppTheme, Column, Row, Layers, Motion, Text, NumberText, Spacer
 
 ### Source edits
 
-Atomic DEAL/Deal UI source edits: `{revision: string, digest: string, edits: [{file: "deal" or "dealui", search: string, replace: string}]}`. Controller issues opaque revision and lowercase SHA-256 of compact `std/json.stringify({deal, dealui})` UTF-8 bytes in that key order. Require both matches; searches are nonempty, exact, unique and disjoint in originals. Apply all or none; rejection preserves source, revision and diagnostics, never authorizes overwrite. Fresh or widened drafts are separate candidates. `load` preserves authored bytes and receives external changes; `source` returns accepted bytes.
+Atomic DEAL/Deal UI source edits: `{revision: string, digest: string, edits: [{file: "deal" or "dealui", search: string, replace: string}]}`. Controller issues opaque revision and lowercase SHA-256 of compact `JSON.stringify({deal, dealui})` UTF-8 bytes in that key order. Require both matches; searches are nonempty, exact, unique and disjoint in originals. Apply all or none; rejection preserves source, revision and diagnostics, never authorizes overwrite. Fresh or widened drafts are separate candidates. `load` preserves authored bytes and receives external changes; `source` returns accepted bytes.
 
 Live refinement prepares an effect-suppressed replacement store. On the serialized Session lane, schema-copy latest authoritative state by stable owner/field identity and exact resolved type; new fields keep initializers, explicitly removed fields disappear, incompatible retained fields reject. Apply restoration invalidation, recompute, validate and check the candidate view. Atomically replace source/store/display only on success; otherwise retain old Session/data. Successful replacement disposes the old store, invalidating its calls/completions; no external work is replayed.
 

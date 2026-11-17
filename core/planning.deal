@@ -25,7 +25,7 @@ export async function run(input: Input): Promise<Result> {
     let response: host.Response = await inference.ask(operation,"planning",prompt(input),previous,diagnostics,tokens,thinking);
     previous = response.content;
     try { plan = decode(response,input); }
-    catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "CONSTRUCTION_SCHEMA" && error.code !== "E8001") { throw error; } diagnostics = error.message; }
+    catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.name !== "CONSTRUCTION_SCHEMA" && error.name !== "E8001" && error.name !== "E8007") { throw error; } diagnostics = error.message; }
   }
   return {plan:plan,diagnostics:diagnostics,answers:[],asks:operation.used};
 }
@@ -42,7 +42,7 @@ export async function review(input: Input, result: Result): Promise<Result> {
   let answers: selection.Answer[] = [];
   if (response.refusal === "") {
     try { answers = selection.decode(response.content,issued); }
-    catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "CONSTRUCTION_SCHEMA" && error.code !== "E8001") { throw error; } }
+    catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.name !== "CONSTRUCTION_SCHEMA" && error.name !== "E8001" && error.name !== "E8007") { throw error; } }
   }
   let blocking: plans.HumanQuestion[] = []; let defaults: Record<string, unknown>[] = [];
   for (let question of plan.questions) {
@@ -62,7 +62,7 @@ export async function review(input: Input, result: Result): Promise<Result> {
     next = decode(response,input);
     for (let requirement of plan.requirements) { let found: boolean = false; for (let candidate of (next as plans.Plan).requirements) { if (candidate.id === requirement.id) { found = true; } } if (!found) { s.reject("Answered replan lost requirement identity"); } }
     (next as plans.Plan).questions = [];
-  } catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "CONSTRUCTION_SCHEMA" && error.code !== "E8001") { throw error; } next = null; diagnostics = error.message; }
+  } catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.name !== "CONSTRUCTION_SCHEMA" && error.name !== "E8001" && error.name !== "E8007") { throw error; } next = null; diagnostics = error.message; }
   return {plan:next,diagnostics:diagnostics,answers:defaults,asks:result.asks+operation.used+replan.used};
 }
-export function main(): null { return null; }
+export function main(): void { return; }

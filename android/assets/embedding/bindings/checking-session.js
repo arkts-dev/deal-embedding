@@ -6,8 +6,8 @@ globalThis.openChecking = function(factories, entryId, restoredState = null) {
   globalThis.Date = class extends NativeDate { constructor(...args) { super(...(args.length ? args : [0])); } static now() { return 0; } };
   let providerCalls = 0;
   globalThis.dealCapabilities = Object.freeze({...dealCapabilities,request: () => { providerCalls++; throw Error('Provider access during isolated checking'); }});
-  let entry, rt;
-  try { ({entry, rt} = dealLoad(factories, entryId)); }
+  let entry, rt, checkpointSchema;
+  try { ({entry, rt, checkpointSchema} = dealLoad(factories, entryId)); }
   catch(error) {
     globalThis.checkingStep=()=>JSON.stringify({ok:false,diagnostics:'CHECK_STARTUP: '+(error.message||String(error)),tree:'',handlers:0,providerCalls});
     return '';
@@ -50,7 +50,7 @@ globalThis.openChecking = function(factories, entryId, restoredState = null) {
       if(operation==='start') {
         store=call('initialStore');
         let initial=call('bridgeInitialState');
-        if(restoredState !== null) initial=rt.decodeGraph(restoredState,call('bridgeSchemaDigest'),entry.bridgeInitialState.$sig.substring(4));
+        if(restoredState !== null) initial=createDealUiCheckpoint(rt,checkpointSchema,call('bridgeSchemaDigest')).decode(restoredState,entry.bridgeInitialState.$sig.substring(4));
         render(initial,null);
       }
       else {

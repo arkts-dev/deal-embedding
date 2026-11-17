@@ -15,4 +15,4 @@ export function dismissing(state: State, action: Dismiss): State { return {title
 export async function dismiss(state: State, action: Dismiss): Promise<Done> { await host.dismiss(); return {}; }
 // @ui-update
 export function complete(state: State, action: Done): State { return {title:state.title,busy:false}; }
-export function main(): null { return null; }
+export function main(): void { return; }

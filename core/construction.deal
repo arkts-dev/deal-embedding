@@ -15,7 +15,6 @@ import * as strings from "std/string";
 import * as revisions from "./source-revisions";
 import * as inference from "./inference";
 import * as identity from "embedding/construction-identity";
-import * as json from "std/json";
 
 export class Result { candidateId: string; attempts: number; diagnostics: string; runnable: boolean; }
 function mark(screen: screens.Screen, instance: screens.Instance): void {
@@ -163,4 +162,4 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   }
   return {candidateId:"",attempts:attempts,diagnostics:diagnostic,runnable:true};
 }
-export function main(): null { return null; }
+export function main(): void { return; }

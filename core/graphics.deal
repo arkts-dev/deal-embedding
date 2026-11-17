@@ -2,9 +2,24 @@ import * as decoded from "./decoded";
 import * as s from "./construction-schema";
 import * as strings from "std/string";
 import * as math from "std/math";
-import * as json from "std/json";
 function require(condition: boolean, message: string): void { if (!condition) { s.reject(message); } }
-function numberText(text: string): number { let normalized: string = text; if (strings.startsWith(normalized,"+")) { normalized = strings.substring(normalized,1,strings.length(normalized)); } if (strings.startsWith(normalized,".")) { normalized = "0"+normalized; } if (strings.startsWith(normalized,"-.")) { normalized = "-0"+strings.substring(normalized,1,strings.length(normalized)); } if (strings.endsWith(normalized,".")) { normalized = normalized+"0"; } let parsed: Record<string, unknown> = json.parse("{\"n\":"+normalized+"}"); return s.finite(parsed.n); }
+// The path scanner validates SVG syntax first. Normalize only the differences
+// from JSON numbers: leading '+', leading zeros and omitted decimal digits.
+function numberText(text: string): number {
+  const pieces = text.toLowerCase().split("e");
+  let mantissa: string = pieces[0]; let sign: string = "";
+  if (mantissa.startsWith("-")) { sign = "-"; mantissa = mantissa.substring(1); }
+  else if (mantissa.startsWith("+")) { mantissa = mantissa.substring(1); }
+  const decimal = mantissa.split(".");
+  let integer: string = decimal[0];
+  while (integer.length > 1 && integer.startsWith("0")) { integer = integer.substring(1); }
+  if (integer === "") { integer = "0"; }
+  let normalized: string = sign+integer;
+  if (decimal.length > 1 && decimal[1] !== "") { normalized = normalized+"."+decimal[1]; }
+  if (pieces.length > 1) { normalized = normalized+"e"+pieces[1]; }
+  const value: number = JSON.parse(normalized);
+  return s.finite(value);
+}
 
 function numeric(value: unknown): number { return s.finite(value); }
 function nonnegative(value: unknown): number { let n: number = numeric(value); require(n >= 0,"Negative graphics size"); return n; }

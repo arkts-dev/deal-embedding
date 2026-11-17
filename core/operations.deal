@@ -16,7 +16,7 @@ function copy(operation: Operation): Operation {
   if (Object.hasOwn(operation,"result")) { result.result = operation.result; }
   if (Object.hasOwn(operation,"admittedAt")) { result.admittedAt = operation.admittedAt as number; }
   if (Object.hasOwn(operation,"expiresAt")) { result.expiresAt = operation.expiresAt as number; }
-  for (let call of operation.calls) { let copied: Call = {id:call.id,terminal:call.terminal,status:call.status,outcome:call.outcome,message:call.message}; if (Object.hasOwn(call,"result")) { copied.result = call.result; } result.calls[result.calls.length] = copied; }
+  result.calls = operation.calls.map((call: Call): Call => { let copied: Call = {id:call.id,terminal:call.terminal,status:call.status,outcome:call.outcome,message:call.message}; if (Object.hasOwn(call,"result")) { copied.result = call.result; } return copied; });
   return result;
 }
 export function idle(id: string, owner: string): Operation {
@@ -42,14 +42,12 @@ export function begin(operation: Operation, phase: string, prerequisites: Prereq
   return next;
 }
 export function envelope(operation: Operation, callId: string): Envelope {
-  let issued: boolean = false; for (let call of operation.calls) { if (call.id === callId) { issued = true; } }
-  if (!issued || operation.status !== "pending") { s.reject("Unissued operation call"); }
+  if (!operation.calls.some((call: Call): boolean => call.id === callId) || operation.status !== "pending") { s.reject("Unissued operation call"); }
   return {operationId:operation.id,sequence:operation.sequence,phase:operation.phase,revision:operation.revision,lifetime:operation.lifetime,epoch:operation.epoch,callId:callId};
 }
 export function sendCurrent(operation: Operation, envelope: Envelope, prerequisites: Prerequisites): boolean {
   if (!current(operation,envelope,prerequisites)) { return false; }
-  for (let call of operation.calls) { if (call.id === envelope.callId && !call.terminal) { return true; } }
-  return false;
+  return operation.calls.some((call: Call): boolean => call.id === envelope.callId && !call.terminal);
 }
 function sameInvocation(operation: Operation, envelope: Envelope): boolean {
   return operation.id === envelope.operationId && operation.sequence === envelope.sequence && operation.phase === envelope.phase && operation.revision === envelope.revision && operation.lifetime === envelope.lifetime && operation.epoch === envelope.epoch;
@@ -84,4 +82,4 @@ export function invalidate(operation: Operation, revision: number, message: stri
   return next;
 }
 export function rejected(envelope: Envelope): Completion { return {envelope:envelope,accepted:false,status:"stale",message:"Action not admitted",outcome:"none"}; }
-export function main(): null { return null; }
+export function main(): void { return; }

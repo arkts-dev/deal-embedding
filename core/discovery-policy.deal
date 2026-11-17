@@ -1,5 +1,4 @@
 import * as decoded from "./decoded";
-import * as json from "std/json";
 import * as strings from "std/string";
 import * as tables from "std/table";
 
@@ -7,7 +6,7 @@ export class Suggestion { title: string; brief: string; supportingFactIds: strin
 export class Capture { facts: Record<string, unknown>[]; capabilityIds: string[]; catalogue: string; }
 
 function require(condition: boolean, message: string): null {
-    if (!condition) { throw {code:"INVALID_REPLY",message:message}; }
+    if (!condition) { throw {name:"INVALID_REPLY",message:message}; }
     return null;
 }
 function contains(values: string[], value: string): boolean {
@@ -25,15 +24,13 @@ function references(values: string[], allowed: string[], minimum: number): strin
 }
 export function validate(text: string, capture: Capture): Suggestion | null {
     if (strings.trim(text) === "null") { return null; }
-    let value: Record<string, unknown> = json.parse(text);
-    let keys: string[] = tables.keys(value);
-    require(keys.length === 4 && contains(keys,"title") && contains(keys,"brief") && contains(keys,"supportingFactIds") && contains(keys,"capabilityIds"), "Invalid discovery output");
-    let title: string = (value.title as string); let brief: string = (value.brief as string);
+    const value: Suggestion = JSON.parse(text);
+    const title = value.title; const brief = value.brief;
     require(strings.length(strings.trim(title)) > 0 && strings.length(title) <= 120, "Invalid discovery title");
     require(strings.length(strings.trim(brief)) > 0 && strings.length(brief) <= 4096, "Invalid discovery brief");
     let allowedFacts: string[] = [];
     for (let fact of capture.facts) { let id: string = (fact.id as string); allowedFacts[allowedFacts.length] = id; }
-    let facts: string[] = decoded.strings(value.supportingFactIds); let capabilities: string[] = decoded.strings(value.capabilityIds);
+    const facts = value.supportingFactIds; const capabilities = value.capabilityIds;
     return {title:title,brief:brief,supportingFactIds:references(facts,allowedFacts,1),capabilityIds:references(capabilities,capture.capabilityIds,0)};
 }
 export function intent(): string {

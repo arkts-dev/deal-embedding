@@ -17,6 +17,6 @@ public final class AssistanceUi {
         Files.writeString(src.resolve("experience_entry.deal"),result.source());
         Files.writeString(output.resolve("assistance.d.deal"),"export function open(): Promise<null>;\nexport function dismiss(): Promise<null>;\n");
         Files.copy(root.resolve("api/graphics.d.deal"),output.resolve("graphics.d.deal"),StandardCopyOption.REPLACE_EXISTING);
-        Files.writeString(output.resolve("deal.json"),"{\"languageVersion\":\"1.5\",\"backend\":\"js\",\"moduleRoots\":[\"src\",\""+output.toAbsolutePath().relativize(distribution.toAbsolutePath()).toString().replace("\\","/")+"\"],\"externals\":{\"embedding/assistance\":{\"declaration\":\"assistance.d.deal\"},\"embedding/graphics\":{\"declaration\":\"graphics.d.deal\"}}}");
+        Files.writeString(output.resolve("deal.json"),"{\"languageVersion\":\"1.6\",\"backend\":\"js\",\"moduleRoots\":[\"src\",\""+output.toAbsolutePath().relativize(distribution.toAbsolutePath()).toString().replace("\\","/")+"\"],\"externals\":{\"embedding/assistance\":{\"declaration\":\"assistance.d.deal\"},\"embedding/graphics\":{\"declaration\":\"graphics.d.deal\"}}}");
     }
 }

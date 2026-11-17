@@ -19,12 +19,12 @@ export async function resolve(requestId: string, questions: plans.HumanQuestion[
   let result: Resolution = {answers:[],changed:false};
   for (let question of questions) {
     let response: host.Answer = await host.ask(requestId,s.encode(question));
-    if (response.cancelled) { throw {code:"CANCELLED",message:"Question cancelled"}; }
+    if (response.cancelled) { throw {name:"CANCELLED",message:"Question cancelled"}; }
     if (response.optionId !== null && response.text !== null) { s.reject("Option and text are mutually exclusive"); }
     let optionId: string | null = response.optionId; let text: string | null = response.text;
     if (text !== null) {
       let answer: string = text as string;
-      if (strings.trim(answer) === "" || await data.utf16Length(answer) > 4096) { s.reject("Question text length"); }
+      if (strings.trim(answer) === "" || answer.length > 4096) { s.reject("Question text length"); }
       result.changed = true;
     } else {
       if (optionId === null) { optionId = question.default; }
@@ -37,4 +37,4 @@ export async function resolve(requestId: string, questions: plans.HumanQuestion[
   }
   return result;
 }
-export function main(): null { return null; }
+export function main(): void { return; }

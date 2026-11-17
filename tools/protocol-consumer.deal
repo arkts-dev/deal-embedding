@@ -1,8 +1,7 @@
 import * as embedding from "embedding";
 import * as strings from "std/string";
-import * as json from "std/json";
 
-function insist(value:boolean, message:string):null { if(!value){throw {code:"PROOF_FAILED",message:message};}return null; }
+function insist(value:boolean, message:string):null { if(!value){throw {name:"PROOF_FAILED",message:message};}return null; }
 export function contexts():string {
     let name:embedding.WireField={name:"name",type:{kind:"string",maximum:16,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional: false};let count:embedding.WireField={name:"count",type:{kind:"number",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional:true};
     let fields:embedding.WireField[]=[name,count];
@@ -13,24 +12,24 @@ export function contexts():string {
     let second:embedding.WireType=embedding.contextSchema(context);
     insist(second.fields[0].type.maximum===16,"Frozen schema/copy");
     insist(embedding.contextJson(context)==="{\"name\":\"Ada\"}","Frozen value");
-    let rejected:boolean=false;try{embedding.contextJson({id:"forged"});}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Forged context");
+    let rejected:boolean=false;try{embedding.contextJson({id:"forged"});}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.name==="INVALID_HANDLE";}insist(rejected,"Forged context");
     rejected=false;try{embedding.snapshot(second,"{\"name\":\"Ada\",\"extra\":1}");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=true;}insist(rejected,"Closed record");
     let bad:embedding.WireField={name:"bad",type:{kind:"",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional:true};let badFields:embedding.WireField[]=[bad];
     rejected=false;try{embedding.snapshot({kind:"record",fields:badFields,element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"{}");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=true;}insist(rejected,"Invalid absent schema");
     rejected=false;try{embedding.snapshot({kind:"string",maximum:1,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"\"😀\"");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=true;}insist(rejected,"UTF16 bound");
-    rejected=false;try{embedding.snapshot(second,"{\"name\":\"Ada\",\"name\":\"Ada\"}");}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.code==="INVALID_JSON";}insist(rejected,"Duplicate JSON key");
+    rejected=false;try{embedding.snapshot(second,"{\"name\":\"Ada\",\"name\":\"Ada\"}");}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.name==="INVALID_JSON";}insist(rejected,"Duplicate JSON key");
     let tooLarge:string="";let i:number=0;while(i<5000){tooLarge=tooLarge+"é";i=i+1;}
-    rejected=false;try{embedding.snapshot({kind:"string",maximum:8192,fields:[],element:null,minimumNumber:-1.7976931348623157e308,maximumNumber:1.7976931348623157e308},json.stringify(tooLarge) as string);}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.code==="INVALID_ARGUMENT";}insist(rejected,"Context UTF-8 bytes");
+    rejected=false;try{embedding.snapshot({kind:"string",maximum:8192,fields:[],element:null,minimumNumber:-1.7976931348623157e308,maximumNumber:1.7976931348623157e308},JSON.stringify(tooLarge) as string);}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.name==="INVALID_ARGUMENT";}insist(rejected,"Context UTF-8 bytes");
     let title:string="";i=0;while(i<121){title=title+"t";i=i+1;}
-    rejected=false;try{embedding.request(title,"Intent",context);}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.code==="INVALID_ARGUMENT";}insist(rejected,"Request title bound");
+    rejected=false;try{embedding.request(title,"Intent",context);}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.name==="INVALID_ARGUMENT";}insist(rejected,"Request title bound");
     let intent:string="";i=0;while(i<4097){intent=intent+"i";i=i+1;}
-    rejected=false;try{embedding.request("Title",intent,context);}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.code==="INVALID_ARGUMENT";}insist(rejected,"Request intent bound");
+    rejected=false;try{embedding.request("Title",intent,context);}catch(errorUnknown){let error:Error=errorUnknown as Error;rejected=error.name==="INVALID_ARGUMENT";}insist(rejected,"Request intent bound");
     let pending:embedding.GenerationRequest=embedding.request("Proof","An authored test workflow",context);
     insist(embedding.requestTrace(pending)!=="","Request trace");
     embedding.cancel(pending);return pending.id;
 }
 export async function fractionalEvents(): Promise<embedding.EventPage> {return await embedding.events("","",1.5);}
-export async function cancelled(id:string): Promise<string> {let rejected:boolean=false;try{await embedding.generate({id:id});}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.code==="CANCELLED";}insist(rejected,"Precancel");return "cancelled";}
+export async function cancelled(id:string): Promise<string> {let rejected:boolean=false;try{await embedding.generate({id:id});}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.name==="CANCELLED";}insist(rejected,"Precancel");return "cancelled";}
 export async function generated(): Promise<embedding.Experience> {
     let context:embedding.GenerationContext=embedding.snapshot({kind:"record",fields: [], element: null, maximum: 128, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},"{}");let pending:embedding.GenerationRequest=embedding.request("Generated proof","An authored test workflow",context);
     let prepared:embedding.Experience=await embedding.generate(pending);insist(prepared.origin==="generated","Generated origin");return prepared;
@@ -50,16 +49,16 @@ export async function lifecycle(deal:string,dealui:string): Promise<string> {
     let live:embedding.Session=await embedding.run(fake);let again:embedding.Session=await embedding.run(prepared);insist(live.id===again.id,"One live session");
     let update:embedding.SessionUpdate=await embedding.next(live,"");let snapshot:embedding.UiSnapshot=update.snapshot;insist(snapshot.fault==="","Initial snapshot");
     embedding.published(live,snapshot.version);
-    let fractional:boolean=false;try{embedding.published(live,0.5);}catch (eUnknown) { let e: Error = eUnknown as Error;fractional=e.code==="INVALID_ARGUMENT";}insist(fractional,"Fractional publication");
-    fractional=false;try{await embedding.dispatch(live,0.5,null);}catch (eUnknown) { let e: Error = eUnknown as Error;fractional=e.code==="INVALID_ARGUMENT";}insist(fractional,"Fractional slot");
+    let fractional:boolean=false;try{embedding.published(live,0.5);}catch (eUnknown) { let e: Error = eUnknown as Error;fractional=e.name==="INVALID_ARGUMENT";}insist(fractional,"Fractional publication");
+    fractional=false;try{await embedding.dispatch(live,0.5,null);}catch (eUnknown) { let e: Error = eUnknown as Error;fractional=e.name==="INVALID_ARGUMENT";}insist(fractional,"Fractional slot");
     let rejected:boolean=false;try{embedding.published(live,snapshot.version+1);}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=true;}insist(rejected,"Unproduced version");
     await embedding.dispatch(live,0,null);update=await embedding.next(live,update.cursor);snapshot=update.snapshot;embedding.published(live,snapshot.version);
     insist(embedding.sessionTrace(live)!=="","Session trace");
     let found:boolean=false;for (let e of embedding.saved()){if(e.id===prepared.id){found=e.title==="Lifecycle proof"&&e.origin==="supplied"&&e.attempts===0;}}insist(found,"Metadata cannot mint provenance");
-    await embedding.close(live);rejected=false;try{await embedding.next(live,"");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Closed session");
+    await embedding.close(live);rejected=false;try{await embedding.next(live,"");}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.name==="INVALID_HANDLE";}insist(rejected,"Closed session");
     let cold:embedding.Session=await embedding.run(prepared);insist(cold.id!==live.id,"Cold new session");await embedding.close(cold);
     await embedding.forget(prepared);insist(embedding.saved().length===before,"Forget");
-    let unused:embedding.Experience=await embedding.load("Unused",{deal:deal,dealui:dealui});embedding.release(unused);rejected=false;try{embedding.source(unused);}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.code==="INVALID_HANDLE";}insist(rejected,"Release");return "load/run/same-live/next/dispatch/published/close/cold/forget/release";
+    let unused:embedding.Experience=await embedding.load("Unused",{deal:deal,dealui:dealui});embedding.release(unused);rejected=false;try{embedding.source(unused);}catch (eUnknown) { let e: Error = eUnknown as Error;rejected=e.name==="INVALID_HANDLE";}insist(rejected,"Release");return "load/run/same-live/next/dispatch/published/close/cold/forget/release";
 }
 export async function equipment(intent:string,json:string): Promise<embedding.Experience> {
     let requirement:embedding.WireField={name:"requirement",type:{kind:"string",maximum:128,fields: [], element: null, minimumNumber: -1.7976931348623157e308, maximumNumber: 1.7976931348623157e308},optional: false};
@@ -84,8 +83,8 @@ export function construction():string {
     insist(embedding.contextJson(context)==="1.5","Fractional number crosses public protocol");
     return "construction";
 }
-export async function invalidCursor(id:string,cursor:string): Promise<string> {let caught:boolean=false;try{await embedding.next({id:id},cursor);}catch (errorUnknown) { let error: Error = errorUnknown as Error;caught=error.code==="INVALID_CURSOR";}insist(caught,"Invalid cursor must raise DEAL Error");return "invalid cursor";}
-export function invalidGrant():string {let caught:boolean=false;try{embedding.grant("missing/module");}catch (errorUnknown) { let error: Error = errorUnknown as Error;caught=error.code==="INVALID_ARGUMENT";}insist(caught,"Grant failure must raise in originating DEAL call");return "grant error";}
+export async function invalidCursor(id:string,cursor:string): Promise<string> {let caught:boolean=false;try{await embedding.next({id:id},cursor);}catch (errorUnknown) { let error: Error = errorUnknown as Error;caught=error.name==="INVALID_CURSOR";}insist(caught,"Invalid cursor must raise DEAL Error");return "invalid cursor";}
+export function invalidGrant():string {let caught:boolean=false;try{embedding.grant("missing/module");}catch (errorUnknown) { let error: Error = errorUnknown as Error;caught=error.name==="INVALID_ARGUMENT";}insist(caught,"Grant failure must raise in originating DEAL call");return "grant error";}
 export function grant(module:string):null {return embedding.grant(module);}
 export function revoke(module:string):null {return embedding.revoke(module);}
 export async function close(id:string): Promise<null> {return await embedding.close({id:id});}
@@ -106,4 +105,4 @@ export async function artifact(id:string): Promise<embedding.Artifact> {return a
 export function capture(enabled:boolean):null {return embedding.capture(enabled);}
 export async function events(trace:string,cursor:string,limit:number): Promise<embedding.EventPage> {return await embedding.events(trace,cursor,limit);}
 export async function shutdown(): Promise<null> {return await embedding.shutdown();}
-export function main():null {return null;}
+export function main(): void { return; }

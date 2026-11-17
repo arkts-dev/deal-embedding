@@ -59,4 +59,4 @@ export function judge(plan: plans.Plan, screen: screens.Screen, answers: selecti
   }
   return result;
 }
-export function main(): null { return null; }
+export function main(): void { return; }

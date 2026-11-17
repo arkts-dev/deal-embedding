@@ -81,7 +81,6 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         "embedding/policy-data"->when(function){
                             "catalogJson"->args.getJSONArray(0).toString()
                             "capabilityDeclarations"->{val modules=args.getJSONArray(0);(0 until modules.length()).joinToString("\n"){index->val contract=CapabilityContract.parse(modules.getJSONObject(index).toString());"// "+contract.module+"\n"+dev.deal.embedding.capabilities.CapabilityBindings.declaration(contract)}}
-                            "utf16Length"->args.getString(0).length
                             "sha256"->MessageDigest.getInstance("SHA-256").digest(args.getString(0).toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it)}
                             else->error("Unissued generation data mechanism: $function")
                         }

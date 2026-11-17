@@ -3,9 +3,9 @@ import * as s from "./construction-schema";
 export class Operation { id: string; used: number; cap: number; }
 export function operation(id: string, cap: number): Operation { if (cap < 1) { s.reject("Invalid inference cap"); } return {id:id,used:0,cap:cap}; }
 export async function ask(operation: Operation, stage: string, input: string, previous: string, diagnostics: string, tokens: number, thinking: boolean): Promise<host.Response> {
-  if (operation.used >= operation.cap) { throw {code:"ASK_LIMIT",message:"Inference operation exhausted: "+operation.id}; }
+  if (operation.used >= operation.cap) { throw {name:"ASK_LIMIT",message:"Inference operation exhausted: "+operation.id}; }
   operation.used = operation.used+1;
   // Charge before dispatch, including operational failures. No adapter retries.
   return await host.dispatch({operation:operation.id,stage:stage,ask:operation.used,input:input,previous:previous,diagnostics:diagnostics,maxTokens:tokens,thinking:thinking});
 }
-export function main(): null { return null; }
+export function main(): void { return; }

@@ -5,7 +5,6 @@ import * as inference from "./inference";
 import * as identity from "embedding/construction-identity";
 import * as s from "./construction-schema";
 import * as strings from "std/string";
-import * as json from "std/json";
 
 // Alternatives are issued by part/catalogue definitions, not authored by the selector.
 export class Alternative { id: string; need: string; origin: string; kind: string; criteria: string; eligible: boolean; reason: string; }
@@ -29,11 +28,11 @@ export async function batch(stage: string, context: Context, plan: plans.Plan, q
     else {
       if (refusal !== "") { return []; }
       try {
-        let envelope: Record<string, unknown> = json.parse(completion); s.closed(envelope,["answers"],[]);
+        let envelope: Record<string, unknown> = JSON.parse(completion); s.closed(envelope,["answers"],[]);
         if (s.records(envelope,"answers").length === 0) { previous = completion; }
         else { return selections.decode(completion,questions); }
       }
-      catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.code !== "CONSTRUCTION_SCHEMA" && error.code !== "E8001") { throw error; } return []; }
+      catch (errorUnknown) { let error: Error = errorUnknown as Error; if (error.name !== "CONSTRUCTION_SCHEMA" && error.name !== "E8001" && error.name !== "E8007") { throw error; } return []; }
     }
   }
   return [];
@@ -84,4 +83,4 @@ export async function second(context: Context, plan: plans.Plan, alternatives: A
   }
   return {choices:choices,answers:answers,settled:settled,usable:true};
 }
-export function main(): null { return null; }
+export function main(): void { return; }

@@ -12,7 +12,7 @@ mkdir -p "$OUTPUT_DIR"
 rm -rf "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar" "$OUTPUT_DIR/generation" "$OUTPUT_DIR/logging"
 mkdir -p "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar/assets/distribution/deal" "$OUTPUT_DIR/aar/assets/distribution/std" "$OUTPUT_DIR/native-tools"
 find "$DEAL_ROOT/deal" -name '*.java' | sort > "$OUTPUT_DIR/sources.txt"
-for source in UiModel UiParser UiDiagnostic UiChecker UiBorrowedValueChecker UiDealGenerator UiSourceGenerator DealUiDealSource; do
+for source in UiModel UiParser UiDiagnostic UiChecker UiBorrowedValueChecker UiDealGenerator UiSourceGenerator DealUiDealSource UiCheckpointCompiler; do
     printf '%s/src/main/java/deal/ui/%s.java\n' "$DEAL_UI_ROOT" "$source" >> "$OUTPUT_DIR/sources.txt"
 done
 mkdir -p "$OUTPUT_DIR/generated"
@@ -44,13 +44,13 @@ stage=pathlib.Path(sys.argv[1]);externals={}
 for p in stage.glob('*.d.deal'):
     name='embedding' if p.name=='embedding.d.deal' else 'embedding/'+p.name.removesuffix('.d.deal')
     externals[name]={'declaration':p.name}
-(stage/'deal.json').write_text(json.dumps({'languageVersion':'1.5','backend':'js','moduleRoots':['src','ui'],'externals':externals}))
+(stage/'deal.json').write_text(json.dumps({'languageVersion':'1.6','backend':'js','moduleRoots':['src','ui'],'externals':externals}))
 PY
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/generation/src/generation.deal" --backend js --output "$OUTPUT_DIR/aar/assets/generation"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/generation/src/discovery.deal" --backend js --output "$OUTPUT_DIR/aar/assets/discovery"
 mkdir -p "$OUTPUT_DIR/logging/src"
 cp "$ROOT/core/logging.deal" "$OUTPUT_DIR/logging/src/"
-printf '%s' '{"languageVersion":"1.5","backend":"js","moduleRoots":["src"]}' > "$OUTPUT_DIR/logging/deal.json"
+printf '%s' '{"languageVersion":"1.6","backend":"js","moduleRoots":["src"]}' > "$OUTPUT_DIR/logging/deal.json"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/logging/src/logging.deal" --backend js --output "$OUTPUT_DIR/aar/assets/logging"
 mkdir -p "$OUTPUT_DIR/binding-tools" "$OUTPUT_DIR/aar/assets/embedding/bindings"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/binding-tools" "$ROOT/tools/GenerationBindings.java"
@@ -62,10 +62,11 @@ cp "$ROOT/ui/platform.dealui-pack" "$OUTPUT_DIR/aar/assets/embedding/platform.de
 mkdir -p "$OUTPUT_DIR/aar/assets/ui"
 cp -r "$ROOT/ui/." "$OUTPUT_DIR/aar/assets/ui/"
 cp "$DEAL_UI_ROOT/runtime-js/session.js" "$OUTPUT_DIR/aar/assets/embedding/bindings/dealui-session.js"
+cp "$DEAL_UI_ROOT/runtime-js/checkpoint.js" "$OUTPUT_DIR/aar/assets/embedding/bindings/checkpoint.js"
 cp -r "$DEAL_UI_ROOT/ui" "$OUTPUT_DIR/aar/assets/distribution/"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/native-tools" "$ROOT/tools/AssistanceUi.java"
 java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/native-tools" AssistanceUi "$ROOT" "$OUTPUT_DIR/assistance" "$DEAL_UI_ROOT"
-java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/assistance/src/experience_entry.deal" --backend js --output "$OUTPUT_DIR/aar/assets/assistance"
+java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.ui.UiCheckpointCompiler "$OUTPUT_DIR/assistance/src/experience_entry.deal" "$OUTPUT_DIR/aar/assets/assistance"
 mkdir -p "$OUTPUT_DIR/aar/assets/protocol"
 cp "$ROOT/api/"*.d.deal "$OUTPUT_DIR/aar/assets/protocol/"
 cp "$DEAL_ROOT/deal/runtime.js" "$OUTPUT_DIR/aar/assets/distribution/deal/"

@@ -1,37 +1,20 @@
-// Validate decoded elements into fresh invariant arrays; preserve already typed arrays.
+// Dynamic Record fields can contain typed framework arrays or untyped JSON arrays.
+// Array invariance forbids casting an existing T[] to unknown[]: preserve an
+// already-compatible array, otherwise check elements into a fresh typed array.
+// Fixed envelopes decode through contextual JSON.parse instead.
 export function records(value: unknown): Record<string, unknown>[] {
-    let typed: Record<string, unknown>[] | null = null;
-    try { typed = value as Record<string, unknown>[]; } catch (error) { }
-    if (typed !== null) { return typed; }
-    let source: unknown[] = value as unknown[];
-    let result: Record<string, unknown>[] = [];
-    for (let item of source) { result[result.length] = item as Record<string, unknown>; }
-    return result;
+    try { return value as Record<string, unknown>[]; } catch (error) { }
+    return Array.from(value as unknown[], (item: unknown): Record<string, unknown> => item as Record<string, unknown>);
 }
 export function strings(value: unknown): string[] {
-    let typed: string[] | null = null;
-    try { typed = value as string[]; } catch (error) { }
-    if (typed !== null) { return typed; }
-    let source: unknown[] = value as unknown[];
-    let result: string[] = [];
-    for (let item of source) { result[result.length] = item as string; }
-    return result;
+    try { return value as string[]; } catch (error) { }
+    return Array.from(value as unknown[], (item: unknown): string => item as string);
 }
 export function numbers(value: unknown): number[] {
-    let typed: number[] | null = null;
-    try { typed = value as number[]; } catch (error) { }
-    if (typed !== null) { return typed; }
-    let source: unknown[] = value as unknown[];
-    let result: number[] = [];
-    for (let item of source) { result[result.length] = item as number; }
-    return result;
+    try { return value as number[]; } catch (error) { }
+    return Array.from(value as unknown[], (item: unknown): number => item as number);
 }
 export function booleans(value: unknown): boolean[] {
-    let typed: boolean[] | null = null;
-    try { typed = value as boolean[]; } catch (error) { }
-    if (typed !== null) { return typed; }
-    let source: unknown[] = value as unknown[];
-    let result: boolean[] = [];
-    for (let item of source) { result[result.length] = item as boolean; }
-    return result;
+    try { return value as boolean[]; } catch (error) { }
+    return Array.from(value as unknown[], (item: unknown): boolean => item as boolean);
 }

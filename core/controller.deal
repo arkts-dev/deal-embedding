@@ -1,7 +1,6 @@
 import * as embedding from "embedding";
 import * as mechanism from "embedding/controller-mechanisms";
 import * as strings from "std/string";
-import * as json from "std/json";
 import * as math from "std/math";
 
 class ContextEntry { id: string; schema: embedding.WireType; json: string; }
@@ -50,7 +49,7 @@ export class Controller {
   stop: () => null;
 }
 function require(condition: boolean, code: string, message: string): null {
-  if (!condition) { throw {code:code,message:message}; }
+  if (!condition) { throw {name:code,message:message}; }
   return null;
 }
 export function create(seed: string, initialContracts: embedding.CapabilityContract[]): Controller {
@@ -64,34 +63,32 @@ export function create(seed: string, initialContracts: embedding.CapabilityContr
   let contracts: embedding.CapabilityContract[] = initialContracts;
   let nextId: () => string = function(): string {
     sequence = sequence + 1;
-    return seed + "-" + (json.stringify(sequence) as string);
+    return seed + "-" + String(sequence);
   };
   let active: () => null = function(): null {
     return require(!stopped,"STOPPED","Embedding instance is stopped");
   };
   let context: (id: string) => ContextEntry = function(id: string): ContextEntry {
-    for (let entry of contexts) { if (entry.id === id) { return entry; } }
-    throw {code:"INVALID_HANDLE",message:"Unissued context"};
+    const entry = contexts.find((item: ContextEntry): boolean => item.id === id); if (entry !== undefined) { return entry; }
+    throw {name:"INVALID_HANDLE",message:"Unissued context"};
   };
   let request: (id: string) => RequestEntry = function(id: string): RequestEntry {
-    for (let entry of requests) { if (entry.id === id) { return entry; } }
-    throw {code:"INVALID_HANDLE",message:"Unissued request"};
+    const entry = requests.find((item: RequestEntry): boolean => item.id === id); if (entry !== undefined) { return entry; }
+    throw {name:"INVALID_HANDLE",message:"Unissued request"};
   };
   let experience: (id: string) => ExperienceEntry = function(id: string): ExperienceEntry {
-    for (let entry of experiences) { if (entry.metadata.id === id) { return entry; } }
-    throw {code:"INVALID_HANDLE",message:"Unissued or expired Experience"};
+    const entry = experiences.find((item: ExperienceEntry): boolean => item.metadata.id === id); if (entry !== undefined) { return entry; }
+    throw {name:"INVALID_HANDLE",message:"Unissued or expired Experience"};
   };
   let session: (id: string) => SessionEntry = function(id: string): SessionEntry {
-    for (let entry of sessions) { if (entry.id === id) { return entry; } }
-    throw {code:"INVALID_HANDLE",message:"Unissued or closed Session"};
+    const entry = sessions.find((item: SessionEntry): boolean => item.id === id); if (entry !== undefined) { return entry; }
+    throw {name:"INVALID_HANDLE",message:"Unissued or closed Session"};
   };
   let title: (value: string) => null = function(value: string): null {
-    return require(strings.trim(value) !== "" && mechanism.utf16Length(value) <= 120,"INVALID_ARGUMENT","Experience title");
+    return require(strings.trim(value) !== "" && value.length <= 120,"INVALID_ARGUMENT","Experience title");
   };
   let removeSession: (id: string) => null = function(id: string): null {
-    let retained: SessionEntry[] = [];
-    for (let entry of sessions) { if (entry.id !== id) { retained[retained.length] = entry; } }
-    sessions = retained;
+    sessions = sessions.filter((entry: SessionEntry): boolean => entry.id !== id);
     return null;
   };
   return {
@@ -106,8 +103,8 @@ export function create(seed: string, initialContracts: embedding.CapabilityContr
     contextJson:function(id: string): string { active(); return context(id).json; },
     request:function(title: string, intent: string, contextId: string): embedding.GenerationRequest {
       active();
-      require(strings.trim(title) !== "" && mechanism.utf16Length(title) <= 120,"INVALID_ARGUMENT","Request title");
-      require(strings.trim(intent) !== "" && mechanism.utf16Length(intent) <= 4096,"INVALID_ARGUMENT","Request intent");
+      require(strings.trim(title) !== "" && title.length <= 120,"INVALID_ARGUMENT","Request title");
+      require(strings.trim(intent) !== "" && intent.length <= 4096,"INVALID_ARGUMENT","Request intent");
       let facts: ContextEntry = context(contextId);
       let id: string = nextId();
       requests[requests.length] = {id:id,title:title,intent:intent,context:facts,contracts:contracts,trace:nextId(),used:false,cancelled:false};
@@ -188,7 +185,7 @@ export function create(seed: string, initialContracts: embedding.CapabilityContr
         let error: Error = errorUnknown as Error;
         entry.starting = false;
         let store: mechanism.PreparedStart | null = prepared;
-        if (store !== null) { await mechanism.abortStart(store,error.code,error.message); }
+        if (store !== null) { await mechanism.abortStart(store,error.name,error.message); }
         throw error;
       }
     },
@@ -246,4 +243,4 @@ export function create(seed: string, initialContracts: embedding.CapabilityContr
     }
   };
 }
-export function main(): null { return null; }
+export function main(): void { return; }

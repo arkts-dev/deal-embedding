@@ -9,7 +9,7 @@ import java.util.*;
 public final class FragmentRegions {
     private FragmentRegions() {}
     private static String slice(String source, int start, int end) {
-        return source.substring(source.offsetByCodePoints(0,start),source.offsetByCodePoints(0,end));
+        return source.substring(start,end);
     }
     public static Map<String,Object> describe(String classes, String fields, String functions, String view) {
         List<Object> declared = new ArrayList<>(), imports = new ArrayList<>(), callable = new ArrayList<>(), state = new ArrayList<>();
@@ -42,7 +42,7 @@ public final class FragmentRegions {
                 state.add(Map.of("name",v.name(),"type",FragmentSyntax.type(v.typeAnnotation().get()),"initial",FragmentSyntax.expression(v.initializer())));
             }
         }
-        if (depth != 0 || !slice(fields,start,fields.codePointCount(0,fields.length())).isBlank()) throw new IllegalArgumentException("Unterminated field declaration");
+        if (depth != 0 || !slice(fields,start,fields.length()).isBlank()) throw new IllegalArgumentException("Unterminated field declaration");
         UiModel.ViewModule parsedView = UiParser.parseViews(Path.of("fragment.dealui"),view);
         return Map.of("classes",declared,"imports",imports,"functions",callable,"fields",state,
             "viewImports",parsedView.imports().stream().map(i -> Map.of("alias",i.alias(),"module",i.specifier())).toList(),

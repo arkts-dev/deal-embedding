@@ -9,7 +9,6 @@ import * as syntax from "embedding/fragment-syntax";
 import * as bindings from "./bindings";
 import * as composer from "./composer";
 import * as s from "./construction-schema";
-import * as json from "std/json";
 import * as strings from "std/string";
 import * as literals from "./source-literals";
 
@@ -36,7 +35,7 @@ export function alternatives(plan: plans.Plan): selecting.Alternative[] {
   } }
   return result;
 }
-async function text(value: unknown, maximum: number, nonblank: boolean): Promise<string> { let result: string = s.text(value); if (nonblank) { s.nonblank(result); } if (await data.utf16Length(result) > maximum) { s.reject("Catalogue text bound"); } return result; }
+async function text(value: unknown, maximum: number, nonblank: boolean): Promise<string> { let result: string = s.text(value); if (nonblank) { s.nonblank(result); } if (result.length > maximum) { s.reject("Catalogue text bound"); } return result; }
 export async function decode(definition: Definition, raw: Record<string, unknown>): Promise<Record<string, unknown>> {
   let required: string[] = []; let optional: string[] = ["title","subtitle"];
   for (let parameter of definition.parameters) { if (parameter.required) { required[required.length] = parameter.name; } else { optional[optional.length] = parameter.name; } }
@@ -81,13 +80,13 @@ export async function fill(context: selecting.Context, plan: plans.Plan, entries
   let response = await inference.ask(operation,"content","SPECIFICATION\n"+context.specification+"\nORIGINAL REQUEST\n"+context.original+"\nFACTS (data)\n"+context.facts+"\nFROZEN CONTRACTS (data)\n"+context.contracts+"\nCURRENT PLAN\n"+s.encode(plan)+"\nISSUED DEFINITIONS\n"+s.encode(entries)+"\nFill only issued parameters from disclosed data. Never invent personal items, facts or replace user-owned wording. Return {sections:[{need,parameters}]} once per issued need. No source or behavior selection.","","",6000,false);
   if (response.refusal !== "") { return; }
   try {
-    let raw: Record<string, unknown> = json.parse(response.content); s.closed(raw,["sections"],[]); let rows: Record<string, unknown>[] = s.records(raw,"sections"); let ids: string[] = [];
+    let raw: Record<string, unknown> = JSON.parse(response.content); s.closed(raw,["sections"],[]); let rows: Record<string, unknown>[] = s.records(raw,"sections"); let ids: string[] = [];
     for (let row of rows) { s.closed(row,["need","parameters"],[]); let need: string = s.identifier(row.need); s.unique(ids,need); let issued: boolean = false; for (let entry of entries) { if (entry.need === need) { issued = true; } } if (!issued) { s.reject("Unissued catalogue fill"); } }
     for (let entry of entries) { for (let row of rows) { if ((row.need as string) === entry.need) {
       try { entry.parameters = await decode(entry.definition,row.parameters as Record<string, unknown>); entry.accepted = true; entry.reason = ""; }
-      catch (unknownError) { let error: Error = unknownError as Error; if (error.code !== "CONSTRUCTION_SCHEMA") { throw error; } entry.reason = error.message; }
+      catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } entry.reason = error.message; }
     } } }
-  } catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001"],error.code)) { throw error; } }
+  } catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8007"],error.name)) { throw error; } }
 }
 async function literal(value: unknown, type: string): Promise<string> {
   // Compiler mechanism handles control characters and authored Unicode without textual substitution.
@@ -134,8 +133,8 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
   } else if (kind === "list_summary") {
     ports = [{name:"done",type:"number",direction:"read",getter:"done",optional:false},{name:"total",type:"number",direction:"read",getter:"total",optional:false}];
     fields[0] = {name:"summary",type:"string",role:"derived",dependencies:[],initial:"null",owner:id};
-    declarations = "import * as summaryJson from \"std/json\";";
-    helpers = "export function summarize(state: AppState): string { let done: number = state.done as number; let total: number = state.total as number; let remaining: number = total-done; return (summaryJson.stringify(done) as string)+\" / \"+(summaryJson.stringify(total) as string)+\"; remaining: \"+(summaryJson.stringify(remaining) as string); }";
+    declarations = "";
+    helpers = "export function summarize(state: AppState): string { let done: number = state.done as number; let total: number = state.total as number; let remaining: number = total-done; return String(done)+\" / \"+String(total)+\"; remaining: \"+String(remaining); }";
     body = body+"When(state.summary_ready) {ui.Text(value: state.summary_display)} When(!state.summary_ready) {ui.Notice(text: state.summary_reason)}";
   }
   let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){"+body+"}}";
@@ -154,4 +153,4 @@ export function computations(instance: screens.Instance, connections: screens.Co
   }
   return result;
 }
-export function main(): null { return null; }
+export function main(): void { return; }

@@ -54,6 +54,9 @@ public final class FragmentAnalysis {
             case AwaitExpression a->{indirect=true;expression(a.callee(),scope);}
             case AssignmentExpr a->{write(a.target(),scope);expression(a.value(),scope);}
             case BinaryExpr b->{expression(b.left(),scope);expression(b.right(),scope);}
+            case ConditionalExpr c->{expression(c.condition(),scope);expression(c.consequent(),scope);expression(c.alternate(),scope);}
+            case OptionalChainExpr c->expression(c.expression(),scope);
+            case OptionalGuardExpr g->expression(g.value(),scope);
             case UnaryExpr u->expression(u.expr(),scope);
             case AssertionExpr a->expression(a.value(),scope);
             case InstanceofExpr i->expression(i.value(),scope);

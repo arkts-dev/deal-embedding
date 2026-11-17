@@ -8,7 +8,6 @@ import * as formula from "./formula";
 import * as s from "./construction-schema";
 import * as literals from "./source-literals";
 import * as strings from "std/string";
-import * as json from "std/json";
 import * as math from "std/math";
 import * as tables from "std/table";
 import * as scalar from "./scalar-read";
@@ -53,7 +52,7 @@ export function defineWithProviders(plan: plans.Plan, providerOperands: formula.
           definitions.alternatives[definitions.alternatives.length] = {id:"part_"+need.id,need:need.id,origin:"part",kind:"figure",criteria:"Pure checked numeric formula "+s.text(need.spec.formula)+" over issued inputs/constants. Preserves numeric value, explicit readiness and units; no provider work, timer, records or external action.",eligible:true,reason:""};
           issued[issued.length] = {id:need.id,expression:"(state."+need.id+" as number)",type:"number",dependency:"f_parts_"+need.id}; added[added.length] = need.id; progress = true;
         }
-      } catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001"],error.code)) { throw error; } }
+      } catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8007"],error.name)) { throw error; } }
     } }
   }
   return definitions;
@@ -70,9 +69,9 @@ export function formulaQuestions(plan: plans.Plan, definitions: Definitions, fir
 }
 export function build(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry): Built { return buildWithProviders(plan,definitions,choices,registry,null); }
 export function buildWithProviders(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry, reads: scalar.Built | null): Built {
-  let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let effects: screens.Handler[] = []; let declarations: string = "import * as formulaMath from \"std/math\";"; let helpers: string = ""; let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() {";
+  let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let effects: screens.Handler[] = []; let declarations: string = ""; let helpers: string = ""; let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() {";
   let computations: composer.Computation[] = []; let covers: string[] = [];
-  declarations = declarations+"import * as inputJson from \"std/json\"; import * as inputString from \"std/string\"; import * as inputMath from \"std/math\";";
+  declarations = declarations+"import * as inputString from \"std/string\"; import * as inputMath from \"std/math\";";
   helpers = helpers+"export function decimalDraft(text: string): boolean { let digits: number = 0; let dot: boolean = false; let index: number = 0; for (let ch of text) { if ((ch === \"+\" || ch === \"-\") && index === 0) {} else if (ch === \".\" && !dot) {dot = true;} else if (inputString.contains(\"0123456789\",ch)) {digits = digits+1;} else {return false;} index = index+1; } return digits > 0; } export function parseDraft(text: string): number { let negative: boolean = false; let whole: number = 0; let scale: number = 1; let dot: boolean = false; for (let ch of text) { if (ch === \"-\") {negative = true;} else if (ch === \".\") {dot = true;} else if (ch !== \"+\") { let digit: number = 0; for (let n of [0,1,2,3,4,5,6,7,8,9]) { if (inputString.substring(\"0123456789\",n,n+1) === ch) {digit = n;} } whole = whole*10+digit; if(dot) {scale = scale*10;} } } let value: number = whole/scale; if(negative) {return -value;} return value; }";
   for (let input of plan.inputs) {
     if (!s.contains(["text","toggle","amount","percent","count","time","date"],input.kind)) { continue; }
@@ -132,19 +131,19 @@ export function buildWithProviders(plan: plans.Plan, definitions: Definitions, c
     fields[fields.length] = {name:figure.need,type:"number",role:"derived",dependencies:figure.expression.dependencies,initial:"null",owner:"parts"};
     bindings.reserve(registry,{id:figure.need,type:"number",schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+figure.need,ready:"f_parts_"+figure.need+"_ready"});
     let formulaReady: string = "true";
-    for (let need of plan.needs) { if (need.id === figure.need && s.text(need.spec.format) === "money") { formulaReady = "formulaMath.absNumber("+figure.expression.source+") <= 9007199254740991"; if (minorUnits(figure.unit)) { formulaReady = formulaReady+" && formulaMath.floor("+figure.expression.source+") === ("+figure.expression.source+")"; } } }
-    if (figure.format === "time_of_day") { formulaReady = formulaReady+" && formulaMath.floor("+figure.expression.source+") === ("+figure.expression.source+") && ("+figure.expression.source+") >= 0 && ("+figure.expression.source+") <= 1439"; }
+    for (let need of plan.needs) { if (need.id === figure.need && s.text(need.spec.format) === "money") { formulaReady = "Math.abs("+figure.expression.source+") <= 9007199254740991"; if (minorUnits(figure.unit)) { formulaReady = formulaReady+" && Math.floor("+figure.expression.source+") === ("+figure.expression.source+")"; } } }
+    if (figure.format === "time_of_day") { formulaReady = formulaReady+" && Math.floor("+figure.expression.source+") === ("+figure.expression.source+") && ("+figure.expression.source+") >= 0 && ("+figure.expression.source+") <= 1439"; }
     computations[computations.length] = {instance:"parts",field:figure.need,value:figure.expression.source,ready:formulaReady,reason:"\"Input or upstream result unavailable\"",dependencies:figure.expression.dependencies};
     // Primitive render values are separate composer-owned derived fields, guarded in the view.
     fields[fields.length] = {name:figure.need+"_text",type:"string",role:"derived",dependencies:[figure.need],initial:"null",owner:"parts"};
-    let formatted: string = "jsonText(state."+figure.need+" as number)";
+    let formatted: string = "numberText(state."+figure.need+" as number)";
     if (figure.format === "time_of_day") { formatted = "timeText(state."+figure.need+" as number)"; }
     helpers = helpers+"export function text_"+figure.need+"(state: AppState): string { return "+literals.quote(figure.label+": ")+"+"+formatted+"+"+literals.quote(" "+figure.unit)+"; }";
     computations[computations.length] = {instance:"parts",field:figure.need+"_text",value:"text_"+figure.need+"(state)",ready:"true",reason:"\"Result unavailable\"",dependencies:["f_parts_"+figure.need]};
     if (figure.shown) { view = view+"When(state."+figure.need+"_text_ready) {ui.Text(value: state."+figure.need+"_text_display)} When(!state."+figure.need+"_text_ready) {ui.Notice(text: state."+figure.need+"_text_reason)}"; } covers[covers.length] = figure.need;
   } }
-  declarations = declarations+"import * as json from \"std/json\";";
-  helpers = helpers+"export function jsonText(value: number): string { return json.stringify(value) as string; } export function twoDigits(value:number):string {if(value<10){return \"0\"+jsonText(value);}return jsonText(value);} export function timeText(value:number):string {let hours:number=formulaMath.floor(value/60);return twoDigits(hours)+\":\"+twoDigits(value-hours*60);}";
+
+  helpers = helpers+"export function numberText(value: number): string { return String(value); } export function twoDigits(value:number):string {if(value<10){return \"0\"+numberText(value);}return numberText(value);} export function timeText(value:number):string {let hours:number=Math.floor(value/60);return twoDigits(hours)+\":\"+twoDigits(value-hours*60);}";
   return {instance:{id:"parts",kind:"inputs_figures",origin:"part",parameters:{},fragment:{declarations:declarations,fields:fields,updates:updates,effects:effects,helpers:helpers,view:view+"} }",options:[],content:[],ports:[],holes:[],covers:covers,owns:["parts"]},bodies:{}},computations:computations};
 }
-export function main(): null { return null; }
+export function main(): void { return; }

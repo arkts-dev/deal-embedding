@@ -40,14 +40,14 @@ internal class ExperienceCompiler(private val context: Context, private val conf
                 File(project, declaration).writeText(dev.deal.embedding.capabilities.CapabilityBindings.declaration(module))
                 externals.put(module.module, JSONObject().put("declaration", declaration))
             }
-            File(project, "deal.json").writeText(JSONObject().put("languageVersion", "1.5").put("backend", "js")
+            File(project, "deal.json").writeText(JSONObject().put("languageVersion", "1.6").put("backend", "js")
                 .put("moduleRoots", JSONArray(listOf("src"))).put("externals", externals).toString())
             val output = File(project, "output")
             val diagnostics = File(project, "diagnostics.json")
             log.stage("compiler-deal", target = "DEAL compile js", detail = entry.readText()) {
                 val phases = JSONObject()
                 val status = deal.module.CompilationTiming.observe { phase, nanos -> phases.put(phase, nanos / 1000000.0) }.use {
-                    deal.Main.run(arrayOf("compile", entry.absolutePath, "--backend", "js", "--output", output.absolutePath, "--diagnostics-json", diagnostics.absolutePath))
+                    deal.ui.UiCheckpointCompiler.compile(entry.toPath(), output.toPath(), diagnostics.toPath())
                 }
                 log.event("compiler-deal", "phases", target = "Monotonic phase milliseconds; codegen-total includes lowering/emission", detail = phases.toString())
                 log.event("compiler-deal", "diagnostics", code = "STATUS_$status", detail = if (diagnostics.exists()) diagnostics.readText().replace(project.absolutePath, "candidate") else null)

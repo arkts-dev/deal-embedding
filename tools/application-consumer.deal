@@ -28,4 +28,4 @@ export function health():embedding.ObservationHealth {return embedding.health();
 export function capture(enabled:boolean):null {return embedding.capture(enabled);}
 export async function clearObservation(): Promise<null> {return await embedding.clearObservation();}
 export async function shutdown(): Promise<null> {return await embedding.shutdown();}
-export function main():null {return null;}
+export function main(): void { return; }

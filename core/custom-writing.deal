@@ -9,7 +9,6 @@ import * as revisions from "./source-revisions";
 import * as identity from "embedding/construction-identity";
 import * as checker from "embedding/checker";
 import * as checking from "./isolated-check";
-import * as json from "std/json";
 import * as tables from "std/table";
 import * as strings from "std/string";
 import * as selection from "./selection";
@@ -45,7 +44,7 @@ function instructions(input: Input): string {
 export async function assemble(response: string, input: Input): Promise<revisions.Source> {
   let owner: string = "whole"; if (Object.hasOwn(input,"base")) { owner = "gap"; }
   let parsed: fragments.Parsed = fragments.parse(response); if (!parsed.accepted) { s.reject(parsed.diagnostics); }
-  let facts: Record<string, unknown> = json.parse(await fragments.describe(parsed.regions));
+  let facts: Record<string, unknown> = JSON.parse(await fragments.describe(parsed.regions));
   let fields: screens.Field[] = [];
   for (let value of decoded.records(facts.fields)) { fields[fields.length] = {name:s.identifier(value.name),type:s.nonblank(value.type),role:"authoritative",dependencies:[],initial:s.nonblank(value.initial),owner:owner}; }
   let updates: screens.Handler[] = []; let effects: screens.Handler[] = [];
@@ -160,7 +159,7 @@ export async function run(input: Input): Promise<Result> {
     } else {
       draft = null; edits = 0;
       try { source = await assemble(response.content,input); }
-      catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8010","FRAGMENT_SYNTAX"],error.code)) { throw error; } diagnostics = error.message; }
+      catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8007","E8010","FRAGMENT_SYNTAX"],error.name)) { throw error; } diagnostics = error.message; }
       if (source !== null) { draft = await revisions.issue(source as revisions.Source); }
     }
     if (source !== null) {
@@ -177,4 +176,4 @@ export async function run(input: Input): Promise<Result> {
   }
   return {candidateId:"",attempts:attempts,diagnostics:diagnostics};
 }
-export function main(): null { return null; }
+export function main(): void { return; }

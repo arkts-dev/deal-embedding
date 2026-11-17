@@ -3,7 +3,6 @@ import * as embedding from "embedding";
 export class ContextValue { schema: embedding.WireType; json: string; }
 // Boundary codec only. Limits and admission are selected by compiled controller policy.
 export function context(schema: embedding.WireType, valueJson: string, maximumBytes: number, maximumDepth: number, maximumFields: number, maximumLength: number): ContextValue;
-export function utf16Length(value: string): number;
 
 export class PreparedStart { id: string; session: string; trace: string; }
 export function prepareStart(experience: embedding.Experience, session: string): Promise<PreparedStart>;

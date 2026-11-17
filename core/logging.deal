@@ -1,4 +1,3 @@
-import * as json from "std/json";
 import * as strings from "std/string";
 
 // Canonical logging policy. Only trusted adapters submit events; application source cannot.
@@ -11,17 +10,12 @@ export class LogEvent {
     capture: boolean; artifact: string; bytes: number;
 }
 function bounded(value: string, maximum: number): string {
-    let controls: Record<string, unknown> = json.parse("{\"cr\":\"\\r\"}");
-    let carriageReturn: string = (controls.cr as string);
-    let cleaned: string = strings.replace(strings.replace(value, "\n", " "), carriageReturn, " ");
-    return strings.substring(cleaned, 0, maximum);
+    return value.split("\n").join(" ").split("\r").join(" ").substring(0,maximum);
 }
 export function normalize(event: LogEvent): string {
     let stage: string = event.stage;
     let stages: string[] = ["opportunity", "opportunity-catalogue", "opportunity-input", "opportunity-inference", "opportunity-validation", "opportunity-admission", "opportunity-handoff", "request", "discovery", "grant", "session", "contract", "choice", "source", "policy", "lower", "check", "compiler-ui", "compiler-deal", "candidate", "route", "mount", "action", "capability", "effect-delivery", "snapshot", "storage", "host", "transport", "model-provider", "repair-metrics", "request-summary", "candidate-test", "composition", "composition-assemble", "composition-dependencies", "composition-expand", "composition-view-binding", "composition-lower", "generation-bundle", "generation-initialize", "generation-bridge", "recovery", "logger"];
-    let known: boolean = false;
-    for (let allowed of stages) { if (stage === allowed) { known = true; } }
-    if (!known) { stage = "logger"; }
+    if (!stages.includes(stage)) { stage = "logger"; }
     let outcome: string = bounded(event.outcome, 32);
     let duration: number = event.durationMs;
     if (duration < 0) { duration = 0; }
@@ -29,7 +23,7 @@ export function normalize(event: LogEvent): string {
     if (event.artifact !== "" && event.capture) { content = "captured"; }
     let targetLimit: number = 160;
     if (stage === "repair-metrics" || stage === "request-summary" || stage === "model-provider" || stage === "composition") { targetLimit = 16384; }
-    return (json.stringify({ schema: 1, sequence: event.sequence, time: event.time, elapsed: event.elapsed,
+    return (JSON.stringify({ schema: 1, sequence: event.sequence, time: event.time, elapsed: event.elapsed,
         trace: bounded(event.trace, 80), span: bounded(event.span, 80), parent: bounded(event.parent, 80),
         stage: stage, outcome: outcome, code: bounded(event.code, 80),
         candidate: bounded(event.candidate, 80), workspace: bounded(event.workspace, 80), session: bounded(event.session,80), operation: bounded(event.operation, 80),
@@ -38,4 +32,4 @@ export function normalize(event: LogEvent): string {
         summary: stage + " · " + outcome + " " + bounded(event.target, 160),
         contentLimit: 262144, artifactStoreLimit: 4194304, eventStoreLimit: 524288, queueLimit: 256 }) as string);
 }
-export function main(): null { return null; }
+export function main(): void { return; }

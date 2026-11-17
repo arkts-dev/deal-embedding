@@ -1,15 +1,14 @@
-import * as json from "std/json";
 import * as tables from "std/table";
 import * as strings from "std/string";
 import * as math from "std/math";
 import * as decoded from "./decoded";
 
-export function reject(message: string): void { throw {code:"CONSTRUCTION_SCHEMA",message:message}; }
+export function reject(message: string): void { throw {name:"CONSTRUCTION_SCHEMA",message:message}; }
 export function closed(value: Record<string, unknown>, required: string[], optional: string[]): void {
   for (let key of required) { if (!Object.hasOwn(value,key)) { reject("Missing field: "+key); } }
   for (let key of tables.keys(value)) { if (!contains(required,key) && !contains(optional,key)) { reject("Unknown field: "+key); } }
 }
-export function contains(values: string[], value: string): boolean { for (let entry of values) { if (entry === value) { return true; } } return false; }
+export function contains(values: string[], value: string): boolean { return values.includes(value); }
 export function finite(value: unknown): number { let n: number = value as number; if (n-n !== 0) { reject("Expected finite number"); } return n; }
 export function integral(value: unknown): number { let n: number = finite(value); if (math.floor(n) !== n) { reject("Expected integral number"); } return n; }
 export function text(value: unknown): string { return value as string; }
@@ -31,5 +30,5 @@ export function records(owner: Record<string, unknown>, name: string): Record<st
 export function stringArray(value: unknown): string[] { return decoded.strings(value); }
 export function optionalText(owner: Record<string, unknown>, name: string): string { if (!Object.hasOwn(owner,name)) { return ""; } return owner[name] as string; }
 export function optionalBoolean(owner: Record<string, unknown>, name: string, fallback: boolean): boolean { if (!Object.hasOwn(owner,name)) { return fallback; } return owner[name] as boolean; }
-export function encode(value: unknown): string { return json.stringify(value) as string; }
-export function main(): null { return null; }
+export function encode(value: unknown): string { return JSON.stringify(value) as string; }
+export function main(): void { return; }

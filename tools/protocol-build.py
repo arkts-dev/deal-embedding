@@ -9,8 +9,8 @@ for p in (root/'api').glob('*.d.deal'):shutil.copy(p,stage/'src'/p.name)
 for p in (root/'core/host').glob('*.d.deal'):shutil.copy(p,stage/'src'/p.name)
 shutil.copy(root/'tools/controller-mechanisms.d.deal',stage/'src/controller-mechanisms.d.deal')
 modules={'embedding':'embedding.d.deal','embedding/policy-data':'policy-data.d.deal','embedding/controller-mechanisms':'controller-mechanisms.d.deal'}
-(stage/'deal.json').write_text(json.dumps({'languageVersion':'1.5','backend':'js','moduleRoots':['src'],'externals':{k:{'declaration':'src/'+v} for k,v in modules.items()}}))
-(stage/'src/main.deal').write_text('\n'.join('import * as m'+str(i)+' from "'+m+'";' for i,m in enumerate(modules))+'\nexport function main(): null { return null; }')
+(stage/'deal.json').write_text(json.dumps({'languageVersion':'1.6','backend':'js','moduleRoots':['src'],'externals':{k:{'declaration':'src/'+v} for k,v in modules.items()}}))
+(stage/'src/main.deal').write_text('\n'.join('import * as m'+str(i)+' from "'+m+'";' for i,m in enumerate(modules))+'\nexport function main(): void { return; }')
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(compiler),'deal.Main','compile',str(stage/'src/main.deal'),'--backend','js','--output',str(stage/'js')],check=True)
 text=(stage/'js/main.js').read_text()
 entries=[]

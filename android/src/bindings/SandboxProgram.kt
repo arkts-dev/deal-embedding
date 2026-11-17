@@ -112,6 +112,7 @@ internal object SandboxBundle {
     fun build(context: Context, bindings: List<String>, configure: String, invocation: String, output: File? = null, assetRoot: String? = null): String = buildString {
         require((output == null) != (assetRoot == null))
         asset(context, "embedding/bindings/sandbox.js")
+        asset(context, "embedding/bindings/checkpoint.js")
         bindings.forEach { asset(context, "embedding/bindings/$it") }
         append(configure).append("\n(() => { const factories = Object.create(null);\n")
         if (output != null) {

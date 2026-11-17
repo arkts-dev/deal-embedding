@@ -9,7 +9,7 @@ public final class FragmentSyntax {
     private FragmentSyntax() {}
     public static ProgramNode parse(String source) {
         var lexed=new Lexer(source,"fragment.deal").tokenize();
-        var parsed=new Parser(lexed.tokens(),"fragment.deal",lexed.directiveEvents()).parse();
+        var parsed=new Parser(lexed.tokens(),"fragment.deal").parse();
         if(!lexed.diagnostics().isEmpty() || !parsed.diagnostics().isEmpty())throw new IllegalArgumentException("Invalid fragment syntax: " + parsed.diagnostics());
         return parsed.program();
     }
@@ -66,7 +66,7 @@ public final class FragmentSyntax {
             case ImportDeclaration i->"import * as "+name(i.alias())+" from "+quote(i.modulePath())+";\n";
             case ClassDeclaration c->"class "+name(c.name())+" {\n"+c.fields().stream().map(f->name(f.name())+(f.optional()?"?":"")+": "+type(f.type())+";\n").collect(Collectors.joining())+"}\n";
             case Block b->block(b);
-            case VariableDeclaration v->"let "+name(v.name())+v.typeAnnotation().map(t->":"+type(t)).orElse("")+"="+expression(v.initializer())+";\n";
+            case VariableDeclaration v->(v.isConst()?"const ":"let ")+name(v.name())+v.typeAnnotation().map(t->":"+type(t)).orElse("")+"="+expression(v.initializer())+";\n";
             case ReturnStatement r->"return"+r.expr().map(e->" "+expression(e)).orElse("")+";\n";
             case ExpressionStatement e->e.expr() instanceof CallExpr c && c.callee() instanceof IdentifierExpr i && statements.containsKey(i.name())
                 ?statements.get(i.name()).stream().map(s->new Printer(Map.of(),Map.of()).statement(s)).collect(Collectors.joining()):expression(e.expr())+";\n";
@@ -82,6 +82,9 @@ public final class FragmentSyntax {
         };}
         String block(Block b){return "{\n"+b.statements().stream().map(this::statement).collect(Collectors.joining())+"}\n";}
         String expression(ExpressionNode node){return switch(node){
+            case ConditionalExpr c->"("+expression(c.condition())+" ? "+expression(c.consequent())+" : "+expression(c.alternate())+")";
+            case OptionalChainExpr c->"("+expression(c.expression())+")";
+            case OptionalGuardExpr g->expression(g.value());
             case IdentifierExpr i->expressions.containsKey(i.name())?new Printer(Map.of(),Map.of()).expression(expressions.get(i.name())):name(i.name());
             case LiteralExpr l->switch(l.value()){
                 case LiteralValue.StringLiteral s->quote(s.value());
@@ -89,21 +92,22 @@ public final class FragmentSyntax {
                 case LiteralValue.BooleanLiteral b->Boolean.toString(b.value());
                 case LiteralValue.NullLiteral n->"null";
             };
-            case MemberAccessExpr m->expression(m.object())+"."+name(m.field());
-            case IndexExpr i->expression(i.array())+"["+expression(i.index())+"]";
-            case CallExpr c->expression(c.callee())+"("+c.args().stream().map(this::expression).collect(Collectors.joining(","))+")";
+            case MemberAccessExpr m->expression(m.object())+(m.object() instanceof OptionalGuardExpr?"?.":".")+name(m.field());
+            case IndexExpr i->expression(i.array())+(i.array() instanceof OptionalGuardExpr?"?.[":"[")+expression(i.index())+"]";
+            case CallExpr c->expression(c.callee())+(c.callee() instanceof OptionalGuardExpr?"?.(":"(")+c.args().stream().map(this::expression).collect(Collectors.joining(","))+")";
             case AwaitExpression a->"await "+expression(a.callee());
-            case BinaryExpr b->"("+expression(b.left())+" "+switch(b.op()){case ADD->"+";case SUB->"-";case MUL->"*";case DIV->"/";case POW->"**";case EQ->"===";case NEQ->"!==";case LT->"<";case LTE->"<=";case GT->">";case GTE->">=";case AND->"&&";case OR->"||";}+" "+expression(b.right())+")";
+            case BinaryExpr b->"("+expression(b.left())+" "+switch(b.op()){case ADD->"+";case SUB->"-";case MUL->"*";case DIV->"/";case REM->"%";case COALESCE->"??";case POW->"**";case EQ->"===";case NEQ->"!==";case LT->"<";case LTE->"<=";case GT->">";case GTE->">=";case AND->"&&";case OR->"||";}+" "+expression(b.right())+")";
             case UnaryExpr u->"("+switch(u.op()){case NOT->"!";case NEG->"-";case TYPEOF->"typeof ";}+expression(u.expr())+")";
             case AssignmentExpr a->expression(a.target())+" = "+expression(a.value());
-            case ObjectLiteralExpr o->o.properties().stream().map(p->name(p.name())+":"+expression(p.value())).collect(Collectors.joining(",","{","}"));
+            case ObjectLiteralExpr o->o.properties().stream().map(p->(p.key()!=null?"["+expression(p.key())+"]":quote(name(p.name())))+":"+expression(p.value())).collect(Collectors.joining(",","{","}"));
             case ArrayLiteralExpr a->a.elements().stream().map(this::expression).collect(Collectors.joining(",","[","]"));
-            case HasExpr h->"Object.hasOwn("+expression(h.object())+","+quote(name(h.field()))+")";
+            case HasExpr h->"Object.hasOwn("+expression(h.object())+","+expression(h.key())+")";
             case InstanceofExpr i->"("+expression(i.value())+" instanceof "+type(i.target())+")";
             case AssertionExpr a->"("+expression(a.value())+" as "+type(a.target())+")";
+            case TemplateLiteralExpr t->"("+t.parts().stream().map(e->"String("+expression(e)+")").collect(Collectors.joining(" + "))+")";
             case FunctionExpr f->(f.isAsync()?"async ":"")+"function("+parameters(f.params())+"):"+result(f.returnType(),f.isAsync())+block(f.body());
             default->throw new IllegalArgumentException("Unsupported structural expression " + node.getClass().getSimpleName());
         };}
     }
-    private static String quote(String source){return "\""+source.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\\n").replace("\r","\\r").replace("\t","\\t")+"\"";}
+    private static String quote(String source){return "\""+deal.codegen.jvm.JvmJson.escapeString(source)+"\"";}
 }

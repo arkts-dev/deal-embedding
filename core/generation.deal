@@ -1,7 +1,6 @@
 import * as embedding from "embedding";
 import * as data from "embedding/policy-data";
 import * as identity from "embedding/construction-identity";
-import * as json from "std/json";
 import * as decoded from "./decoded";
 import * as s from "./construction-schema";
 import * as plans from "./plan";
@@ -18,7 +17,7 @@ export async function generate(request: GenerationInput): Promise<GenerationResu
   let disclosed: string = embedding.contextJson(request.context);
   let contracts: string = await data.catalogJson(request.capabilities);
   contracts = contracts+"\nCOMPILER PROVIDER DECLARATIONS\n"+await data.capabilityDeclarations(request.capabilities);
-  let facts: Record<string, unknown> = json.parse(disclosed); let factIds: string[] = [];
+  let facts: Record<string, unknown> = JSON.parse(disclosed); let factIds: string[] = [];
   if (Object.hasOwn(facts,"facts")) { for (let fact of decoded.records(facts.facts)) { s.unique(factIds,s.nonblank(fact.id)); } }
   let input: planning.Input = {requestId:await identity.issue(),request:request.intent,facts:disclosed,factIds:factIds,sourceIds:[],contracts:contracts,specification:assets.planningSpecification(),target:"screen"};
   let result: planning.Result = await planning.review(input,await planning.run(input));
@@ -32,4 +31,4 @@ export async function generate(request: GenerationInput): Promise<GenerationResu
   let written: writing.Result = await writing.run(writingInput);
   return {candidateId:written.candidateId,attempts:written.attempts,diagnostics:written.diagnostics,origin:"generated"};
 }
-export function main(): null { return null; }
+export function main(): void { return; }

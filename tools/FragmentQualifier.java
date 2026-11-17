@@ -102,7 +102,7 @@ public final class FragmentQualifier {
                 TypeNode declared = v.typeAnnotation().orElseGet(() -> resolved(v.initializer(),scope));
                 String initializer = expression(v.initializer(),scope,declared);
                 scope.put(v.name(),declared);
-                yield "let " + v.name() + v.typeAnnotation().map(t -> ": " + type(t)).orElse("") + " = " + initializer + ";\n";
+                yield (v.isConst()?"const ":"let ") + v.name() + v.typeAnnotation().map(t -> ": " + type(t)).orElse("") + " = " + initializer + ";\n";
             }
             case Block b -> block(b,scope,returns,level) + "\n";
             case ReturnStatement r -> "return" + r.expr().map(e -> " " + expression(e,scope,returns)).orElse("") + ";\n";
@@ -126,6 +126,8 @@ public final class FragmentQualifier {
         };
     }
     private TypeNode resolved(ExpressionNode node, Map<String,TypeNode> scope) {
+        if (node instanceof OptionalChainExpr c) return resolved(c.expression(),scope);
+        if (node instanceof OptionalGuardExpr g) return resolved(g.value(),scope);
         if (node instanceof IdentifierExpr i) return scope.get(i.name());
         if (node instanceof AssertionExpr a) return a.target();
         if (node instanceof AwaitExpression a) return resolved(a.callee(),scope);
@@ -147,13 +149,16 @@ public final class FragmentQualifier {
                 case LiteralValue.BooleanLiteral b -> Boolean.toString(b.value());
                 case LiteralValue.NullLiteral n -> "null";
             };
-            case MemberAccessExpr m -> expression(m.object(),scope,null) + "." + (state(resolved(m.object(),scope)) ? stateField(m.field()) : m.field());
-            case IndexExpr i -> expression(i.array(),scope,null) + "[" + expression(i.index(),scope,null) + "]";
+            case MemberAccessExpr m -> expression(m.object(),scope,null) + (m.object() instanceof OptionalGuardExpr ? "?." : ".") + (state(resolved(m.object(),scope)) ? stateField(m.field()) : m.field());
+            case IndexExpr i -> expression(i.array(),scope,null) + (i.array() instanceof OptionalGuardExpr ? "?.[" : "[") + expression(i.index(),scope,null) + "]";
             case AssertionExpr a -> "(" + expression(a.value(),scope,a.target()) + " as " + type(a.target()) + ")";
             case InstanceofExpr i -> "(" + expression(i.value(),scope,null) + " instanceof " + type(i.target()) + ")";
             case AwaitExpression a -> "await " + expression(a.callee(),scope,expected);
             case UnaryExpr u -> "(" + switch(u.op()) { case NOT -> "!"; case NEG -> "-"; case TYPEOF -> "typeof "; } + expression(u.expr(),scope,null) + ")";
-            case BinaryExpr b -> "(" + expression(b.left(),scope,null) + " " + switch(b.op()) { case ADD -> "+"; case SUB -> "-"; case MUL -> "*"; case DIV -> "/"; case POW -> "**"; case EQ -> "==="; case NEQ -> "!=="; case LT -> "<"; case LTE -> "<="; case GT -> ">"; case GTE -> ">="; case AND -> "&&"; case OR -> "||"; } + " " + expression(b.right(),scope,null) + ")";
+            case BinaryExpr b -> "(" + expression(b.left(),scope,null) + " " + switch(b.op()) { case ADD -> "+"; case SUB -> "-"; case MUL -> "*"; case DIV -> "/"; case REM -> "%"; case COALESCE -> "??"; case POW -> "**"; case EQ -> "==="; case NEQ -> "!=="; case LT -> "<"; case LTE -> "<="; case GT -> ">"; case GTE -> ">="; case AND -> "&&"; case OR -> "||"; } + " " + expression(b.right(),scope,null) + ")";
+            case ConditionalExpr c -> "("+expression(c.condition(),scope,null)+" ? "+expression(c.consequent(),scope,expected)+" : "+expression(c.alternate(),scope,expected)+")";
+            case OptionalChainExpr c -> "("+expression(c.expression(),scope,expected)+")";
+            case OptionalGuardExpr g -> expression(g.value(),scope,null);
             case AssignmentExpr a -> expression(a.target(),scope,null) + " = " + expression(a.value(),scope,resolved(a.target(),scope));
             case ArrayLiteralExpr a -> a.elements().stream().map(e -> expression(e,scope,unnull(expected) instanceof ArrayType array ? array.elementType() : null)).collect(Collectors.joining(", ","[","]"));
             case ObjectLiteralExpr o -> {
@@ -165,7 +170,9 @@ public final class FragmentQualifier {
                 if(state(expected) && !writable.contains(p.name())) {
                     if(!(p.value() instanceof MemberAccessExpr member) || !member.field().equals(p.name()) || !state(resolved(member.object(),scope)))throw new IllegalArgumentException("Owner reducer cannot write derived/foreign field: "+p.name());
                 }
-                properties.add((state(expected) ? stateField(p.name()) : p.name()) + ": " + expression(p.value(),scope,target));
+                if (state(expected) && p.key()!=null) throw new IllegalArgumentException("Computed AppState field is not an issued owner field");
+                String key = p.key()!=null ? "["+expression(p.key(),scope,null)+"]" : state(expected) ? stateField(p.name()) : p.name().matches("[A-Za-z_$][A-Za-z0-9_$]*") ? p.name() : quote(p.name());
+                properties.add(key + ": " + expression(p.value(),scope,target));
               }
               if (state(expected) && !preserved.isEmpty()) {
                 String original = scope.entrySet().stream().filter(e -> state(e.getValue())).map(Map.Entry::getKey).findFirst().orElseThrow(() -> new IllegalArgumentException("AppState construction outside owner reducer requires full initialization"));
@@ -178,7 +185,7 @@ public final class FragmentQualifier {
                 List<Parameter> parameters = c.callee() instanceof IdentifierExpr i && !scope.containsKey(i.name()) && functions.containsKey(i.name()) ? functions.get(i.name()).params() : List.of();
                 List<String> args = new ArrayList<>();
                 for (int index=0;index<c.args().size();index++) args.add(expression(c.args().get(index),scope,index<parameters.size()?parameters.get(index).type():null));
-                yield expression(c.callee(),scope,null) + "(" + String.join(", ",args) + ")";
+                yield expression(c.callee(),scope,null) + (c.callee() instanceof OptionalGuardExpr ? "?.(" : "(") + String.join(", ",args) + ")";
             }
             case FunctionExpr f -> {
                 var local = new LinkedHashMap<>(scope); f.params().forEach(p -> local.put(p.name(),p.type()));
@@ -186,7 +193,7 @@ public final class FragmentQualifier {
             }
             case HasExpr h -> "Object.hasOwn(" + expression(h.object(),scope,null) + ", " + (h.key() instanceof LiteralExpr l && l.value() instanceof LiteralValue.StringLiteral text && state(resolved(h.object(),scope)) ? quote(stateField(text.value())) : expression(h.key(),scope,null)) + ")";
             case TemplateLiteralExpr t -> {
-                List<String> pieces = t.parts().stream().map(e -> expression(e,scope,null)).toList();
+                List<String> pieces = t.parts().stream().map(e -> "String("+expression(e,scope,null)+")").toList();
                 yield "(" + String.join(" + ",pieces) + ")";
             }
         };
@@ -247,20 +254,8 @@ public final class FragmentQualifier {
             }
         };
     }
-    private static String literal(String text) {
-        if (text.codePoints().anyMatch(c -> c<32 && c!='\n' && c!='\t')) {
-            StringBuilder encoded=new StringBuilder("{\"value\":\"");
-            text.codePoints().forEach(c->{
-                if(c<32)encoded.append(String.format("\\u%04x",c));
-                else if(c=='\\' || c=='\"')encoded.append('\\').appendCodePoint(c);
-                else encoded.appendCodePoint(c);
-            });
-            encoded.append("\"}");
-            return "(embeddingJson.parse("+quote(encoded.toString())+").value as string)";
-        }
-        return quote(text);
-    }
+    private static String literal(String text) { return quote(text); }
     private static String quote(String text) {
-        return "\""+text.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\\n").replace("\t","\\t")+"\"";
+        return "\""+deal.codegen.jvm.JvmJson.escapeString(text)+"\"";
     }
 }

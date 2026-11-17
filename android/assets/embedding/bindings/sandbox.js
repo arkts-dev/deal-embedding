@@ -142,5 +142,5 @@ globalThis.dealLoad = function(factories, entryId) {
     factories[id](require, module, module.exports, process, console);
     return module.exports;
   }
-  return {rt: load("deal/runtime.js"), entry: load(entryId)};
+  return {rt: load("deal/runtime.js"), entry: load(entryId), checkpointSchema: Object.hasOwn(factories,'checkpoint-schema.js') ? load('checkpoint-schema.js') : null};
 };

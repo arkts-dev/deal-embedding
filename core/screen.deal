@@ -1,4 +1,3 @@
-import * as json from "std/json";
 import * as tables from "std/table";
 import * as s from "./construction-schema";
 import * as decoded from "./decoded";
@@ -23,62 +22,63 @@ export class ActionDescriptor { id: string; label: string; binding: string; inpu
 export class Connection { readerInstance: string; readerPort: string; writerInstance: string; writerPort: string; }
 export class Composition { screen: Screen; bindings: Record<string, unknown>; actions: Record<string, unknown>; connections: Connection[]; }
 export class Projection { composition: Composition; notices: string[]; }
+class WireLayout { kind:string; positions?:Position[]; }
+class WirePort { name:string; type:string; direction:string; getter:string; optional?:boolean; fallback?:string; }
+class WireFragment { declarations:string; fields:Field[]; updates:Handler[]; effects:Handler[]; helpers:string; view:string; options:Record<string, unknown>[]; content:Record<string, unknown>[]; ports:WirePort[]; holes:Record<string, unknown>[]; covers:string[]; owns:string[]; }
+class WireInstance { id:string; kind:string; origin:string; parameters:Record<string, unknown>; fragment:WireFragment; bodies:Record<string, unknown>; position?:string; }
+class WireScreen { title:string; target:string; layout:WireLayout; slots:Slot[]; instances:WireInstance[]; }
+class WireComposition { screen:WireScreen; bindings:Record<string, unknown>; actions:Record<string, unknown>; connections:Connection[]; }
 
 export function catalogueKinds(): string[] {
   return ["checklist","metrics","timer","calendar_event","actions","progress_goal","key_facts","trend_chart","note","rating","spotlight","search_list","master_list","filter_box","detail_view","list_summary","record_log","number_strip","breakdown_table","series_chart","settle_up","itinerary","progress_line","intent_panel","data_table","timeline","bar_chart","quick_log","reminders","dose_schedule","due_items","points_ledger","idea_deck","interval_timer","reading_status","live_figure"];
 }
-function layout(raw: Record<string, unknown>): Layout {
+function layout(raw: WireLayout): Layout {
   let kind: string = s.oneOf(raw.kind,["stack","positions"]); let positions: Position[] = [];
-  if (kind === "stack") { s.closed(raw,["kind"],[]); }
+  if (kind === "stack") { if (Object.hasOwn(raw,"positions")) { s.reject("Stack omits positions"); } }
   else {
-    s.closed(raw,["kind","positions"],[]); let ids: string[] = [];
-    for (let entry of s.records(raw,"positions")) {
-      s.closed(entry,["id","allowedKinds","minimum","maximum"],[]);
-      let position: Position = {id:s.identifier(entry.id),allowedKinds:s.stringArray(entry.allowedKinds),minimum:s.integral(entry.minimum),maximum:s.integral(entry.maximum)};
+    const entries = raw.positions; if (entries === undefined) { s.reject("Missing positions"); }
+    let ids: string[] = [];
+    for (let position of entries as Position[]) {
+      s.identifier(position.id); s.integral(position.minimum); s.integral(position.maximum);
       if (position.minimum < 0 || position.minimum > position.maximum) { s.reject("Invalid layout capacity"); }
       s.unique(ids,position.id); positions[positions.length] = position;
     }
   }
   return {kind:kind,positions:positions};
 }
-function handlers(values: Record<string, unknown>[]): Handler[] {
-  let result: Handler[] = []; let ids: string[] = [];
-  for (let raw of values) { s.closed(raw,["action","function"],[]); let entry: Handler = {action:s.identifier(raw.action),function:s.identifier(raw.function)}; s.unique(ids,entry.action); result[result.length] = entry; }
-  return result;
+function handlers(values: Handler[]): Handler[] {
+  let ids: string[] = [];
+  for (let entry of values) { s.identifier(entry.function); s.unique(ids,s.identifier(entry.action)); }
+  return values;
 }
-function fragment(raw: Record<string, unknown>, owner: string): Fragment {
-  s.closed(raw,["declarations","fields","updates","effects","helpers","view","options","content","ports","holes","covers","owns"],[]);
+function fragment(raw: WireFragment, owner: string): Fragment {
   let fields: Field[] = []; let names: string[] = [];
-  for (let value of s.records(raw,"fields")) {
-    s.closed(value,["name","type","role","dependencies","initial","owner"],[]);
-    let field: Field = {name:s.identifier(value.name),type:s.nonblank(value.type),role:s.oneOf(value.role,["authoritative","derived"]),dependencies:s.stringArray(value.dependencies),initial:s.nonblank(value.initial),owner:s.identifier(value.owner)};
+  for (let field of raw.fields) {
+    s.identifier(field.name); s.nonblank(field.type); s.oneOf(field.role,["authoritative","derived"]); s.nonblank(field.initial); s.identifier(field.owner);
     if (field.owner !== owner) { s.reject("Foreign field owner"); } s.unique(names,field.name); fields[fields.length] = field;
   }
   let ports: Port[] = []; let portNames: string[] = [];
-  for (let value of s.records(raw,"ports")) {
-    s.closed(value,["name","type","direction","getter"],["optional","fallback"]);
-    let port: Port = {name:s.identifier(value.name),type:s.nonblank(value.type),direction:s.oneOf(value.direction,["publish","read"]),getter:s.nonblank(value.getter),optional:s.optionalBoolean(value,"optional",false)};
+  for (let value of raw.ports) {
+    let port: Port = {name:s.identifier(value.name),type:s.nonblank(value.type),direction:s.oneOf(value.direction,["publish","read"]),getter:s.nonblank(value.getter),optional:value.optional ?? false};
     if (Object.hasOwn(value,"fallback")) { port.fallback = s.nonblank(value.fallback); }
     if (port.direction === "publish" && (port.optional || Object.hasOwn(port,"fallback"))) { s.reject("Publisher cannot declare reader fallback"); }
     if (port.optional && !Object.hasOwn(port,"fallback")) { s.reject("Optional reader needs checked fallback"); }
     s.unique(portNames,port.name); ports[ports.length] = port;
   }
-  return {declarations:s.text(raw.declarations),fields:fields,updates:handlers(s.records(raw,"updates")),effects:handlers(s.records(raw,"effects")),helpers:s.text(raw.helpers),view:s.nonblank(raw.view),options:s.records(raw,"options"),content:s.records(raw,"content"),ports:ports,holes:s.records(raw,"holes"),covers:s.stringArray(raw.covers),owns:s.stringArray(raw.owns)};
+  return {declarations:s.text(raw.declarations),fields:fields,updates:handlers(raw.updates),effects:handlers(raw.effects),helpers:s.text(raw.helpers),view:s.nonblank(raw.view),options:raw.options,content:raw.content,ports:ports,holes:raw.holes,covers:raw.covers,owns:raw.owns};
 }
 export function reserve(plan: plans.Plan, target: string): Screen {
   s.oneOf(target,["screen","chat","card"]); let slots: Slot[] = [];
   for (let need of plan.needs) { slots[slots.length] = {id:need.id,need:need.id,reads:need.reads,writes:[],provider:need.type === "action" || need.type === "live",allowedKinds:[],status:"open",instance:null,reason:"Implementation not selected"}; }
   return {title:plan.title,target:target,layout:{kind:"stack",positions:[]},slots:slots,instances:[]};
 }
-function screen(raw: Record<string, unknown>, frozenTarget: string, needIds: string[]): Screen {
-  s.closed(raw,["title","target","layout","slots","instances"],[]);
+function screen(raw: WireScreen, frozenTarget: string, needIds: string[]): Screen {
   let target: string = s.oneOf(raw.target,["screen","chat","card"]); if (target !== frozenTarget) { s.reject("Screen target promotion"); }
-  let result: Screen = {title:s.nonblank(raw.title),target:target,layout:layout(raw.layout as Record<string, unknown>),slots:[],instances:[]};
+  let result: Screen = {title:s.nonblank(raw.title),target:target,layout:layout(raw.layout),slots:[],instances:[]};
   let slotIds: string[] = []; let instanceIds: string[] = []; let catalogue: string[] = [];
-  for (let value of s.records(raw,"instances")) {
-    s.closed(value,["id","kind","origin","parameters","fragment","bodies"],["position"]);
+  for (let value of raw.instances) {
     let id: string = s.identifier(value.id); s.unique(instanceIds,id);
-    let entry: Instance = {id:id,kind:s.nonblank(value.kind),origin:s.oneOf(value.origin,["part","catalogue","custom","notice"]),parameters:value.parameters as Record<string, unknown>,fragment:fragment(value.fragment as Record<string, unknown>,id),bodies:value.bodies as Record<string, unknown>};
+    let entry: Instance = {id:id,kind:s.nonblank(value.kind),origin:s.oneOf(value.origin,["part","catalogue","custom","notice"]),parameters:value.parameters as Record<string, unknown>,fragment:fragment(value.fragment,id),bodies:value.bodies as Record<string, unknown>};
     if (Object.hasOwn(value,"position")) { entry.position = s.identifier(value.position); }
     if (entry.origin === "catalogue") { s.oneOf(entry.kind,catalogueKinds()); s.unique(catalogue,entry.kind); }
     let holes: string[] = []; for (let hole of entry.fragment.holes) { s.unique(holes,s.identifier(hole.id)); }
@@ -86,9 +86,8 @@ function screen(raw: Record<string, unknown>, frozenTarget: string, needIds: str
     for (let cover of entry.fragment.covers) { if (!s.contains(needIds,cover)) { s.reject("Unissued fragment coverage"); } }
     result.instances[result.instances.length] = entry;
   }
-  for (let value of s.records(raw,"slots")) {
-    s.closed(value,["id","need","reads","writes","provider","allowedKinds","status","instance","reason"],["event"]);
-    let entry: Slot = {id:s.identifier(value.id),need:s.identifier(value.need),reads:s.stringArray(value.reads),writes:s.stringArray(value.writes),provider:value.provider as boolean,allowedKinds:s.stringArray(value.allowedKinds),status:s.oneOf(value.status,["open","filled","missing","unchecked"]),instance:null,reason:s.text(value.reason)};
+  for (let value of raw.slots) {
+    let entry: Slot = {id:s.identifier(value.id),need:s.identifier(value.need),reads:value.reads,writes:value.writes,provider:value.provider,allowedKinds:value.allowedKinds,status:s.oneOf(value.status,["open","filled","missing","unchecked"]),instance:null,reason:value.reason};
     if (!s.contains(needIds,entry.need)) { s.reject("Unissued slot need"); } s.unique(slotIds,entry.id);
     if (value.instance !== null) { entry.instance = s.identifier(value.instance); if (!s.contains(instanceIds,entry.instance as string)) { s.reject("Unissued slot instance"); } }
     if (entry.status === "filled" && entry.instance === null) { s.reject("Filled slot without implementation"); }
@@ -98,15 +97,15 @@ function screen(raw: Record<string, unknown>, frozenTarget: string, needIds: str
   for (let need of needIds) { let preserved: boolean = false; for (let slot of result.slots) { if (slot.need === need) { preserved = true; } } if (!preserved) { s.reject("Lost need: "+need); } }
   return result;
 }
-function findInstance(screen: Screen, id: string): Instance { for (let entry of screen.instances) { if (entry.id === id) { return entry; } } s.reject("Unissued instance: "+id); throw {code:"CONSTRUCTION_SCHEMA",message:"Unissued instance"}; }
-function findPort(instance: Instance, name: string, direction: string): Port { for (let port of instance.fragment.ports) { if (port.name === name && port.direction === direction) { return port; } } s.reject("Unissued port: "+name); throw {code:"CONSTRUCTION_SCHEMA",message:"Unissued port"}; }
+function findInstance(screen: Screen, id: string): Instance { for (let entry of screen.instances) { if (entry.id === id) { return entry; } } s.reject("Unissued instance: "+id); throw {name:"CONSTRUCTION_SCHEMA",message:"Unissued instance"}; }
+function findPort(instance: Instance, name: string, direction: string): Port { for (let port of instance.fragment.ports) { if (port.name === name && port.direction === direction) { return port; } } s.reject("Unissued port: "+name); throw {name:"CONSTRUCTION_SCHEMA",message:"Unissued port"}; }
 function visit(id: string, connections: Connection[], path: string[]): void {
   if (s.contains(path,id)) { s.reject("Connection cycle"); } let next: string[] = []; for (let prior of path) { next[next.length] = prior; } next[next.length] = id;
   for (let connection of connections) { if (connection.readerInstance === id) { visit(connection.writerInstance,connections,next); } }
 }
 export function decode(raw: string, frozenTarget: string, needIds: string[]): Projection {
-  let value: Record<string, unknown> = json.parse(raw); s.closed(value,["screen","bindings","actions","connections"],[]);
-  let result: Composition = {screen:screen(value.screen as Record<string, unknown>,frozenTarget,needIds),bindings:{},actions:{},connections:[]}; let notices: string[] = [];
+  const value: WireComposition = JSON.parse(raw);
+  let result: Composition = {screen:screen(value.screen,frozenTarget,needIds),bindings:{},actions:{},connections:[]}; let notices: string[] = [];
   let bindings: Record<string, unknown> = value.bindings as Record<string, unknown>;
   for (let id of tables.keys(bindings)) {
     s.identifier(id); let rawBinding: Record<string, unknown> = bindings[id] as Record<string, unknown>; s.closed(rawBinding,["module","function","arguments"],[]);
@@ -122,8 +121,7 @@ export function decode(raw: string, frozenTarget: string, needIds: string[]): Pr
     result.actions[id] = action;
   }
   let readers: string[] = [];
-  for (let rawConnection of s.records(value,"connections")) {
-    s.closed(rawConnection,["readerInstance","readerPort","writerInstance","writerPort"],[]);
+  for (let rawConnection of value.connections) {
     let connection: Connection = {readerInstance:s.identifier(rawConnection.readerInstance),readerPort:s.identifier(rawConnection.readerPort),writerInstance:s.identifier(rawConnection.writerInstance),writerPort:s.identifier(rawConnection.writerPort)};
     let reader: Port = findPort(findInstance(result.screen,connection.readerInstance),connection.readerPort,"read");
     let writer: Port = findPort(findInstance(result.screen,connection.writerInstance),connection.writerPort,"publish");
@@ -150,4 +148,4 @@ export function decode(raw: string, frozenTarget: string, needIds: string[]): Pr
   }
   return {composition:result,notices:notices};
 }
-export function main(): null { return null; }
+export function main(): void { return; }

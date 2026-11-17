@@ -2,7 +2,6 @@ import * as screens from "./screen";
 import * as decoded from "./decoded";
 import * as s from "./construction-schema";
 import * as tables from "std/table";
-import * as json from "std/json";
 import * as literals from "./source-literals";
 import * as syntax from "embedding/fragment-syntax";
 import * as policy from "./computation-policy";
@@ -34,7 +33,7 @@ function importSource(imports: Import[]): string {
 }
 function field(fields: Field[], instance: string, local: string): Field {
   for (let item of fields) { if (item.instance === instance && item.local === local) { return item; } }
-  s.reject("Unissued field producer/read"); throw {code:"CONSTRUCTION_SCHEMA",message:"Unissued field"};
+  s.reject("Unissued field producer/read"); throw {name:"CONSTRUCTION_SCHEMA",message:"Unissued field"};
 }
 function placeholder(type: string): string { if (type === "string") { return "\"\""; } if (type === "boolean") { return "false"; } if (type === "number") { return "0"; } return "null"; }
 function primitive(type: string): boolean { return s.contains(["string","boolean","number"],type); }
@@ -59,13 +58,13 @@ async function expression(value: string, expected: string, instance: Prepared, n
   return await syntax.expression(s.encode({source:value,expected:expected,names:names,fields:fields,types:types,variables:variables}));
 }
 export async function assemble(composition: screens.Composition, computations: Computation[]): Promise<Result> {
-  let imports: Import[] = [{module:"std/time",alias:"embeddingClock"},{module:"std/json",alias:"embeddingJson"}];
+  let imports: Import[] = [{module:"std/time",alias:"embeddingClock"}];
   let prepared: Prepared[] = []; let allFields: Field[] = []; let namesByInstance: Record<string, unknown> = {}; let fieldsByInstance: Record<string, unknown> = {}; let typesByInstance: Record<string, unknown> = {}; let factsByInstance: Record<string, unknown> = {};
   let instances: string[] = []; let owners: string[] = []; let storageNames: string[] = [];
   for (let instance of composition.screen.instances) {
     s.unique(instances,s.identifier(instance.id));
     for (let resource of instance.fragment.owns) { s.unique(owners,resource); }
-    let raw: Record<string, unknown> = json.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
+    let raw: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
     let names: Record<string, unknown> = {}; let fieldNames: Record<string, unknown> = {}; let types: Record<string, unknown> = {};
     for (let category of ["classes","functions","views"]) {
       for (let declaration of decoded.records(raw[category])) { let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
@@ -99,7 +98,7 @@ export async function assemble(composition: screens.Composition, computations: C
     factsByInstance[instance.id] = await policy.inspect(instance.fragment.helpers,importModules);
     namesByInstance[instance.id] = names; fieldsByInstance[instance.id] = fieldNames; typesByInstance[instance.id] = types;
     let writable: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { writable[writable.length] = field.name; } }
-    let qualifiedSource: Record<string, unknown> = json.parse(await syntax.qualify(s.encode({declarations:instance.fragment.declarations,helpers:instance.fragment.helpers,view:instance.fragment.view,names:names,fields:fieldNames,types:types,writable:writable})));
+    let qualifiedSource: Record<string, unknown> = JSON.parse(await syntax.qualify(s.encode({declarations:instance.fragment.declarations,helpers:instance.fragment.helpers,view:instance.fragment.view,names:names,fields:fieldNames,types:types,writable:writable})));
     let resolvedTypes: Record<string, unknown> = qualifiedSource.types as Record<string, unknown>;
     let item: Prepared = {id:instance.id,declarations:qualifiedSource.declarations as string,helpers:qualifiedSource.helpers as string,view:qualifiedSource.view as string,fields:[],updates:instance.fragment.updates,effects:instance.fragment.effects,viewName:qualified(instance.id,views[0].name as string)};
     for (let source of instance.fragment.fields) {
@@ -117,7 +116,7 @@ export async function assemble(composition: screens.Composition, computations: C
   for (let item of prepared) {
     for (let instance of composition.screen.instances) { if (instance.id === item.id) {
       let writable: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { writable[writable.length] = field.name; } }
-      let projection: Record<string, unknown> = json.parse(await syntax.qualify(s.encode({declarations:instance.fragment.declarations,helpers:instance.fragment.helpers,view:instance.fragment.view,names:namesByInstance[item.id],fields:fieldsByInstance[item.id],types:typesByInstance[item.id],preserved:preserved,writable:writable})));
+      let projection: Record<string, unknown> = JSON.parse(await syntax.qualify(s.encode({declarations:instance.fragment.declarations,helpers:instance.fragment.helpers,view:instance.fragment.view,names:namesByInstance[item.id],fields:fieldsByInstance[item.id],types:typesByInstance[item.id],preserved:preserved,writable:writable})));
       item.declarations = projection.declarations as string; item.helpers = projection.helpers as string; item.view = projection.view as string;
     } }
   }
@@ -129,7 +128,7 @@ export async function assemble(composition: screens.Composition, computations: C
   declarations = declarations+"}\n";
   let viewImports: Import[] = [{module:"./experience",alias:"app"},{module:"./platform.dealui-pack",alias:"ui"}];
   for (let instance of composition.screen.instances) {
-    let facts: Record<string, unknown> = json.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
+    let facts: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
     let names: Record<string, unknown> = namesByInstance[instance.id] as Record<string, unknown>;
     for (let item of decoded.records(facts.viewImports)) { let alias: string = item.alias as string; if (Object.hasOwn(names,alias)) { alias = names[alias] as string; } addImport(viewImports,item.module as string,alias); }
   }
@@ -146,7 +145,7 @@ export async function assemble(composition: screens.Composition, computations: C
       let action: string = qualified(item.id,effect.action); s.unique(effects,action);
       if (!s.contains(actions,action)) { s.reject("Effect has no owning reducer"); }
       // Exact completion types are compiler facts, never guessed from model labels.
-      let facts: Record<string, unknown> = json.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:item.helpers,view:composition.screen.instances[0].fragment.view})));
+      let facts: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:item.helpers,view:composition.screen.instances[0].fragment.view})));
       let result: string = "";
       for (let fn of decoded.records(facts.functions)) { if ((fn.name as string) === qualified(item.id,effect.function)) { if (!(fn.async as boolean)) { s.reject("Effect must be asynchronous"); } result = fn.result as string; } }
       if (result === "") { s.reject("Unissued effect function"); }
@@ -204,10 +203,10 @@ export async function assemble(composition: screens.Composition, computations: C
   recompute = recompute+"  return state;\n}\n";
   let initial: Record<string, unknown> = {};
   for (let item of allFields) { initial[item.name] = item.initial; if (item.role === "derived") { initial[item.name+"_ready"] = "false"; initial[item.name+"_reason"] = "\"Not ready\""; if (primitive(item.type)) { initial[item.name+"_display"] = placeholder(item.type); } } }
-  declarations = declarations+recompute+"export function initialState(): AppState {\n  let capturedTime: number = embeddingClock.nowMillis();\n  let candidate: AppState = "+copyExpression(allFields,initial,"")+";\n  return recompute(candidate);\n}\nexport function main(): null { return null; }\n";
+  declarations = declarations+recompute+"export function initialState(): AppState {\n  let capturedTime: number = embeddingClock.nowMillis();\n  let candidate: AppState = "+copyExpression(allFields,initial,"")+";\n  return recompute(candidate);\n}\nexport function main(): void { return; }\n";
   viewSource = viewSource+"// @ui-root\nexport view Main(state: app.AppState): View {\n  ui.Column() {\n";
   for (let item of prepared) { viewSource = viewSource+"    "+item.viewName+"(state: state)\n"; }
   viewSource = viewSource+"  }\n}\n";
   return {source:{deal:declarations,dealui:viewSource},fields:allFields,computations:ordered};
 }
-export function main(): null { return null; }
+export function main(): void { return; }

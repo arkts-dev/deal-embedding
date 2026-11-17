@@ -6,7 +6,7 @@ import java.util.*;
 public final class FragmentMechanisms {
     private FragmentMechanisms() {}
     public static String invoke(String function, String input) {
-        Map<String,Object> value = object(decode(JvmJson.parse(input)));
+        Map<String,Object> value = object(decode(JvmJson.decode(input,"record",new deal.semantic.ir.SourceOrigin("syntax transport",deal.semantic.ir.SourceSpan.synthetic("syntax transport"),deal.semantic.ir.SourceOriginKind.SYNTHETIC,new deal.semantic.ir.AnchorId(0),null),"syntax transport",Map.of())));
         if (function.equals("expression")) return FragmentQualifier.expression(text(value,"source"),strings(value,"names"),strings(value,"fields"),strings(value,"types"),text(value,"expected"),strings(value,"variables"));
         return encode(switch(function) {
             case "imports" -> FragmentSyntax.parse(text(value,"source")).statements().stream().filter(statement -> statement instanceof deal.ast.ImportDeclaration).map(statement -> ((deal.ast.ImportDeclaration)statement).modulePath()).toList();
@@ -18,8 +18,7 @@ public final class FragmentMechanisms {
         });
     }
     private static Object decode(Object value) {
-        if (value == JvmJson.SYNTAX) throw new IllegalArgumentException("Invalid syntax transport JSON");
-        if (value == JvmJson.JNULL) return null;
+        if (value == null) return null;
         if (value instanceof JvmRuntime.Table table) { Map<String,Object> out = new LinkedHashMap<>(); table.entries.forEach((key,item)->out.put(key,decode(item))); return out; }
         if (value instanceof JvmRuntime.Array array) { List<Object> out = new ArrayList<>(); for(int i=0;i<array.length;i++)out.add(decode(array.elements.get(i))); return out; }
         return value;

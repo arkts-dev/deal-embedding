@@ -13,8 +13,8 @@ export class Draft { sourceId: string; label: string; initial: string; }
 export class Descriptor { id: string; label: string; binding: string; input?: Draft; }
 export class Registry { sources: Source[]; bindings: Binding[]; actions: Descriptor[]; contracts: embedding.CapabilityContract[]; }
 export function create(contracts: embedding.CapabilityContract[]): Registry { return {sources:[],bindings:[],actions:[],contracts:contracts}; }
-export function source(registry: Registry, id: string): Source { for (let item of registry.sources) { if (item.id === id) { return item; } } s.reject("Unissued argument source: "+id); throw {code:"CONSTRUCTION_SCHEMA",message:"Unissued source"}; }
-export function binding(registry: Registry, id: string): Binding { for (let item of registry.bindings) { if (item.id === id) { return item; } } s.reject("Unissued binding: "+id); throw {code:"CONSTRUCTION_SCHEMA",message:"Unissued binding"}; }
+export function source(registry: Registry, id: string): Source { for (let item of registry.sources) { if (item.id === id) { return item; } } s.reject("Unissued argument source: "+id); throw {name:"CONSTRUCTION_SCHEMA",message:"Unissued source"}; }
+export function binding(registry: Registry, id: string): Binding { for (let item of registry.bindings) { if (item.id === id) { return item; } } s.reject("Unissued binding: "+id); throw {name:"CONSTRUCTION_SCHEMA",message:"Unissued binding"}; }
 function visit(registry: Registry, current: string, path: string[]): void {
   if (s.contains(path,current)) { s.reject("Source dependency cycle"); }
   let next: string[] = []; for (let prior of path) { next[next.length] = prior; } next[next.length] = current;
@@ -51,7 +51,7 @@ function compatible(actual: embedding.WireType, expected: embedding.WireType): b
 }
 function selectedFunction(registry: Registry, module: string, name: string): embedding.CapabilityFunction {
   for (let contract of registry.contracts) { if (contract.module === module) { for (let item of contract.functions) { if (item.name === name) { return item; } } } }
-  s.reject("Unknown frozen capability binding"); throw {code:"CONSTRUCTION_SCHEMA",message:"Unknown capability"};
+  s.reject("Unknown frozen capability binding"); throw {name:"CONSTRUCTION_SCHEMA",message:"Unknown capability"};
 }
 function prepareBinding(registry: Registry, id: string, raw: Record<string, unknown>, owner: string, extra: Source | null): Binding {
   s.identifier(id); s.closed(raw,["module","function","arguments"],[]);
@@ -77,13 +77,13 @@ export function issueBinding(registry: Registry, id: string, raw: Record<string,
 }
 export async function issueDescriptor(registry: Registry, raw: Record<string, unknown>, bindingId: string, bindingRaw: Record<string, unknown>): Promise<void> {
   s.closed(raw,["id","label"],["input"]); let id: string = s.identifier(raw.id); let label: string = s.nonblank(raw.label);
-  if (await data.utf16Length(label) > 32) { s.reject("Descriptor label length"); }
+  if (label.length > 32) { s.reject("Descriptor label length"); }
   for (let prior of registry.actions) { if (prior.id === id) { s.reject("Descriptor identity collision"); } }
   let descriptor: Descriptor = {id:id,label:label,binding:bindingId}; let draft: Source | null = null;
   if (Object.hasOwn(raw,"input")) {
     let input: Record<string, unknown> = raw.input as Record<string, unknown>; s.closed(input,["sourceId","label","initial"],[]);
     let sourceId: string = s.identifier(input.sourceId); let initial: string = s.text(input.initial); let inputLabel: string = s.nonblank(input.label);
-    if (await data.utf16Length(initial) > 512 || await data.utf16Length(inputLabel) > 32) { s.reject("Descriptor input length"); }
+    if (initial.length > 512 || inputLabel.length > 32) { s.reject("Descriptor input length"); }
     for (let prior of registry.sources) { if (prior.id === sourceId) { s.reject("Descriptor draft collision"); } }
     let fields: embedding.WireField[] = [];
     let schema: embedding.WireType = {kind:"string",fields:fields,element:null,maximum:8192,minimumNumber:-1.7976931348623157e308,maximumNumber:1.7976931348623157e308};
@@ -100,4 +100,4 @@ export async function issueDescriptor(registry: Registry, raw: Record<string, un
   if (draft !== null) { registry.sources[registry.sources.length] = draft as Source; }
   registry.bindings[registry.bindings.length] = issued; registry.actions[registry.actions.length] = descriptor;
 }
-export function main(): null { return null; }
+export function main(): void { return; }

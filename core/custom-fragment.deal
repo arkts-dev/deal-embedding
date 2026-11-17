@@ -31,4 +31,4 @@ export function parse(response: string): Parsed {
 export async function describe(regions: Regions): Promise<string> {
   return await syntax.describe(s.encode(regions));
 }
-export function main(): null { return null; }
+export function main(): void { return; }
