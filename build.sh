@@ -24,40 +24,28 @@ find "$OUTPUT_DIR/generated" -name '*.java' >> "$OUTPUT_DIR/sources.txt"
 javac --release 21 -cp "$ANDROID_JAR" -proc:none -d "$OUTPUT_DIR/classes" @"$OUTPUT_DIR/sources.txt"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/native-tools" "$ROOT/tools/CapabilityApi.java"
 java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/native-tools" CapabilityApi "$ROOT/api/embedding.d.deal" "$OUTPUT_DIR/generated/CapabilityApi.kt"
-javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/native-tools" "$ROOT/tools/FragmentAssets.java"
-java -cp "$OUTPUT_DIR/native-tools" FragmentAssets "$ROOT/ui/fragments" "$OUTPUT_DIR/generated/AuthoredFragments.java"
-javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$OUTPUT_DIR/generated/AuthoredFragments.java" "$ROOT/tools/FragmentStructure.java" "$ROOT/tools/FragmentSyntax.java"
-mkdir -p "$OUTPUT_DIR/composition/core/composition" "$OUTPUT_DIR/composition/ui/fragments/support"
-cp -r "$ROOT/core/composition/." "$OUTPUT_DIR/composition/core/composition/"
-cp "$ROOT/core/decoded.deal" "$ROOT/core/section-contract.deal" "$OUTPUT_DIR/composition/core/"
-cp -r "$ROOT/ui/fragments/." "$OUTPUT_DIR/composition/ui/fragments/"
-# Separate compiled closures must not overwrite one another's module exports.
-python3 -c 'import pathlib,sys; pathlib.Path(sys.argv[2]).write_text(pathlib.Path(sys.argv[1]).read_text().replace("\"../decoded\"", "\"../../../core/decoded\""))' "$ROOT/core/composition/formula.deal" "$OUTPUT_DIR/composition/ui/fragments/support/formula.deal"
-cp "$ROOT/core/composition/execution.deal" "$OUTPUT_DIR/composition/core/composition/lowering-execution.generated.deal"
-python3 "$ROOT/tools/composition-schema.py" "$ROOT/ui/fragment-contract.json" "$OUTPUT_DIR/composition/core/composition/validation.generated.deal"
-printf '%s' '{"languageVersion":"1.5","backend":"jvm","moduleRoots":["core","ui"],"externals":{"embedding/syntax":{"declaration":"core/composition/lowering-syntax.d.deal"}}}' > "$OUTPUT_DIR/composition/deal.json"
-for entry in execution compose fragments view-binding lowering; do
-    java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/composition/core/composition/$entry.deal" --backend jvm --output "$OUTPUT_DIR/composition/$entry-java"
-    source="$OUTPUT_DIR/composition/$entry-java/Composition$(case "$entry" in execution) echo Execution;; compose) echo Compose;; fragments) echo Fragments;; view-binding) echo View_binding;; lowering) echo Lowering;; esac).java"
-    # Package each independent generated JVM program with its own private host-ABI scope.
-    # This changes only Java linkage, never authored DEAL or emitted behavior.
-        python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text("package dev.deal.embedding.composition."+sys.argv[2].replace("-","_")+"; "+p.read_text())' "$source" "$entry"
-    javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$source"
+mkdir -p "$OUTPUT_DIR/syntax-source"
+for mechanism in FragmentSyntax FragmentRegions FragmentQualifier FragmentAnalysis FragmentMechanisms; do
+    { printf 'package dev.deal.embedding;\n'; head -n -0 "$ROOT/tools/$mechanism.java"; } > "$OUTPUT_DIR/syntax-source/$mechanism.java"
 done
-javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$ROOT/tools/EmbeddingSyntax.java" "$ROOT/tools/CompositionBridge.java"
+javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$OUTPUT_DIR/syntax-source/"*.java
 python3 "$ROOT/tools/theme-build.py" "$ROOT/ui/theme.json" "$OUTPUT_DIR/generated/PackTheme.kt"
 "$KOTLIN_HOME/bin/kotlinc" "$OUTPUT_DIR/generated/PackTheme.kt" "$OUTPUT_DIR/generated/CapabilityApi.kt" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect \
     -classpath "$ANDROID_JAR:$OUTPUT_DIR/classes:$RUNTIME_CP" -d "$OUTPUT_DIR/classes" $(find "$ROOT/android/src" -name '*.kt' | sort)
 mkdir -p "$OUTPUT_DIR/generation/src" "$OUTPUT_DIR/guidance-tools"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/guidance-tools" "$ROOT/tools/GenerationGuidance.java"
-java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/guidance-tools" GenerationGuidance \
-    "$ROOT/ui/platform.dealui-pack" "$ROOT/ui/generation-guidance.md" \
-    "$DEAL_ROOT/skills/write-deal/references" "$ROOT/core/generation-guidance.generated.deal" "$ROOT/ui"
 cp -r "$ROOT/core/." "$OUTPUT_DIR/generation/src/"
-python3 "$ROOT/tools/composition-schema.py" "$ROOT/ui/fragment-contract.json" "$OUTPUT_DIR/generation/src/composition/validation.generated.deal"
+java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/guidance-tools" GenerationGuidance "$ROOT" "$DEAL_ROOT" "$OUTPUT_DIR/generation/src/generation-guidance.generated.deal"
 cp "$ROOT/core/host/"*.d.deal "$OUTPUT_DIR/generation/"
 cp -r "$DEAL_UI_ROOT/ui" "$OUTPUT_DIR/generation/ui"
-printf '%s' '{"languageVersion":"1.5","backend":"js","moduleRoots":["src","ui"],"externals":{"embedding/composer":{"declaration":"composer.d.deal"},"embedding/discovery":{"declaration":"discovery.d.deal"},"embedding/model":{"declaration":"model.d.deal"},"embedding/checker":{"declaration":"checker.d.deal"},"embedding/chooser":{"declaration":"chooser.d.deal"},"embedding/policy-data":{"declaration":"policy-data.d.deal"},"embedding/observer":{"declaration":"observer.d.deal"},"embedding":{"declaration":"embedding.d.deal"},"catalogue-policy":{"declaration":"catalogue-policy.d.deal"},"embedding/protocol":{"declaration":"protocol.d.deal"}}}' > "$OUTPUT_DIR/generation/deal.json"
+python3 - "$OUTPUT_DIR/generation" <<'PY'
+import json,pathlib,sys
+stage=pathlib.Path(sys.argv[1]);externals={}
+for p in stage.glob('*.d.deal'):
+    name='embedding' if p.name=='embedding.d.deal' else 'embedding/'+p.name.removesuffix('.d.deal')
+    externals[name]={'declaration':p.name}
+(stage/'deal.json').write_text(json.dumps({'languageVersion':'1.5','backend':'js','moduleRoots':['src','ui'],'externals':externals}))
+PY
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/generation/src/generation.deal" --backend js --output "$OUTPUT_DIR/aar/assets/generation"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/generation/src/discovery.deal" --backend js --output "$OUTPUT_DIR/aar/assets/discovery"
 mkdir -p "$OUTPUT_DIR/logging/src"
@@ -66,7 +54,7 @@ printf '%s' '{"languageVersion":"1.5","backend":"js","moduleRoots":["src"]}' > "
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/logging/src/logging.deal" --backend js --output "$OUTPUT_DIR/aar/assets/logging"
 mkdir -p "$OUTPUT_DIR/binding-tools" "$OUTPUT_DIR/aar/assets/embedding/bindings"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/binding-tools" "$ROOT/tools/GenerationBindings.java"
-java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/binding-tools" GenerationBindings "$ROOT/core/host" "$OUTPUT_DIR/aar/assets/embedding/bindings/generation-contracts.js"
+java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/binding-tools" GenerationBindings "$OUTPUT_DIR/aar/assets/generation" "$OUTPUT_DIR/aar/assets/embedding/bindings/generation-contracts.js"
 python3 "$ROOT/tools/protocol-build.py" "$ROOT" "$OUTPUT_DIR" "$OUTPUT_DIR/classes" "$DEAL_ROOT" "$DEAL_UI_ROOT"
 jar --create --file "$OUTPUT_DIR/aar/classes.jar" -C "$OUTPUT_DIR/classes" .
 cp -r "$ROOT/android/assets/embedding" "$OUTPUT_DIR/aar/assets/"
@@ -75,7 +63,6 @@ mkdir -p "$OUTPUT_DIR/aar/assets/ui"
 cp -r "$ROOT/ui/." "$OUTPUT_DIR/aar/assets/ui/"
 cp "$DEAL_UI_ROOT/runtime-js/session.js" "$OUTPUT_DIR/aar/assets/embedding/bindings/dealui-session.js"
 cp -r "$DEAL_UI_ROOT/ui" "$OUTPUT_DIR/aar/assets/distribution/"
-cp -r "$ROOT/ui/fragments" "$OUTPUT_DIR/aar/assets/distribution/"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/native-tools" "$ROOT/tools/AssistanceUi.java"
 java -cp "$OUTPUT_DIR/classes:$OUTPUT_DIR/native-tools" AssistanceUi "$ROOT" "$OUTPUT_DIR/assistance" "$DEAL_UI_ROOT"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/assistance/src/experience_entry.deal" --backend js --output "$OUTPUT_DIR/aar/assets/assistance"

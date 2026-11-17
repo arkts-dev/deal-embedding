@@ -1,0 +1,59 @@
+import * as json from "std/json";
+import * as strings from "std/string";
+import * as decoded from "./decoded";
+import * as s from "./construction-schema";
+import * as data from "embedding/policy-data";
+import * as identity from "embedding/construction-identity";
+
+export class Source { deal: string; dealui: string; }
+export class Revision { revision: string; digest: string; source: Source; }
+export class Edit { file: string; search: string; replace: string; start: number; end: number; }
+export class Applied { accepted: boolean; current: Revision; diagnostics: string; }
+export async function issue(source: Source): Promise<Revision> {
+  let encoded: string = s.encode({deal:source.deal,dealui:source.dealui});
+  return {revision:await identity.issue(),digest:await data.sha256(encoded),source:{deal:source.deal,dealui:source.dealui}};
+}
+function match(source: string, search: string): number {
+  let length: number = strings.length(search); if (length === 0) { s.reject("Empty edit search"); }
+  let found: number = -1; let i: number = 0; let size: number = strings.length(source);
+  while (i+length <= size) {
+    if (strings.substring(source,i,i+length) === search) { if (found >= 0) { s.reject("Ambiguous edit search"); } found = i; }
+    i = i+1;
+  }
+  if (found < 0) { s.reject("Missing edit search"); } return found;
+}
+function edited(source: string, file: string, edits: Edit[]): string {
+  let result: string = ""; let offset: number = 0; let left: number = edits.length;
+  while (left > 0) {
+    let next: Edit | null = null;
+    for (let edit of edits) { if (edit.file === file && edit.start >= offset) { if (next === null) { next = edit; } else if (edit.start < (next as Edit).start) { next = edit; } } }
+    if (next === null) { break; }
+    let selected: Edit = next as Edit;
+    result = result+strings.substring(source,offset,selected.start)+selected.replace; offset = selected.end; left = left-1;
+  }
+  return result+strings.substring(source,offset,strings.length(source));
+}
+export async function apply(current: Revision, response: string): Promise<Applied> {
+  let next: Source | null = null;
+  try {
+    let raw: Record<string, unknown> = json.parse(response); s.closed(raw,["revision","digest","edits"],[]);
+    if ((raw.revision as string) !== current.revision || (raw.digest as string) !== current.digest) { s.reject("Unissued source revision or digest"); }
+    let edits: Edit[] = [];
+    for (let value of decoded.records(raw.edits)) {
+      s.closed(value,["file","search","replace"],[]); let file: string = s.oneOf(value.file,["deal","dealui"]); let search: string = s.text(value.search);
+      let source: string = current.source.deal; if (file === "dealui") { source = current.source.dealui; }
+      let start: number = match(source,search); let edit: Edit = {file:file,search:search,replace:s.text(value.replace),start:start,end:start+strings.length(search)};
+      for (let prior of edits) { if (prior.file === edit.file && edit.start < prior.end && prior.start < edit.end) { s.reject("Overlapping source edits"); } }
+      edits[edits.length] = edit;
+    }
+    if (edits.length === 0) { s.reject("Empty source edit set"); }
+    next = {deal:edited(current.source.deal,"deal",edits),dealui:edited(current.source.dealui,"dealui",edits)};
+  } catch (unknownError) {
+    let error: Error = unknownError as Error;
+    if (error.code !== "CONSTRUCTION_SCHEMA" && error.code !== "E8001" && error.code !== "E8010") { throw error; }
+    return {accepted:false,current:current,diagnostics:error.message};
+  }
+  // Identity/hash failures are operational; they never authorize another model edit.
+  return {accepted:true,current:await issue(next as Source),diagnostics:""};
+}
+export function main(): null { return null; }

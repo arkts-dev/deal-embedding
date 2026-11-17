@@ -1,17 +1,11 @@
 package dev.deal.embedding
 
-/** Explicit app-linked catalogue policy, packaged by the consuming application. */
-data class CataloguePolicy(val assetNamespace: String) {
-    init { require(assetNamespace.matches(Regex("[A-Za-z][A-Za-z0-9_-]*"))) }
-}
-
 /** Ordinary application setup; compiler distribution and candidate tests are private mechanisms. */
 data class EmbeddingConfig(
     val storageName: String,
     val generation: GenerationGatewayConfig,
     val discovery: GenerationGatewayConfig? = null,
     val retainState: Boolean = false,
-    val policy: CataloguePolicy? = null,
     val inference: InferenceProvider? = null,
     val execution: ExecutionLimits = ExecutionLimits(),
 )
@@ -28,7 +22,10 @@ data class ExecutionLimits(
     }
 }
 
-data class InferenceRequest(val input: String, val previous: String, val diagnostics: String)
+data class InferenceRequest(
+    val input: String, val previous: String, val diagnostics: String,
+    val operation: String, val stage: String, val ask: Int, val maxTokens: Int, val thinking: Boolean,
+)
 fun interface InferenceProvider {
     fun complete(request: InferenceRequest, cancellation: GenerationCancellation): String
 }

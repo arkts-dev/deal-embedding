@@ -1,6 +1,0 @@
-import * as embedding from "./embedding";
-import * as policy from "./catalogue-policy";
-export class Decision { accepted: boolean; answers: policy.ChoiceAnswer[] ; reason: string; }
-export function questions(questions: policy.ChoiceQuestion[]): Promise<string> ;
-export function answers(raw: string, questions: policy.ChoiceQuestion[]): Promise<Decision> ;
-export function envelope(source: embedding.Source): Promise<string> ;

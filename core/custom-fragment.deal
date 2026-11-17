@@ -1,0 +1,34 @@
+import * as strings from "std/string";
+import * as s from "./construction-schema";
+import * as syntax from "embedding/fragment-syntax";
+
+export class Regions { classes: string; fields: string; functions: string; view: string; }
+export class Parsed { accepted: boolean; regions: Regions; diagnostics: string; }
+function empty(): Regions { return {classes:"",fields:"",functions:"",view:""}; }
+export function parse(response: string): Parsed {
+  let result: Regions = empty(); let names: string[] = ["classes","fields","functions","view"];
+  let consumed: string = response;
+  for (let name of names) {
+    let open: string = "<"+name+">"; let close: string = "</"+name+">";
+    let starts: string[] = strings.split(consumed,open);
+    if (starts.length > 2) { return {accepted:false,regions:empty(),diagnostics:"Duplicate response region: "+name}; }
+    if (starts.length === 1) {
+      return {accepted:false,regions:empty(),diagnostics:"Missing response region: "+name};
+    } else {
+      let ends: string[] = strings.split(starts[1],close);
+      if (ends.length !== 2) { return {accepted:false,regions:empty(),diagnostics:"Missing/duplicate region terminator: "+name}; }
+      let body: string = ends[0];
+      if (name === "classes") { result.classes = body; }
+      else if (name === "fields") { result.fields = body; }
+      else if (name === "functions") { result.functions = body; }
+      else { result.view = body; }
+      consumed = starts[0]+ends[1];
+    }
+  }
+  if (strings.trim(result.view) === "" || strings.trim(consumed) !== "") { return {accepted:false,regions:empty(),diagnostics:"Expected only response regions and a nonempty view"}; }
+  return {accepted:true,regions:result,diagnostics:""};
+}
+export async function describe(regions: Regions): Promise<string> {
+  return await syntax.describe(s.encode(regions));
+}
+export function main(): null { return null; }

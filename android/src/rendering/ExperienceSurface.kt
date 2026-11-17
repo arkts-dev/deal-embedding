@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.lifecycle.repeatOnLifecycle
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
@@ -86,6 +87,7 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
             }
         }
     }
+    internal fun frameVisibility(visible:Boolean){synchronized(this){session?.let{protocol.frameVisibility(it,visible)}}}
     internal fun accepted(value:UiSnapshot){
         synchronized(this){
             if(ended||value!==snapshot||snapshotSession!=session||value.version==acceptedVersion&&value.fault==acceptedFault)return
@@ -115,7 +117,9 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
     onSnapshot:(UiSnapshot)->Unit={},
     loading:@Composable ()->Unit={Text("Opening your experience…")}
 ) {
-    DisposableEffect(surface){val attachment=surface.attach();onDispose{attachment.close()}}
+    DisposableEffect(surface){val attachment=surface.attach();onDispose{surface.frameVisibility(false);attachment.close()}}
+    val lifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(surface,lifecycle){lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED){surface.frameVisibility(true);try{kotlinx.coroutines.awaitCancellation()}finally{surface.frameVisibility(false)}}}
     val snapshot=surface.snapshot
     if(snapshot==null){loading();return}
     DealRenderer(transformTree(snapshot.tree)){slot,payload->surface.event(snapshot,slot,payload,onAction)}

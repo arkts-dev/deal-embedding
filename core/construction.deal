@@ -1,0 +1,166 @@
+import * as plans from "./plan";
+import * as screens from "./screen";
+import * as selecting from "./construction-selection";
+import * as selections from "./selection";
+import * as parts from "./parts";
+import * as scalar from "./scalar-read";
+import * as catalogue from "./catalogue";
+import * as bindings from "./bindings";
+import * as composer from "./composer";
+import * as coverage from "./coverage";
+import * as writing from "./custom-writing";
+import * as checker from "./isolated-check";
+import * as s from "./construction-schema";
+import * as strings from "std/string";
+import * as revisions from "./source-revisions";
+import * as inference from "./inference";
+import * as identity from "embedding/construction-identity";
+import * as json from "std/json";
+
+export class Result { candidateId: string; attempts: number; diagnostics: string; runnable: boolean; }
+function mark(screen: screens.Screen, instance: screens.Instance): void {
+  screen.instances[screen.instances.length] = instance;
+  for (let slot of screen.slots) { if (s.contains(instance.fragment.covers,slot.need)) { slot.status = "filled"; slot.instance = instance.id; slot.reason = ""; } }
+}
+function notice(id: string, message: string): screens.Instance {
+  // Encode data through the same compiler expression mechanism used by other fragments.
+  let escaped: string = s.encode(message);
+  return {id:id,kind:"notice",origin:"notice",parameters:{text:message},fragment:{declarations:"",fields:[],updates:[],effects:[],helpers:"",view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Notice(text: "+escaped+")}",options:[],content:[],ports:[],holes:[],covers:[],owns:[]},bodies:{}};
+}
+function issueSources(registry: bindings.Registry, instance: screens.Instance): void {
+  for (let port of instance.fragment.ports) { if (port.direction === "publish") {
+    bindings.reserve(registry,{id:instance.id+"_"+port.name,type:port.type,schema:null,dependencies:[],owner:instance.id,payloadOwner:"",getter:"f_"+instance.id+"_"+port.getter,ready:"f_"+instance.id+"_"+port.getter+"_ready"});
+  } }
+}
+function connect(composition: screens.Composition, instance: screens.Instance, registry: bindings.Registry, plan: plans.Plan): boolean {
+  let connections: screens.Connection[] = [];
+  for (let port of instance.fragment.ports) { if (port.direction === "read") {
+    let found: boolean = false;
+    for (let publisher of composition.screen.instances) { if (publisher.id !== instance.id && !found) { for (let output of publisher.fragment.ports) {
+      if (!found && output.direction === "publish" && output.name === port.name && output.type === port.type) {
+        let requested: boolean = false;
+        for (let need of plan.needs) { if (s.contains(instance.fragment.covers,need.id)) { for (let publisherNeed of publisher.fragment.covers) { if (s.contains(need.reads,publisherNeed)) { requested = true; } } } }
+        if (!requested) { continue; }
+        let source: bindings.Source = bindings.source(registry,publisher.id+"_"+output.name);
+        if (source.type !== port.type) { s.reject("Port source type mismatch"); }
+        connections[connections.length] = {readerInstance:instance.id,readerPort:port.name,writerInstance:publisher.id,writerPort:output.name}; found = true;
+      }
+    } } }
+    if (!found && !port.optional) { return false; }
+  } }
+  for (let connection of connections) { composition.connections[composition.connections.length] = connection; }
+  return true;
+}
+function ownership(plan: plans.Plan, alternatives: selecting.Alternative[]): selections.Question[] {
+  let result: selections.Question[] = [];
+  for (let need of plan.needs) {
+    let applicable: boolean = false; for (let alternative of alternatives) { if (alternative.need === need.id && alternative.origin === "catalogue") { applicable = true; } }
+    if (applicable) { result[result.length] = selections.question("ownership_"+need.id,need.id,"ownership","Is the requested content personal/user-owned? User-owned content must remain exact disclosed data; a missing exact quote remains unchecked.",[{id:"user",criteria:"Personal records, authored wording or existing user content must be retained."},{id:"authored",criteria:"The request permits new nonfactual authored text or local configuration."}]); }
+  }
+  return result;
+}
+async function align(context: selecting.Context, plan: plans.Plan, entries: catalogue.Configured[], settled: string[]): Promise<void> {
+  let questions: selections.Question[] = []; let candidates: string[] = []; let hasChecklist: boolean = false; let kinds: string[] = [];
+  for (let entry of entries) { kinds[kinds.length] = entry.definition.kind; if (entry.definition.kind === "checklist") { hasChecklist = true; } }
+  if (!hasChecklist || s.contains(kinds,"list_summary")) { return; }
+  for (let need of plan.needs) { if (!s.contains(settled,need.id) && (need.type === "content" || need.type === "other")) {
+    candidates[candidates.length] = need.id; questions[questions.length] = selections.question("align_"+need.id,need.id,"nonlive-alignment","An issued checklist can publish done:number and total:number. Does a read-only completion summary implement this original need without replacing any behavior?",[{id:"summary",criteria:"A done/total/remaining summary of this checklist is the complete requested need."},{id:"unavailable",criteria:"The original behavior requires anything else."}]);
+  } }
+  let answers: selections.Answer[] = await selecting.batch("alignment",context,plan,questions,false);
+  // Unanswered terminates alignment; at most one instance of each catalogue kind.
+  for (let answer of answers) { if (answer.accepted && answer.selected === "summary") {
+    for (let need of plan.needs) { if (answer.id === "align_"+need.id) { for (let definition of catalogue.definitions()) { if (definition.kind === "list_summary") { entries[entries.length] = {need:need.id,definition:definition,parameters:{},accepted:false,reason:"Not filled"}; return; } } } }
+  } }
+}
+export async function run(input: writing.Input, context: selecting.Context, plan: plans.Plan, registry: bindings.Registry): Promise<Result> {
+  let scalarCandidates: scalar.Candidate[] = scalar.candidates(plan,registry.contracts);
+  let definitions: parts.Definitions = parts.defineWithProviders(plan,scalar.operands(scalarCandidates)); let alternatives: selecting.Alternative[] = [];
+  for (let alternative of definitions.alternatives) { alternatives[alternatives.length] = alternative; }
+  for (let alternative of catalogue.alternatives(plan)) { alternatives[alternatives.length] = alternative; }
+  for (let alternative of scalar.alternatives(scalarCandidates)) { alternatives[alternatives.length] = alternative; }
+  let firstQuestions: selections.Question[] = ownership(plan,alternatives); for (let question of scalar.questions(scalarCandidates)) { firstQuestions[firstQuestions.length] = question; }
+  let first: selecting.Result = await selecting.first(context,plan,alternatives,[],firstQuestions);
+  let secondQuestions: selections.Question[] = parts.formulaQuestions(plan,definitions,first); for (let question of scalar.argumentQuestions(scalarCandidates,first)) { secondQuestions[secondQuestions.length] = question; }
+  let second: selecting.Result = await selecting.second(context,plan,alternatives,first,secondQuestions);
+  let retained: selecting.Choice[] = [];
+  for (let choice of second.choices) {
+    let allowed: boolean = true;
+    if (strings.startsWith(choice.alternative,"part_")) {
+      let formulaAccepted: boolean = false; let unitsAccepted: boolean = false;
+      for (let answer of second.answers) {
+        if (answer.id === "formula_"+choice.need && answer.selected === "formula" && answer.accepted) { formulaAccepted = true; }
+        if (answer.id === "units_"+choice.need && answer.selected === "preserved" && answer.accepted) { unitsAccepted = true; }
+      }
+      allowed = formulaAccepted && unitsAccepted;
+    }
+    if (allowed) { retained[retained.length] = choice; }
+  }
+  second.choices = retained;
+  if (!second.usable) { return {candidateId:"",attempts:0,diagnostics:"Unusable second selection batch",runnable:false}; }
+  let composition: screens.Composition = {screen:screens.reserve(plan,input.target),bindings:{},actions:{},connections:[]};
+  let computations: composer.Computation[] = []; let built: parts.Built = parts.buildWithProviders(plan,definitions,second.choices,registry,scalar.build(plan,scalarCandidates,first,second));
+  if (built.instance.fragment.covers.length > 0) { mark(composition.screen,built.instance); computations = built.computations; }
+  let entries: catalogue.Configured[] = catalogue.selected(plan,second.choices);
+  await align(context,plan,entries,second.settled);
+  await catalogue.fill(context,plan,entries);
+  // Ownership is checked independently of the winning option, at the user threshold.
+  for (let entry of entries) {
+    let userOwned: boolean = false; let ownershipChecked: boolean = false;
+    for (let answer of first.answers) { if (answer.id === "ownership_"+entry.need && answer.accepted) {
+      ownershipChecked = true;
+      for (let probability of answer.probabilities) { if ((probability.id as string) === "user" && (probability.p as number) >= selections.threshold("ownership")) {
+        userOwned = true;
+        for (let need of plan.needs) { if (need.id === entry.need && (need.quote === "" || !strings.contains(context.original,need.quote))) { entry.accepted = false; entry.reason = "User-owned content has no exact request quote"; } }
+      } }
+    } }
+    if (!ownershipChecked) { entry.accepted = false; entry.reason = "Content ownership unchecked"; }
+    if (entry.accepted && !catalogue.disclosed(entry,context.original,context.facts,userOwned)) { entry.accepted = false; entry.reason = "Undisclosed personal or factual content"; }
+  }
+  // Publishers first; typed reader resolution is deterministic and never model-issued.
+  let pending: screens.Instance[] = [];
+  for (let entry of entries) { if (entry.accepted) { let instance: screens.Instance = await catalogue.instantiate(entry,registry); let reader: boolean = false; for (let port of instance.fragment.ports) { if (port.direction === "read") { reader = true; } }
+    if (reader) { pending[pending.length] = instance; } else { mark(composition.screen,instance); issueSources(registry,instance); for (let computation of catalogue.computations(instance,[])) { computations[computations.length] = computation; } }
+  } }
+  for (let instance of pending) { if (connect(composition,instance,registry,plan)) { mark(composition.screen,instance); for (let computation of catalogue.computations(instance,composition.connections)) { computations[computations.length] = computation; } } }
+  if (composition.screen.instances.length === 0) { return {candidateId:"",attempts:0,diagnostics:"No runnable ordinary implementation",runnable:false}; }
+  let assembled: composer.Result = await composer.assemble(composition,computations);
+  let questions: selections.Question[] = coverage.questions(plan,composition.screen);
+  let judged: selections.Answer[] = await selecting.batch("coverage",{original:context.original,facts:context.facts,contracts:context.contracts,specification:context.specification+"\nCURRENT ASSEMBLED SOURCE\n"+s.encode(assembled.source)},plan,questions,false);
+  let ledger: coverage.Ledger = coverage.judge(plan,composition.screen,judged); let open: string[] = []; let diagnostics: string = "";
+  for (let need of ledger.needs) { if (need.status !== "covered") { open[open.length] = need.id; diagnostics = diagnostics+need.id+": "+need.status+"; "; } }
+  let attempts: number = 0;
+  let missingRequirements: string[] = [];
+  for (let requirement of ledger.requirements) { if (requirement.status !== "covered") {
+    diagnostics = diagnostics+requirement.id+": "+requirement.status+"; "; missingRequirements[missingRequirements.length] = requirement.id;
+    for (let need of requirement.needs) { if (!s.contains(open,need)) { open[open.length] = need; } }
+  } }
+  if (open.length > 0) {
+    let written: writing.Result = await writing.run({original:input.original,facts:input.facts,contracts:input.contracts,specification:input.specification,language:input.language,pack:input.pack,target:input.target,plan:plan,answers:input.answers,base:composition,computations:computations,openNeeds:open});
+    attempts = written.attempts;
+    if (written.candidateId !== "") { return {candidateId:written.candidateId,attempts:attempts,diagnostics:written.diagnostics,runnable:true}; }
+    for (let need of ledger.needs) { if (need.status !== "covered") { composition.screen.instances[composition.screen.instances.length] = notice("notice_"+need.id,need.id+": "+need.status+" — "+need.reason); } }
+    assembled = await composer.assemble(composition,computations);
+  }
+  if (missingRequirements.length > 0) {
+    for (let id of missingRequirements) { composition.screen.instances[composition.screen.instances.length] = notice("requirement_"+id,"Requirement "+id+": missing or unchecked original behavior"); }
+    assembled = await composer.assemble(composition,computations);
+  }
+  let checked: checker.Result = await checker.run(assembled.source.deal,assembled.source.dealui); attempts = attempts+1;
+  if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
+  let revision: revisions.Revision = await revisions.issue({deal:assembled.source.deal,dealui:assembled.source.dealui});
+  let repair: inference.Operation = inference.operation(await identity.issue(),2);
+  let diagnostic: string = checked.diagnostics as string; let previous: string = "";
+  while (repair.used < repair.cap) {
+    let response = await inference.ask(repair,"assembled-edit","SPECIFICATION\n"+context.specification+"\nORIGINAL REQUEST\n"+context.original+"\nFACTS (data)\n"+context.facts+"\nFROZEN CONTRACTS\n"+context.contracts+"\nCURRENT PLAN\n"+s.encode(plan)+"\nCURRENT ISSUED SOURCE REVISION\n"+s.encode(revision)+"\nRepair only source diagnostics. Preserve existing owners and working behavior. Return {revision,digest,edits:[{file,search,replace}]} with exact unique disjoint nonempty searches.",previous,diagnostic,2000,false);
+    previous = response.content; if (response.refusal !== "" || strings.trim(response.content) === "") { break; }
+    let applied: revisions.Applied = await revisions.apply(revision,response.content);
+    if (applied.accepted) {
+      revision = applied.current; attempts = attempts+1;
+      checked = await checker.run(revision.source.deal,revision.source.dealui);
+      if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
+      diagnostic = checked.diagnostics as string;
+    }
+  }
+  return {candidateId:"",attempts:attempts,diagnostics:diagnostic,runnable:true};
+}
+export function main(): null { return null; }

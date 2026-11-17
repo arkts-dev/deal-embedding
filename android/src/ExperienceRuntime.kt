@@ -6,15 +6,14 @@ import org.json.JSONObject
 import dev.deal.embedding.capabilities.*
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 
-internal data class RuntimeConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val policyAssets: String = "", val retainState: Boolean = false, val candidateTest: ((CandidateTestSession) -> String)? = null, val execution: ExecutionLimits = ExecutionLimits()) {
+internal data class RuntimeConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val retainState: Boolean = false, val execution: ExecutionLimits = ExecutionLimits()) {
 }
 internal data class ExperienceSource(val deal: String, val ui: String)
 internal data class SavedWorkspace(val id: String, val title: String, val origin: WorkspaceOrigin, val attempts: Int)
 
-/** A live workspace: its own isolate and state, sharing the connected sandbox engine. */
-internal class PreparedWorkspace(val token:String, val live:LiveWorkspace, val candidate:CheckedCandidate, val snapshot:JSONObject, var persisted:Boolean=false)
+/** Issued metadata only; suppressed preparation isolates are discarded before retention. */
+internal class PreparedWorkspace(val token:String, val id:String, val title:String, val session:String, val candidate:CheckedCandidate, val trace:String, var persisted:Boolean=false)
 internal class LiveWorkspace internal constructor(val id: String, val title: String, internal val session: UiSession, internal val output: File, internal val source: ExperienceSource, val origin: WorkspaceOrigin, val attempts: Int)
 
 /**
@@ -42,62 +41,48 @@ internal class ExperienceRuntime(private val context: Context, private val capab
         val log = EmbeddingLog(context)
         val identity = UUID.randomUUID().toString()
         log.event("route", "saved", candidate = identity)
-        CheckedCandidate(context,source, log.operation("check", candidate = identity) { child -> ExperienceCompiler(context, config, child).compile(source.deal, source.ui) }, catalogRevision(config), attempts, log, identity, origin)
+        CheckedCandidate(context,source, log.operation("check", candidate = identity) { child -> CandidateChecks(context,config,sandbox(),child).use { it.check(source) } }, catalogRevision(config), attempts, log, identity, origin)
     }
-    /** Mount a workspace with its own capability session and return its initial snapshot. */
-    fun open(title: String, candidate: CheckedCandidate, id: String, session:String): Pair<LiveWorkspace, JSONObject> = mountWorkspace(id, title, candidate,session)
-
-    /** Explicit reopen rechecks saved source against current contracts; never invokes inference. */
     fun savedWorkspaces(): List<SavedWorkspace> = storage.savedWorkspaces()
-    fun reopen(id: String, session:String): Pair<LiveWorkspace, JSONObject> {
-        workspaces[id]?.let { return it to it.session.advance() }
-        val saved = savedWorkspaces().firstOrNull { it.id == id } ?: error("Saved workspace not found")
-        val source = storage.source(id) ?: error("Saved workspace source missing")
-        return check(source, saved.origin, saved.attempts).use { mountWorkspace(id, saved.title, it,session) }
-    }
     fun forgetWorkspace(id: String) { closeWorkspace(id); storage.forgetWorkspace(id); EmbeddingLog(context).event("storage", "deleted", workspace = id) }
     private val prepared = mutableMapOf<String,PreparedWorkspace>()
     internal fun prepareWorkspace(id:String,title:String,candidate:CheckedCandidate,session:String):PreparedWorkspace = guarded(live = false) {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
-        val live = LiveWorkspace(id, title, UiSession(context, capabilities, sandbox(), config, candidate.log.bind(id,session), candidate.identity, id), candidate.output, candidate.source, candidate.origin, candidate.attempts)
-        try {
-            val restored = if (config.retainState) storage.state(id, candidate.source) else null
-            val mountStarted=android.os.SystemClock.elapsedRealtime()
-            val snapshot = try { candidate.log.stage("mount", candidate.identity, id) { live.session.mount(candidate.output, restored) }.also { candidate.log.generationTelemetry?.mounted(android.os.SystemClock.elapsedRealtime()-mountStarted,true) } }
-                catch(error:Throwable){candidate.log.generationTelemetry?.mounted(android.os.SystemClock.elapsedRealtime()-mountStarted,false);throw error}
-            PreparedWorkspace(UUID.randomUUID().toString(),live,candidate,snapshot).also{prepared[it.token]=it}
-        } catch (error: Throwable) { runCatching{live.session.close()}.onFailure{error.addSuppressed(it)};throw error }
+        val restored=if(config.retainState)storage.state(id,candidate.source)else null
+        CandidateChecks(context,config,sandbox(),candidate.log.bind(id,session)).use{it.prepare(candidate.source,candidate.output,restored)}
+        // The preparation isolate is gone. Activation initializes independently.
+        PreparedWorkspace(UUID.randomUUID().toString(),id,title,session,candidate,candidate.log.bind(id,session).run).also{prepared[it.token]=it}
     }
     internal fun persistPrepared(token:String) {
         val store=prepared[token] ?: throw ProtocolFailure("INVALID_HANDLE","Unknown prepared store")
-        val live=store.live
-        storage.saveWorkspace(live.id,live.title,live.source,live.origin,live.attempts)
+        val candidate=store.candidate
+        storage.saveWorkspace(store.id,store.title,candidate.source,candidate.origin,candidate.attempts)
         store.persisted=true
     }
     internal fun activatePrepared(token:String):Pair<LiveWorkspace,JSONObject> {
         val store=prepared[token] ?: throw ProtocolFailure("INVALID_HANDLE","Unknown prepared store")
         check(store.persisted){"Prepared store has not been persisted"}
-        check(!workspaces.containsKey(store.live.id)){"Workspace already active"}
-        store.candidate.consumed=true
-        workspaces[store.live.id]=store.live
+        check(!workspaces.containsKey(store.id)){"Workspace already active"}
+        val candidate=store.candidate
+        val live=LiveWorkspace(store.id,store.title,UiSession(context,capabilities,sandbox(),config,candidate.log.bind(store.id,store.session),candidate.identity,store.id),candidate.output,candidate.source,candidate.origin,candidate.attempts)
+        val snapshot=try {
+            val restored=if(config.retainState)storage.state(store.id,candidate.source)else null
+            live.session.mount(candidate.output,restored)
+        }catch(error:Throwable){runCatching{live.session.close()}.onFailure(error::addSuppressed);throw error}
+        candidate.consumed=true
+        workspaces[store.id]=live
         prepared.remove(token)
-        return store.live to store.snapshot
+        return live to snapshot
     }
     internal fun abortPrepared(token:String) {
-        val store=prepared.remove(token) ?: return
-        store.live.session.close()
-    }
-    private fun mountWorkspace(id:String,title:String,candidate:CheckedCandidate,session:String):Pair<LiveWorkspace,JSONObject> {
-        val store=prepareWorkspace(id,title,candidate,session)
-        try { persistPrepared(store.token); return activatePrepared(store.token) }
-        catch(error:Throwable){runCatching{abortPrepared(store.token)}.onFailure(error::addSuppressed);throw error}
+        prepared.remove(token)
     }
     /** Native host acknowledges publication separately from runtime snapshot production. */
+    internal fun frameVisibility(id:String,visible:Boolean){workspaces[id]?.session?.frameVisibility(visible)}
     fun published(id: String, version: Int) {
         val live = workspaces[id] ?: return
         live.session.published(version)
     }
-    fun workspaces(): List<LiveWorkspace> = workspaces.values.toList()
     fun workspace(id: String): LiveWorkspace? = workspaces[id]
     private fun checkpoint(live: LiveWorkspace) {
         if (config.retainState) live.session.state()?.let { state ->

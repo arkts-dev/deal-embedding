@@ -1,0 +1,40 @@
+import * as json from "std/json";
+import * as strings from "std/string";
+import * as tables from "std/table";
+import * as decoded from "./decoded";
+import * as s from "./construction-schema";
+import * as syntax from "embedding/fragment-syntax";
+
+export class Facts { functions: Record<string, unknown>; pureImports: string[]; }
+export async function inspect(source: string, imports: Record<string, unknown>): Promise<Facts> {
+  let pure: string[] = [];
+  for (let alias of tables.keys(imports)) {
+    let module: string = imports[alias] as string;
+    if (s.contains(["std/math","std/string","std/table","std/json"],module)) { pure[pure.length] = alias; }
+  }
+  return {functions:json.parse(await syntax.analyzeFunctions(s.encode({source:source}))),pureImports:pure};
+}
+function check(fact: Record<string, unknown>, facts: Facts, reads: string[], path: string[]): void {
+  if (fact.indirect as boolean) { s.reject("Recomputation requires checked read-only summary for indirect/effectful calls"); }
+  // Borrow safety for helpers is additionally checked by the production UI compiler.
+  // Conservatively reject writes here rather than permit a purity escape through an alias.
+  if (decoded.strings(fact.writes).length > 0) { s.reject("Recomputation helper writes require a checked fresh-local summary"); }
+  for (let read of decoded.strings(fact.reads)) {
+    let parts: string[] = strings.split(read,".");
+    if (parts[0] === "state") { if (parts.length < 2 || !s.contains(reads,parts[1])) { s.reject("Undeclared computation read: "+read); } }
+  }
+  for (let call of decoded.strings(fact.calls)) {
+    let parts: string[] = strings.split(call,".");
+    if (parts.length === 2 && s.contains(facts.pureImports,parts[0])) { }
+    else if (parts.length === 1 && Object.hasOwn(facts.functions,call)) {
+      if (s.contains(path,call)) { s.reject("Recursive recomputation helper lacks bounded read-only summary"); }
+      let next: string[] = []; for (let prior of path) { next[next.length] = prior; } next[next.length] = call;
+      check(facts.functions[call] as Record<string, unknown>,facts,reads,next);
+    } else { s.reject("Effectful or unverified recomputation call: "+call); }
+  }
+}
+export async function expression(source: string, facts: Facts, reads: string[]): Promise<void> {
+  let fact: Record<string, unknown> = json.parse(await syntax.analyzeExpression(s.encode({source:source})));
+  check(fact,facts,reads,[]);
+}
+export function main(): null { return null; }

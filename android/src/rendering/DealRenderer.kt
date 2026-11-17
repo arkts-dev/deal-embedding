@@ -31,6 +31,7 @@ import org.json.JSONObject
 
 /** One entry per implemented component. Compilation verifies agreement with the pack. */
 internal enum class RenderComponent(val component: String, val capability: String) {
+    Graphics("Surface", "renderer.graphics.surface"),
     Column("Column", "renderer.compose.column"), Card("Card", "renderer.compose.card"),
     Text("Text", "renderer.compose.text"), Hero("Hero", "renderer.compose.hero"),
     Button("Button", "renderer.compose.button"), Toggle("Toggle", "renderer.compose.toggle"),
@@ -144,6 +145,7 @@ private val LocalFramed = compositionLocalOf { false }
     val name = node.getString("component").substringAfterLast('.')
     val component = if (name == "root" || name == "__root") RenderComponent.Column else RenderComponent.entries.single { it.component == name }
     when (component) {
+        RenderComponent.Graphics -> GraphicsSurface(prop("width")!!.getDouble("numberValue"),prop("height")!!.getDouble("numberValue"),org.json.JSONArray(text("shapes")),prop("onPointer")?.getInt("actionSlot"),dispatch)
         RenderComponent.Column -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) { children() }
         RenderComponent.Screen -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.screenGap)) { children() }
         RenderComponent.InputGroup -> AdaptiveRow(PackTheme.inputMinimumWidth.value.toInt()) { children() }

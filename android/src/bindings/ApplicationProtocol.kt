@@ -64,6 +64,7 @@ class ApplicationProtocol internal constructor(private val context:Context, mech
     internal fun surfaceFailure(session:Session,error:Throwable) {
         runCatching { EmbeddingLog.traced(context,sessionTrace(session)).bind("",session.id).event("host","failed",target="ExperienceSurface",code=error.javaClass.simpleName,detail=android.util.Log.getStackTraceString(error)) }
     }
+    internal fun frameVisibility(session:Session,visible:Boolean)=controller.frameVisibility(session,visible)
     fun dispatch(session:Session,slot:Int,payload:String?){call("dispatch",session.id,slot,payload ?: JSONObject.NULL)}
     fun published(session:Session,version:Int){sync("published",session.id,version)}
     fun close(session:Session){call("close",session.id)}

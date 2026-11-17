@@ -1,4 +1,7 @@
+import * as graphics from "embedding/graphics";
 pack version "1";
+export class SurfaceProps { width: number; height: number; shapes: graphics.Shape[]; onFrame?: Action; onPointer?: Action; }
+export component Surface(props: SurfaceProps): View { event onFrame(payload: number); event onPointer(payload: graphics.Pointer); capability "renderer.graphics.surface"; }
 export class TextProps { value: string = ""; }
 export class ButtonProps { text: string = ""; enabled: boolean = true; onClick?: Action; accessibilityLabel?: string; }
 export class ToggleProps { value: string = ""; text: string = ""; checked: boolean = false; onChange?: Action; accessibilityLabel?: string; }
@@ -56,7 +59,7 @@ export component Item(props: ItemProps): View { children optional; capability "r
 export class KeyedListProps { key: string = ""; }
 export component KeyedList(props: KeyedListProps): View { children required; capability "renderer.compose.keyedlist"; }
 
-// Semantic additions. Existing component contracts and defaults remain compatible.
+// Semantic layout and value components.
 export class LayoutProps { minimumChildWidth: number = 240; }
 export component Row(props: LayoutProps): View { children required; capability "renderer.layout.row"; }
 export component Heading(props: TextProps): View { capability "renderer.text.heading"; }

@@ -36,9 +36,11 @@ internal class UiSession(private val context: Context, private val broker: Capab
         lastAction = span
         log.event("action", "started", candidate, workspace, span, detail = payload, span = span)
         try { evaluate(DealSessionBindings.dispatch(slot, payload)); log.event("action", "completed", candidate, workspace, span, span = span) }
-        catch (error: Throwable) { log.generationTelemetry?.runtimeFailure(error.javaClass.simpleName);log.event("action", "failed", candidate, workspace, span, code = error.javaClass.simpleName, span = span); throw error }
+        catch (error: Throwable) { log.event("action", "failed", candidate, workspace, span, code = error.javaClass.simpleName, span = span); throw error }
     }
+    internal fun frameVisibility(visible:Boolean){evaluate("setFrameVisibility($visible)")}
     fun advance(): JSONObject {
+        evaluate("advanceFrames(${android.os.SystemClock.elapsedRealtime()})")
         val encoded = evaluate(DealSessionBindings.requests)
         check(encoded.toByteArray().size <= 16 * 1024) { "Capability request batch too large" }
         val requests = JSONArray(encoded)
@@ -69,7 +71,6 @@ internal class UiSession(private val context: Context, private val broker: Capab
     /** Optional bounded observation of production, not a second update or renderer delivery path. */
     private fun recordSnapshot(snapshot: JSONObject) {
         lastVersion = snapshot.getInt("version"); lastFault = snapshot.optString("fault").isNotEmpty()
-        if(lastFault)log.generationTelemetry?.runtimeFailure("SNAPSHOT_FAULT")
         log.event("snapshot", if (lastFault) "fault" else "produced", candidate, workspace, version = lastVersion, parentOperation = lastAction,
             detail = if (log.capturesContent) runCatching { observationValue(snapshot).toString() }.getOrNull() else null)
     }
@@ -79,7 +80,7 @@ internal class UiSession(private val context: Context, private val broker: Capab
         is JSONArray -> JSONArray().also { out -> for (i in 0 until value.length()) out.put(observationValue(value.get(i))) }
         else -> value
     }
-    fun published(version: Int) { require(version>=0 && version<=lastVersion) { "Unproduced snapshot version" }; log.event("snapshot", "published", candidate, workspace, version = version);log.generationTelemetry?.published() }
+    fun published(version: Int) { require(version>=0 && version<=lastVersion) { "Unproduced snapshot version" }; log.event("snapshot", "published", candidate, workspace, version = version) }
     override fun close() {
         if (!closed) {
             closed = true

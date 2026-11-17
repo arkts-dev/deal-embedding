@@ -1,0 +1,150 @@
+import * as plans from "./plan";
+import * as screens from "./screen";
+import * as selecting from "./construction-selection";
+import * as selections from "./selection";
+import * as bindings from "./bindings";
+import * as composer from "./composer";
+import * as formula from "./formula";
+import * as s from "./construction-schema";
+import * as literals from "./source-literals";
+import * as strings from "std/string";
+import * as json from "std/json";
+import * as math from "std/math";
+import * as tables from "std/table";
+import * as scalar from "./scalar-read";
+
+export class Figure { need: string; expression: formula.Expression; label: string; unit: string; format: string; shown: boolean; }
+export class Definitions { alternatives: selecting.Alternative[]; figures: Figure[]; }
+export class Built { instance: screens.Instance; computations: composer.Computation[]; }
+function minorUnits(unit: string): boolean { return strings.endsWith(unit,"cents") || strings.endsWith(unit,"minor units"); }
+function type(input: plans.Input): string { if (input.kind === "text") { return "string"; } if (input.kind === "toggle") { return "boolean"; } return "number"; }
+export function operands(plan: plans.Plan): formula.Operand[] {
+  let result: formula.Operand[] = [];
+  for (let input of plan.inputs) { if (s.contains(["amount","percent","count","time","date","toggle"],input.kind)) { result[result.length] = {id:input.id,expression:"(state."+input.id+" as "+type(input)+")",type:type(input),dependency:"f_parts_"+input.id}; } }
+  for (let constant of plan.constants) { result[result.length] = {id:constant.id,expression:s.encode(constant.value),type:"number",dependency:""}; }
+  return result;
+}
+export function define(plan: plans.Plan): Definitions { return defineWithProviders(plan,[]); }
+export function defineWithProviders(plan: plans.Plan, providerOperands: formula.Operand[]): Definitions {
+  let definitions: Definitions = {alternatives:[],figures:[]}; let issued: formula.Operand[] = operands(plan);
+  for (let need of plan.needs) { if (need.type === "other" && need.reads.length > 0) {
+    let inputsOnly: boolean = true;
+    for (let read of need.reads) { let found: boolean = false; for (let input of plan.inputs) { if (input.id === read && s.contains(["text","toggle","amount","percent","count","time","date"],input.kind)) { found = true; } } if (!found) { inputsOnly = false; } }
+    if (inputsOnly) { definitions.alternatives[definitions.alternatives.length] = {id:"input_"+need.id,need:need.id,origin:"part",kind:"inputs",criteria:"Only expose the existing issued editable input controls "+s.encode(need.reads)+" with their exact seeds, draft validation and downstream recomputation. No calculation beyond input parsing, status, provider call or additional behavior. Choose only when exposing these controls completely implements the original need.",eligible:true,reason:""}; }
+  } }
+  for (let operand of providerOperands) { issued[issued.length] = operand; } let added: string[] = []; let progress: boolean = true;
+  while (progress) {
+    progress = false;
+    for (let need of plan.needs) { if (need.type === "figure" && !s.contains(added,need.id)) {
+      try {
+        let expression: formula.Expression = formula.compile(s.text(need.spec.formula),issued);
+        let example: Record<string, unknown> = need.spec.example as Record<string, unknown>; let examples: Record<string, unknown> = example.inputs as Record<string, unknown>;
+        let testOperands: formula.Operand[] = [];
+        for (let operand of issued) { if (Object.hasOwn(examples,operand.id)) { testOperands[testOperands.length] = {id:operand.id,expression:operand.expression,type:operand.type,dependency:operand.dependency,value:s.finite(examples[operand.id])}; } }
+        for (let key of tables.keys(examples)) { let known: boolean = false; for (let operand of issued) { if (operand.id === key) { known = true; } } if (!known) { s.reject("Unissued example operand"); } }
+        let tested: formula.Expression = formula.compile(s.text(need.spec.formula),testOperands); let expected: number = s.finite(example.result);
+        if (!Object.hasOwn(tested,"number")) { s.reject("Incomplete numeric example"); }
+        let actual: number = tested.number as number; let tolerance: number = math.absNumber(expected)*0.006; if (tolerance < 0.011) { tolerance = 0.011; }
+        if (actual-actual !== 0 || math.absNumber(actual-expected) > tolerance) { s.reject("Formula fails the issued numeric example"); }
+        let valid: boolean = true;
+        for (let dependency of expression.dependencies) { let original: string = strings.substring(dependency,8,strings.length(dependency)); if (!s.contains(need.reads,original)) { valid = false; } }
+        if (valid && expression.type === "number") {
+          definitions.figures[definitions.figures.length] = {need:need.id,expression:expression,label:s.nonblank(need.spec.label),unit:s.text(need.spec.unit),format:s.text(need.spec.format),shown:need.spec.shown as boolean};
+          definitions.alternatives[definitions.alternatives.length] = {id:"part_"+need.id,need:need.id,origin:"part",kind:"figure",criteria:"Pure checked numeric formula "+s.text(need.spec.formula)+" over issued inputs/constants. Preserves numeric value, explicit readiness and units; no provider work, timer, records or external action.",eligible:true,reason:""};
+          issued[issued.length] = {id:need.id,expression:"(state."+need.id+" as number)",type:"number",dependency:"f_parts_"+need.id}; added[added.length] = need.id; progress = true;
+        }
+      } catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001"],error.code)) { throw error; } }
+    } }
+  }
+  return definitions;
+}
+export function formulaQuestions(plan: plans.Plan, definitions: Definitions, first: selecting.Result): selections.Question[] {
+  let questions: selections.Question[] = [];
+  for (let figure of definitions.figures) {
+    // Ask even when the first implementation batch was unusable: second-stage selections
+    // must still carry the formula decision rather than silently dropping retained parts.
+    questions[questions.length] = selections.question("formula_"+figure.need,figure.need,"formula","Does this exact typed formula preserve the original requested calculation, units, constraints and dependencies? "+figure.expression.source,[{id:"formula",criteria:"The issued formula completely implements the original calculation."},{id:"unavailable",criteria:"It changes or omits requested computation, units or constraints."}]);
+    questions[questions.length] = selections.question("units_"+figure.need,figure.need,"units","Independently check the ORIGINAL REQUEST AND FACTS against this exact numeric expression and rendered unit: "+figure.expression.source+"; label="+figure.label+"; unit="+figure.unit+". Trace every input, constant and provider result through the arithmetic. Currency alone does not specify scale: cents/minor units are not major units. Accept only if both arithmetic scale and displayed unit preserve the original quantities; a numerically correct example does not prove this.",[{id:"preserved",criteria:"All source dimensions, currency and scale match the actual calculation and displayed unit, with every required conversion explicit in checked arithmetic."},{id:"unavailable",criteria:"Wrong, missing or ambiguous units/scale, or an implicit conversion; keep the need open."}]);
+  }
+  return questions;
+}
+export function build(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry): Built { return buildWithProviders(plan,definitions,choices,registry,null); }
+export function buildWithProviders(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry, reads: scalar.Built | null): Built {
+  let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let effects: screens.Handler[] = []; let declarations: string = "import * as formulaMath from \"std/math\";"; let helpers: string = ""; let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() {";
+  let computations: composer.Computation[] = []; let covers: string[] = [];
+  declarations = declarations+"import * as inputJson from \"std/json\"; import * as inputString from \"std/string\"; import * as inputMath from \"std/math\";";
+  helpers = helpers+"export function decimalDraft(text: string): boolean { let digits: number = 0; let dot: boolean = false; let index: number = 0; for (let ch of text) { if ((ch === \"+\" || ch === \"-\") && index === 0) {} else if (ch === \".\" && !dot) {dot = true;} else if (inputString.contains(\"0123456789\",ch)) {digits = digits+1;} else {return false;} index = index+1; } return digits > 0; } export function parseDraft(text: string): number { let negative: boolean = false; let whole: number = 0; let scale: number = 1; let dot: boolean = false; for (let ch of text) { if (ch === \"-\") {negative = true;} else if (ch === \".\") {dot = true;} else if (ch !== \"+\") { let digit: number = 0; for (let n of [0,1,2,3,4,5,6,7,8,9]) { if (inputString.substring(\"0123456789\",n,n+1) === ch) {digit = n;} } whole = whole*10+digit; if(dot) {scale = scale*10;} } } let value: number = whole/scale; if(negative) {return -value;} return value; }";
+  for (let input of plan.inputs) {
+    if (!s.contains(["text","toggle","amount","percent","count","time","date"],input.kind)) { continue; }
+    let valueType: string = type(input); let initial: string = s.encode(input.value);
+    let fieldName: string = input.id; let actionType: string = valueType;
+    if (valueType === "number") {
+      fieldName = input.id+"_draft"; actionType = "string"; initial = s.encode(initial);
+      fields[fields.length] = {name:input.id,type:"number",role:"derived",dependencies:[fieldName],initial:"null",owner:"parts"};
+      let ready: string = "decimalDraft(state."+fieldName+")";
+      let parsed: string = "parseDraft(state."+fieldName+")";
+      if (input.kind === "count" || input.kind === "time" || input.kind === "date") { ready = ready+" && inputMath.floor("+parsed+") === "+parsed; }
+      if (input.measure === "money") {
+        ready = ready+" && inputMath.absNumber("+parsed+") <= 9007199254740991";
+        if (minorUnits(input.unit)) { ready = ready+" && inputMath.floor("+parsed+") === "+parsed; }
+      }
+      if (input.kind === "time") { ready = ready+" && "+parsed+" >= 0 && "+parsed+" <= 1439"; }
+      if (Object.hasOwn(input,"min")) { ready = ready+" && "+parsed+" >= "+s.encode(input.min); }
+      if (Object.hasOwn(input,"max")) { ready = ready+" && "+parsed+" <= "+s.encode(input.max); }
+      computations[computations.length] = {instance:"parts",field:input.id,value:parsed,ready:ready,reason:"\"Enter a valid value in the requested domain\"",dependencies:["f_parts_"+fieldName]};
+    }
+    fields[fields.length] = {name:fieldName,type:actionType,role:"authoritative",dependencies:[],initial:initial,owner:"parts"};
+    let sourceReady: string = "true"; if (valueType === "number") { sourceReady = "f_parts_"+input.id+"_ready"; }
+    bindings.reserve(registry,{id:input.id,type:valueType,schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+input.id,ready:sourceReady});
+    declarations = declarations+"export class Change_"+input.id+" { value: "+actionType+"; }";
+    updates[updates.length] = {action:"Change_"+input.id,function:"change_"+input.id};
+    let changes: string = ""; let separator: string = "";
+    for (let other of plan.inputs) { if (s.contains(["text","toggle","amount","percent","count","time","date"],other.kind)) { let otherName: string = other.id; if (type(other) === "number") { otherName = other.id+"_draft"; } changes = changes+separator+otherName+": "; if (other.id === input.id) { changes = changes+"action.value"; } else { changes = changes+"state."+otherName; } separator = ", "; } }
+    if (reads !== null) {
+      for (let invalidation of (reads as scalar.Built).invalidations) { if (invalidation.input === input.id) {
+        let prefix: string = invalidation.prefix;
+        changes = changes+", "+prefix+"status:\"Inputs changed; load again\", "+prefix+"valid:false, "+prefix+"pending:false, "+prefix+"action:null, "+prefix+"code:\"STALE\", "+prefix+"outcome:\"none\", "+prefix+"sequence:state."+prefix+"sequence+1";
+      } }
+    }
+    helpers = helpers+"export function change_"+input.id+"(state: AppState, action: Change_"+input.id+"): AppState { return {"+changes+"}; }";
+    let inputLabel: string = input.label; if (input.unit !== "") { inputLabel = inputLabel+" ("+input.unit+")"; }
+    if (valueType === "string") { view = view+"ui.TextField(label: "+literals.quote(input.label)+", value: state."+input.id+", onChange: action app.Change_"+input.id+" {value: payload})"; }
+    else if (valueType === "boolean") { view = view+"ui.Toggle(text: "+literals.quote(input.label)+", checked: state."+input.id+", onChange: action app.Change_"+input.id+" {value: payload === \"true\"})"; }
+    else { view = view+"ui.TextField(label: "+literals.quote(inputLabel)+", value: state."+fieldName+", error: state."+input.id+"_reason, onChange: action app.Change_"+input.id+" {value: payload})"; }
+  }
+  if (reads !== null) {
+    let built: scalar.Built = reads as scalar.Built;
+    for (let field of built.fields) { fields[fields.length] = field; }
+    for (let update of built.updates) { updates[updates.length] = update; }
+    effects = built.effects;
+    for (let computation of built.computations) { computations[computations.length] = computation; }
+    for (let need of built.covers) { covers[covers.length] = need; bindings.reserve(registry,{id:need,type:"number",schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+need,ready:"f_parts_"+need+"_ready"}); }
+    declarations = declarations+built.declarations; helpers = helpers+built.helpers; view = view+built.view;
+  }
+  let selected: string[] = []; for (let choice of choices) {
+    if (strings.startsWith(choice.alternative,"part_")) { selected[selected.length] = choice.need; }
+    if (choice.alternative === "input_"+choice.need) { covers[covers.length] = choice.need; }
+  }
+  for (let figure of definitions.figures) { if (s.contains(selected,figure.need)) {
+    let dependenciesReady: boolean = true;
+    for (let dependency of figure.expression.dependencies) { let name: string = strings.substring(dependency,8,strings.length(dependency)); let issued: boolean = false; for (let input of plan.inputs) { if (input.id === name) { issued = true; } } if (s.contains(covers,name)) { issued = true; } if (!issued) { dependenciesReady = false; } for (let other of definitions.figures) { if (other.need === name && !s.contains(covers,name)) { dependenciesReady = false; } } }
+    if (!dependenciesReady) { continue; }
+    fields[fields.length] = {name:figure.need,type:"number",role:"derived",dependencies:figure.expression.dependencies,initial:"null",owner:"parts"};
+    bindings.reserve(registry,{id:figure.need,type:"number",schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+figure.need,ready:"f_parts_"+figure.need+"_ready"});
+    let formulaReady: string = "true";
+    for (let need of plan.needs) { if (need.id === figure.need && s.text(need.spec.format) === "money") { formulaReady = "formulaMath.absNumber("+figure.expression.source+") <= 9007199254740991"; if (minorUnits(figure.unit)) { formulaReady = formulaReady+" && formulaMath.floor("+figure.expression.source+") === ("+figure.expression.source+")"; } } }
+    if (figure.format === "time_of_day") { formulaReady = formulaReady+" && formulaMath.floor("+figure.expression.source+") === ("+figure.expression.source+") && ("+figure.expression.source+") >= 0 && ("+figure.expression.source+") <= 1439"; }
+    computations[computations.length] = {instance:"parts",field:figure.need,value:figure.expression.source,ready:formulaReady,reason:"\"Input or upstream result unavailable\"",dependencies:figure.expression.dependencies};
+    // Primitive render values are separate composer-owned derived fields, guarded in the view.
+    fields[fields.length] = {name:figure.need+"_text",type:"string",role:"derived",dependencies:[figure.need],initial:"null",owner:"parts"};
+    let formatted: string = "jsonText(state."+figure.need+" as number)";
+    if (figure.format === "time_of_day") { formatted = "timeText(state."+figure.need+" as number)"; }
+    helpers = helpers+"export function text_"+figure.need+"(state: AppState): string { return "+literals.quote(figure.label+": ")+"+"+formatted+"+"+literals.quote(" "+figure.unit)+"; }";
+    computations[computations.length] = {instance:"parts",field:figure.need+"_text",value:"text_"+figure.need+"(state)",ready:"true",reason:"\"Result unavailable\"",dependencies:["f_parts_"+figure.need]};
+    if (figure.shown) { view = view+"When(state."+figure.need+"_text_ready) {ui.Text(value: state."+figure.need+"_text_display)} When(!state."+figure.need+"_text_ready) {ui.Notice(text: state."+figure.need+"_text_reason)}"; } covers[covers.length] = figure.need;
+  } }
+  declarations = declarations+"import * as json from \"std/json\";";
+  helpers = helpers+"export function jsonText(value: number): string { return json.stringify(value) as string; } export function twoDigits(value:number):string {if(value<10){return \"0\"+jsonText(value);}return jsonText(value);} export function timeText(value:number):string {let hours:number=formulaMath.floor(value/60);return twoDigits(hours)+\":\"+twoDigits(value-hours*60);}";
+  return {instance:{id:"parts",kind:"inputs_figures",origin:"part",parameters:{},fragment:{declarations:declarations,fields:fields,updates:updates,effects:effects,helpers:helpers,view:view+"} }",options:[],content:[],ports:[],holes:[],covers:covers,owns:["parts"]},bodies:{}},computations:computations};
+}
+export function main(): null { return null; }

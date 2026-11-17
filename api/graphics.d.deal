@@ -1,0 +1,10 @@
+export class Shape {
+  tag: string;
+  x?: number; y?: number; width?: number; height?: number; radius?: number;
+  startDegrees?: number; sweepDegrees?: number; lineWidth?: number;
+  x1?: number; y1?: number; x2?: number; y2?: number;
+  size?: number; rotation?: number; scale?: number; alpha?: number;
+  color?: string; commands?: string; align?: string; text?: string;
+  points?: number[]; bold?: boolean; shapes?: Shape[];
+}
+export class Pointer { phase: string; id: number; x: number; y: number; }

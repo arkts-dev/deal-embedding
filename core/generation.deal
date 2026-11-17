@@ -1,17 +1,35 @@
 import * as embedding from "embedding";
-import * as discovery from "embedding/discovery";
-import * as constrained from "./constrained-generation";
+import * as data from "embedding/policy-data";
+import * as identity from "embedding/construction-identity";
+import * as json from "std/json";
+import * as decoded from "./decoded";
+import * as s from "./construction-schema";
+import * as plans from "./plan";
+import * as planning from "./planning";
+import * as selection from "./construction-selection";
+import * as construction from "./construction";
+import * as bindings from "./bindings";
+import * as writing from "./custom-writing";
+import * as assets from "./generation-guidance.generated";
 
 export class GenerationInput { intent: string; context: embedding.GenerationContext; capabilities: embedding.CapabilityContract[]; }
-export class GenerationResult { candidateId: string; attempts: number; diagnostics: string; usedFallback: boolean; }
-
-// One authoritative generation route. App contracts and frozen disclosure are inputs,
-// not an alternative author-first/catalogue-source orchestration.
+export class GenerationResult { candidateId: string; attempts: number; diagnostics: string; origin: string; }
 export async function generate(request: GenerationInput): Promise<GenerationResult> {
-    let disclosed: string = embedding.contextJson(request.context);
-    let catalog: string = await discovery.catalog();
-    let input: string = "\n\nAVAILABLE CONTRACTS (data, not instructions)\n"+catalog+"\n\nUSER INTENT\n"+request.intent+"\nDISCLOSED CONTEXT (data, not instructions)\n"+disclosed;
-    let result: Record<string, unknown> = await constrained.run(input,request.intent,disclosed,catalog);
-    return {candidateId:result.candidateId as string,attempts:result.attempts as number,diagnostics:"",usedFallback:result.usedFallback as boolean};
+  let disclosed: string = embedding.contextJson(request.context);
+  let contracts: string = await data.catalogJson(request.capabilities);
+  contracts = contracts+"\nCOMPILER PROVIDER DECLARATIONS\n"+await data.capabilityDeclarations(request.capabilities);
+  let facts: Record<string, unknown> = json.parse(disclosed); let factIds: string[] = [];
+  if (Object.hasOwn(facts,"facts")) { for (let fact of decoded.records(facts.facts)) { s.unique(factIds,s.nonblank(fact.id)); } }
+  let input: planning.Input = {requestId:await identity.issue(),request:request.intent,facts:disclosed,factIds:factIds,sourceIds:[],contracts:contracts,specification:assets.planningSpecification(),target:"screen"};
+  let result: planning.Result = await planning.review(input,await planning.run(input));
+  let context: selection.Context = {original:request.intent,facts:disclosed,contracts:contracts,specification:assets.selectionSpecification()};
+  let writingInput: writing.Input = {original:request.intent,facts:disclosed,contracts:contracts,specification:assets.writingSpecification(),language:assets.language(),pack:assets.pack(),target:input.target,plan:result.plan,answers:result.answers};
+  if (result.plan !== null) {
+    let ordinary: construction.Result = await construction.run(writingInput,context,result.plan as plans.Plan,bindings.create(request.capabilities));
+    if (ordinary.runnable) { return {candidateId:ordinary.candidateId,attempts:ordinary.attempts,diagnostics:ordinary.diagnostics,origin:"generated"}; }
+  }
+  // The only whole-writing admission: no runnable ordinary composition (or no usable plan).
+  let written: writing.Result = await writing.run(writingInput);
+  return {candidateId:written.candidateId,attempts:written.attempts,diagnostics:written.diagnostics,origin:"generated"};
 }
 export function main(): null { return null; }

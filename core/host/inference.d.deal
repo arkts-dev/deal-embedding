@@ -1,0 +1,3 @@
+export class Request { operation: string; stage: string; ask: number; input: string; previous: string; diagnostics: string; maxTokens: number; thinking: boolean; }
+export class Response { content: string; finish: string; refusal: string; }
+export function dispatch(request: Request): Promise<Response>;

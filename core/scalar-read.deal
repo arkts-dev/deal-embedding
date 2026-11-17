@@ -1,0 +1,112 @@
+import * as embedding from "embedding";
+import * as plans from "./plan";
+import * as selecting from "./construction-selection";
+import * as selections from "./selection";
+import * as screens from "./screen";
+import * as composer from "./composer";
+import * as formula from "./formula";
+import * as s from "./construction-schema";
+import * as literals from "./source-literals";
+
+// Generic numeric provider part. Every binding is issued from frozen contracts and
+// separately selected for requested authority and argument semantics. No provider names.
+export class Candidate { id: string; need: string; module: string; function: string; description: string; label: string; unit: string; argument: string; minimum: number; maximum: number; resultMinimum: number; resultMaximum: number; }
+export class Invalidation { input: string; prefix: string; }
+export class Built { fields: screens.Field[]; updates: screens.Handler[]; effects: screens.Handler[]; declarations: string; helpers: string; view: string; computations: composer.Computation[]; covers: string[]; invalidations: Invalidation[]; }
+export function candidates(plan: plans.Plan, contracts: embedding.CapabilityContract[]): Candidate[] {
+  let result: Candidate[] = [];
+  for (let need of plan.needs) { if (need.type === "live") {
+    for (let contract of contracts) { for (let fn of contract.functions) {
+      if (fn.result.kind !== "number" || fn.parameters.length > 1) { continue; }
+      if (fn.parameters.length === 0) {
+        result[result.length] = {id:"scalar_"+s.encode(result.length),need:need.id,module:contract.module,function:fn.name,description:contract.description+" / "+fn.description,label:s.nonblank(need.spec.label),unit:s.text(need.spec.unit),argument:"",minimum:0,maximum:0,resultMinimum:fn.result.minimumNumber,resultMaximum:fn.result.maximumNumber};
+      } else if (fn.parameters[0].type.kind === "number") {
+        for (let input of plan.inputs) {
+          if (!s.contains(need.reads,input.id) || !s.contains(["amount","percent","count","time","date"],input.kind)) { continue; }
+          let parameter: embedding.Parameter = fn.parameters[0];
+          result[result.length] = {id:"scalar_"+s.encode(result.length),need:need.id,module:contract.module,function:fn.name,description:contract.description+" / "+fn.description+" parameter "+parameter.name,label:s.nonblank(need.spec.label),unit:s.text(need.spec.unit),argument:input.id,minimum:parameter.type.minimumNumber,maximum:parameter.type.maximumNumber,resultMinimum:fn.result.minimumNumber,resultMaximum:fn.result.maximumNumber};
+        }
+      }
+    } }
+  } }
+  return result;
+}
+export function alternatives(candidates: Candidate[]): selecting.Alternative[] {
+  let result: selecting.Alternative[] = [];
+  for (let candidate of candidates) {
+    result[result.length] = {id:candidate.id,need:candidate.need,origin:"part",kind:"scalar_read",criteria:"Explicit button reads the numeric result of "+candidate.module+"."+candidate.function+" ("+candidate.description+") using issued input "+candidate.argument+". Waiting/failure/explicit retry, correlated completion, input-change invalidation; never startup or automatic calls. Select only if this operation is a read authorized by the original task, not a mutation, and its actual scalar result implements the need.",eligible:true,reason:""};
+  }
+  return result;
+}
+export function questions(candidates: Candidate[]): selections.Question[] {
+  let result: selections.Question[] = [];
+  for (let candidate of candidates) {
+    result[result.length] = selections.question("real_"+candidate.id,candidate.need,"real-data","Does the original task require this actual authorized read? "+candidate.module+"."+candidate.function+" "+candidate.description,[{id:"read",criteria:"This exact disclosed operation reads the required actual numeric result; it does not mutate or exceed requested authority."},{id:"unavailable",criteria:"Not required, not a read, wrong result, or insufficient authority."}]);
+  }
+  return result;
+}
+export function argumentQuestions(candidates: Candidate[], first: selecting.Result): selections.Question[] {
+  let result: selections.Question[] = [];
+  for (let candidate of candidates) { if (candidate.argument !== "") {
+    let chosen: boolean = !first.usable;
+    for (let choice of first.choices) { if (choice.alternative === candidate.id) { chosen = true; } }
+    if (!chosen) { continue; }
+    result[result.length] = selections.question("argument_"+candidate.id,candidate.need,"argument","Bind the sole numeric parameter of "+candidate.module+"."+candidate.function+" ("+candidate.description+") to issued input "+candidate.argument+". Does this preserve exact units and original parameter semantics without conversion?",[{id:"bound",criteria:"This exact input has the required units and meaning; use its validated current numeric value."},{id:"unavailable",criteria:"Wrong units, conversion required, ambiguous, or not a requested argument."}]);
+  } }
+  return result;
+}
+function admitted(candidate: Candidate, first: selecting.Result, second: selecting.Result): boolean {
+  let selected: boolean = false; for (let choice of second.choices) { if (choice.alternative === candidate.id) { selected = true; } }
+  let read: boolean = false; for (let answer of first.answers) { if (answer.id === "real_"+candidate.id && answer.accepted && answer.selected === "read") { read = true; } }
+  let bound: boolean = candidate.argument === ""; for (let answer of second.answers) { if (answer.id === "argument_"+candidate.id && answer.accepted && answer.selected === "bound") { bound = true; } }
+  return selected && read && bound;
+}
+export function operands(candidates: Candidate[]): formula.Operand[] {
+  let result: formula.Operand[] = []; let ids: string[] = [];
+  for (let candidate of candidates) { if (!s.contains(ids,candidate.need)) { ids[ids.length] = candidate.need; result[result.length] = {id:candidate.need,expression:"(state."+candidate.need+" as number)",type:"number",dependency:"f_parts_"+candidate.need}; } }
+  return result;
+}
+function field(name: string, type: string, initial: string, role: string): screens.Field { return {name:name,type:type,initial:initial,role:role,dependencies:[],owner:"parts"}; }
+export function build(plan: plans.Plan, candidates: Candidate[], first: selecting.Result, second: selecting.Result): Built {
+  let built: Built = {fields:[],updates:[],effects:[],declarations:"",helpers:"",view:"",computations:[],covers:[],invalidations:[]};
+  for (let candidate of candidates) { if (admitted(candidate,first,second) && !s.contains(built.covers,candidate.need)) {
+    let id: string = candidate.id; let prefix: string = id+"_"; let argument: string = "0"; let ready: string = "true"; let dependencies: string[] = [];
+    if (candidate.argument !== "") {
+      argument = "(state."+candidate.argument+" as number)";
+      ready = "state."+candidate.argument+"_ready && "+argument+" >= "+s.encode(candidate.minimum)+" && "+argument+" <= "+s.encode(candidate.maximum);
+      dependencies[0] = "f_parts_"+candidate.argument;
+      built.invalidations[built.invalidations.length] = {input:candidate.argument,prefix:prefix};
+    }
+    built.fields[built.fields.length] = field(prefix+"sequence","number","0","authoritative");
+    built.fields[built.fields.length] = field(prefix+"action","Load_"+id+" | null","null","authoritative");
+    built.fields[built.fields.length] = field(prefix+"pending","boolean","false","authoritative");
+    built.fields[built.fields.length] = field(prefix+"code","string","\"\"","authoritative");
+    built.fields[built.fields.length] = field(prefix+"outcome","string","\"none\"","authoritative");
+    built.fields[built.fields.length] = field(prefix+"argument","number","0","authoritative");
+    built.fields[built.fields.length] = field(prefix+"valid","boolean","false","authoritative");
+    built.fields[built.fields.length] = field(prefix+"value","number","0","authoritative");
+    built.fields[built.fields.length] = field(prefix+"status","string","\"Not loaded\"","authoritative");
+    built.fields[built.fields.length] = field(candidate.need,"number","null","derived");
+    built.fields[built.fields.length] = field(prefix+"text","string","null","derived");
+    let start: string = "Load_"+id; let completion: string = "Loaded_"+id;
+    built.declarations = built.declarations+"import * as scalarJson from \"std/json\"; import * as provider_"+id+" from "+literals.quote(candidate.module)+"; export class "+start+" {sequence:number;} export class "+completion+" {sequence:number;argument:number;ok:boolean;value:number;code:string;outcome:string;message:string;}";
+    built.updates[built.updates.length] = {action:start,function:"start_"+id};
+    built.updates[built.updates.length] = {action:completion,function:"complete_"+id};
+    built.effects[built.effects.length] = {action:start,function:"read_"+id};
+    // Complete local owner projections are expanded by the same composer as other parts.
+    let changes: string = prefix+"sequence:state."+prefix+"sequence+1,"+prefix+"action:action,"+prefix+"pending:true,"+prefix+"argument:"+argument+","+prefix+"valid:false,"+prefix+"code:\"\","+prefix+"outcome:\"none\","+prefix+"status:\"Loading\"";
+    built.helpers = built.helpers+"export function start_"+id+"(state:AppState,action:"+start+"):AppState {if(action.sequence !== state."+prefix+"sequence || state."+prefix+"pending || !("+ready+") || state."+prefix+"sequence >= 9007199254740991){return state;} return {"+changes+"};}";
+    let call: string = "provider_"+id+"."+candidate.function+"("; if (candidate.argument !== "") { call = call+"state."+prefix+"argument"; } call = call+")";
+    let completionPrefix: string = "sequence:state."+prefix+"sequence,argument:state."+prefix+"argument,";
+    built.helpers = built.helpers+"export async function read_"+id+"(state:AppState,action:"+start+"):Promise<"+completion+"> {if(!state."+prefix+"pending || state."+prefix+"action === null || (state."+prefix+"action as "+start+") !== action || state."+prefix+"sequence !== action.sequence+1){return {sequence:-1,argument:0,ok:false,value:0,code:\"NOT_ADMITTED\",outcome:\"none\",message:\"Not admitted\"};} try {let value:number=await "+call+";if(value-value !== 0 || value < "+s.encode(candidate.resultMinimum)+" || value > "+s.encode(candidate.resultMaximum)+"){return {"+completionPrefix+"ok:false,value:0,code:\"BAD_RESPONSE\",outcome:\"failure\",message:\"Invalid provider result\"};} return {"+completionPrefix+"ok:true,value:value,code:\"\",outcome:\"success\",message:\"Loaded\"};} catch(unknownError){let error:Error=unknownError as Error;return {"+completionPrefix+"ok:false,value:0,code:error.code,outcome:\"failure\",message:error.message};}}";
+    built.helpers = built.helpers+"export function complete_"+id+"(state:AppState,action:"+completion+"):AppState {if(!state."+prefix+"pending || action.sequence !== state."+prefix+"sequence || action.argument !== state."+prefix+"argument){return state;} if (!("+ready+") || action.argument !== "+argument+"){return {"+prefix+"pending:false,"+prefix+"valid:false,"+prefix+"status:\"Inputs changed; load again\"};}return {"+prefix+"pending:false,"+prefix+"valid:action.ok,"+prefix+"value:action.value,"+prefix+"code:action.code,"+prefix+"outcome:action.outcome,"+prefix+"status:action.message};}";
+    for (let suffix of ["valid","argument","value"]) { dependencies[dependencies.length] = "f_parts_"+prefix+suffix; }
+    built.computations[built.computations.length] = {instance:"parts",field:candidate.need,value:"state."+prefix+"value",ready:"state."+prefix+"valid && state."+prefix+"argument === "+argument,reason:"\"Load the current input explicitly\"",dependencies:dependencies};
+    built.helpers = built.helpers+"export function text_"+id+"(state:AppState):string {return "+literals.quote(candidate.label+": ")+"+(scalarJson.stringify(state."+candidate.need+" as number) as string)+"+literals.quote(" "+candidate.unit)+";}";
+    built.computations[built.computations.length] = {instance:"parts",field:prefix+"text",value:"text_"+id+"(state)",ready:"true",reason:"\"Result unavailable\"",dependencies:["f_parts_"+candidate.need]};
+    built.view = built.view+"When(state."+prefix+"text_ready){ui.Text(value:state."+prefix+"text_display)} ui.Button(text:"+literals.quote("Load "+candidate.label)+",onClick:action app."+start+" {sequence:state."+prefix+"sequence}) ui.Text(value:state."+prefix+"status)";
+    built.covers[built.covers.length] = candidate.need;
+  } }
+  return built;
+}
+export function main(): null { return null; }

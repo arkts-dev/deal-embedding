@@ -1,73 +1,34 @@
-import deal.ast.TokenType;
-import deal.parser.Parser;
-import deal.lexer.Lexer;
-import deal.ui.UiModel;
-import deal.ui.UiParser;
 import java.nio.file.*;
-import java.util.*;
 
-/** Build-time asset/pack-AST extraction only. Composition and prompt formatting live in core. */
+/** Build-time immutable specification/language/pack assets. No generation decisions. */
 public final class GenerationGuidance {
     public static void main(String[] args) throws Exception {
-        Path packFile = Path.of(args[0]);
-        UiModel.PackModule pack = UiParser.parsePack(packFile, Files.readString(packFile));
-        List<String> components = new ArrayList<>();
-        pack.components().values().stream().sorted(Comparator.comparing(UiModel.Component::name)).forEach(component -> {
-            UiModel.PackClass props = pack.classes().getOrDefault(component.propsType(), new UiModel.PackClass(component.propsType(), List.of(), null));
-            List<String> fields = new ArrayList<>();
-            for (UiModel.Field field : props.fields()) {
-                Object declared = field.defaultValue() instanceof UiModel.Literal literal ? literal.value() : null;
-                String kind = declared instanceof Number ? "number" : declared instanceof String ? "string" : declared instanceof Boolean ? "boolean" : "other";
-                String text = declared == null ? "" : String.valueOf(declared);
-                fields.add("{ name: " + literal(field.name()) + ", type: " + literal(field.type().name()) + ", required: " + (!field.type().optional() && field.defaultValue() == null) + ", defaultKind: " + literal(kind) + ", defaultText: " + literal(text) + " }");
-            }
-            List<String> contracts = new ArrayList<>();
-            for (UiModel.Contract contract : component.contracts()) {
-                if (contract instanceof UiModel.Event event) contracts.add("{ kind: \"event\", prop: " + literal(event.prop()) + ", payload: " + literal(event.payload() == null ? "" : event.payload().name()) + " }");
-                else if (contract instanceof UiModel.Children children) contracts.add("{ kind: \"children\", required: " + children.required() + ", types: " + literal(children.typed() ? children.componentType() : "") + " }");
-            }
-            components.add("{ name: " + literal(component.name()) + ", fields: " + array(fields) + ", contracts: " + array(contracts) + " }");
-        });
-        // Derive spellings from the compiled lexer, not a second maintained keyword list.
-        List<String> reserved = Arrays.stream(TokenType.values())
-            .map(type -> type.name().toLowerCase(Locale.ROOT))
-            .filter(word -> {
-                var result = new Lexer(word, "keywords.deal").tokenize();
-                var binding = new Lexer("function probe():null { let " + word + " = 0; return null; }", "keywords.deal").tokenize();
-                return result.diagnostics().isEmpty() && result.tokens().size() == 2
-                    && result.tokens().get(0).type() != TokenType.IDENTIFIER
-                    && result.tokens().get(0).type() != TokenType.EOF
-                    && (!binding.diagnostics().isEmpty()
-                        || !new Parser(binding.tokens(), "keywords.deal").parse().diagnostics().isEmpty());
-            }).sorted().toList();
-        Path output = Path.of(args[3]);
+        Path root=Path.of(args[0]),deal=Path.of(args[1]),output=Path.of(args[2]);
         Files.createDirectories(output.getParent());
-        Files.writeString(output, "/** Generated asset text and pack facts. Do not edit. */\n"
-            + "function empty(): Record<string, unknown>[] { return []; }\n"
-            + "export function behavior(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("behavior-guidance.md")).trim()) + "; }\n"
-            + "export function language(): string { return " + literal(Files.readString(Path.of(args[2]).resolve("language.md")).trim()) + "; }\n"
-            + "export function reservedWords(): string[] { return [" + String.join(",", reserved.stream().map(GenerationGuidance::literal).toList()) + "]; }\n"
-            + "export function renderer(): string { return " + literal(Files.readString(Path.of(args[1])).trim()) + "; }\n"
-            + "export function composition(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("composition.md")).trim()) + "; }\n"
-            + "export function pack(): Record<string, unknown> { return { components: [" + String.join(",", components) + "] }; }\n"
-            + "export function exampleDeal(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("generation-example.deal"))) + "; }\n"
-            + "export function exampleUi(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("generation-example.dealui"))) + "; }\n"
-            + "export function comparisonDeal(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("comparison.deal"))) + "; }\n"
-            + "export function comparisonUi(): string { return " + literal(Files.readString(Path.of(args[4]).resolve("comparison.dealui"))) + "; }\n");
+        String specification=Files.readString(root.resolve("docs/spec-v0.8.md"));
+        Files.writeString(output,"// Generated from authoritative inputs.\n"
+            +function("specification",specification)
+            +function("planningSpecification",sections(specification,"Scope and responsibilities","Discovery and intent preservation","Generation schemas","Construction route"))
+            +function("selectionSpecification",sections(specification,"Scope and responsibilities","Generation schemas","Construction route","Fragments and deterministic assembly","Reusable sections"))
+            +function("writingSpecification",sections(specification,"Scope and responsibilities","Fragments and deterministic assembly","Custom writing and recovery","Execution and provider workflows","UI vocabulary and Deal UI mapping","Source, checking and observation"))
+            +function("language",Files.readString(deal.resolve("skills/write-deal/references/language.md")))
+            +function("pack",Files.readString(root.resolve("ui/platform.dealui-pack"))));
     }
-    private static String array(List<String> values) { return values.isEmpty() ? "empty()" : "[" + String.join(",", values) + "]"; }
-    private static String literal(String text) {
-        StringBuilder out = new StringBuilder("\"");
-        for (char c : text.toCharArray()) {
-            switch (c) {
-                case '\\' -> out.append("\\\\");
-                case '"' -> out.append("\\\"");
-                case '\n' -> out.append("\\n");
-                case '\r' -> out.append("\\r");
-                case '\t' -> out.append("\\t");
-                default -> out.append(c);
-            }
+    /** Exact authoritative sections, never a second hand-maintained schema/policy summary. */
+    private static String sections(String specification,String... headings){
+        StringBuilder result=new StringBuilder();
+        for(String heading:headings){
+            String marker="## "+heading+"\n";int start=specification.indexOf(marker);
+            if(start<0)throw new IllegalArgumentException("Missing specification section: "+heading);
+            int end=specification.indexOf("\n## ",start+marker.length());
+            result.append(specification,start,end<0?specification.length():end).append('\n');
         }
+        return result.toString();
+    }
+    private static String function(String name,String text){return "export function "+name+"(): string { return "+literal(text)+"; }\n";}
+    private static String literal(String text){
+        StringBuilder out=new StringBuilder("\"");
+        text.codePoints().forEach(c->{switch(c){case '\\'->out.append("\\\\");case '"'->out.append("\\\"");case '\n'->out.append("\\n");case '\r'->out.append("\\r");case '\t'->out.append("\\t");default->{if(c<32)throw new IllegalArgumentException("Control in build input");out.appendCodePoint(c);}}});
         return out.append('"').toString();
     }
 }

@@ -1,0 +1,157 @@
+import * as plans from "./plan";
+import * as screens from "./screen";
+import * as selecting from "./construction-selection";
+import * as selections from "./selection";
+import * as inference from "./inference";
+import * as identity from "embedding/construction-identity";
+import * as data from "embedding/policy-data";
+import * as syntax from "embedding/fragment-syntax";
+import * as bindings from "./bindings";
+import * as composer from "./composer";
+import * as s from "./construction-schema";
+import * as json from "std/json";
+import * as strings from "std/string";
+import * as literals from "./source-literals";
+
+// Only executable definitions are issued. Unsupported kinds remain open for custom sections.
+export class Parameter { name: string; type: string; required: boolean; fallback: unknown; maximum: number; }
+export class Definition { kind: string; criteria: string; parameters: Parameter[]; mutable: boolean; }
+export class Configured { need: string; definition: Definition; parameters: Record<string, unknown>; accepted: boolean; reason: string; }
+export function definitions(): Definition[] {
+  return [
+    {kind:"note",criteria:"Editable retained text, not structured records, calculations or provider work.",parameters:[{name:"text",type:"string",required:false,fallback:"",maximum:512}],mutable:true},
+    {kind:"spotlight",criteria:"Highlighted read-only message; never a substitute for constructing or obtaining a result.",parameters:[{name:"message",type:"string",required:true,fallback:"",maximum:512}],mutable:false},
+    {kind:"metrics",criteria:"Read-only labelled facts from disclosed data, not generated estimates, calculations or provider records.",parameters:[{name:"values",type:"facts",required:true,fallback:null,maximum:12}],mutable:false},
+    {kind:"key_facts",criteria:"Read-only labelled facts from disclosed data; no calculation, timer, action or external data.",parameters:[{name:"items",type:"facts",required:true,fallback:null,maximum:12}],mutable:false},
+    {kind:"actions",criteria:"Local label selection and last-tapped label only. No external operation or completion claims.",parameters:[{name:"labels",type:"labels",required:true,fallback:null,maximum:12}],mutable:true},
+    {kind:"checklist",criteria:"Keyed toggles with checked and total counts; not records, assignments or external operations.",parameters:[{name:"items",type:"entries",required:false,fallback:null,maximum:12}],mutable:true},
+    {kind:"filter_box",criteria:"Editable query publishing query:string for an issued reader. No search provider or external effect.",parameters:[],mutable:true},
+    {kind:"list_summary",criteria:"Read-only done/total/remaining from exact typed publishers; cannot create or replace a publisher.",parameters:[],mutable:false}
+  ];
+}
+export function alternatives(plan: plans.Plan): selecting.Alternative[] {
+  let result: selecting.Alternative[] = [];
+  for (let need of plan.needs) { if (need.type === "content" || need.type === "other") {
+    for (let definition of definitions()) { result[result.length] = {id:"cat_"+need.id+"_"+definition.kind,need:need.id,origin:"catalogue",kind:definition.kind,criteria:definition.criteria,eligible:true,reason:""}; }
+  } }
+  return result;
+}
+async function text(value: unknown, maximum: number, nonblank: boolean): Promise<string> { let result: string = s.text(value); if (nonblank) { s.nonblank(result); } if (await data.utf16Length(result) > maximum) { s.reject("Catalogue text bound"); } return result; }
+export async function decode(definition: Definition, raw: Record<string, unknown>): Promise<Record<string, unknown>> {
+  let required: string[] = []; let optional: string[] = ["title","subtitle"];
+  for (let parameter of definition.parameters) { if (parameter.required) { required[required.length] = parameter.name; } else { optional[optional.length] = parameter.name; } }
+  s.closed(raw,required,optional); let result: Record<string, unknown> = {title:"",subtitle:""};
+  for (let key of ["title","subtitle"]) { if (Object.hasOwn(raw,key)) { result[key] = await text(raw[key],512,false); } }
+  for (let parameter of definition.parameters) {
+    let value: unknown = parameter.fallback; if (value === null) { let empty: Record<string, unknown>[] = []; value = empty; } if (Object.hasOwn(raw,parameter.name)) { value = raw[parameter.name]; }
+    if (parameter.type === "string") { result[parameter.name] = await text(value,parameter.maximum,false); }
+    else if (parameter.type === "labels") {
+      let labels: string[] = s.stringArray(value); if (labels.length < 1 || labels.length > parameter.maximum) { s.reject("Catalogue labels bound"); }
+      for (let label of labels) { await text(label,32,true); } result[parameter.name] = labels;
+    } else {
+      let rows: Record<string, unknown>[] = s.records({rows:value},"rows"); if (rows.length > parameter.maximum) { s.reject("Catalogue rows bound"); }
+      let checked: Record<string, unknown>[] = []; let ids: string[] = [];
+      for (let row of rows) {
+        if (parameter.type === "facts") { s.closed(row,["label","value"],[]); checked[checked.length] = {label:await text(row.label,32,true),value:await text(row.value,512,false)}; }
+        else { s.closed(row,["id","label"],["detail","done"]); let id: string = s.identifier(row.id); s.unique(ids,id); checked[checked.length] = {id:id,label:await text(row.label,32,true),detail:await text(s.optionalText(row,"detail"),512,false),done:s.optionalBoolean(row,"done",false)}; }
+      }
+      result[parameter.name] = checked;
+    }
+  }
+  return result;
+}
+export function disclosed(entry: Configured, original: string, facts: string, userOwned: boolean): boolean {
+  let data: string = original+"\n"+facts;
+  if (entry.definition.kind === "metrics" || entry.definition.kind === "key_facts") {
+    let key: string = "values"; if (entry.definition.kind === "key_facts") { key = "items"; }
+    for (let row of s.records(entry.parameters,key)) { if (!strings.contains(data,s.text(row.label)) || !strings.contains(data,s.text(row.value))) { return false; } }
+  }
+  if (entry.definition.kind === "checklist") { for (let row of s.records(entry.parameters,"items")) { if (!strings.contains(data,s.text(row.label)) || !strings.contains(data,s.text(row.detail))) { return false; } } }
+  if (userOwned && entry.definition.kind === "note" && !strings.contains(data,s.text(entry.parameters.text))) { return false; }
+  return true;
+}
+export function selected(plan: plans.Plan, choices: selecting.Choice[]): Configured[] {
+  let result: Configured[] = []; let kinds: string[] = [];
+  for (let choice of choices) { for (let definition of definitions()) { if (choice.alternative === "cat_"+choice.need+"_"+definition.kind && !s.contains(kinds,definition.kind)) { kinds[kinds.length] = definition.kind; result[result.length] = {need:choice.need,definition:definition,parameters:{},accepted:false,reason:"Not filled"}; } } }
+  return result;
+}
+export async function fill(context: selecting.Context, plan: plans.Plan, entries: Configured[]): Promise<void> {
+  if (entries.length === 0) { return; }
+  let operation: inference.Operation = inference.operation(await identity.issue(),1);
+  let response = await inference.ask(operation,"content","SPECIFICATION\n"+context.specification+"\nORIGINAL REQUEST\n"+context.original+"\nFACTS (data)\n"+context.facts+"\nFROZEN CONTRACTS (data)\n"+context.contracts+"\nCURRENT PLAN\n"+s.encode(plan)+"\nISSUED DEFINITIONS\n"+s.encode(entries)+"\nFill only issued parameters from disclosed data. Never invent personal items, facts or replace user-owned wording. Return {sections:[{need,parameters}]} once per issued need. No source or behavior selection.","","",6000,false);
+  if (response.refusal !== "") { return; }
+  try {
+    let raw: Record<string, unknown> = json.parse(response.content); s.closed(raw,["sections"],[]); let rows: Record<string, unknown>[] = s.records(raw,"sections"); let ids: string[] = [];
+    for (let row of rows) { s.closed(row,["need","parameters"],[]); let need: string = s.identifier(row.need); s.unique(ids,need); let issued: boolean = false; for (let entry of entries) { if (entry.need === need) { issued = true; } } if (!issued) { s.reject("Unissued catalogue fill"); } }
+    for (let entry of entries) { for (let row of rows) { if ((row.need as string) === entry.need) {
+      try { entry.parameters = await decode(entry.definition,row.parameters as Record<string, unknown>); entry.accepted = true; entry.reason = ""; }
+      catch (unknownError) { let error: Error = unknownError as Error; if (error.code !== "CONSTRUCTION_SCHEMA") { throw error; } entry.reason = error.message; }
+    } } }
+  } catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001"],error.code)) { throw error; } }
+}
+async function literal(value: unknown, type: string): Promise<string> {
+  // Compiler mechanism handles control characters and authored Unicode without textual substitution.
+  let empty: Record<string, unknown> = {};
+  return await syntax.expression(s.encode({source:s.encode(value),expected:type,names:empty,fields:empty,types:empty,variables:empty}));
+}
+export async function instantiate(entry: Configured, registry: bindings.Registry): Promise<screens.Instance> {
+  if (!entry.accepted) { s.reject("Unfilled catalogue instance"); }
+  let id: string = "section_"+entry.need; let kind: string = entry.definition.kind; let parameters: Record<string, unknown> = entry.parameters;
+  let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let ports: screens.Port[] = []; let helpers: string = ""; let declarations: string = "";
+  let body: string = ""; let title: string = s.text(parameters.title); if (title !== "") { body = body+"ui.Text(value: "+await literal(title,"string")+")"; }
+  let subtitle: string = s.text(parameters.subtitle); if (subtitle !== "") { body = body+"ui.Text(value: "+await literal(subtitle,"string")+")"; }
+  if (kind === "note" || kind === "filter_box") {
+    let name: string = "text"; let initial: string = ""; if (kind === "filter_box") { name = "query"; } else { initial = s.text(parameters.text); }
+    fields[0] = {name:name,type:"string",role:"authoritative",dependencies:[],initial:await literal(initial,"string"),owner:id};
+    declarations = "export class Change { value: string; }"; updates[0] = {action:"Change",function:"change"}; helpers = "export function change(state: AppState, action: Change): AppState { return {"+name+":action.value}; }";
+    body = body+"ui.TextField(label: "+await literal(title,"string")+", value: state."+name+", onChange: action app.Change {value: payload})";
+    if (kind === "filter_box") { ports[0] = {name:"query",type:"string",direction:"publish",getter:"query",optional:false}; }
+  } else if (kind === "spotlight") { body = body+"ui.Text(value: "+await literal(parameters.message,"string")+")"; }
+  else if (kind === "metrics" || kind === "key_facts") {
+    let key: string = "values"; if (kind === "key_facts") { key = "items"; }
+    for (let row of s.records(parameters,key)) { body = body+"ui.Text(value: "+await literal(s.text(row.label)+": "+s.text(row.value),"string")+")"; }
+    if (s.records(parameters,key).length === 0) { body = body+"ui.Notice(text: \"No disclosed facts\")"; }
+  } else if (kind === "actions") {
+    fields[0] = {name:"selected",type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:id}; declarations = "export class Select { value: string; }"; updates[0] = {action:"Select",function:"select"};
+    helpers = "export function select(state: AppState, action: Select): AppState { return {selected:action.value}; }";
+    for (let label of s.stringArray(parameters.labels)) { body = body+"ui.Button(text: "+await literal(label,"string")+", onClick: action app.Select {value: "+await literal(label,"string")+"})"; } body = body+"ui.Text(value: state.selected)";
+  } else if (kind === "checklist") {
+    let rows: Record<string, unknown>[] = s.records(parameters,"items"); let index: number = 0; let sum: string = "0";
+    declarations = "export class Toggle { id: string; }"; updates[0] = {action:"Toggle",function:"toggle"}; let changes: string = ""; let separator: string = "";
+    for (let row of rows) { let name: string = "checked_"+s.identifier(row.id); fields[fields.length] = {name:name,type:"boolean",role:"authoritative",dependencies:[],initial:s.encode(row.done),owner:id};
+      helpers = helpers+"export function count_"+s.identifier(row.id)+"(state: AppState): number { if (state."+name+") {return 1;} return 0;}";
+      sum = sum+"+count_"+s.identifier(row.id)+"(state)"; changes = changes+separator+name+":state."+name; separator = ", ";
+      body = body+"ui.Button(text: "+await literal(row.label,"string")+", onClick: action app.Toggle {id: "+await literal(row.id,"string")+"}) When(state."+name+") {ui.Text(value: \"Done\")}";
+      index = index+1;
+    }
+    helpers = helpers+"export function toggle(state: AppState, action: Toggle): AppState {";
+    for (let row of rows) { helpers = helpers+"if(action.id === "+await literal(row.id,"string")+") {return {"; let comma: string = ""; for (let other of rows) { let name: string = "checked_"+s.identifier(other.id); helpers = helpers+comma+name+":"; if (other.id === row.id) { helpers = helpers+"!state."+name; } else { helpers = helpers+"state."+name; } comma = ", "; } helpers = helpers+"};}"; }
+    helpers = helpers+"return state;} export function countDone(state: AppState): number { return "+sum+"; }";
+    fields[fields.length] = {name:"done",type:"number",role:"derived",dependencies:[],initial:"null",owner:id};
+    fields[fields.length] = {name:"total",type:"number",role:"derived",dependencies:[],initial:"null",owner:id};
+    ports = [{name:"done",type:"number",direction:"publish",getter:"done",optional:false},{name:"total",type:"number",direction:"publish",getter:"total",optional:false}];
+    if (index === 0) { body = body+"ui.Notice(text: \"No disclosed items\")"; }
+  } else if (kind === "list_summary") {
+    ports = [{name:"done",type:"number",direction:"read",getter:"done",optional:false},{name:"total",type:"number",direction:"read",getter:"total",optional:false}];
+    fields[0] = {name:"summary",type:"string",role:"derived",dependencies:[],initial:"null",owner:id};
+    declarations = "import * as summaryJson from \"std/json\";";
+    helpers = "export function summarize(state: AppState): string { let done: number = state.done as number; let total: number = state.total as number; let remaining: number = total-done; return (summaryJson.stringify(done) as string)+\" / \"+(summaryJson.stringify(total) as string)+\"; remaining: \"+(summaryJson.stringify(remaining) as string); }";
+    body = body+"When(state.summary_ready) {ui.Text(value: state.summary_display)} When(!state.summary_ready) {ui.Notice(text: state.summary_reason)}";
+  }
+  let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){"+body+"}}";
+  return {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:[],helpers:helpers,view:view,options:[],content:[],ports:ports,holes:[],covers:[entry.need],owns:[id]},bodies:{}};
+}
+export function computations(instance: screens.Instance, connections: screens.Connection[]): composer.Computation[] {
+  let result: composer.Computation[] = [];
+  if (instance.kind === "checklist") {
+    let dependencies: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { dependencies[dependencies.length] = "f_"+instance.id+"_"+field.name; } }
+    result[result.length] = {instance:instance.id,field:"done",value:"countDone(state)",ready:"true",reason:"\"Unavailable\"",dependencies:dependencies};
+    result[result.length] = {instance:instance.id,field:"total",value:s.encode(s.records(instance.parameters,"items").length),ready:"true",reason:"\"Unavailable\"",dependencies:[]};
+  } else if (instance.kind === "list_summary") {
+    let dependencies: string[] = [];
+    for (let connection of connections) { if (connection.readerInstance === instance.id) { dependencies[dependencies.length] = "f_"+connection.writerInstance+"_"+connection.writerPort; } }
+    result[0] = {instance:instance.id,field:"summary",value:"summarize(state)",ready:"true",reason:"\"Publisher unavailable\"",dependencies:dependencies};
+  }
+  return result;
+}
+export function main(): null { return null; }

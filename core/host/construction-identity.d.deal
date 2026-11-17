@@ -1,0 +1,2 @@
+// Fresh opaque resource identity; no construction or source policy.
+export function issue(): Promise<string>;

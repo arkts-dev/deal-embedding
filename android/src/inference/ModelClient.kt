@@ -3,13 +3,14 @@ package dev.deal.embedding
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Injection seam for alternative inference mechanisms and deterministic tests. Gateway integration is library-owned.
- * Source completions return a serialized native assistant tool message. Core owns the restricted
- * staged workspace and tool feedback; previous is a host-serialized pair, not model output. Catalogue choice calls retain their independently specified JSON contract.
- */
+/** One transport dispatch. Stage, token and reasoning policy arrive from compiled DEAL. */
 internal interface ModelClient {
-    fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog): String
+    fun complete(request: InferenceRequest, cancellation: GenerationCancellation, log: EmbeddingLog): String
+    fun dispatch(request: InferenceRequest, cancellation: GenerationCancellation, log: EmbeddingLog): InferenceResponse =
+        InferenceResponse(complete(request,cancellation,log),"unknown","")
 }
+
+internal data class InferenceResponse(val content: String, val finish: String, val refusal: String)
 
 class GenerationCancellation {
     private val cancelled = AtomicBoolean(false)

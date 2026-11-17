@@ -1,0 +1,213 @@
+import * as screens from "./screen";
+import * as decoded from "./decoded";
+import * as s from "./construction-schema";
+import * as tables from "std/table";
+import * as json from "std/json";
+import * as literals from "./source-literals";
+import * as syntax from "embedding/fragment-syntax";
+import * as policy from "./computation-policy";
+
+// Internal resolved assembly input. Generated strings never issue type or owner identities.
+export class Computation { instance: string; field: string; value: string; ready: string; reason: string; dependencies: string[]; }
+export class Import { module: string; alias: string; }
+export class Field { instance: string; local: string; name: string; type: string; role: string; initial: string; }
+export class Prepared { id: string; declarations: string; helpers: string; view: string; fields: Field[]; updates: screens.Handler[]; effects: screens.Handler[]; viewName: string; }
+export class Source { deal: string; dealui: string; }
+export class Result { source: Source; fields: Field[]; computations: string[]; }
+function qualified(id: string, name: string): string { return "f_"+id+"_"+name; }
+function addImport(imports: Import[], module: string, alias: string): void {
+  for (let item of imports) {
+    if (item.alias === alias && item.module !== module) { s.reject("Conflicting resolved import alias"); }
+    if (item.alias === alias && item.module === module) { return; }
+  }
+  imports[imports.length] = {module:module,alias:alias};
+}
+function importSource(imports: Import[]): string {
+  let emitted: string[] = []; let result: string = "";
+  while (emitted.length < imports.length) {
+    let next: Import | null = null;
+    for (let item of imports) { if (!s.contains(emitted,item.alias)) { if (next === null) { next = item; } else { let selected: Import = next as Import; if (item.module < selected.module || (item.module === selected.module && item.alias < selected.alias)) { next = item; } } } }
+    let item: Import = next as Import; emitted[emitted.length] = item.alias;
+    result = result+"import * as "+item.alias+" from "+literals.quote(item.module)+";\n";
+  }
+  return result;
+}
+function field(fields: Field[], instance: string, local: string): Field {
+  for (let item of fields) { if (item.instance === instance && item.local === local) { return item; } }
+  s.reject("Unissued field producer/read"); throw {code:"CONSTRUCTION_SCHEMA",message:"Unissued field"};
+}
+function placeholder(type: string): string { if (type === "string") { return "\"\""; } if (type === "boolean") { return "false"; } if (type === "number") { return "0"; } return "null"; }
+function primitive(type: string): boolean { return s.contains(["string","boolean","number"],type); }
+function copyExpression(fields: Field[], changes: Record<string, unknown>, state: string): string {
+  let result: string = "{"; let separator: string = "";
+  for (let item of fields) {
+    let expression: string = state+"."+item.name;
+    if (Object.hasOwn(changes,item.name)) { expression = changes[item.name] as string; }
+    result = result+separator+item.name+": "+expression; separator = ", ";
+    if (item.role === "derived") {
+      let ready: string = state+"."+item.name+"_ready"; let reason: string = state+"."+item.name+"_reason";
+      if (Object.hasOwn(changes,item.name+"_ready")) { ready = changes[item.name+"_ready"] as string; }
+      if (Object.hasOwn(changes,item.name+"_reason")) { reason = changes[item.name+"_reason"] as string; }
+      result = result+", "+item.name+"_ready: "+ready+", "+item.name+"_reason: "+reason;
+      if (primitive(item.type)) { let display: string = state+"."+item.name+"_display"; if (Object.hasOwn(changes,item.name+"_display")) { display = changes[item.name+"_display"] as string; } result = result+", "+item.name+"_display: "+display; }
+    }
+  }
+  return result+"}";
+}
+async function expression(value: string, expected: string, instance: Prepared, names: Record<string, unknown>, fields: Record<string, unknown>, types: Record<string, unknown>, variable: string): Promise<string> {
+  let variables: Record<string, unknown> = {}; if (variable !== "") { variables[variable] = "AppState"; }
+  return await syntax.expression(s.encode({source:value,expected:expected,names:names,fields:fields,types:types,variables:variables}));
+}
+export async function assemble(composition: screens.Composition, computations: Computation[]): Promise<Result> {
+  let imports: Import[] = [{module:"std/time",alias:"embeddingClock"},{module:"std/json",alias:"embeddingJson"}];
+  let prepared: Prepared[] = []; let allFields: Field[] = []; let namesByInstance: Record<string, unknown> = {}; let fieldsByInstance: Record<string, unknown> = {}; let typesByInstance: Record<string, unknown> = {}; let factsByInstance: Record<string, unknown> = {};
+  let instances: string[] = []; let owners: string[] = []; let storageNames: string[] = [];
+  for (let instance of composition.screen.instances) {
+    s.unique(instances,s.identifier(instance.id));
+    for (let resource of instance.fragment.owns) { s.unique(owners,resource); }
+    let raw: Record<string, unknown> = json.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
+    let names: Record<string, unknown> = {}; let fieldNames: Record<string, unknown> = {}; let types: Record<string, unknown> = {};
+    for (let category of ["classes","functions","views"]) {
+      for (let declaration of decoded.records(raw[category])) { let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
+    }
+    for (let item of decoded.records(raw.imports)) { let alias: string = s.identifier(item.alias); if (Object.hasOwn(names,alias)) { s.reject("Import/declaration conflict"); } let bound: string = qualified(instance.id,alias); names[alias] = bound; addImport(imports,s.nonblank(item.module),bound); }
+    let views: Record<string, unknown>[] = decoded.records(raw.views);
+    if (views.length !== 1 || !(views[0].exported as boolean) || (views[0].root as boolean)) { s.reject("Fragment requires one exported nonroot view"); }
+    let parameters: Record<string, unknown>[] = decoded.records(views[0].parameters);
+    if (parameters.length !== 1 || (parameters[0].type as string) !== "app.AppState") { s.reject("Fragment view must receive app.AppState"); }
+    let localNames: string[] = [];
+    for (let item of instance.fragment.fields) { s.unique(localNames,item.name); if (item.owner !== instance.id) { s.reject("Foreign field owner"); } fieldNames[item.name] = qualified(instance.id,item.name); types[item.name] = item.type; if (item.role === "derived") { fieldNames[item.name+"_ready"] = qualified(instance.id,item.name)+"_ready"; fieldNames[item.name+"_reason"] = qualified(instance.id,item.name)+"_reason"; types[item.name+"_ready"] = "boolean"; types[item.name+"_reason"] = "string"; if (primitive(item.type)) { fieldNames[item.name+"_display"] = qualified(instance.id,item.name)+"_display"; types[item.name+"_display"] = item.type; } } }
+    for (let connection of composition.connections) { if (connection.readerInstance === instance.id) {
+      let reader: screens.Port | null = null; let writer: screens.Port | null = null; let writerField: screens.Field | null = null;
+      for (let port of instance.fragment.ports) { if (port.name === connection.readerPort && port.direction === "read") { reader = port; } }
+      for (let other of composition.screen.instances) { if (other.id === connection.writerInstance) {
+        for (let port of other.fragment.ports) { if (port.name === connection.writerPort && port.direction === "publish") { writer = port; for (let item of other.fragment.fields) { if (item.name === port.getter) { writerField = item; } } } }
+      } }
+      if (reader === null || writer === null || writerField === null || (reader as screens.Port).type !== (writer as screens.Port).type || (writerField as screens.Field).type !== (reader as screens.Port).type) { s.reject("Unresolved typed port connection"); }
+      let port: screens.Port = reader as screens.Port; let publisher: screens.Field = writerField as screens.Field;
+      if (Object.hasOwn(fieldNames,port.getter)) { s.reject("Reader field conflicts with owner field"); }
+      fieldNames[port.getter] = qualified(connection.writerInstance,publisher.name); types[port.getter] = publisher.type;
+      if (publisher.role === "derived") {
+        for (let suffix of ["_ready","_reason"]) {
+          fieldNames[port.getter+suffix] = qualified(connection.writerInstance,publisher.name)+suffix;
+          if (suffix === "_ready") { types[port.getter+suffix] = "boolean"; } else { types[port.getter+suffix] = "string"; }
+        }
+        if (primitive(publisher.type)) { fieldNames[port.getter+"_display"] = qualified(connection.writerInstance,publisher.name)+"_display"; types[port.getter+"_display"] = publisher.type; }
+      }
+    } }
+    let importModules: Record<string, unknown> = {}; for (let item of decoded.records(raw.imports)) { let alias: string = item.alias as string; importModules[alias] = item.module; }
+    factsByInstance[instance.id] = await policy.inspect(instance.fragment.helpers,importModules);
+    namesByInstance[instance.id] = names; fieldsByInstance[instance.id] = fieldNames; typesByInstance[instance.id] = types;
+    let writable: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { writable[writable.length] = field.name; } }
+    let qualifiedSource: Record<string, unknown> = json.parse(await syntax.qualify(s.encode({declarations:instance.fragment.declarations,helpers:instance.fragment.helpers,view:instance.fragment.view,names:names,fields:fieldNames,types:types,writable:writable})));
+    let resolvedTypes: Record<string, unknown> = qualifiedSource.types as Record<string, unknown>;
+    let item: Prepared = {id:instance.id,declarations:qualifiedSource.declarations as string,helpers:qualifiedSource.helpers as string,view:qualifiedSource.view as string,fields:[],updates:instance.fragment.updates,effects:instance.fragment.effects,viewName:qualified(instance.id,views[0].name as string)};
+    for (let source of instance.fragment.fields) {
+      let initial: string = "null"; if (source.role === "authoritative") { initial = await expression(source.initial,source.type,item,names,fieldNames,types,""); }
+      let current: Field = {instance:instance.id,local:source.name,name:qualified(instance.id,source.name),type:resolvedTypes[source.name] as string,role:source.role,initial:initial};
+      s.unique(storageNames,current.name);
+      if (current.role === "derived") { s.unique(storageNames,current.name+"_ready"); s.unique(storageNames,current.name+"_reason"); if (primitive(current.type)) { s.unique(storageNames,current.name+"_display"); } }
+      item.fields[item.fields.length] = current; allFields[allFields.length] = current;
+    }
+    prepared[prepared.length] = item;
+  }
+  if (prepared.length === 0) { s.reject("No runnable fragments"); }
+  let preserved: string[] = [];
+  for (let field of allFields) { preserved[preserved.length] = field.name; if (field.role === "derived") { preserved[preserved.length] = field.name+"_ready"; preserved[preserved.length] = field.name+"_reason"; if (primitive(field.type)) { preserved[preserved.length] = field.name+"_display"; } } }
+  for (let item of prepared) {
+    for (let instance of composition.screen.instances) { if (instance.id === item.id) {
+      let writable: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { writable[writable.length] = field.name; } }
+      let projection: Record<string, unknown> = json.parse(await syntax.qualify(s.encode({declarations:instance.fragment.declarations,helpers:instance.fragment.helpers,view:instance.fragment.view,names:namesByInstance[item.id],fields:fieldsByInstance[item.id],types:typesByInstance[item.id],preserved:preserved,writable:writable})));
+      item.declarations = projection.declarations as string; item.helpers = projection.helpers as string; item.view = projection.view as string;
+    } }
+  }
+  let producers: string[] = [];
+  for (let computation of computations) { let target: Field = field(allFields,computation.instance,computation.field); if (target.role !== "derived") { s.reject("Derived producer targets authoritative field"); } s.unique(producers,target.name); }
+  for (let item of allFields) { if (item.role === "derived" && !s.contains(producers,item.name)) { s.reject("Missing derived producer"); } }
+  let declarations: string = importSource(imports)+"export class AppState {\n";
+  for (let item of allFields) { let type: string = item.type; if (item.role === "derived") { type = "("+type+" | null)"; } declarations = declarations+"  "+item.name+": "+type+";\n"; if (item.role === "derived") { declarations = declarations+"  "+item.name+"_ready: boolean;\n  "+item.name+"_reason: string;\n"; if (primitive(item.type)) { declarations = declarations+"  "+item.name+"_display: "+item.type+";\n"; } } }
+  declarations = declarations+"}\n";
+  let viewImports: Import[] = [{module:"./experience",alias:"app"},{module:"./platform.dealui-pack",alias:"ui"}];
+  for (let instance of composition.screen.instances) {
+    let facts: Record<string, unknown> = json.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
+    let names: Record<string, unknown> = namesByInstance[instance.id] as Record<string, unknown>;
+    for (let item of decoded.records(facts.viewImports)) { let alias: string = item.alias as string; if (Object.hasOwn(names,alias)) { alias = names[alias] as string; } addImport(viewImports,item.module as string,alias); }
+  }
+  let viewSource: string = importSource(viewImports);
+  let actions: string[] = []; let effects: string[] = [];
+  for (let item of prepared) {
+    declarations = declarations+item.declarations+item.helpers;
+    viewSource = viewSource+item.view;
+    for (let update of item.updates) {
+      let action: string = qualified(item.id,update.action); s.unique(actions,action);
+      declarations = declarations+"// @ui-update\nexport function update_"+action+"(state: AppState, action: "+action+"): AppState {\n  return recompute("+qualified(item.id,update.function)+"(state, action));\n}\n";
+    }
+    for (let effect of item.effects) {
+      let action: string = qualified(item.id,effect.action); s.unique(effects,action);
+      if (!s.contains(actions,action)) { s.reject("Effect has no owning reducer"); }
+      // Exact completion types are compiler facts, never guessed from model labels.
+      let facts: Record<string, unknown> = json.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:item.helpers,view:composition.screen.instances[0].fragment.view})));
+      let result: string = "";
+      for (let fn of decoded.records(facts.functions)) { if ((fn.name as string) === qualified(item.id,effect.function)) { if (!(fn.async as boolean)) { s.reject("Effect must be asynchronous"); } result = fn.result as string; } }
+      if (result === "") { s.reject("Unissued effect function"); }
+      declarations = declarations+"// @ui-effect\nexport async function effect_"+action+"(state: AppState, action: "+action+"): Promise<"+result+"> {\n  return await "+qualified(item.id,effect.function)+"(state, action);\n}\n";
+    }
+  }
+  let recompute: string = "export function recompute(candidate: AppState): AppState {\n  let state: AppState = candidate;\n"; let ordered: string[] = [];
+  while (ordered.length < computations.length) {
+    let progress: boolean = false;
+    for (let computation of computations) {
+      let target: Field = field(allFields,computation.instance,computation.field);
+      if (!s.contains(ordered,target.name)) {
+        let readyToEmit: boolean = true;
+        for (let dependency of computation.dependencies) { if (s.contains(producers,dependency) && !s.contains(ordered,dependency)) { readyToEmit = false; } }
+        if (readyToEmit) {
+          let owner: Prepared | null = null; for (let item of prepared) { if (item.id === computation.instance) { owner = item; } }
+          let instance: Prepared = owner as Prepared;
+          let names: Record<string, unknown> = namesByInstance[instance.id] as Record<string, unknown>; let fields: Record<string, unknown> = fieldsByInstance[instance.id] as Record<string, unknown>; let types: Record<string, unknown> = typesByInstance[instance.id] as Record<string, unknown>;
+          let allowedReads: string[] = [];
+          for (let dependency of computation.dependencies) {
+            let found: boolean = false;
+            for (let item of allFields) { if (item.name === dependency) { found = true; if (item.instance !== instance.id) {
+              let connected: boolean = false;
+              for (let connection of composition.connections) { if (connection.readerInstance === instance.id && connection.writerInstance === item.instance) {
+                for (let owner of composition.screen.instances) { if (owner.id === item.instance) { for (let port of owner.fragment.ports) { if (port.name === connection.writerPort && port.getter === item.local) {
+                  for (let current of composition.screen.instances) { if (current.id === instance.id) { for (let reader of current.fragment.ports) { if (reader.name === connection.readerPort) { allowedReads[allowedReads.length] = reader.getter; connected = true; } } } }
+                } } } }
+              } }
+              if (!connected) { s.reject("Cross-owner calculation requires issued port binding"); }
+            } else { allowedReads[allowedReads.length] = item.local; } if (item.role === "derived") { allowedReads[allowedReads.length] = item.local+"_ready"; allowedReads[allowedReads.length] = item.local+"_reason"; } } }
+            if (!found) { s.reject("Unissued computation dependency"); }
+          }
+          let purity: policy.Facts = factsByInstance[instance.id] as policy.Facts;
+          await policy.expression(computation.ready,purity,allowedReads);
+          await policy.expression(computation.value,purity,allowedReads);
+          await policy.expression(computation.reason,purity,allowedReads);
+          let ready: string = await expression(computation.ready,"boolean",instance,names,fields,types,"state");
+          // Readiness is a composer dependency guard, not an optional writer predicate.
+          // Short-circuit before any getter when an upstream derived value is unavailable.
+          for (let dependency of computation.dependencies) { for (let input of allFields) { if (input.name === dependency && input.role === "derived") { ready = "state."+input.name+"_ready && ("+ready+")"; } } }
+          let value: string = await expression(computation.value,types[computation.field] as string,instance,names,fields,types,"state");
+          let reason: string = await expression(computation.reason,"string",instance,names,fields,types,"state");
+          let changes: Record<string, unknown> = {}; changes[target.name] = "null"; changes[target.name+"_ready"] = "false"; changes[target.name+"_reason"] = reason; if (primitive(target.type)) { changes[target.name+"_display"] = placeholder(target.type); }
+          recompute = recompute+"  if ("+ready+") {\n    let value: "+target.type+" = "+value+";\n";
+          let finite: string = "true"; if (target.type === "number") { finite = "value - value === 0"; }
+          recompute = recompute+"    if ("+finite+") {\n";
+          let available: Record<string, unknown> = {}; available[target.name] = "value"; available[target.name+"_ready"] = "true"; available[target.name+"_reason"] = "\"\""; if (primitive(target.type)) { available[target.name+"_display"] = "value"; }
+          recompute = recompute+"      state = "+copyExpression(allFields,available,"state")+";\n    } else {\n      state = "+copyExpression(allFields,changes,"state")+";\n    }\n  } else {\n    state = "+copyExpression(allFields,changes,"state")+";\n  }\n";
+          ordered[ordered.length] = target.name; progress = true;
+        }
+      }
+    }
+    if (!progress) { s.reject("Derived dependency cycle"); }
+  }
+  recompute = recompute+"  return state;\n}\n";
+  let initial: Record<string, unknown> = {};
+  for (let item of allFields) { initial[item.name] = item.initial; if (item.role === "derived") { initial[item.name+"_ready"] = "false"; initial[item.name+"_reason"] = "\"Not ready\""; if (primitive(item.type)) { initial[item.name+"_display"] = placeholder(item.type); } } }
+  declarations = declarations+recompute+"export function initialState(): AppState {\n  let capturedTime: number = embeddingClock.nowMillis();\n  let candidate: AppState = "+copyExpression(allFields,initial,"")+";\n  return recompute(candidate);\n}\nexport function main(): null { return null; }\n";
+  viewSource = viewSource+"// @ui-root\nexport view Main(state: app.AppState): View {\n  ui.Column() {\n";
+  for (let item of prepared) { viewSource = viewSource+"    "+item.viewName+"(state: state)\n"; }
+  viewSource = viewSource+"  }\n}\n";
+  return {source:{deal:declarations,dealui:viewSource},fields:allFields,computations:ordered};
+}
+export function main(): null { return null; }

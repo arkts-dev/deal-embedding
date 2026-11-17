@@ -90,7 +90,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
                         generatedTraces[key]=state.getString("trace");requests[key]=request;if(key in cancelled)embedding.cancel(request);request
                     }else null
                     reply.put("ok",true).put("value",invoke(name,args,preparation))
-                }catch(e:Throwable){reply.put("ok",false).put("error",error(e));if(name in setOf("dispatch","run"))reply.put("invalidSessions",JSONArray(embedding.liveSessions().map{it.id}))}
+                }catch(e:Throwable){reply.put("ok",false).put("error",error(e));if(name in setOf("dispatch","activateStart"))reply.put("invalidSessions",JSONArray(embedding.liveSessions().map{it.id}))}
                 completed.add(reply)
             }
         }
@@ -128,6 +128,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
         if(name=="capture")embedding.capture(args.getBoolean(0))
         return result.opt("value") ?: JSONObject.NULL
     }
+    @Synchronized internal fun frameVisibility(session:Session,visible:Boolean) { embedding.frameVisibility(session,visible) }
     @Synchronized fun capturing():Boolean=embedding.capturesContent()
     fun update(session:Session,cursor:String=""):SessionUpdate=(call("next",JSONArray().put(session.id).put(cursor),Long.MAX_VALUE) as JSONObject).let{SessionUpdate(UiSnapshot.parse(it.getJSONObject("snapshot")),it.getString("cursor"))}
     private fun control(name:String,args:JSONArray){when(name){

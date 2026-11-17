@@ -1,0 +1,2 @@
+export class Answer { optionId: string | null; text: string | null; cancelled: boolean; }
+export function ask(requestId: string, questionJson: string): Promise<Answer>;

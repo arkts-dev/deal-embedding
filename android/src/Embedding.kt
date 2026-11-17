@@ -13,13 +13,13 @@ class Embedding internal constructor(private val context: Context, internal val 
             val application = context.applicationContext
             val registry = CapabilityRegistry(application, CapabilityDiscovery(application,trustProvider),capabilities)
             val model = config.inference?.let { provider -> object : ModelClient {
-                override fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog) =
-                    provider.complete(InferenceRequest(input,previous,diagnostics),cancellation)
+                override fun complete(request: InferenceRequest, cancellation: GenerationCancellation, log: EmbeddingLog) =
+                    provider.complete(request,cancellation)
             } } ?: GatewayModelClient(config.generation)
             var mechanisms: Embedding? = null
             try {
                 val owner = Embedding(application,registry,model,RuntimeConfig("experience",emptyList(),config.storageName,
-                    policyAssets=config.policy?.assetNamespace.orEmpty(),retainState=config.retainState,execution=config.execution))
+                    retainState=config.retainState,execution=config.execution))
                 mechanisms = owner
                 return ApplicationProtocol(application,owner,config.discovery)
             } catch (error: Throwable) {
@@ -117,7 +117,7 @@ class Embedding internal constructor(private val context: Context, internal val 
         }
         val store=runtime.prepareWorkspace(e.id,e.title,candidate,session)
         preparedStarts[store.token]=e.id to session
-        return JSONObject().put("id",store.token).put("session",session).put("trace",store.live.session.logTrace())
+        return JSONObject().put("id",store.token).put("session",session).put("trace",store.trace)
     }
     @Synchronized internal fun persistStart(token:String) { check(preparedStarts.containsKey(token));runtime.persistPrepared(token) }
     @Synchronized internal fun activateStart(token:String) {
@@ -127,17 +127,9 @@ class Embedding internal constructor(private val context: Context, internal val 
         candidates.remove(experience);preparedStarts.remove(token)
     }
     @Synchronized internal fun abortStart(token:String) { runtime.abortPrepared(token);preparedStarts.remove(token) }
-    @Synchronized fun run(experience:Experience):Session {
-        check(!stopped);val e=trusted(experience)
-        sessions.entries.firstOrNull{it.value==e.id}?.let{if(runtime.workspace(e.id)!=null)return Session(it.key);sessions.remove(it.key)}
-        val prepared=candidates[e.id];val session=Session(id())
-        val mounted=if(prepared!=null){runtime.open(e.title,prepared,e.id,session.id).also{candidates.remove(e.id)}}else runtime.reopen(e.id,session.id)
-        val initial=UiSnapshot.parse(mounted.second)
-        deliveries[session.id]=Delivery(initial)
-        return session.also{sessions[it.id]=e.id}
-    }
     @Synchronized fun experience(session:Session):Experience=experiences[sessions[session.id] ?: error("Invalid session")] ?: error("Invalid experience")
     @Synchronized fun dispatch(session:Session,actionSlot:Int,payload:String?){runtime.dispatch(experience(session).id,actionSlot,payload)}
+    @Synchronized internal fun frameVisibility(session:Session,visible:Boolean){runtime.frameVisibility(experience(session).id,visible)}
     @Synchronized fun published(session:Session,version:Int){runtime.published(experience(session).id,version)}
     @Synchronized fun close(session:Session){
         if(deliveries[session.id]?.failure!=null){StagingReclamation.retry(context);endDelivery(session.id);return}

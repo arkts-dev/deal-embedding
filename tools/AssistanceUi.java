@@ -12,10 +12,11 @@ public final class AssistanceUi {
         Path app = src.resolve("experience.deal"), ui = src.resolve("experience.dealui"), pack = output.resolve("platform.dealui-pack");
         Files.writeString(app, deal); Files.writeString(ui, view);
         String packSource = Files.readString(root.resolve("ui/platform.dealui-pack")); Files.writeString(pack, packSource);
-        var result = UiSourceGenerator.generate(ui, view, app, deal, Map.of("./platform.dealui-pack", UiParser.parsePack(pack,packSource)), distribution);
+        var result = UiSourceGenerator.generate(ui, view, app, deal, Map.of("./platform.dealui-pack", UiParser.parsePack(pack,packSource)), distribution, Map.of("embedding/graphics",Files.readString(root.resolve("api/graphics.d.deal"))));
         Files.writeString(app, UiSourceGenerator.compilerSource(deal) + result.augmentation());
         Files.writeString(src.resolve("experience_entry.deal"),result.source());
         Files.writeString(output.resolve("assistance.d.deal"),"export function open(): Promise<null>;\nexport function dismiss(): Promise<null>;\n");
-        Files.writeString(output.resolve("deal.json"),"{\"languageVersion\":\"1.5\",\"backend\":\"js\",\"moduleRoots\":[\"src\",\""+output.toAbsolutePath().relativize(distribution.toAbsolutePath()).toString().replace("\\","/")+"\"],\"externals\":{\"embedding/assistance\":{\"declaration\":\"assistance.d.deal\"}}}");
+        Files.copy(root.resolve("api/graphics.d.deal"),output.resolve("graphics.d.deal"),StandardCopyOption.REPLACE_EXISTING);
+        Files.writeString(output.resolve("deal.json"),"{\"languageVersion\":\"1.5\",\"backend\":\"js\",\"moduleRoots\":[\"src\",\""+output.toAbsolutePath().relativize(distribution.toAbsolutePath()).toString().replace("\\","/")+"\"],\"externals\":{\"embedding/assistance\":{\"declaration\":\"assistance.d.deal\"},\"embedding/graphics\":{\"declaration\":\"graphics.d.deal\"}}}");
     }
 }

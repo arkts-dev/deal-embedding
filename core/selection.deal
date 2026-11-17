@@ -1,0 +1,57 @@
+import * as json from "std/json";
+import * as math from "std/math";
+import * as s from "./construction-schema";
+export class Option { id: string; criteria: string; }
+export class Question { id: string; need: string; decision: string; instructions: string; options: Option[]; threshold: number; }
+export class Answer { id: string; selected: string; probability: number; accepted: boolean; probabilities: Record<string, unknown>[]; }
+export function threshold(category: string): number {
+  if (category === "ordinary") { return 0.25; }
+  if (category === "formula" || category === "argument" || category === "deadline") { return 0.4; }
+  if (s.contains(["written-formula","multistep","coverage","units","added-input","added-value","nonlive-alignment"],category)) { return 0.5; }
+  if (category === "added-other") { return 0.7; }
+  if (category === "real-data") { return 0.35; }
+  if (category === "ownership") { return 0.2; }
+  if (category === "live" || category === "live-alignment") { return 0.65; }
+  if (category === "human-question" || category === "structural-edit") { return 0.6; }
+  s.reject("Unknown decision category: "+category); return 1;
+}
+export function question(id: string, need: string, category: string, instructions: string, options: Option[]): Question {
+  let ids: string[] = []; for (let option of options) { s.unique(ids,s.identifier(option.id)); s.nonblank(option.criteria); }
+  if (options.length === 0) { s.reject("Empty issued selection"); }
+  return {id:s.identifier(id),need:need,decision:category,instructions:instructions,options:options,threshold:threshold(category)};
+}
+export function decode(raw: string, questions: Question[]): Answer[] {
+  let envelope: Record<string, unknown> = json.parse(raw); s.closed(envelope,["answers"],[]);
+  let values: Record<string, unknown>[] = s.records(envelope,"answers");
+  if (values.length !== questions.length) { s.reject("Incomplete selection batch"); }
+  let ids: string[] = []; let result: Answer[] = [];
+  for (let question of questions) {
+    let found: boolean = false;
+    for (let value of values) {
+      s.closed(value,["id","selected","probabilities"],[]); let id: string = value.id as string;
+      if (id === question.id) {
+        if (found) { s.reject("Duplicate selection answer"); } found = true; s.unique(ids,id);
+        let probabilities: Record<string, unknown>[] = s.records(value,"probabilities");
+        if (probabilities.length !== question.options.length) { s.reject("Incomplete probabilities"); }
+        let seen: string[] = []; let total: number = 0; let winner: string = ""; let best: number = -1;
+        for (let option of question.options) {
+          let present: boolean = false;
+          for (let probability of probabilities) {
+            s.closed(probability,["id","p"],[]);
+            if ((probability.id as string) === option.id) {
+              if (present) { s.reject("Duplicate probability"); } present = true; s.unique(seen,option.id);
+              let p: number = s.finite(probability.p); if (p < 0 || p > 1) { s.reject("Probability outside domain"); }
+              total = total+p; if (p > best) { best = p; winner = option.id; }
+            }
+          }
+          if (!present) { s.reject("Missing issued probability"); }
+        }
+        if (math.absNumber(total-1) > 0.000001 || (value.selected as string) !== winner) { s.reject("Probability sum or selected maximum"); }
+        result[result.length] = {id:id,selected:winner,probability:best,accepted:best >= question.threshold,probabilities:probabilities};
+      }
+    }
+    if (!found) { s.reject("Unanswered question: "+question.id); }
+  }
+  return result;
+}
+export function main(): null { return null; }

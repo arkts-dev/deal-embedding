@@ -1,6 +1,8 @@
 import * as embedding from "./embedding";
 
 export function catalogJson(capabilities: embedding.CapabilityContract[]): Promise<string> ;
+// Compiler-facing provider declarations derived from the exact frozen contracts.
+export function capabilityDeclarations(capabilities: embedding.CapabilityContract[]): Promise<string>;
 export function contextEntries(input: string): Promise<string> ;
 export function member(input: Record<string, unknown>, key: string): Promise<Record<string, unknown>> ;
 export function stringMember(input: Record<string, unknown>, key: string): Promise<string> ;

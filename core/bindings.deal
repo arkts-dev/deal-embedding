@@ -1,0 +1,103 @@
+import * as embedding from "embedding";
+import * as tables from "std/table";
+import * as s from "./construction-schema";
+import * as data from "embedding/policy-data";
+
+// Issued after compiler resolution. Model strings cannot create sources or type identities.
+export class Source {
+  id: string; type: string; schema: embedding.WireType | null; dependencies: string[];
+  owner: string; payloadOwner: string; getter: string; ready: string;
+}
+export class Binding { id: string; module: string; function: string; arguments: Record<string, unknown>; parameterOrder: string[]; owner: string; }
+export class Draft { sourceId: string; label: string; initial: string; }
+export class Descriptor { id: string; label: string; binding: string; input?: Draft; }
+export class Registry { sources: Source[]; bindings: Binding[]; actions: Descriptor[]; contracts: embedding.CapabilityContract[]; }
+export function create(contracts: embedding.CapabilityContract[]): Registry { return {sources:[],bindings:[],actions:[],contracts:contracts}; }
+export function source(registry: Registry, id: string): Source { for (let item of registry.sources) { if (item.id === id) { return item; } } s.reject("Unissued argument source: "+id); throw {code:"CONSTRUCTION_SCHEMA",message:"Unissued source"}; }
+export function binding(registry: Registry, id: string): Binding { for (let item of registry.bindings) { if (item.id === id) { return item; } } s.reject("Unissued binding: "+id); throw {code:"CONSTRUCTION_SCHEMA",message:"Unissued binding"}; }
+function visit(registry: Registry, current: string, path: string[]): void {
+  if (s.contains(path,current)) { s.reject("Source dependency cycle"); }
+  let next: string[] = []; for (let prior of path) { next[next.length] = prior; } next[next.length] = current;
+  for (let item of registry.sources) { if (item.id === current) { for (let dependency of item.dependencies) { visit(registry,dependency,next); } } }
+}
+export function reserve(registry: Registry, issued: Source): void {
+  s.identifier(issued.id); s.nonblank(issued.type); s.nonblank(issued.getter); s.nonblank(issued.ready);
+  for (let item of registry.sources) { if (item.id === issued.id) { s.reject("Source identity collision"); } }
+  // Reserve before resolving dependencies; all custom outputs are issued before binding.
+  let staged: Registry = {sources:[],bindings:registry.bindings,actions:registry.actions,contracts:registry.contracts};
+  for (let prior of registry.sources) { staged.sources[staged.sources.length] = prior; }
+  staged.sources[staged.sources.length] = issued; visit(staged,issued.id,[]);
+  registry.sources = staged.sources;
+}
+function declarationType(schema: embedding.WireType): string {
+  if (schema.kind === "record") { return "Record<string, unknown>"; }
+  if (schema.kind === "array") { return declarationType(schema.element as embedding.WireType)+"[]"; }
+  return s.oneOf(schema.kind,["number","string","boolean","null"]);
+}
+function compatible(actual: embedding.WireType, expected: embedding.WireType): boolean {
+  if (actual.kind !== expected.kind) { return false; }
+  if (actual.kind === "number") { return actual.minimumNumber >= expected.minimumNumber && actual.maximumNumber <= expected.maximumNumber; }
+  if ((actual.kind === "string" || actual.kind === "array") && actual.maximum > expected.maximum) { return false; }
+  if (actual.kind === "array") { return compatible(actual.element as embedding.WireType,expected.element as embedding.WireType); }
+  if (actual.kind === "record") {
+    for (let field of expected.fields) {
+      let present: boolean = false;
+      for (let existing of actual.fields) { if (existing.name === field.name) { present = true; if ((!field.optional && existing.optional) || !compatible(existing.type,field.type)) { return false; } } }
+      if (!present && !field.optional) { return false; }
+    }
+    for (let field of actual.fields) { let present: boolean = false; for (let expectedField of expected.fields) { if (expectedField.name === field.name) { present = true; } } if (!present) { return false; } }
+  }
+  return true;
+}
+function selectedFunction(registry: Registry, module: string, name: string): embedding.CapabilityFunction {
+  for (let contract of registry.contracts) { if (contract.module === module) { for (let item of contract.functions) { if (item.name === name) { return item; } } } }
+  s.reject("Unknown frozen capability binding"); throw {code:"CONSTRUCTION_SCHEMA",message:"Unknown capability"};
+}
+function prepareBinding(registry: Registry, id: string, raw: Record<string, unknown>, owner: string, extra: Source | null): Binding {
+  s.identifier(id); s.closed(raw,["module","function","arguments"],[]);
+  for (let prior of registry.bindings) { if (prior.id === id) { s.reject("Binding identity collision"); } }
+  let module: string = s.nonblank(raw.module); let name: string = s.identifier(raw.function);
+  let operation: embedding.CapabilityFunction = selectedFunction(registry,module,name);
+  let argumentsByName: Record<string, unknown> = raw.arguments as Record<string, unknown>; let names: string[] = [];
+  for (let parameter of operation.parameters) { names[names.length] = parameter.name; }
+  s.closed(argumentsByName,names,[]); let copied: Record<string, unknown> = {};
+  for (let parameter of operation.parameters) {
+    let sourceId: string = s.identifier(argumentsByName[parameter.name]); let selected: Source | null = null;
+    if (extra !== null && sourceId === (extra as Source).id) { selected = extra as Source; } else { selected = source(registry,sourceId); }
+    let issued: Source = selected as Source;
+    if (issued.payloadOwner !== "" && issued.payloadOwner !== owner) { s.reject("Foreign originating payload or descriptor draft"); }
+    if (issued.type !== declarationType(parameter.type)) { s.reject("Argument type mismatch: "+parameter.name); }
+    if (issued.schema === null || !compatible(issued.schema as embedding.WireType,parameter.type)) { s.reject("Unknown/incompatible wire schema: "+parameter.name); }
+    copied[parameter.name] = sourceId;
+  }
+  return {id:id,module:module,function:name,arguments:copied,parameterOrder:names,owner:owner};
+}
+export function issueBinding(registry: Registry, id: string, raw: Record<string, unknown>, owner: string): void {
+  let issued: Binding = prepareBinding(registry,id,raw,owner,null); registry.bindings[registry.bindings.length] = issued;
+}
+export async function issueDescriptor(registry: Registry, raw: Record<string, unknown>, bindingId: string, bindingRaw: Record<string, unknown>): Promise<void> {
+  s.closed(raw,["id","label"],["input"]); let id: string = s.identifier(raw.id); let label: string = s.nonblank(raw.label);
+  if (await data.utf16Length(label) > 32) { s.reject("Descriptor label length"); }
+  for (let prior of registry.actions) { if (prior.id === id) { s.reject("Descriptor identity collision"); } }
+  let descriptor: Descriptor = {id:id,label:label,binding:bindingId}; let draft: Source | null = null;
+  if (Object.hasOwn(raw,"input")) {
+    let input: Record<string, unknown> = raw.input as Record<string, unknown>; s.closed(input,["sourceId","label","initial"],[]);
+    let sourceId: string = s.identifier(input.sourceId); let initial: string = s.text(input.initial); let inputLabel: string = s.nonblank(input.label);
+    if (await data.utf16Length(initial) > 512 || await data.utf16Length(inputLabel) > 32) { s.reject("Descriptor input length"); }
+    for (let prior of registry.sources) { if (prior.id === sourceId) { s.reject("Descriptor draft collision"); } }
+    let fields: embedding.WireField[] = [];
+    let schema: embedding.WireType = {kind:"string",fields:fields,element:null,maximum:8192,minimumNumber:-1.7976931348623157e308,maximumNumber:1.7976931348623157e308};
+    draft = {id:sourceId,type:"string",schema:schema,dependencies:[],owner:id,payloadOwner:id,getter:"draft_"+sourceId,ready:"ready_"+sourceId};
+    descriptor.input = {sourceId:sourceId,label:inputLabel,initial:initial};
+  }
+  let issued: Binding = prepareBinding(registry,bindingId,bindingRaw,id,draft);
+  if (draft !== null) { let used: boolean = false; for (let key of tables.keys(issued.arguments)) { if ((issued.arguments[key] as string) === (draft as Source).id) { used = true; } } if (!used) { s.reject("Descriptor input unused by its binding"); } }
+  // Recheck after adapters: another awaited issuance may have committed meanwhile.
+  for (let prior of registry.actions) { if (prior.id === id) { s.reject("Descriptor identity collision"); } }
+  for (let prior of registry.bindings) { if (prior.id === bindingId) { s.reject("Binding identity collision"); } }
+  if (draft !== null) { for (let prior of registry.sources) { if (prior.id === (draft as Source).id) { s.reject("Descriptor draft collision"); } } }
+  // Nothing is published until all checks have passed; no await in the commit.
+  if (draft !== null) { registry.sources[registry.sources.length] = draft as Source; }
+  registry.bindings[registry.bindings.length] = issued; registry.actions[registry.actions.length] = descriptor;
+}
+export function main(): null { return null; }

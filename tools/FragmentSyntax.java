@@ -32,6 +32,13 @@ public final class FragmentSyntax {
         }
         throw new IllegalArgumentException("Unknown authored block " + function);
     }
+    /** Re-emit parsed declarations with caller-issued name bindings. No textual source rewriting. */
+    public static String qualify(String source, Map<String,String> names) {
+        var printer = new Printer(names, Map.of());
+        return parse(source).statements().stream().map(printer::statement).collect(Collectors.joining());
+    }
+    public static String type(TypeNode type) { return new Printer(Map.of(),Map.of()).type(type); }
+    public static String expression(ExpressionNode expression) { return new Printer(Map.of(),Map.of()).expression(expression); }
     private static final class Printer {
         final Map<String,List<StatementNode>> statements=new HashMap<>();
         final Map<String,String> names;
@@ -56,6 +63,8 @@ public final class FragmentSyntax {
         String statement(StatementNode node){return switch(node){
             case ExportDeclaration e->"export "+statement(e.declaration());
             case FunctionDeclaration f->(f.isAsync()?"async ":"")+"function "+name(f.name())+"("+parameters(f.params())+"):"+result(f.returnType(),f.isAsync())+block(f.body())+"\n";
+            case ImportDeclaration i->"import * as "+name(i.alias())+" from "+quote(i.modulePath())+";\n";
+            case ClassDeclaration c->"class "+name(c.name())+" {\n"+c.fields().stream().map(f->name(f.name())+(f.optional()?"?":"")+": "+type(f.type())+";\n").collect(Collectors.joining())+"}\n";
             case Block b->block(b);
             case VariableDeclaration v->"let "+name(v.name())+v.typeAnnotation().map(t->":"+type(t)).orElse("")+"="+expression(v.initializer())+";\n";
             case ReturnStatement r->"return"+r.expr().map(e->" "+expression(e)).orElse("")+";\n";
@@ -68,6 +77,7 @@ public final class FragmentSyntax {
             case ThrowStatement t->"throw "+expression(t.expr())+";\n";
             case BreakStatement b->"break;\n";
             case ContinueStatement c->"continue;\n";
+            case DeleteStatement d->"delete "+expression(d.target())+";\n";
             default->throw new IllegalArgumentException("Unsupported structural statement " + node.getClass().getSimpleName());
         };}
         String block(Block b){return "{\n"+b.statements().stream().map(this::statement).collect(Collectors.joining())+"}\n";}
@@ -88,7 +98,8 @@ public final class FragmentSyntax {
             case AssignmentExpr a->expression(a.target())+" = "+expression(a.value());
             case ObjectLiteralExpr o->o.properties().stream().map(p->name(p.name())+":"+expression(p.value())).collect(Collectors.joining(",","{","}"));
             case ArrayLiteralExpr a->a.elements().stream().map(this::expression).collect(Collectors.joining(",","[","]"));
-            case HasExpr h->"Object.hasOwn("+expression(h.object())+","+quote(h.field())+")";
+            case HasExpr h->"Object.hasOwn("+expression(h.object())+","+quote(name(h.field()))+")";
+            case InstanceofExpr i->"("+expression(i.value())+" instanceof "+type(i.target())+")";
             case AssertionExpr a->"("+expression(a.value())+" as "+type(a.target())+")";
             case FunctionExpr f->(f.isAsync()?"async ":"")+"function("+parameters(f.params())+"):"+result(f.returnType(),f.isAsync())+block(f.body());
             default->throw new IllegalArgumentException("Unsupported structural expression " + node.getClass().getSimpleName());

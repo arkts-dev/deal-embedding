@@ -59,6 +59,7 @@ globalThis.dealLoad = function(factories, entryId) {
     error: log
   });
   function resolve(parent, name) {
+    if (name === 'embedding/graphics' || name === 'embedding/graphics.js') return 'embedding/graphics';
     if (typeof protocolDeclarations !== 'undefined' && Object.hasOwn(protocolDeclarations, name.replace(/\.js$/, ""))) return name.replace(/\.js$/, "");
     if (Object.hasOwn(dealHostContracts, name.replace(/\.js$/, ""))) return name.replace(/\.js$/, "");
     if (!name.startsWith("./") && !name.startsWith("../")) {
@@ -74,9 +75,12 @@ globalThis.dealLoad = function(factories, entryId) {
       } else parts.push(part);
     }
     const id = parts.join("/");
+    if (id === 'embedding/graphics') return id;
     return id.endsWith(".js") ? id : id + ".js";
   }
   function load(id) {
+    // Frozen nominal transport declarations; constructors are issued by DEAL loadHost.
+    if (id === 'embedding/graphics') return Object.freeze(Object.fromEntries(['Shape','Pointer'].map(name => [name, {$kind:'class',$classname:'@$external/embedding/graphics/'+name}])));
     function encode(type, value) {
       if (type.kind === 'array') return value.map(item => encode(type.element, item));
       if (type.kind === 'record') {

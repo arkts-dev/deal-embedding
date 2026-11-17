@@ -1,2 +1,0 @@
-// Bounded stage identity and diagnostic code only; never source, prompts or payloads.
-export function record(stage: string, outcome: string, code: string): Promise<null> ;

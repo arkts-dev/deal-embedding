@@ -15,7 +15,7 @@ internal class GatewayDiscovery(config: GenerationGatewayConfig) : DiscoveryInfe
             GenerationCancellation().also { active = it }
         }
         try {
-            return client.complete(prompt, "", "", cancellation, log)
+            return client.complete(InferenceRequest(prompt,"","","discovery","discovery",1,2000,false), cancellation, log)
         } finally {
             synchronized(this) { if (active === cancellation) active = null }
         }

@@ -1,0 +1,87 @@
+import * as s from "./construction-schema";
+
+// Authoritative operation fields. Admission markers are transition-local, never authority.
+export class Operation {
+  id: string; owner: string; status: string; sequence: number; phase: string; revision: number;
+  lifetime: string; epoch: number; accepted: boolean; continuation: boolean;
+  message: string; outcome: string; result?: unknown; admittedAt?: number; expiresAt?: number;
+  arguments: Record<string, unknown>; calls: Call[];
+}
+export class Call { id: string; terminal: boolean; status: string; outcome: string; message: string; result?: unknown; }
+export class Envelope { operationId: string; sequence: number; phase: string; revision: number; lifetime: string; epoch: number; callId: string; }
+export class Completion { envelope: Envelope; accepted: boolean; status: string; message: string; outcome: string; result?: unknown; }
+export class Prerequisites { ready: boolean; unexpired: boolean; revision: number; lifetime: string; epoch: number; }
+function copy(operation: Operation): Operation {
+  let result: Operation = {id:operation.id,owner:operation.owner,status:operation.status,sequence:operation.sequence,phase:operation.phase,revision:operation.revision,lifetime:operation.lifetime,epoch:operation.epoch,accepted:false,continuation:false,message:operation.message,outcome:operation.outcome,arguments:operation.arguments,calls:[]};
+  if (Object.hasOwn(operation,"result")) { result.result = operation.result; }
+  if (Object.hasOwn(operation,"admittedAt")) { result.admittedAt = operation.admittedAt as number; }
+  if (Object.hasOwn(operation,"expiresAt")) { result.expiresAt = operation.expiresAt as number; }
+  for (let call of operation.calls) { let copied: Call = {id:call.id,terminal:call.terminal,status:call.status,outcome:call.outcome,message:call.message}; if (Object.hasOwn(call,"result")) { copied.result = call.result; } result.calls[result.calls.length] = copied; }
+  return result;
+}
+export function idle(id: string, owner: string): Operation {
+  return {id:s.identifier(id),owner:s.identifier(owner),status:"idle",sequence:0,phase:"",revision:0,lifetime:"",epoch:0,accepted:false,continuation:false,message:"",outcome:"none",arguments:{},calls:[]};
+}
+export function current(operation: Operation, envelope: Envelope, prerequisites: Prerequisites): boolean {
+  return operation.id === envelope.operationId && operation.status === "pending" && operation.sequence === envelope.sequence && operation.phase === envelope.phase && operation.revision === envelope.revision && operation.revision === prerequisites.revision && operation.lifetime === envelope.lifetime && operation.lifetime === prerequisites.lifetime && operation.epoch === envelope.epoch && operation.epoch === prerequisites.epoch && prerequisites.ready && prerequisites.unexpired;
+}
+export function begin(operation: Operation, phase: string, prerequisites: Prerequisites, args: Record<string, unknown>, callIds: string[], admittedAt: number, expiresAt: number | null): Operation {
+  let next: Operation = copy(operation);
+  // Reject before changing sequence, phase, correlation or invocation eligibility.
+  if (operation.status === "pending" || !prerequisites.ready || !prerequisites.unexpired) { return next; }
+  s.nonblank(phase); s.nonblank(prerequisites.lifetime); s.integral(prerequisites.revision); s.integral(prerequisites.epoch); s.finite(admittedAt);
+  if (prerequisites.revision < 0 || prerequisites.epoch < 0 || operation.sequence >= 9007199254740991) { s.reject("Operation correlation domain exhausted"); }
+  if (expiresAt !== null && (s.finite(expiresAt) < admittedAt)) { s.reject("Operation expiry before admission"); }
+  let ids: string[] = []; for (let callId of callIds) { s.unique(ids,s.nonblank(callId)); }
+  if (ids.length === 0) { s.reject("Invocation requires issued call identity"); }
+  next.status = "pending"; next.sequence = operation.sequence+1; next.phase = phase; next.revision = prerequisites.revision; next.lifetime = prerequisites.lifetime; next.epoch = prerequisites.epoch;
+  next.accepted = true; next.message = ""; next.outcome = "none"; next.arguments = args; next.calls = []; next.admittedAt = admittedAt;
+  if (Object.hasOwn(next,"result")) { delete next.result; } if (Object.hasOwn(next,"expiresAt")) { delete next.expiresAt; }
+  if (expiresAt !== null) { next.expiresAt = expiresAt as number; }
+  for (let callId of ids) { next.calls[next.calls.length] = {id:callId,terminal:false,status:"pending",outcome:"none",message:""}; }
+  return next;
+}
+export function envelope(operation: Operation, callId: string): Envelope {
+  let issued: boolean = false; for (let call of operation.calls) { if (call.id === callId) { issued = true; } }
+  if (!issued || operation.status !== "pending") { s.reject("Unissued operation call"); }
+  return {operationId:operation.id,sequence:operation.sequence,phase:operation.phase,revision:operation.revision,lifetime:operation.lifetime,epoch:operation.epoch,callId:callId};
+}
+export function sendCurrent(operation: Operation, envelope: Envelope, prerequisites: Prerequisites): boolean {
+  if (!current(operation,envelope,prerequisites)) { return false; }
+  for (let call of operation.calls) { if (call.id === envelope.callId && !call.terminal) { return true; } }
+  return false;
+}
+function sameInvocation(operation: Operation, envelope: Envelope): boolean {
+  return operation.id === envelope.operationId && operation.sequence === envelope.sequence && operation.phase === envelope.phase && operation.revision === envelope.revision && operation.lifetime === envelope.lifetime && operation.epoch === envelope.epoch;
+}
+export function complete(operation: Operation, completion: Completion, prerequisites: Prerequisites): Operation {
+  let next: Operation = copy(operation); let origin: Envelope = completion.envelope;
+  // Stale completions cannot clear a newer pending invocation.
+  if (!completion.accepted || !sameInvocation(operation,origin) || operation.status !== "pending") { return next; }
+  let found: boolean = false;
+  for (let call of next.calls) { if (call.id === origin.callId && !call.terminal) { call.terminal = true; found = true; } }
+  if (!found) { return next; }
+  if (!current(operation,origin,prerequisites)) {
+    next.status = "stale"; next.outcome = "unknown"; next.message = "Invocation no longer current"; return next;
+  }
+  s.oneOf(completion.status,["ready","error","stale"]); s.oneOf(completion.outcome,["success","failure","unknown"]);
+  if ((completion.status === "ready") !== (completion.outcome === "success")) { s.reject("Inconsistent completion classification"); }
+  let pending: boolean = false; let status: string = "ready"; let outcome: string = "success"; let message: string = "";
+  for (let call of next.calls) {
+    if (call.id === origin.callId) { call.status = completion.status; call.outcome = completion.outcome; call.message = completion.message; if (Object.hasOwn(completion,"result")) { call.result = completion.result; } }
+    if (!call.terminal) { pending = true; }
+    if (call.outcome === "unknown") { status = "stale"; outcome = "unknown"; message = call.message; }
+    else if (call.outcome === "failure" && outcome !== "unknown") { status = "error"; outcome = "failure"; message = call.message; }
+  }
+  // Each row result is retained; a later success cannot conceal an earlier failure.
+  if (!pending) { next.status = status; next.outcome = outcome; next.message = message; if (next.calls.length === 1 && Object.hasOwn(completion,"result")) { next.result = completion.result; } }
+  return next;
+}
+export function invalidate(operation: Operation, revision: number, message: string): Operation {
+  let next: Operation = copy(operation); s.integral(revision); if (revision < operation.revision) { s.reject("Revision retreated"); }
+  next.revision = revision;
+  if (operation.status === "pending" || operation.status === "ready") { next.status = "stale"; next.message = message; if (operation.status === "pending") { next.outcome = "unknown"; } }
+  return next;
+}
+export function rejected(envelope: Envelope): Completion { return {envelope:envelope,accepted:false,status:"stale",message:"Action not admitted",outcome:"none"}; }
+export function main(): null { return null; }

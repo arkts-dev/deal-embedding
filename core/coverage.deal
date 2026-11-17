@@ -1,0 +1,62 @@
+import * as plans from "./plan";
+import * as screens from "./screen";
+import * as selection from "./selection";
+import * as s from "./construction-schema";
+
+export class NeedCoverage { id: string; status: string; reason: string; instances: string[]; }
+export class RequirementCoverage { id: string; status: string; reason: string; needs: string[]; }
+export class Ledger { needs: NeedCoverage[]; requirements: RequirementCoverage[]; }
+function implemented(screen: screens.Screen, need: string): boolean {
+  for (let slot of screen.slots) {
+    if (slot.need === need && slot.status === "filled" && slot.instance !== null) {
+      for (let instance of screen.instances) { if (instance.id === (slot.instance as string) && instance.origin !== "notice" && s.contains(instance.fragment.covers,need)) { return true; } }
+    }
+  }
+  return false;
+}
+export function questions(plan: plans.Plan, screen: screens.Screen): selection.Question[] {
+  let result: selection.Question[] = [];
+  for (let need of plan.needs) {
+    if (implemented(screen,need.id)) {
+      let options: selection.Option[] = [{id:"covered",criteria:"The assembled behavior implements the complete original need under every constraint and preserves related requirements."},{id:"missing",criteria:"Any requested behavior, constraint, construction, authority or required result is absent or substituted."}];
+      result[result.length] = selection.question("coverage_"+need.id,need.id,"coverage","Judge behavior, not labels, confidence, compilation or mere data display.",options);
+    }
+  }
+  for (let requirement of plan.requirements) {
+    result[result.length] = selection.question("requirement_"+requirement.id,"","coverage","Check this ORIGINAL requirement independently against the actual assembled source, original request and facts, not the planner's interpretation: "+requirement.text+". Verify quantities, scale, requested presentation, editable controls, exclusions and authority. A numeric code is not an explicitly requested named status. An exclusion can be satisfied by absence of prohibited behavior; input controls may satisfy editability even if the plan omitted implementing need IDs.",[{id:"covered",criteria:"The actual complete source satisfies this original requirement, not merely a claim or renamed/substituted need."},{id:"missing",criteria:"Any part is absent, substituted, ambiguous or unchecked."}]);
+  }
+  return result;
+}
+export function judge(plan: plans.Plan, screen: screens.Screen, answers: selection.Answer[]): Ledger {
+  let result: Ledger = {needs:[],requirements:[]};
+  for (let need of plan.needs) {
+    let status: string = "missing"; let reason: string = "No implementation"; let instances: string[] = [];
+    if (implemented(screen,need.id)) {
+      status = "unchecked"; reason = "Coverage judgment unavailable";
+      for (let answer of answers) { if (answer.id === "coverage_"+need.id && answer.accepted) { if (answer.selected === "covered") { status = "covered"; reason = ""; } else { status = "missing"; reason = "Validated coverage gap"; } } }
+    }
+    for (let slot of screen.slots) {
+      if (slot.need === need.id) {
+        if (slot.instance !== null && !s.contains(instances,slot.instance as string)) { instances[instances.length] = slot.instance as string; }
+        if (slot.status === "missing") { status = "missing"; reason = slot.reason; }
+        else if ((slot.status === "open" || slot.status === "unchecked") && status === "covered") { status = "unchecked"; reason = slot.reason; }
+      }
+    }
+    result.needs[result.needs.length] = {id:need.id,status:status,reason:reason,instances:instances};
+  }
+  for (let requirement of plan.requirements) {
+    let status: string = "unchecked"; let reason: string = "Original requirement judgment unavailable";
+    for (let answer of answers) { if (answer.id === "requirement_"+requirement.id && answer.accepted) {
+      if (answer.selected === "covered") { status = "covered"; reason = ""; }
+      else { status = "missing"; reason = "Original requirement not implemented"; }
+    } }
+    for (let id of requirement.needs) {
+      let found: boolean = false;
+      for (let need of result.needs) { if (need.id === id) { found = true; if (need.status === "missing") { status = "missing"; reason = "Required behavior missing: "+id; } else if (need.status !== "covered" && status !== "missing") { status = "unchecked"; reason = "Required behavior unchecked: "+id; } } }
+      if (!found) { status = "missing"; reason = "Lost requirement need: "+id; }
+    }
+    result.requirements[result.requirements.length] = {id:requirement.id,status:status,reason:reason,needs:requirement.needs};
+  }
+  return result;
+}
+export function main(): null { return null; }

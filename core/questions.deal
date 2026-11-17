@@ -1,0 +1,40 @@
+import * as plans from "./plan";
+import * as s from "./construction-schema";
+import * as data from "embedding/policy-data";
+import * as host from "embedding/questions";
+import * as strings from "std/string";
+
+export class Resolution { answers: Record<string, unknown>[]; changed: boolean; }
+export async function resolve(requestId: string, questions: plans.HumanQuestion[]): Promise<Resolution> {
+  if (questions.length > 2) { s.reject("At most two blocking questions"); }
+  // Validate the complete batch before displaying any question.
+  let ids: string[] = [];
+  for (let question of questions) {
+    s.unique(ids,question.id);
+    if (question.options.length < 2 || question.options.length > 4) { s.reject("Question needs two to four options"); }
+    s.nonblank(question.text); let options: string[] = [];
+    for (let option of question.options) { s.closed(option,["id","label"],[]); s.unique(options,s.identifier(option.id)); s.nonblank(option.label); }
+    if (!s.contains(options,question.default)) { s.reject("Question default not issued"); }
+  }
+  let result: Resolution = {answers:[],changed:false};
+  for (let question of questions) {
+    let response: host.Answer = await host.ask(requestId,s.encode(question));
+    if (response.cancelled) { throw {code:"CANCELLED",message:"Question cancelled"}; }
+    if (response.optionId !== null && response.text !== null) { s.reject("Option and text are mutually exclusive"); }
+    let optionId: string | null = response.optionId; let text: string | null = response.text;
+    if (text !== null) {
+      let answer: string = text as string;
+      if (strings.trim(answer) === "" || await data.utf16Length(answer) > 4096) { s.reject("Question text length"); }
+      result.changed = true;
+    } else {
+      if (optionId === null) { optionId = question.default; }
+      let present: boolean = false;
+      for (let option of question.options) { if ((option.id as string) === (optionId as string)) { present = true; } }
+      if (!present) { s.reject("Unissued question option"); }
+      if ((optionId as string) !== question.default) { result.changed = true; }
+    }
+    result.answers[result.answers.length] = {id:question.id,optionId:optionId,text:text};
+  }
+  return result;
+}
+export function main(): null { return null; }

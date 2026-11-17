@@ -25,17 +25,21 @@ class GenerationGatewayConfig(
     }
 }
 
-/** Implements core/host/model.complete for the existing compiled generate path. No retries or redirects. */
+/** Single bounded inference transport. No stage inference, retries or redirects. */
 internal class GatewayModelClient(private val config: GenerationGatewayConfig) : ModelClient {
     companion object {
         private val deadlines = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { task ->
             Thread(task, "embedding-inference-deadline").apply { isDaemon = true }
         }
     }
-    override fun complete(input: String, previous: String, diagnostics: String, cancellation: GenerationCancellation, log: EmbeddingLog): String {
+    override fun complete(request: InferenceRequest, cancellation: GenerationCancellation, log: EmbeddingLog): String = dispatch(request,cancellation,log).content
+    override fun dispatch(request: InferenceRequest, cancellation: GenerationCancellation, log: EmbeddingLog): InferenceResponse {
         cancellation.check()
+        require(request.ask > 0 && request.maxTokens > 0)
         val capture = log.capturesContent
-        val body = JSONObject().put("input", input).put("previous", previous).put("diagnostics", diagnostics).put("capture", capture).toString().toByteArray(Charsets.UTF_8)
+        val body = JSONObject().put("input", request.input).put("previous", request.previous).put("diagnostics", request.diagnostics)
+            .put("operation",request.operation).put("stage",request.stage).put("ask",request.ask).put("maxTokens",request.maxTokens)
+            .put("thinking",request.thinking).put("capture", capture).toString().toByteArray(Charsets.UTF_8)
         if (body.size > config.requestBytes) throw ProtocolFailure("GATEWAY_REQUEST_LIMIT", "Generation request exceeds configured byte limit")
         val connection = URI(config.endpoint).toURL().openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
@@ -89,7 +93,6 @@ internal class GatewayModelClient(private val config: GenerationGatewayConfig) :
             val content = envelope.opt("content") as? String ?: throw ProtocolFailure("GATEWAY_FAILURE", "Missing model content")
             val model = envelope.opt("model") as? String ?: throw ProtocolFailure("GATEWAY_FAILURE", "Missing model provenance")
             val metadata = envelope.optJSONObject("metadata") ?: throw ProtocolFailure("GATEWAY_FAILURE", "Missing model metadata")
-            log.generationTelemetry?.provider(model, metadata)
             log.event("model-provider", "completed", target = model + " " + metadata.toString())
             if (envelope.optBoolean("captureOmitted")) log.event("model-provider", "omitted", code = "CAPTURE_LIMIT", target = model)
             else if (capture) {
@@ -100,7 +103,7 @@ internal class GatewayModelClient(private val config: GenerationGatewayConfig) :
                     else log.event("model-provider", "omitted", code = "CAPTURE_MISSING", target = model)
                 }
             }
-            return content
+            return InferenceResponse(content,envelope.optString("finish","unknown"),envelope.optString("refusal",""))
         } catch (error: Exception) {
             checkDeadline()
             when (error) {

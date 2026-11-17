@@ -1,9 +1,0 @@
-import * as embedding from "./embedding";
-export class ChoiceOption { name: string; description: string; }
-export class ChoiceQuestion { name: string; instructions: string; options: ChoiceOption[] ; }
-export class OptionProbability { option: string; probability: number; }
-export class ChoiceAnswer { question: string; choice: string; probabilities: OptionProbability[] ; confidence: number | null; }
-export class CatalogueOffer { available: boolean; questions: ChoiceQuestion[] ; stateJson: string; }
-export function offer(intent: string, context: embedding.GenerationContext, capabilities: embedding.CapabilityContract[]): Promise<CatalogueOffer> ;
-export class CatalogueLowering { source: embedding.Source | null; reason: string; }
-export function lower(stateJson: string, answers: ChoiceAnswer[]): Promise<CatalogueLowering> ;

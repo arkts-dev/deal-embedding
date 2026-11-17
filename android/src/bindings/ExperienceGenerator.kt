@@ -10,239 +10,106 @@ import java.util.UUID
 /** Host-facing facts, never inferred from generated source or its title. */
 enum class WorkspaceOrigin { AI_SOURCE, CATALOGUE, SAVED_SOURCE }
 class GenerationRejected(val attempts: Int, val reason: Reason, val diagnostics: String) : IllegalStateException("Generation rejected ($reason, attempts=$attempts): ${diagnostics.take(4000)}") {
-    enum class Reason { ATTEMPT_LIMIT, REPEATED_RESPONSE, TEMPLATE_CHECK, INVALID_CANDIDATE }
+    enum class Reason { ATTEMPT_LIMIT }
 }
 internal class CheckedCandidate internal constructor(private val context:Context, internal val source: ExperienceSource, internal val output: File, internal val revision: String, val attempts: Int, internal val log: EmbeddingLog, internal val identity: String = UUID.randomUUID().toString(), val origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE) : AutoCloseable {
     internal var consumed = false
     override fun close() { if (!consumed) StagingReclamation.remove(context,output.parentFile) }
 }
-// Object keys and unordered module/function inventories are stable; positional arrays stay ordered.
 internal fun canonicalCatalog(config: RuntimeConfig): String {
     fun encode(value: Any?): String = when(value) {
-        is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") { val child = value.get(it)
-            val canonical = if (it == "fields" && child is JSONArray) {
-                JSONArray((0 until child.length()).map { index -> child.getJSONObject(index) }.sortedBy { field -> field.getString("name") })
-            } else child
-            JSONObject.quote(it) + ":" + encode(canonical) }
+        is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") { key -> JSONObject.quote(key)+":"+encode(value.get(key)) }
         is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { encode(value.get(it)) }
         null, JSONObject.NULL -> "null"
         is String -> JSONObject.quote(value)
         else -> value.toString()
     }
-    val modules=config.contracts.sortedBy { it.module }.map { contract -> contract.json().also { module ->
-        val functions=module.getJSONArray("functions")
-        module.put("functions",JSONArray((0 until functions.length()).map { functions.getJSONObject(it) }.sortedBy { it.getString("name") }))
-    } }
-    return encode(JSONArray(modules))
+    return encode(JSONArray(config.contracts.map { it.json() }))
 }
 internal fun catalogRevision(config: RuntimeConfig): String = MessageDigest.getInstance("SHA-256").digest(canonicalCatalog(config).toByteArray()).joinToString("") { "%02x".format(it) }
 
-/** Runs compiled trusted DEAL. No native retry loop, and no capability invocation during inference. */
+/** Transport/compiler mechanisms for the sole compiled DEAL generation entry. No retries or composition policy. */
 internal class ExperienceGenerator(private val context: Context, private val config: RuntimeConfig, private val engine: JavaScriptSandbox, private val capabilityHost: dev.deal.embedding.capabilities.CapabilityHost) {
     fun generate(intent: String, disclosedContext: String, model: ModelClient, cancellation: GenerationCancellation, progress: (String) -> Unit, log: EmbeddingLog = EmbeddingLog(context), contextId: String = UUID.randomUUID().toString(), contextSchema: JSONObject = WireType("record").json()): CheckedCandidate {
         require(intent.isNotBlank())
-        val telemetry=GenerationTelemetry(log)
-        log.generationTelemetry=telemetry
-        val revision = catalogRevision(config)
-        val catalog = canonicalCatalog(config)
-        val checked = mutableMapOf<String, Pair<ExperienceSource, File>>()
-        log.event("request", "started", detail = JSONObject().put("intent", intent).put("context", disclosedContext).put("catalog", catalog).toString())
-        val program = SandboxProgram(engine, 512 * 1024, config.execution)
-        var originalFailure:Throwable?=null
-        var accepted:CheckedCandidate?=null
-        fun eval(s: String) = program.evaluate(s)
+        val revision=catalogRevision(config)
+        val checked=CandidateChecks(context,config,engine,log)
+        val program=SandboxProgram(engine,512*1024,config.execution)
+        var failure:Throwable?=null; var accepted:CheckedCandidate?=null
+        fun deliver(request:JSONObject,value:Any)=program.evaluate("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id",request.getInt("id")).put("ok",true).put("value",value))})")
+        fun reject(request:JSONObject,code:String,message:String)=program.evaluate("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id",request.getInt("id")).put("ok",false).put("error",JSONObject().put("code",code).put("message",message)))})")
         try {
-            val input = JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map { it.json() }))
-            val configure = "protocolContexts[${JSONObject.quote(contextId)}]={value:${JSONObject.quote(disclosedContext)},schema:$contextSchema};"
-            val bundle = log.stage("generation-bundle") { SandboxBundle.build(context, listOf("generation-contracts.js", "protocol-contracts.js", "protocol-host.js", "generation-session.js"), configure,
-                "runGeneration(factories, $input)", assetRoot = config.generationAssets) }
-            val extra = if(config.policyAssets.isNotEmpty()) SandboxBundle.factories(context,config.policyAssets) else "factories['app-policy.js']=function(require,module,exports){module.exports={offer:{\$f:async()=>protocolRecord('@\$external/catalogue-policy/CatalogueOffer',{available:false,questions:[],stateJson:''})}};};"
-            log.stage("generation-initialize") { eval(bundle.replace("return runGeneration(factories,", extra+"\nreturn runGeneration(factories,")) }
-            var attempts = 0
-            while (true) {
+            log.event("request","started",detail=JSONObject().put("intent",intent).put("context",disclosedContext).put("catalog",canonicalCatalog(config)).toString())
+            val input=JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map{it.json()}))
+            val configure="protocolContexts[${JSONObject.quote(contextId)}]={value:${JSONObject.quote(disclosedContext)},schema:$contextSchema};"
+            val bundle=log.stage("generation-bundle"){SandboxBundle.build(context,listOf("generation-contracts.js","protocol-contracts.js","protocol-host.js","generation-session.js"),configure,"runGeneration(factories, $input)",assetRoot=config.generationAssets)}
+            log.stage("generation-initialize"){program.evaluate(bundle)}
+            while(true){
                 cancellation.check()
-                val snapshot = JSONObject(program.evaluateString("generationSnapshot()"))
-                if (snapshot.getBoolean("done")) {
-                    if(snapshot.optJSONObject("error")!=null){val e=snapshot.getJSONObject("error");throw ProtocolFailure(e.getString("code"),e.getString("message"))}
-                    val result = snapshot.getJSONObject("result")
-                    val id = result.getString("candidateId")
+                val snapshot=JSONObject(program.evaluateString("generationSnapshot()"))
+                if(snapshot.getBoolean("done")){
+                    snapshot.optJSONObject("error")?.let{throw ProtocolFailure(it.getString("code"),it.getString("message"))}
+                    val result=snapshot.getJSONObject("result"); val id=result.getString("candidateId")
                     cancellation.check()
-                    log.event("route", if (result.getBoolean("usedFallback")) "source" else "template", candidate = id)
-                    val candidate = checked.remove(id) ?: run {
-                        val diagnostics = result.optString("diagnostics")
-                        val reason = when {
-                            !result.getBoolean("usedFallback") -> GenerationRejected.Reason.TEMPLATE_CHECK
-                            diagnostics.startsWith("REPEATED_CANDIDATE:") -> GenerationRejected.Reason.REPEATED_RESPONSE
-                            diagnostics.contains("INVALID_CANDIDATE") -> GenerationRejected.Reason.INVALID_CANDIDATE
-                            else -> GenerationRejected.Reason.ATTEMPT_LIMIT
-                        }
-                        throw GenerationRejected(result.getInt("attempts"), reason, diagnostics)
-                    }
-                    log.event("candidate", "accepted", candidate = id)
-                    log.event("request", "completed", candidate = id)
-                    telemetry.end("source_checked")
-                    return CheckedCandidate(context,candidate.first, candidate.second, revision, result.getInt("attempts"), log, id, if (result.getBoolean("usedFallback")) WorkspaceOrigin.AI_SOURCE else WorkspaceOrigin.CATALOGUE).also{accepted=it}
+                    if(id.isEmpty())throw GenerationRejected(result.getInt("attempts"),GenerationRejected.Reason.ATTEMPT_LIMIT,result.getString("diagnostics"))
+                    val candidate=checked.take(id)
+                    log.event("request","completed",candidate=id)
+                    return CheckedCandidate(context,candidate.first,candidate.second,revision,result.getInt("attempts"),log,id,WorkspaceOrigin.AI_SOURCE).also{accepted=it}
                 }
-                val requests = JSONArray(program.evaluateString("dealCapabilities.take()"))
-                for (i in 0 until requests.length()) {
+                val requests=JSONArray(program.evaluateString("dealCapabilities.take()"))
+                for(i in 0 until requests.length()){
                     cancellation.check()
-                    val request = requests.getJSONObject(i); val args = request.getJSONArray("args")
-                    val value: Any = when(request.getString("module")) {
-                        "embedding/observer" -> {
-                            val code = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("[A-Z][A-Z0-9_]{0,79}")) } ?: ""
-                            if (args.getString(0) == "check" && args.getString(1) == "rejected" && code == "INVALID_ENVELOPE") log.event("check", "rejected", code = code)
-                            else if (args.getString(0) == "lower" && args.getString(1) in setOf("started", "completed", "failed")) log.event("lower", args.getString(1), code = code)
-                            else if(args.getString(0)=="composition")log.event("composition",args.getString(1),target=if(args.getString(1) in setOf("checked","materialized","source-repair","fallback"))args.getString(2)else "",detail=args.getString(2))
-                            else if(args.getString(0)=="recovery")log.event("recovery",args.getString(1),code=code)
-                            else if(args.getString(0)=="patch") {
-                                if(args.getString(1)=="started")telemetry.patchStart()
-                                else runCatching { telemetry.patchEnd(JSONObject(args.getString(2))) }
-                            }
-                            else log.event("policy", if (args.getString(1) == "issued") "issued" else "validated", code = code)
-                            JSONObject.NULL
+                    val request=requests.getJSONObject(i);val args=request.getJSONArray("args");val function=request.getString("function")
+                    val value:Any=when(request.getString("module")){
+                        "embedding/construction-identity"->{check(function=="issue");UUID.randomUUID().toString()}
+                        "embedding/inference"->{
+                            check(function=="dispatch");val raw=args.getJSONObject(0)
+                            val inference=InferenceRequest(raw.getString("input"),raw.getString("previous"),raw.getString("diagnostics"),raw.getString("operation"),raw.getString("stage"),raw.getInt("ask"),raw.getInt("maxTokens"),raw.getBoolean("thinking"))
+                            progress("Constructing tool · ${inference.stage}")
+                            val response=log.operation("inference",operation=inference.operation,target=inference.stage,detail=raw.toString()){child->model.dispatch(inference,cancellation,child)}
+                            JSONObject().put("content",response.content).put("finish",response.finish).put("refusal",response.refusal)
                         }
-                        "embedding/composer" -> {
-                            try {
-                                val plan = JSONObject(args.getString(0))
-                                val custom = plan.has("custom")
-                                val source = log.stage("composition-assemble") {
-                                    BehaviorCandidate(config.contracts, custom, timing = { phase, nanos ->
-                                        log.event("composition-$phase", "completed", durationMs = nanos / 1_000_000)
-                                    }).assemble(plan)
+                        "embedding/fragment-syntax"->{
+                            try{FragmentMechanisms.invoke(function,args.getString(0))}
+                            catch(error:deal.ui.UiDiagnostic){reject(request,"FRAGMENT_SYNTAX",error.message ?: "Invalid fragment view syntax");continue}
+                            catch(error:IllegalArgumentException){reject(request,"FRAGMENT_SYNTAX",error.message ?: "Invalid fragment syntax");continue}
+                        }
+                        "embedding/questions"->{
+                            // No host UI callback is registered: unanswered is explicitly resolved to the issued default by DEAL.
+                            check(function=="ask");JSONObject().put("optionId",JSONObject.NULL).put("text",JSONObject.NULL).put("cancelled",false)
+                        }
+                        "embedding/policy-data"->when(function){
+                            "catalogJson"->args.getJSONArray(0).toString()
+                            "capabilityDeclarations"->{val modules=args.getJSONArray(0);(0 until modules.length()).joinToString("\n"){index->val contract=CapabilityContract.parse(modules.getJSONObject(index).toString());"// "+contract.module+"\n"+dev.deal.embedding.capabilities.CapabilityBindings.declaration(contract)}}
+                            "utf16Length"->args.getString(0).length
+                            "sha256"->MessageDigest.getInstance("SHA-256").digest(args.getString(0).toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it)}
+                            else->error("Unissued generation data mechanism: $function")
+                        }
+                        "embedding/checker"->{
+                            when(function) {
+                                "discard"->{checked.discard(args.getString(0));JSONObject.NULL}
+                                "finish"->{checked.finish(args.getString(0));JSONObject.NULL}
+                                "step"->checked.step(args.getString(0),args.getString(1),args.getInt(2),args.getString(3))
+                                "compile"->{
+                                    progress("Checking constructed source")
+                                    checked.compile(ExperienceSource(args.getString(0),args.getString(1)))
                                 }
-                                val inventory=plan.optJSONArray("fragments") ?: plan.optJSONArray("behaviors") ?: if(plan.has("kind"))JSONArray().put(plan)else plan.getJSONArray("nodes")
-                                val operations=(0 until inventory.length()).map{inventory.getJSONObject(it).getString(if(plan.has("fragments")||plan.has("behaviors")||plan.has("kind"))"kind" else "op")}
-                                val operationCounts=JSONObject();operations.groupingBy{it}.eachCount().forEach{(op,count)->operationCounts.put(op,count)}
-                                val route=JSONObject().put("route",if(custom)"custom-section" else "maintained-only")
-                                    .put("operations",operationCounts)
-                                    .put("customCharacters",if(custom)(0 until plan.getJSONArray("custom").length()).sumOf{plan.getJSONArray("custom").getJSONObject(it).getString("body").length}else 0)
-                                    .put("reason",plan.optString("reason"))
-                                log.event("composition", "assembled", target=route.toString(), detail=JSONObject(route.toString()).put("source",source).toString())
-                                JSONObject().put("accepted", true).put("source", source).put("diagnostics", "").toString()
-                            } catch (error: BehaviorCandidate.Rejected) {
-                                log.event("composition", "rejected", detail = error.message)
-                                JSONObject().put("accepted", false).put("source", JSONObject()).put("diagnostics", "COMPACT_PLAN: ${error.message}").toString()
+                                else->error("Unissued checking mechanism")
                             }
                         }
-                        "embedding/discovery" -> log.stage("discovery") { catalog }
-                        "embedding/protocol" -> when(request.getString("function")) {
-                            "questions" -> ChoiceProtocol.questions(args.getJSONArray(0)).toString()
-                            "answers" -> ChoiceProtocol.answers(args.getString(0),args.getJSONArray(1))
-                            "envelope" -> args.getJSONObject(0).toString()
-                            else -> error("Unknown protocol mechanism")
-                        }
-                        "embedding/policy-data" -> when (request.getString("function")) {
-                            "catalogJson" -> args.getJSONArray(0).toString()
-                            "contextEntries" -> { val v=JSONObject(args.getString(0));JSONObject().put("entries",JSONArray(v.keys().asSequence().filter{v.opt(it) is String}.map{JSONObject().put("key",it).put("value",v.getString(it))}.toList())).toString() }
-                            "member" -> args.getJSONObject(0).getJSONObject(args.getString(1))
-                            "stringMember" -> args.getJSONObject(0).getString(args.getString(1))
-                            "lowercase" -> args.getString(0).lowercase()
-                            "utf16Length" -> args.getString(0).length
-                            "sha256" -> MessageDigest.getInstance("SHA-256").digest(args.getString(0).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-                            "parse" -> {
-                                try { JSONObject(args.getString(0)) }
-                                catch (error: JSONException) {
-                                    eval("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id", request.getInt("id")).put("ok", false).put("error", JSONObject().put("code", "INVALID_JSON").put("message", "Expected JSON object")))})")
-                                    continue
-                                }
-                            }
-                            else -> error("Unknown trusted data mechanism")
-                        }
-                        "embedding/chooser" -> when (request.getString("function")) {
-                            "choose" -> {
-                                progress("Finding a suitable catalogue template…")
-                                log.operation("choice", operation = request.getInt("id").toString(), detail = args.toString()) { child ->
-                                    model.complete(args.getString(0), "", "", cancellation, child).also { child.event("choice", "response", detail = it) }
-                                }
-                            }
-                            else -> error("Unknown trusted chooser mechanism")
-                        }
-                        "embedding/model" -> {
-                            attempts++
-                            val reason = args.getString(2).substringBefore(':').takeIf { it.matches(Regex("CHOICE_[A-Z_]+")) } ?: ""
-                            log.event("route", if (attempts == 1) "fallback" else "repair", code = reason)
-                            telemetry.modelStart(args.getString(1),args.getString(2))
-                            progress("AI writing logic and screen · attempt $attempts")
-                            val raw = try { log.operation("source", operation = request.getInt("id").toString(), detail = args.toString()) { child ->
-                                model.complete(args.getString(0), args.getString(1), args.getString(2), cancellation, child).also { child.event("source", "response", detail = it) }
-                            } } catch(error:Exception) {
-                                telemetry.modelEnd("")
-                                cancellation.check()
-                                throw error
-                            }
-                            telemetry.modelEnd(raw)
-                            raw
-                        }
-                        "embedding/checker" -> {
-                            progress(if (attempts == 0) "Checking catalogue workspace…" else "Checking AI-written code · attempt $attempts")
-                            val provisional = request.getString("function") == "probe"
-                            val id = UUID.randomUUID().toString()
-                            try {
-                                val source = ExperienceSource(args.getString(0), args.getString(1))
-                                telemetry.checkStart(source)
-                                val output = log.operation("check", candidate = id, detail = JSONObject().put("deal", source.deal).put("dealui", source.ui).toString()) { child -> ExperienceCompiler(context, config, child).compile(source.deal, source.ui) }
-                                if (provisional) {
-                                    StagingReclamation.remove(context,output.parentFile)
-                                    telemetry.checkEnd(true,"")
-                                    eval("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id",request.getInt("id")).put("ok",true).put("value",JSONObject().put("accepted",true).put("candidateId","").put("diagnostics","")))})")
-                                    continue
-                                }
-                                val test=config.candidateTest
-                                if(test!=null) {
-                                    // Speculative test sessions must not mark the accepted
-                                    // request's runtime milestones/failures as final outcomes.
-                                    val testLog=EmbeddingLog.traced(context,log.run)
-                                    val session=UiSession(context,capabilityHost,engine,config,testLog,id,id)
-                                    var failed:String
-                                    var checkpoint:String?=null
-                                    try { session.mount(output);failed=test(CandidateTestSession(session,cancellation));checkpoint=session.state() }
-                                    finally { session.close() }
-                                    if(failed.isEmpty() && checkpoint!=null) {
-                                        val restored=UiSession(context,capabilityHost,engine,config,testLog,id,id)
-                                        try { restored.mount(output,checkpoint);failed=test(CandidateTestSession(restored,cancellation,true)) }
-                                        finally { restored.close() }
-                                    }
-                                    log.event("candidate-test",if(failed.isEmpty())"passed" else "rejected",candidate=id,detail=failed)
-                                    if(failed.isNotEmpty()) {
-                                        StagingReclamation.remove(context,output.parentFile)
-                                        throw CandidateRejected(JSONArray().put(JSONObject().put("stage","runtime-test").put("code","BEHAVIOR_TEST").put("message",failed)).toString())
-                                    }
-                                }
-                                telemetry.checkEnd(true,"");telemetry.checkedTime()
-                                checked[id] = source to output
-                                JSONObject().put("accepted", true).put("candidateId", id).put("diagnostics", "")
-                            } catch (error: Exception) {
-                                if (error !is CandidateRejected) throw error
-                                // Failed physical cleanup is an operational failure, not repair feedback.
-                                if(error.suppressed.isNotEmpty())throw error
-                                val diagnostics = error.diagnostics
-                                telemetry.checkEnd(false,diagnostics)
-                                log.event("check", "rejected", candidate = id, code = "CANDIDATE_REJECTED")
-                                JSONObject().put("accepted", false).put("candidateId", "").put("diagnostics", diagnostics)
-                            }
-                        }
-                        else -> error("Untrusted generation request")
+                        else->error("Unissued generation mechanism: ${request.getString("module")}/$function")
                     }
-                    cancellation.check()
-                    eval("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id", request.getInt("id")).put("ok", true).put("value", value))})")
+                    cancellation.check();deliver(request,value)
                 }
-                if (requests.length() == 0) Thread.sleep(10)
+                if(requests.length()==0)Thread.sleep(10)
             }
-        } catch (error: Throwable) {
-            originalFailure=error
-            telemetry.end(if(error is java.util.concurrent.CancellationException)"cancelled" else "failed",when(error){is GenerationRejected->error.reason.name;is ProtocolFailure->error.code;is CompilerOperationFailed->"COMPILER_OPERATION_${error.status}";else->error.javaClass.simpleName})
-            log.event("request", "failed", code = error.javaClass.simpleName)
-            throw error
-        } finally {
+        }catch(error:Throwable){failure=error;throw error}
+        finally{
             var cleanup:Throwable?=null
             fun clean(block:()->Unit){try{block()}catch(error:Throwable){if(cleanup==null)cleanup=error else cleanup!!.addSuppressed(error)}}
-            log.event("generation-bridge","completed",target=program.metrics().toString())
-            clean{program.close()}
-            checked.values.forEach { clean{StagingReclamation.remove(context,it.second.parentFile)} }
-            cleanup?.let{error->
-                accepted?.let{candidate->runCatching{candidate.close()}.onFailure{error.addSuppressed(it)}}
-                if(originalFailure!=null)originalFailure!!.addSuppressed(error)else throw error
-            }
+            log.event("generation-bridge","completed",target=program.metrics().toString());clean{program.close()}
+            clean{checked.close()}
+            cleanup?.let{error->accepted?.let{clean{it.close()}};if(failure!=null)failure!!.addSuppressed(error)else throw error}
         }
     }
 }

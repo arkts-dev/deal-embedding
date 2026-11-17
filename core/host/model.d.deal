@@ -1,1 +1,0 @@
-export function complete(input: string, previous: string, diagnostics: string): Promise<string> ;
