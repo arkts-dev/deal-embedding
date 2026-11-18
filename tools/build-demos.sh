@@ -22,6 +22,10 @@ python3 "$ROOT/tools/dependencies.py" check
 mkdir -p build/toolchain
 exec 9> build/.demos-build.lock
 flock 9
+if [[ ! -f build/debug.keystore ]]; then
+    keytool -genkeypair -keystore build/debug.keystore -storepass android -keypass android \
+        -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 3650 -dname 'CN=Android Debug'
+fi
 fetch_tool() {
     local artifact="$1" digest="$2" file="build/toolchain/$1.jar"
     if [[ ! -f "$file" ]]; then
@@ -58,7 +62,8 @@ if [[ ! -d build/compose/dependencies || ! -f build/compose/dependencies/genai-p
         printf '%s  %s\n' 72f44c9f8ebcb1af43838f45ee5c4aa9c5444898b3468ab3f4af7b6076c5bc3f build/toolchain/gradle9.zip | sha256sum -c -
         unzip -q -o build/toolchain/gradle9.zip -d build/toolchain
     fi
-    build/toolchain/gradle-9.2.1/bin/gradle -p tools/compose copyRuntime --no-daemon
+    build/toolchain/gradle-9.2.1/bin/gradle -p tools/compose \
+        --project-cache-dir "$ROOT/build/gradle-project-cache" copyRuntime --no-daemon
 fi
 COMPOSE_STAMP=build/compose/.prepared
 if [[ ! -f "$COMPOSE_STAMP" || tools/compose/dependencies.sha256 -nt "$COMPOSE_STAMP" || tools/compose/prepare.py -nt "$COMPOSE_STAMP" ]]; then
@@ -84,10 +89,6 @@ resource_link() {
 sign() {
     local app="$1"
     "$TOOLS/zipalign" -f 4 "build/$app/unsigned.apk" "build/$app/aligned.apk"
-    if [[ ! -f build/debug.keystore ]]; then
-        keytool -genkeypair -keystore build/debug.keystore -storepass android -keypass android \
-            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 3650 -dname 'CN=Android Debug'
-    fi
     "$TOOLS/apksigner" sign --ks build/debug.keystore --ks-pass pass:android --out "build/$app.apk" "build/$app/aligned.apk"
     printf 'Built build/%s.apk\n' "$app"
 }
