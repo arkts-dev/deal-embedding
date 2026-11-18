@@ -15,9 +15,10 @@ TOOLS="$SDK/build-tools/36.0.0"
 ANDROID="$SDK/platforms/android-37.0/android.jar"
 KOTLIN_HOME="${KOTLIN_HOME:-/snap/kotlin/current}"
 ROOT="$PWD"
-DEAL=$(cd "${DEAL_ROOT:-$ROOT/../deal}" && pwd)
-DEAL_UI=$(cd "${DEAL_UI_ROOT:-$ROOT/../deal-ui}" && pwd)
+DEAL=$(cd "${DEAL_ROOT:-$ROOT/dependencies/deal}" && pwd)
+DEAL_UI=$(cd "${DEAL_UI_ROOT:-$ROOT/dependencies/deal-ui}" && pwd)
 export DEAL_ROOT="$DEAL" DEAL_UI_ROOT="$DEAL_UI"
+python3 "$ROOT/tools/dependencies.py" check
 mkdir -p build/toolchain
 exec 9> build/.demos-build.lock
 flock 9

@@ -1,4 +1,5 @@
 core/generation-guidance.generated.deal
 /build/
+/dependencies/
 __pycache__/
 *.pyc

@@ -2,8 +2,10 @@
 # Build a standalone Android library. All inputs are explicit; no demo source is consulted.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")" && pwd)
-: "${DEAL_ROOT:?Set DEAL_ROOT to the core compiler dependency}"
-: "${DEAL_UI_ROOT:?Set DEAL_UI_ROOT to the UI compiler dependency}"
+DEAL_ROOT=$(cd "${DEAL_ROOT:-$ROOT/dependencies/deal}" && pwd)
+DEAL_UI_ROOT=$(cd "${DEAL_UI_ROOT:-$ROOT/dependencies/deal-ui}" && pwd)
+export DEAL_ROOT DEAL_UI_ROOT
+python3 "$ROOT/tools/dependencies.py" check
 : "${ANDROID_JAR:?Set ANDROID_JAR}"
 : "${RUNTIME_CP:?Set RUNTIME_CP to Compose and JavaScriptSandbox libraries}"
 : "${OUTPUT_DIR:?Set OUTPUT_DIR to an absolute output directory}"

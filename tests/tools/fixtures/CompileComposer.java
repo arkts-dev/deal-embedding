@@ -7,7 +7,7 @@ public final class CompileComposer {
         Path root=Path.of(args[0]),stage=Path.of(args[1]),src=stage.resolveSibling("composed-executable").resolve("src");Files.createDirectories(src);
         String appSource=Files.readString(stage.resolve("experience.deal")),uiSource=Files.readString(stage.resolve("experience.dealui"));
         Path app=src.resolve("experience.deal"),ui=src.resolve("experience.dealui");
-        Path framework=Path.of(System.getenv().getOrDefault("DEAL_UI_ROOT",root.resolve("../deal-ui").toString())).toAbsolutePath().normalize();
+        Path framework=Path.of(System.getenv().getOrDefault("DEAL_UI_ROOT",root.resolve("dependencies/deal-ui").toString())).toAbsolutePath().normalize();
         Path pack=root.resolve("ui/platform.dealui-pack");
         var result=UiSourceGenerator.generate(ui,uiSource,app,appSource,Map.of("./platform.dealui-pack",UiParser.parsePack(pack,Files.readString(pack))),framework,Map.of("embedding/graphics",Files.readString(root.resolve("api/graphics.d.deal"))));
         Files.writeString(app,UiSourceGenerator.compilerSource(appSource)+result.augmentation());Files.writeString(ui,uiSource);

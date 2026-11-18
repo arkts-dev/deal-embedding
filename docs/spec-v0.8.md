@@ -2,7 +2,7 @@
 
 ## Scope and responsibilities
 
-DEAL embedding constructs/checks/stores/runs interactive experiences from requests/data/capability contracts. [DEAL v1.6](../../deal/docs/spec-v1.6.md) and [Deal UI](../../deal-ui/docs/deal-ui-framework-design.md) semantics apply unchanged.
+DEAL embedding constructs/checks/stores/runs interactive experiences from requests/data/capability contracts. [DEAL v1.6](../dependencies/deal/docs/spec-v1.6.md) and [Deal UI](../dependencies/deal-ui/docs/deal-ui-framework-design.md) semantics apply unchanged.
 
 Dependencies flow **applications → embedding → Deal UI → DEAL**. Libraries build without application source, provider names or scenario fixtures.
 

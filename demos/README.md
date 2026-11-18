@@ -6,16 +6,17 @@ Framework-owned hard copies of Calendar, Vehicle, Todo, Organizer, Rental and Pi
 
 Applications compile separately against the packaged embedding AAR; they do not compile/import framework implementation sources or compiler internals. Shared demo code owns only application/domain/presentation responsibilities. Compiler integration, AAR assembly, runtime packaging and white-box fixtures stay outside `demos/`, in framework `tools/` and `tests/`. The standalone framework `build.sh` never consumes demos or tests.
 
-Only this repository and DEAL/Deal UI checkouts are required as project sources. Default checkout layout:
+Only this repository and its ignored independent DEAL/Deal UI checkouts are required as project sources. Default layout:
 
 ```text
-deal/
-deal-ui/
 deal-embedding/
+  dependencies/deal/
+  dependencies/deal-ui/
+  dependencies.lock.json
   demos/
 ```
 
-Alternatively set absolute `DEAL_ROOT` and `DEAL_UI_ROOT` explicitly; neither needs to be a sibling. Exact tested revisions are in `../dependencies.lock.json`. Nothing refers to the former outer demo repository. Build outputs stay under framework `build/` and are ignored.
+From the framework root run `python3 tools/dependencies.py setup` once. Exact commits and paths are locked; setup never changes existing checkouts and builds reject wrong revisions/tracked edits rather than pulling or resetting. Absolute `DEAL_ROOT` and `DEAL_UI_ROOT` overrides are supported with the same pin checks. No sibling/outer-repository paths are used by default. Build outputs stay under framework `build/` and are ignored.
 
 ## Build
 

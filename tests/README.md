@@ -9,7 +9,7 @@ JAVA_OPTS=-Xmx768m bash demos/build.sh tests
 bash tests/run.sh
 ```
 
-`DEAL_ROOT` and `DEAL_UI_ROOT` accept absolute external checkout paths and default to sibling checkouts. Tests use the compiler classes built by the framework library build; upstream compiler build outputs are not required. `tests/run.sh` changes to the framework root and works from any caller directory. Individual test tools assume that root as working directory.
+`DEAL_ROOT` and `DEAL_UI_ROOT` accept absolute override paths and default to the framework's `dependencies/deal` and `dependencies/deal-ui` independent ignored checkouts. Run `python3 tools/dependencies.py setup` first; the test runner verifies exact lock pins and rejects tracked dependency edits. Tests use the compiler classes built by the framework library build; upstream compiler build outputs are not required. `tests/run.sh` changes to the framework root and works from any caller directory. Individual test tools assume that root as working directory.
 
 Android instrumentation sources are in `android/`; the APK is `build/v08-cutover/device-test/tests.apk`. Installing/running is explicit, never part of the build. Existing package names and private test-resource cleanup behavior are unchanged.
 

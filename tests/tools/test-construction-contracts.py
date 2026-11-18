@@ -8,8 +8,8 @@ import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EMBEDDING = ROOT
-DEAL = pathlib.Path(os.environ.get('DEAL_ROOT', ROOT.parent / 'deal')).resolve()
-DEAL_UI = pathlib.Path(os.environ.get('DEAL_UI_ROOT', ROOT.parent / 'deal-ui')).resolve()
+DEAL = pathlib.Path(os.environ.get('DEAL_ROOT', ROOT / 'dependencies/deal')).resolve()
+DEAL_UI = pathlib.Path(os.environ.get('DEAL_UI_ROOT', ROOT / 'dependencies/deal-ui')).resolve()
 STAGE = ROOT / 'build/v08-cutover/contract-tests'
 STAGE.mkdir(parents=True, exist_ok=True)
 source = STAGE / 'src'

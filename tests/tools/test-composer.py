@@ -2,8 +2,8 @@
 """Real compiled DEAL composer with JVM syntax mechanisms; no model or alternate emitter."""
 import json, os, pathlib, shutil, subprocess
 root=pathlib.Path(__file__).resolve().parents[2]
-deal=pathlib.Path(os.environ.get('DEAL_ROOT',root.parent/'deal')).resolve()
-deal_ui=pathlib.Path(os.environ.get('DEAL_UI_ROOT',root.parent/'deal-ui')).resolve()
+deal=pathlib.Path(os.environ.get('DEAL_ROOT',root/'dependencies/deal')).resolve()
+deal_ui=pathlib.Path(os.environ.get('DEAL_UI_ROOT',root/'dependencies/deal-ui')).resolve()
 stage=root/'build/v08-cutover/composer-test';stage.mkdir(parents=True,exist_ok=True)
 source=stage/'src';source.mkdir(exist_ok=True)
 embedding=root

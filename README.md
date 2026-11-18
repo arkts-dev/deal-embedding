@@ -14,11 +14,22 @@
 
 ## Standalone build
 
-`build.sh` requires absolute `OUTPUT_DIR` and explicit `DEAL_ROOT`, `DEAL_UI_ROOT`, `ANDROID_JAR`, `AIDL`, `RUNTIME_CP`; `KOTLIN_HOME` is optional. Library builds do not consume application source.
+`build.sh` requires absolute `OUTPUT_DIR` and explicit `ANDROID_JAR`, `AIDL`, `RUNTIME_CP`; `KOTLIN_HOME` is optional. `DEAL_ROOT` and `DEAL_UI_ROOT` default to the ignored independent checkouts under `dependencies/`; absolute overrides are supported and must match the lock. Library builds do not consume application source.
 
 ## Development with demos
 
-This repository owns both framework and illustrative demos. Follow [demos/README.md](demos/README.md) for standalone checkout layout, toolchain requirements, builds and gateway use. Only DEAL and Deal UI are project dependencies; `dependencies.lock.json` records their tested revisions. Set absolute `DEAL_ROOT` and `DEAL_UI_ROOT`, or place those checkouts beside this repository.
+This repository owns both framework and illustrative demos. Follow [demos/README.md](demos/README.md) for toolchain requirements, builds and gateway use. Only DEAL and Deal UI are project dependencies. `dependencies.lock.json` pins their exact commits and repository-relative checkout paths. They are independent ignored repositories, not submodules, symlinks or shared-object clones.
+
+```text
+deal-embedding/
+  dependencies/deal/
+  dependencies/deal-ui/
+  dependencies.lock.json
+  demos/
+  core/
+```
+
+Initialize once with `python3 tools/dependencies.py setup`. Existing checkouts are never reset/switched/updated automatically; setup/check fail on revision mismatch or tracked edits. Builds validate pins even on cache hits. Absolute `DEAL_ROOT` / `DEAL_UI_ROOT` overrides are allowed but subject to the same checks. Updating a dependency requires an explicit reviewed lock change; builds never pull master.
 
 ```sh
 JAVA_OPTS=-Xmx768m bash demos/build.sh calendar vehicle todo organizer rental pizza tests
