@@ -1,0 +1,16 @@
+# Framework regression tests
+
+White-box construction, composition, checkpoint/runtime and packaged controller fixtures belong to the framework, not illustrative application sources. They are hard copies of the current integration tests, with paths changed for framework ownership. Inference/provider boundaries remain explicitly mocked; no paid inference, data reset, new scenario acceptance or visual review is implied.
+
+Build once from the framework root, then execute sequentially:
+
+```sh
+JAVA_OPTS=-Xmx768m bash demos/build.sh tests
+bash tests/run.sh
+```
+
+`DEAL_ROOT` and `DEAL_UI_ROOT` accept absolute external checkout paths and default to sibling checkouts. Tests use the compiler classes built by the framework library build; upstream compiler build outputs are not required. `tests/run.sh` changes to the framework root and works from any caller directory. Individual test tools assume that root as working directory.
+
+Android instrumentation sources are in `android/`; the APK is `build/v08-cutover/device-test/tests.apk`. Installing/running is explicit, never part of the build. Existing package names and private test-resource cleanup behavior are unchanged.
+
+Do not overlap rebuilds with tests. Generation/composer tests share `build/v08-cutover/composed-executable/`; rebuild the composer fixture before probes that depend on it.

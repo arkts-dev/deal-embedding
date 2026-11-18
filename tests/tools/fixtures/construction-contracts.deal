@@ -1,0 +1,138 @@
+import * as plans from "./plan";
+import * as selection from "./selection";
+import * as screens from "./screen";
+import * as custom from "./custom-fragment";
+import * as revisions from "./source-revisions";
+import * as inference from "./inference";
+import * as questions from "./questions";
+import * as s from "./construction-schema";
+import * as operations from "./operations";
+import * as bindings from "./bindings";
+import * as embedding from "embedding";
+import * as planning from "./planning";
+import * as coverage from "./coverage";
+import * as constructionSelection from "./construction-selection";
+import * as formula from "./formula";
+import * as decoded from "./decoded";
+import * as literals from "./source-literals";
+import * as graphics from "./graphics";
+
+function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
+function rejectsPlan(raw: string): void { let rejected: boolean = false; try { plans.decode(raw,[],[]); } catch (error) { rejected = true; } insist(rejected,"Invalid plan admitted"); }
+export function schemas(): null {
+  for (const path of ["M +.5 -.5 L 1. 2.","M 001 000.5 L 1.e2 .5E+1","M -0 +0 A 01 02 0 0 1 3 4 Z"]) { graphics.path(path); }
+  for (const path of ["M 1e 0","M 1e+ 0","M . 0","M 1e999 0","M 0 0 A 1 1 0 2 0 3 4"]) {
+    let rejected: boolean = false; try { graphics.path(path); } catch(error) { rejected = true; } insist(rejected,"Malformed SVG number admitted: "+path);
+  }
+  const typed: string[] = ["😀","\ud800","\u0001"];
+  insist(decoded.strings(typed) === typed,"Typed invariant array identity lost");
+  const dynamic: unknown[] = JSON.parse("[\"😀\",\"\\ud800\",\"\\u0001\"]");
+  const fresh: string[] = decoded.strings(dynamic); insist(fresh.join("") === typed.join(""),"Dynamic array conversion lost UTF-16 units");
+  const controls: string = JSON.parse(literals.quote(typed.join(""))); insist(controls === typed.join(""),"Source literal escape round-trip");
+  const projection = screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[],\"instances\":[]},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",[]);
+  insist(projection.composition.screen.instances.length === 0,"Contextual screen decoding");
+  let badScreen: boolean = false; try { screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[],\"instances\":[],\"extra\":0},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",[]); } catch(error) { badScreen = true; } insist(badScreen,"Extra nominal screen field admitted");
+  let plan: plans.Plan = plans.decode("{\"title\":\"Budget\",\"inputs\":[{\"id\":\"limit\",\"label\":\"Budget\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":120}],\"requirements\":[{\"id\":\"preserve\",\"text\":\"Stay within the budget\",\"sources\":[\"request\"],\"needs\":[\"remaining\"]}],\"needs\":[{\"id\":\"remaining\",\"type\":\"figure\",\"words\":\"Remaining budget\",\"reads\":[\"limit\"],\"spec\":{\"label\":\"Remaining\",\"format\":\"money\",\"unit\":\"EUR\",\"formula\":\"limit\",\"example\":{\"inputs\":{\"limit\":120},\"result\":120}}}]}",[],[]);
+  insist(plan.inputs.length === 1 && plan.requirements.length === 1,"Plan ledger");
+  insist(!Object.hasOwn(plan.inputs[0],"min"),"Absent numeric bounds became values");
+  insist((plan.needs[0].spec.shown as boolean) && (plan.needs[0].spec.decimals as number) === -1,"Declared defaults");
+  rejectsPlan("{\"title\":\"x\",\"legacy\":[]}");
+  rejectsPlan("{\"title\":\"x\",\"title\":\"y\"}");
+  rejectsPlan("{\"title\":\"x\",\"inputs\":null}");
+  rejectsPlan("{\"title\":\"x\",\"needs\":[{\"id\":\"n\",\"type\":\"other\",\"words\":\"x\",\"reads\":[\"invented\"],\"spec\":{}}]}");
+  rejectsPlan("{\"title\":\"x\",\"needs\":[{\"id\":\"n\",\"type\":\"other\",\"words\":\"x\",\"reads\":[\"n\"],\"spec\":{}}]}");
+  let options: selection.Option[] = [{id:"first",criteria:"First"},{id:"second",criteria:"Second"}];
+  let issued: selection.Question[] = [selection.question("choice","remaining","coverage","Select",options)];
+  let answers: selection.Answer[] = selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"first\",\"probabilities\":[{\"id\":\"second\",\"p\":0.5},{\"id\":\"first\",\"p\":0.5}]}]}",issued);
+  insist(answers[0].accepted && answers[0].selected === "first","Inclusive threshold / issued-order tie");
+  let rejected: boolean = false; try { selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"second\",\"probabilities\":[{\"id\":\"first\",\"p\":0.5},{\"id\":\"second\",\"p\":0.5}]}]}",issued); } catch (error) { rejected = true; } insist(rejected,"Wrong tie winner");
+  rejected = false; try { selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"first\",\"probabilities\":[{\"id\":\"first\",\"p\":1}]}]}",issued); } catch (error) { rejected = true; } insist(rejected,"Missing option");
+  let screen: screens.Screen = screens.reserve(plan,"chat"); insist(screen.target === "chat" && screen.slots[0].status === "open","Need reservation");
+  insist(screens.catalogueKinds().length === 36,"Catalogue vocabulary");
+  let ledger: coverage.Ledger = coverage.judge(plan,screen,[]);
+  insist(ledger.needs[0].status === "missing" && ledger.requirements[0].status === "missing","Unimplemented requirement marked covered");
+  let independent: plans.Plan = plans.decode("{\"title\":\"Excluded action\",\"requirements\":[{\"id\":\"exclude\",\"text\":\"No booking\",\"sources\":[\"request\"]}]}",[],[]);
+  let emptyScreen: screens.Screen = screens.reserve(independent,"screen");
+  let questions: selection.Question[] = coverage.questions(independent,emptyScreen);
+  insist(questions.length === 1 && questions[0].id === "requirement_exclude","Original requirement omitted from coverage batch");
+  insist(coverage.judge(independent,emptyScreen,[]).requirements[0].status === "unchecked","Missing requirement judgment fabricated coverage");
+  let judged: selection.Answer[] = selection.decode("{\"answers\":[{\"id\":\"requirement_exclude\",\"selected\":\"covered\",\"probabilities\":[{\"id\":\"covered\",\"p\":1},{\"id\":\"missing\",\"p\":0}]}]}",questions);
+  insist(coverage.judge(independent,emptyScreen,judged).requirements[0].status === "covered","Explicit original exclusion judgment lost");
+  let parsed: custom.Parsed = custom.parse("<classes></classes><fields></fields><functions></functions><view>export view Main(state: app.AppState): View { ui.Text(text: state.label) }</view>");
+  insist(parsed.accepted,"Full custom fragment regions");
+  insist(!custom.parse("<view>x").accepted && !custom.parse("<view>x</view><view>y</view>").accepted,"Malformed/truncated fragment admitted");
+  let prerequisites: operations.Prerequisites = {ready:true,unexpired:true,revision:0,lifetime:"session",epoch:1};
+  let operation: operations.Operation = operations.begin(operations.idle("load","owner"),"read",prerequisites,{},["call1","call2"],100,200);
+  let first: operations.Envelope = operations.envelope(operation,"call1");
+  let duplicate: operations.Operation = operations.begin(operation,"other",prerequisites,{},["replacement"],110,210);
+  insist(!duplicate.accepted && duplicate.sequence === operation.sequence && duplicate.phase === "read","Pending duplicate mutated invocation");
+  insist(operations.sendCurrent(duplicate,first,prerequisites),"Admission marker confused with currentness");
+  let completed: operations.Operation = operations.complete(operation,{envelope:first,accepted:true,status:"error",outcome:"failure",message:"Denied"},prerequisites);
+  insist(completed.status === "pending","Batch ended before terminal rows");
+  let second: operations.Envelope = operations.envelope(completed,"call2");
+  completed = operations.complete(completed,{envelope:second,accepted:true,status:"ready",outcome:"success",message:"",result:12},prerequisites);
+  insist(completed.status === "error" && completed.outcome === "failure","Last success hid earlier failure");
+  let newer: operations.Operation = operations.begin(completed,"read",prerequisites,{},["newcall"],120,220);
+  let stale: operations.Operation = operations.complete(newer,{envelope:first,accepted:true,status:"ready",outcome:"success",message:"",result:99},prerequisites);
+  insist(stale.status === "pending" && stale.sequence === newer.sequence && !Object.hasOwn(stale,"result"),"Old reply cleared new work");
+  let newEnvelope: operations.Envelope = operations.envelope(newer,"newcall");
+  let revoked: operations.Prerequisites = {ready:true,unexpired:true,revision:0,lifetime:"session",epoch:2};
+  insist(!operations.sendCurrent(newer,newEnvelope,revoked),"Regrant revived old invocation");
+  let operands: formula.Operand[] = [{id:"value",expression:"state.value",type:"number",dependency:"f_parts_value"}];
+  let expression: formula.Expression = formula.compile("value * 2 + 1",operands);
+  insist(expression.dependencies.length === 1 && expression.type === "number","Formula did not retain issued typed dependencies");
+  const lazy = formula.compile("choose(true, 7, 1 / 0)",[]); insist((lazy.number as number) === 7 && lazy.source.includes(" ? "),"Lazy choose lowering/value");
+  const rounded = formula.compile("round(-0.5)",[]); insist(1 / (rounded.number as number) < 0,"round lost negative zero");
+  const extrema = formula.compile("max(min(8, 3), 2)",[]); insist((extrema.number as number) === 3,"min/max formula lowering");
+  for (let source of ["value = 4","value[0]","clock.nowMillis()","missing + 1","value && true","1e999"]) {
+    let refused: boolean = false; try { formula.compile(source,operands); } catch(error) { refused = true; } insist(refused,"Unsafe formula admitted: "+source);
+  }
+  return null;
+}
+class WireEdit { file:string; search:string; replace:string; }
+class EditRequest { revision:string; digest:string; edits:WireEdit[]; }
+function editRequest(revision:string,digest:string,edits:WireEdit[]):string { const value:EditRequest = {revision:revision,digest:digest,edits:edits}; return JSON.stringify(value) as string; }
+export async function edits(): Promise<null> {
+  let fields: embedding.WireField[] = [];
+  let textSchema: embedding.WireType = {kind:"string",fields:fields,element:null,maximum:8192,minimumNumber:-1.7976931348623157e308,maximumNumber:1.7976931348623157e308};
+  let parameters: embedding.Parameter[] = [{name:"description",type:textSchema}];
+  let functions: embedding.CapabilityFunction[] = [{name:"prepare",description:"Prepare a review, not a purchase",parameters:parameters,result:textSchema}];
+  let contracts: embedding.CapabilityContract[] = [{module:"host/test",description:"Test review",version:1,functions:functions}];
+  let registry: bindings.Registry = bindings.create(contracts);
+  let args: Record<string, unknown> = {description:"draft"};
+  let rawBinding: Record<string, unknown> = {module:"host/test",function:"prepare",arguments:args};
+  await bindings.issueDescriptor(registry,JSON.parse("{\"id\":\"review\",\"label\":\"Prepare\",\"input\":{\"sourceId\":\"draft\",\"label\":\"Description\",\"initial\":\"Specific requirement\"}}"),"prepareReview",rawBinding);
+  insist(registry.sources.length === 1 && registry.bindings.length === 1 && registry.actions.length === 1,"Descriptor issuance");
+  let rejectedBinding: boolean = false;
+  try { bindings.issueBinding(registry,"steal",rawBinding,"anotherDescriptor"); } catch (error) { rejectedBinding = true; }
+  insist(rejectedBinding && registry.bindings.length === 1,"Foreign descriptor draft admitted");
+  rejectedBinding = false;
+  try { await bindings.issueDescriptor(registry,JSON.parse("{\"id\":\"broken\",\"label\":\"Prepare\",\"input\":{\"sourceId\":\"newDraft\",\"label\":\"Description\",\"initial\":\"\"}}"),"brokenBinding",JSON.parse("{\"module\":\"host/test\",\"function\":\"missing\",\"arguments\":{\"description\":\"newDraft\"}}")); } catch (error) { rejectedBinding = true; }
+  insist(rejectedBinding && registry.sources.length === 1 && registry.bindings.length === 1 && registry.actions.length === 1,"Failed descriptor partially published");
+  let base: revisions.Revision = await revisions.issue({deal:"alpha alphaEnd β",dealui:"view Ω"});
+  let rejected: revisions.Applied = await revisions.apply(base,editRequest(base.revision,base.digest,[{file:"deal",search:"alpha",replace:"x"}]));
+  insist(!rejected.accepted && rejected.current.revision === base.revision,"Ambiguous edit modified revision");
+  rejected = await revisions.apply(base,editRequest("forged",base.digest,[{file:"deal",search:"β",replace:"x"}])); insist(!rejected.accepted,"Unissued revision");
+  rejected = await revisions.apply(base,editRequest(base.revision,base.digest,[{file:"deal",search:"alphaEnd β",replace:"x"},{file:"deal",search:"β",replace:"y"}])); insist(!rejected.accepted,"Overlapping edits");
+  let applied: revisions.Applied = await revisions.apply(base,editRequest(base.revision,base.digest,[{file:"deal",search:"alphaEnd",replace:"z"},{file:"deal",search:"β",replace:"😀"},{file:"dealui",search:"Ω",replace:"δ"}]));
+  insist(applied.accepted && applied.current.source.deal === "alpha z 😀" && applied.current.source.dealui === "view δ","Atomic source pair");
+  insist(applied.current.revision !== base.revision && applied.current.digest !== base.digest,"Fresh issued identity");
+  let operation: inference.Operation = inference.operation("section",2);
+  let failed: boolean = false; try { await inference.ask(operation,"custom","","","",6000,false); } catch (error) { failed = true; }
+  insist(failed && operation.used === 1,"Failure not charged");
+  await inference.ask(operation,"custom","","","",6000,false);
+  failed = false; try { await inference.ask(operation,"custom","","","",18000,true); } catch (errorUnknown) { let error: Error = errorUnknown as Error; failed = error.name === "ASK_LIMIT"; }
+  insist(failed && operation.used === 2,"Nested cap dispatch");
+  return null;
+}
+export async function planningLimits(): Promise<null> {
+  let input: planning.Input = {requestId:"request",request:"Preserve all constraints",facts:"{}",factIds:[],sourceIds:[],contracts:"[]",specification:"Plan contract",target:"screen"};
+  let result: planning.Result = await planning.run(input);
+  insist(result.plan !== null && result.asks === 3,"Planning retry/escalation bounds");
+  let reviewed: planning.Result = await planning.review(input,result);
+  insist(reviewed.asks === 3,"Empty question batch dispatched");
+  result = await planning.run(input);
+  insist(result.plan === null && result.asks === 3,"Failed planning exceeded cap or fabricated plan");
+  return null;
+}
+export function main(): void { return; }

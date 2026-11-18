@@ -1,0 +1,11 @@
+# Applications
+
+Deliver one ordinary journey: open → discover → Open → edit → observe → reopen. Verify installed behavior, not developer setup. Inspect stays reachable before generation/after failure with public trace/experience scope; returning never retries inference. Recovery is explicit. Remove competing entrances and engineering confirmations, not used native features or regressions.
+
+Use DEAL v1.6 only: TypeScript syntax subset with checked semantics. Native integral domains reject fractional/nonfinite/out-of-range numbers before conversion. Capability descriptions include argument meaning/prerequisites. Reject malformed/empty baskets and invalid periods; aggregate package component stock. Pizza exposes diameter millimetres independently of labels and validates exact HH:mm/zone without deadline defaults.
+
+Share AssistanceSettingsActivity/AssistanceInspectActivity across apps, preserving native themes. Settings alone owns assistance/access choices; proposal confirmation is separate. AssistanceShell selects storage/scope, fences generation/stops registered owners before confirmed public saved/forget reset, then clears generated links/dismissals only. Preserve records, permissions, grants, disclosure/capture and failure evidence. Never reset on startup/upgrade, enumerate retired stores or silently retry cleanup. Explicit historical purges are separate.
+
+Remote discovery requires its own cloud opt-in, never local consent. Apps supply bootstrap config to library transport; no app-owned repair, strategy flags or rewrite fallback. Shared shell helpers may own demo trust/sharing, disclosed facts, placement/lifecycle/retention, themes and public Inspect presentation—not compiler, generated state, renderer dispatch, pumping or provider transport. Verify call paths, not directory names.
+
+Task canvases show controls, concise status and necessary consent; Inspect holds engineering details. Read active design guidance before presentation edits. Review actual phone suggestion/pending/populated/empty/failure captures for hierarchy, density, actions and controls/results proximity. Functional/build/tree success is not visual acceptance; unavailable image review leaves it open.

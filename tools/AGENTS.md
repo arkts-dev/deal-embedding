@@ -1,0 +1,19 @@
+# Tooling
+
+Preserve Android dependency service descriptors/root properties alongside D8 output; never duplicate host Guava/Kotlin runtimes. Fingerprint resolved dependencies, all packaging inputs and authoritative library ui/. Library builds have no consuming-app inputs. Policy builders compile trusted DEAL/package source without selecting answers. Host checks execute v1.6 and production JS sessions with exact packaged inputs, revisions/hashes and settled restoration; mock external boundaries only. No historical compiler lane.
+
+Run deterministic checks before opt-in inference. Verifiers consume embedding-library/embedding-consumer: never overlap them with destructive rebuilds. No build/inference overlap. Keep private source, logs, screenshots and receipts in ignored build/.
+
+The embedding spec is the sole generation authority. Test production-reachable construction, compiler and Session wiring, including failed refresh, pending edits, prerequisite commits, expiry, stock-qualified alternatives and whole-basket authority. Fixtures are external inputs, not implementation policy. Supplied-source or deterministic contract passes are not fresh inference, semantic completeness or delivery. Preserve failed inputs and evidence; do not restore deleted architecture to satisfy historical tests.
+
+Credentials/provider parameters stay in the loopback gateway. Apps provide endpoint/backend configuration to embedding's connection client, never app HTTP implementations. APK DEAL_GENERATION_BACKEND selects cerebras (default) or cortex; preserve selection on rebuild and verify installed selection/actual requests, not gateway defaults. Discovery selects independently through DEAL_DISCOVERY_BACKEND=nano/deepseek-flash with separate cloud opt-in. No silent backend switch. Gateway alone reads keys; never package/log them.
+
+Purges require explicit authorization: archive first, preserve domain/authority/original measurements and verify generated-only scope before inference. Never clear package data. Enriched setup adds absent-only isolated records; do not overwrite records/source/state/failures/authority. Keep fixture provenance in tooling/Inspect, not task canvases. Compare private archives for preservation.
+
+Aggregate unified metrics using latest request summaries and unique repair IDs. Missing usage remains unknown; report denominators/revisions and reasoning separately from completion totals. Receipt timing is not model compute; patch locality is not semantic preservation. Keep deterministic, device, live-model and visual results distinct. Screenshots/tree checks do not establish design quality; leave visual review pending when unperformed.
+
+Compiled DEAL owns stages, inference dispatch accounting, operation budgets, issued selections, source revisions and repair admission as specified by v0.8. Gateway transports explicit stage/token/reasoning requests; it never infers policy from prompt markers, selects fallback routes or retries. Preserve configured backends; unavailable transport fails rather than switches. Streaming never executes partial source or retains hidden reasoning.
+
+Exact edits are nonempty, unique, disjoint, atomic and issued-revision/digest-bound. Preserve the accepted source and diagnostics on rejection. Only specified source/coverage/execution feedback authorizes repair; provider, transport, permission, infrastructure, cancellation and cleanup failures do not. Live checks require explicit opt-in, preserve failures and never inject answers.
+
+Shell device checks enter common Settings/Inspect in all apps, separate proposal confirmation, and cancel reset without deleting user experiences. Destructive reset regressions use isolated contexts unless explicitly authorized. Screens show tasks/controls/status/consent; Inspect owns diagnostics. Test real ordinary journeys separately from native fixtures, restoration and fresh inference.

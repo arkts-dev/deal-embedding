@@ -1,0 +1,3 @@
+# Todo
+
+TaskStore owns task facts and provider consent. Keep unfinished preparation discovery read-only and bounded. Task creation/completion stays native; a Calendar suggestion is not authorization to mutate tasks. Preserve provider identity checks and explicit sharing. Keep demo fixtures clearly labelled and separate from unrelated records. Keep fixtures in tooling; sharing is configured only in shared Settings; Review contains only native task proposals, never toggled by fixture setup. Keep the selected native task title visible beside Inspect when generated assistance replaces its detail; do not depend on generated source to repeat navigation context.

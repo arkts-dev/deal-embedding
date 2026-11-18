@@ -1,0 +1,41 @@
+import * as composer from "./composer";
+import * as screens from "./screen";
+import * as s from "./construction-schema";
+
+function fragment(id: string, initial: string): screens.Instance {
+  let fields: screens.Field[] = [
+    {name:"value",type:"number",role:"authoritative",dependencies:[],initial:initial,owner:id},
+    {name:"double",type:"number",role:"derived",dependencies:["value"],initial:"null",owner:id}
+  ];
+  let updates: screens.Handler[] = [{action:"Change",function:"change"}];
+  let fragment: screens.Fragment = {declarations:"export class Change { value: number; }",fields:fields,updates:updates,effects:[],helpers:"export function change(state: AppState, action: Change): AppState { return {value: action.value, double: state.double}; }",view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Text(value: \"Authored text 😀\") ui.IntField(value: state.value, onChange: action app.Change {value: payload}) When(state.double !== null) { ui.IntText(value: state.double as number) } } }",options:[],content:[],ports:[],holes:[],covers:[],owns:[id]};
+  return {id:id,kind:"custom",origin:"custom",parameters:{},fragment:fragment,bodies:{}};
+}
+function composition(instances: screens.Instance[]): screens.Composition { return {screen:{title:"Counter",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:instances},bindings:{},actions:{},connections:[]}; }
+function cleanView(instance: screens.Instance): void { instance.fragment.view = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Text(value: \"Authored text 😀\") ui.IntField(value: state.value, onChange: action app.Change {value: payload}) } }"; }
+function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
+export async function rejects(): Promise<null> {
+  let instance: screens.Instance = fragment("calculation","3"); cleanView(instance);
+  let calculation: composer.Computation = {instance:"calculation",field:"double",value:"state.value * 2",ready:"true",reason:"\"Unavailable\"",dependencies:[]};
+  let rejected: boolean = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Undeclared state read admitted");
+  calculation.dependencies = ["f_calculation_value"];
+  calculation.value = "clock.nowMillis()"; instance.fragment.declarations = instance.fragment.declarations+" import * as clock from \"std/time\";";
+  rejected = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Clock admitted in recompute");
+  instance.fragment.helpers = instance.fragment.helpers+" export function indirect(candidate: AppState): number { return clock.nowMillis() + candidate.value; }"; calculation.value = "indirect(state)";
+  rejected = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Transitive clock read admitted");
+  calculation.value = "state.value * 2";
+  rejected = false; try { await composer.assemble(composition([instance]),[]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Missing producer admitted");
+  return null;
+}
+export async function construct(): Promise<string> {
+  let instance: screens.Instance = fragment("calculation","3");
+  // The view binds prepared fields; nullable assertions are DEAL, not Deal UI syntax.
+  instance.fragment.view = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Text(value: \"Authored text 😀\") ui.IntField(value: state.value, onChange: action app.Change {value: payload}) } }";
+  instance.fragment.fields[instance.fragment.fields.length] = {name:"triple",type:"number",role:"derived",dependencies:["double"],initial:"null",owner:instance.id};
+  let record: screens.Composition = composition([instance]);
+  let calculations: composer.Computation[] = [{instance:"calculation",field:"double",value:"state.value * 2",ready:"state.value >= 0",reason:"\"Value must be nonnegative\"",dependencies:["f_calculation_value"]}];
+  calculations[calculations.length] = {instance:instance.id,field:"triple",value:"(state.double as number) * 3",ready:"true",reason:"\"Upstream unavailable\"",dependencies:["f_calculation_double"]};
+  let result: composer.Result = await composer.assemble(record,calculations);
+  return s.encode(result);
+}
+export function main(): void { return; }
