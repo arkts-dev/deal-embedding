@@ -14,3 +14,9 @@ bash tests/run.sh
 Android instrumentation sources are in `android/`; the APK is `build/v08-cutover/device-test/tests.apk`. Installing/running is explicit, never part of the build. Existing package names and private test-resource cleanup behavior are unchanged.
 
 Do not overlap rebuilds with tests. Generation/composer tests share `build/v08-cutover/composed-executable/`; rebuild the composer fixture before probes that depend on it.
+
+## Original acceptance scenarios
+
+The tracked [scenario inputs and acceptance criteria](scenarios/README.md) are in
+`scenarios/requests.json`. They are separate opt-in acceptance work, not default
+mocked regression passes. No historical build output is needed to recover inputs.
