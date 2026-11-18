@@ -62,17 +62,6 @@ internal enum class RenderComponent(val component: String, val capability: Strin
     }
 }
 
-/** Presentation only: amounts remain integer minor units and no domain status is inferred. */
-internal fun formatMoney(minorUnits: Int, currency: String, locale: java.util.Locale = java.util.Locale.getDefault()): String {
-    val unit = java.util.Currency.getInstance(currency)
-    val amount = java.math.BigDecimal.valueOf(minorUnits.toLong(), unit.defaultFractionDigits.coerceAtLeast(0))
-    return java.text.NumberFormat.getCurrencyInstance(locale).apply {
-        this.currency = unit
-        minimumFractionDigits = unit.defaultFractionDigits.coerceAtLeast(0)
-        maximumFractionDigits = minimumFractionDigits
-    }.format(amount)
-}
-
 private val LocalComparisonValue = compositionLocalOf { false }
 private val LocalFramed = compositionLocalOf { false }
 
@@ -157,7 +146,7 @@ private val LocalFramed = compositionLocalOf { false }
             fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
         RenderComponent.Caption -> Text(text("value"), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
-        RenderComponent.Money -> LabeledValue(text("label"), formatMoney(number("minorUnits"), prop("currency")?.getString("stringValue") ?: "EUR"))
+        RenderComponent.Money -> LabeledValue(text("label"), formatMoney(prop("minorUnits")!!.getDouble("numberValue"), prop("currency")?.getString("stringValue") ?: "EUR"))
         RenderComponent.Metric -> LabeledValue(text("label"), listOf(text("value"), text("unit")).filter { it.isNotEmpty() }.joinToString(" "))
         RenderComponent.Comparison -> {
             val framed = LocalFramed.current
@@ -262,7 +251,7 @@ private val LocalFramed = compositionLocalOf { false }
                         }
                     }, enabled = flag("enabled", true), singleLine = true,
                         label = if (text("format") == "euro-cents") ({ Text("EUR cents") }) else null,
-                        supportingText = if (text("format") == "euro-cents") ({ Text(formatMoney(value, "EUR")) }) else null,
+                        supportingText = if (text("format") == "euro-cents") ({ Text(formatMoney(value.toDouble(), "EUR")) }) else null,
                         isError = draft.toIntOrNull()?.let { it !in lower..upper } ?: true,
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
                         modifier = Modifier.weight(1f).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } })
