@@ -8,22 +8,30 @@ public final class GenerationGuidance {
         String specification=Files.readString(root.resolve("docs/spec-v0.8.md"));
         Files.writeString(output,"// Generated from authoritative inputs.\n"
             +function("specification",specification)
-            +function("planningSpecification",sections(specification,"Scope and responsibilities","Discovery and intent preservation","Generation schemas","Construction route"))
-            +function("selectionSpecification",sections(specification,"Scope and responsibilities","Generation schemas","Construction route","Fragments and deterministic assembly","Reusable sections"))
-            +function("writingSpecification",sections(specification,"Scope and responsibilities","Fragments and deterministic assembly","Custom writing and recovery","Execution and provider workflows","UI vocabulary and Deal UI mapping","Source, checking and observation"))
+            +function("planningSpecification",between(specification,"## Generation schemas\n","```text\nSelectionQuestion")
+                +between(specification,"### Action argument bindings\n","### Action descriptors\n")
+                +between(specification,"## Discovery and intent preservation\n","## Generation schemas\n")
+                +between(specification,"Explicit free drawing or motion permits","## Fragments and deterministic assembly\n"))
+            +function("selectionSpecification",between(specification,"```text\nSelectionQuestion","### Action argument bindings\n"))
+            +function("writingSpecification",between(specification,"## Custom writing and recovery\n","Lookup missing needs concurrently")
+                +between(specification,"Each authoritative field has one owner","Plan dependencies retain intent")
+                +between(specification,"Composer emits pure `recompute","Composer wiring:")
+                +between(specification,"Transitive AST, import and borrow analysis","| Composer part |")
+                +between(specification,"## Execution and provider workflows\n","Require host-configured finite positive deadlines")
+                +between(specification,"### Constructive calculations\n","## Custom writing and recovery\n")
+                +between(specification,"TextField feedback never replaces","## Source, checking and observation\n")
+                +between(specification,"### Source edits\n","### Structural editing\n"))
             +function("language",Files.readString(deal.resolve("skills/write-deal/references/language.md")))
             +function("pack",Files.readString(root.resolve("ui/platform.dealui-pack"))));
     }
-    /** Exact authoritative sections, never a second hand-maintained schema/policy summary. */
-    private static String sections(String specification,String... headings){
-        StringBuilder result=new StringBuilder();
-        for(String heading:headings){
-            String marker="## "+heading+"\n";int start=specification.indexOf(marker);
-            if(start<0)throw new IllegalArgumentException("Missing specification section: "+heading);
-            int end=specification.indexOf("\n## ",start+marker.length());
-            result.append(specification,start,end<0?specification.length():end).append('\n');
-        }
-        return result.toString();
+    /** Exact stage-relevant passages, never a competing schema/policy summary.
+     * Controller budgets, catalogue implementation and renderer/storage mechanics
+     * are executed by the framework, not instructions for application source. */
+    private static String between(String specification,String from,String until){
+        int start=specification.indexOf(from);
+        int end=start<0?-1:specification.indexOf(until,start+from.length());
+        if(start<0||end<0)throw new IllegalArgumentException("Missing specification passage: "+from+" -> "+until);
+        return specification.substring(start,end)+'\n';
     }
     private static String function(String name,String text){return "export function "+name+"(): string { return "+literal(text)+"; }\n";}
     private static String literal(String text){

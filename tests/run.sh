@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 export DEAL_ROOT=$(cd "${DEAL_ROOT:-dependencies/deal}" && pwd)
 export DEAL_UI_ROOT=$(cd "${DEAL_UI_ROOT:-dependencies/deal-ui}" && pwd)
 python3 tools/dependencies.py check
+python3 tests/tools/test-generation-guidance.py
 node tests/tools/test-protocol.js
 python3 tests/tools/test-construction-contracts.py
 python3 tests/tools/test-composer.py

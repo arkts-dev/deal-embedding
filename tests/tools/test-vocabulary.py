@@ -337,11 +337,13 @@ def main():
     message = result.stdout + result.stderr
     assert "PAYLOAD_UNCONSUMED" in message and "NumberField" in message and "onChange" in message, message
 
-    # Migration preservation: the prompt no longer claims NumberText is absent and its shape
-    # example consumes the payload; emitted toggles bind a boolean payload field.
+    # Prompt trimming may remove examples, not checked APIs or event contracts.
+    # Generated stage guidance tests assert the authoritative payload rule remains;
+    # emitted-runtime tests execute numeric/boolean payloads rather than requiring
+    # one particular example's spelling here.
     prompt = (ROOT / "core/custom-writing.deal").read_text()
     assert "There is no ui.NumberText" not in prompt
-    assert "Start {value: payload}" in prompt and "ui.Text(text:state.text)" in prompt
+    assert "Bind only exported nominal actions" in prompt
     parts = (ROOT / "core/parts.deal").read_text()
     assert 'ui.Toggle(label: ' in parts and 'onChange: action app.Change_"+input.id+" {value: payload}' in parts
     assert 'export class Change_"+input.id+" { value: "+actionType+"; }' in parts

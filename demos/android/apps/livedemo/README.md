@@ -87,6 +87,52 @@ Local requests, responses, failures, screenshots, test/build exits and measureme
 receipt are retained under ignored `build/jev-step1/`. This step changes protocol
 and explicit backend configuration only; unnecessary prompt removal is a later step.
 
+## Step 2: stage-specific prompt trimming
+
+Framework guidance now copies exact stage-relevant spec passages instead of whole
+chapters: planning 15,087 → 8,775 characters; selection 36,000 → 602; writing
+35,806 → 17,456. Original requests/facts, current plans/sources, issued questions,
+ownership/readers and frozen provider declarations remain. Full language and
+checked pack remain; duplicate writer prose and the incomplete example are removed.
+No task/provider/scenario special cases were added to framework policy.
+
+Three fresh isolated real-model runs: **one complete, two partial**. Both partials
+show explicit missing-behavior notices and do not count as successful journeys.
+Their request-to-published times were 44.68 s and 40.21 s, including repeated writer
+repairs/truncations. Failures and source are retained, not reset.
+
+| Complete-run step | Step 1: Jev, original prompts | Step 2: trimmed prompts |
+|---|---:|---:|
+| Planning (Cerebras) | 5.37 s | 2.91 s |
+| Selection first (Jev) | 0.43 s | 0.33 s |
+| Selection second (Jev) | 0.48 s | 0.35 s |
+| Initial coverage (Jev) | 0.46 s | 0.36 s |
+| Custom section (Cerebras) | 3.27 s, one ask | 6.64 s, two asks |
+| Final coverage (Jev) | 0.44 s | 0.40 s |
+| Compilation/framework/mount/rest | 6.42 s | 6.33 s |
+| Request → first published UI | 16.89 s | 17.31 s |
+| Discovery + Open processing, excluding human wait | 20.07 s | 18.89 s |
+| Generation input / output tokens | 71,602 / 3,818 | 51,041 / 12,027 |
+
+The complete run needed one syntax repair (`Expected ')'`). Input tokens fell
+28.7%, but output/reasoning and the extra writer ask erased the generation saving:
+**no generation speed improvement demonstrated**. End-to-end processing was lower
+on this success, including faster independent discovery; small stochastic cohorts
+cannot establish a causal latency or reliability gain.
+
+Initial 120/84 → 36/Under; both amounts edited, under/equal/over checked, blank input
+withdrew results, and cold reopen retained 120/130 → -10/Over without inference.
+Original and step-1 saved stores remained byte-identical. Tests cover stage schemas,
+authoritative payload rules, unchanged APIs, compiled construction and runtime.
+An old vocabulary test asserted the removed example's exact spelling; it now checks
+the contract and retains real numeric/boolean payload execution tests. The suite
+passed through construction/runtime; the remaining vocabulary/renderer/cache/
+dependency checks passed after that assertion update. APK build passed.
+
+Local receipts and test/build results: ignored `build/prompt-step2/`; raw phone
+archives/screenshots also remain under `build/jev-step1/lean-*`. Human visual
+acceptance and monetary billing remain unmeasured.
+
 ## Earlier observed phone run
 
 - Live suggestion: “Picnic budget reconciliation”.
