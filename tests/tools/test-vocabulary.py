@@ -52,7 +52,7 @@ def prepared(pack_text=None, theme=None, constraints=None, inventory=None):
 
 def expect_rejected(code, subject, pack=PACK, theme=THEME, constraints=CONSTRAINTS, inventory=INVENTORY):
     assets = pathlib.Path(tempfile.mkdtemp(prefix="vocabulary-out-"))
-    result = validate(pack, theme, constraints, inventory, assets)
+    result = validate(pack, theme, constraints, inventory, assets, assets)
     assert result.returncode != 0, f"expected a rejection for {subject}: {result.stdout}{result.stderr}"
     message = result.stdout + result.stderr
     assert code in message, f"expected {code} naming {subject}, got {message}"
@@ -176,6 +176,39 @@ def main():
     number_boolean = replace_line(PACK.read_text(), "export class ButtonProps",
         'export class ButtonProps { text: string; onClick?: Action; value: number = 0; enabled: boolean = 1; style: string = ""; accessibilityLabel?: string; }')
     expect_rejected("PACK_CONFORMANCE", "Button.enabled", *prepared(pack_text=number_boolean))
+    # `| null` is the optionality spelling, as deal-ui parses it: a required prop or a prop with
+    # a declared default so spelled rejects before any projection is written.
+    nullable_pose = replace_line(PACK.read_text(), "export class TransformProps",
+        'export class TransformProps { pose: number[] | null; durationMs: number; size: number = 0; style: string = ""; }')
+    message = expect_rejected("PACK_CONFORMANCE", "Transform.pose", *prepared(pack_text=nullable_pose))
+    assert "optionality" in message, message
+    nullable_text = replace_line(PACK.read_text(), "export class TextProps",
+        'export class TextProps { text: string | null; style: string = ""; }')
+    message = expect_rejected("PACK_CONFORMANCE", "Text.text", *prepared(pack_text=nullable_text))
+    assert "optionality" in message, message
+    nullable_defaulted = replace_line(PACK.read_text(), "export class TransformProps",
+        'export class TransformProps { pose: number[]; durationMs: number; size: number | null = 0; style: string = ""; }')
+    message = expect_rejected("PACK_CONFORMANCE", "Transform.size", *prepared(pack_text=nullable_defaulted))
+    assert "optionality" in message, message
+    nullable_payload = PACK.read_text().replace("event onChange(payload: boolean); ",
+                                                "event onChange(payload: boolean | null); ", 1)
+    message = expect_rejected("PACK_CONFORMANCE", "Toggle.onChange", *prepared(pack_text=nullable_payload))
+    assert "event-payload" in message, message
+
+    # The positive half of the same rule: `| null` on an optional prop is accepted and projects
+    # as optional in the declaration data and in the generated Kotlin table.
+    nullable_optional = replace_line(PACK.read_text(), "export class ButtonProps",
+        'export class ButtonProps { text: string; onClick: Action | null; value: number = 0; enabled: boolean = true; style: string = ""; accessibilityLabel?: string; }')
+    pack, theme_path, constraint_path, inventory_path = prepared(pack_text=nullable_optional)
+    nullable_out = pathlib.Path(tempfile.mkdtemp(prefix="vocabulary-nullable-"))
+    accepted = validate(pack, theme_path, constraint_path, inventory_path, nullable_out, nullable_out)
+    assert accepted.returncode == 0, f"a nullable optional prop must be accepted: {accepted.stdout}{accepted.stderr}"
+    projected = json.loads((nullable_out / "prop-declarations.json").read_text())
+    button = next(entry for entry in projected["components"] if entry["component"] == "Button")
+    onClick = next(prop for prop in button["props"] if prop["name"] == "onClick")
+    assert onClick.get("optional") is True and "required" not in onClick, onClick
+    generated = (nullable_out / "PackProjections.kt").read_text()
+    assert 'Row("Button", "onClick", "action", false, true, null),' in generated, generated
     theme = json.loads(THEME.read_text()); theme["version"] = 1
     message = expect_rejected("PACK_CONFORMANCE", "version", *prepared(theme=theme))
     assert "2" in message and "1" in message
