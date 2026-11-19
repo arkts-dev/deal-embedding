@@ -1,25 +1,18 @@
 package dev.deal.embedding
 
-import org.json.JSONObject
-
-/** Copy-only presentation transform. Excludes inputs, payloads, keys and executable props. */
-fun displayText(tree:JSONObject,transform:(String)->String):JSONObject {
-    val copy=JSONObject(tree.toString())
-    fun visit(node:JSONObject){
-        val names=when(node.getString("component").substringAfterLast('.')){
-            "Text","Hero","Heading","Caption"->setOf("value")
-            "Money"->setOf("label")
-            "Metric"->setOf("label","value","unit")
-            "Comparison"->setOf("status")
-            "Option","Item"->setOf("title","detail","meta","trailing")
-            "Section"->setOf("title","summary")
-            "Notice","Failure","Toggle","Button","PrimaryAction","SecondaryAction"->setOf("text")
-            "Progress"->setOf("label")
-            else->emptySet()
-        }
-        val props=node.getJSONArray("props")
-        for(i in 0 until props.length()){val prop=props.getJSONObject(i);if(prop.optString("name") in names&&prop.has("stringValue"))prop.put("stringValue",transform(prop.getString("stringValue")))}
-        val children=node.getJSONArray("children");for(i in 0 until children.length())visit(children.getJSONObject(i))
-    }
-    visit(copy);return copy
+/** Copy-only presentation transform over the shipped display vocabulary.
+ *
+ * Only the displayable string props of spec components are rewritten; numbers, payloads, action
+ * slots, keys, inputs and every component outside the table are copied unchanged. Nodes are
+ * immutable values, so the caller's tree is never mutated.
+ */
+internal fun displayText(tree: UiNode, transform: (String) -> String): UiNode {
+    val displayable = DisplayVocabulary.table[tree.component] ?: emptySet()
+    return tree.copy(
+        props = tree.props.map { prop ->
+            val value = prop.value
+            if (prop.name in displayable && value is UiValue.Text) UiProp(prop.name, UiValue.Text(transform(value.value))) else prop
+        },
+        children = tree.children.map { displayText(it, transform) },
+    )
 }

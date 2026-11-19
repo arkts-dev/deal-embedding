@@ -9,7 +9,7 @@ public final class FragmentQualifierTest {
         var types=Map.of("value","number","rows","Row[]");
         String declarations="export class Row { value: number; } export class Apply { value: number; }";
         String helpers="export function helper(value: number): number { return value; } export function apply(state: AppState, action: Apply): AppState { let rows: Row[] = []; for (let row of state.rows) { rows[rows.length] = {value: row.value + action.value}; } let copy: AppState = {value: state.value + helper(action.value), rows: rows}; return copy; }";
-        String view="import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Text(value: \"helper value 😀\") ForEach(state.rows, row: app.Row, key: row.value) { ui.Button(text: \"Tap\", onClick: action app.Apply {value: row.value}) } } }";
+        String view="import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Text(text: \"helper value 😀\") ForEach(state.rows, row: app.Row, key: row.value) { ui.Button(text: \"Tap\", value: row.value, onClick: action app.Apply {value: payload}) } } }";
         var result=FragmentQualifier.qualify(declarations,helpers,view,names,fields,types);
         String code=(String)result.get("helpers"),ui=(String)result.get("view");
         for(String expected:List.of("state.f_a_rows","state.f_a_value","action.value","row.value","value: (row.value","f_a_value: (state.f_a_value","f_a_helper(action.value)","function f_a_helper(value: number)"))if(!code.contains(expected))throw new AssertionError("Lost contextual identity: "+expected+"\n"+code);

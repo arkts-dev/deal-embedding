@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "constraints": [
+    {"prop": "AdaptiveColumns.minimumWidth", "class": "positive"},
+    {"prop": "Grid.columns", "class": "integral-index"},
+    {"prop": "KeyValueGroup.columns", "class": "integral-index"},
+    {"prop": "Layers.height", "class": "nonnegative"},
+    {"prop": "Layers.width", "class": "nonnegative"},
+    {"prop": "MetricGroup.columns", "class": "integral-index"},
+    {"prop": "NumberField.step", "class": "integral-index"},
+    {"prop": "Path.spinPeriodMs", "class": "nonnegative"},
+    {"prop": "Progress.maximum", "class": "positive"},
+    {"prop": "Progress.value", "class": "display-clamp"},
+    {"prop": "ProgressRing.maximum", "class": "positive"},
+    {"prop": "ProgressRing.value", "class": "display-clamp"},
+    {"prop": "Select.selected", "class": "integral-index"},
+    {"prop": "Skeleton.height", "class": "nonnegative"},
+    {"prop": "Skeleton.width", "class": "nonnegative"},
+    {"prop": "Sparkline.maximum", "class": "chart"},
+    {"prop": "Stage.height", "class": "nonnegative"},
+    {"prop": "Stage.perspective", "class": "positive"},
+    {"prop": "Surface.height", "class": "nonnegative"},
+    {"prop": "Surface.width", "class": "nonnegative"},
+    {"prop": "Table.columns", "class": "integral-index"},
+    {"prop": "Tabs.selected", "class": "integral-index"},
+    {"prop": "Ticker.intervalMs", "class": "positive"},
+    {"prop": "Timer.millis", "class": "nonnegative"},
+    {"prop": "Transform.durationMs", "class": "nonnegative"},
+    {"prop": "Transform.pose", "class": "pose"},
+    {"prop": "Transform.size", "class": "nonnegative"}
+  ]
+}

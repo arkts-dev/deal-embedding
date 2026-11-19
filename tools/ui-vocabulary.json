@@ -1,0 +1,2108 @@
+{
+  "cardProfile": {
+    "components": [
+      "AppTheme",
+      "Column",
+      "Row",
+      "Layers",
+      "Motion",
+      "Text",
+      "NumberText",
+      "Spacer",
+      "Divider",
+      "Path",
+      "Button",
+      "Icon",
+      "IconButton",
+      "Badge",
+      "Toggle",
+      "Checkbox",
+      "Progress",
+      "ProgressRing",
+      "Stat",
+      "NumberStat",
+      "MetricGroup",
+      "Sparkline",
+      "Surface",
+      "Timer"
+    ],
+    "events": [
+      "Button.onClick",
+      "Checkbox.onChange",
+      "IconButton.onClick",
+      "Path.onTap",
+      "Surface.onPointer",
+      "Toggle.onChange"
+    ],
+    "limits": {
+      "motions": 5,
+      "nativeTimers": 3,
+      "pictures": 5,
+      "shapesPerPicture": 60
+    }
+  },
+  "components": {
+    "ActionBar": {
+      "children": {
+        "required": true,
+        "types": [
+          "Button",
+          "IconButton",
+          "Badge"
+        ]
+      },
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "AdaptiveColumns": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "default": 240,
+          "name": "minimumWidth",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "AppTheme": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "primary",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "BackHandler": {
+      "events": {
+        "onBack": null
+      },
+      "props": [
+        {
+          "name": "onBack",
+          "required": true,
+          "type": "Action"
+        }
+      ]
+    },
+    "Badge": {
+      "events": {},
+      "props": [
+        {
+          "name": "text",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "icon",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Button": {
+      "accessibility": true,
+      "events": {
+        "onClick": "number"
+      },
+      "props": [
+        {
+          "name": "text",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "onClick",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": 0,
+          "name": "value",
+          "type": "number"
+        },
+        {
+          "default": true,
+          "name": "enabled",
+          "type": "boolean"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Canvas": {
+      "children": {
+        "required": true,
+        "types": [
+          "Path"
+        ]
+      },
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Card": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Cell": {
+      "accessibility": true,
+      "events": {
+        "onClick": "number"
+      },
+      "props": [
+        {
+          "name": "text",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "onClick",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": 0,
+          "name": "value",
+          "type": "number"
+        },
+        {
+          "default": true,
+          "name": "enabled",
+          "type": "boolean"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Checkbox": {
+      "accessibility": true,
+      "events": {
+        "onChange": "boolean"
+      },
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "checked",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "onChange",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "ClockText": {
+      "events": {},
+      "props": [
+        {
+          "name": "minutes",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "prefix",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "suffix",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Column": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "DateField": {
+      "accessibility": true,
+      "events": {
+        "onChange": "number"
+      },
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "onChange",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Divider": {
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "EmptyState": {
+      "accessibility": true,
+      "events": {
+        "onAction": null
+      },
+      "props": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "message",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "actionText",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "icon",
+          "type": "string"
+        },
+        {
+          "name": "onAction",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Grid": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "default": 1,
+          "name": "columns",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Header": {
+      "events": {},
+      "props": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "eyebrow",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "supporting",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "icon",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Hero": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "eyebrow",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "supporting",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Icon": {
+      "events": {},
+      "props": [
+        {
+          "name": "name",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "IconButton": {
+      "accessibility": true,
+      "events": {
+        "onClick": "number"
+      },
+      "props": [
+        {
+          "name": "icon",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "onClick",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": 0,
+          "name": "value",
+          "type": "number"
+        },
+        {
+          "default": true,
+          "name": "enabled",
+          "type": "boolean"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Image": {
+      "events": {},
+      "props": [
+        {
+          "name": "src",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "alt",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "InsetBanner": {
+      "accessibility": true,
+      "events": {
+        "onAction": null
+      },
+      "props": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "message",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "actionText",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "icon",
+          "type": "string"
+        },
+        {
+          "name": "onAction",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "KeyValueGroup": {
+      "children": {
+        "required": true,
+        "types": [
+          "KeyValueItem"
+        ]
+      },
+      "events": {},
+      "props": [
+        {
+          "default": 1,
+          "name": "columns",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "KeyValueItem": {
+      "events": {},
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "supporting",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Layers": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "name": "width",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "height",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "ListGroup": {
+      "children": {
+        "required": true,
+        "types": [
+          "ListItem",
+          "NumberListItem",
+          "SectionHeader",
+          "ActionBar"
+        ]
+      },
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "title",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "ListItem": {
+      "accessibility": true,
+      "events": {
+        "onTap": "number"
+      },
+      "props": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "subtitle",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "trailing",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "icon",
+          "type": "string"
+        },
+        {
+          "name": "onTap",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": 0,
+          "name": "eventValue",
+          "type": "number"
+        },
+        {
+          "default": true,
+          "name": "enabled",
+          "type": "boolean"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "MetricGroup": {
+      "children": {
+        "required": true,
+        "types": [
+          "Stat",
+          "NumberStat"
+        ]
+      },
+      "events": {},
+      "props": [
+        {
+          "default": 1,
+          "name": "columns",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Motion": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "name": "trigger",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": "pop",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": "pop"
+    },
+    "NumberField": {
+      "accessibility": true,
+      "events": {
+        "onChange": "number"
+      },
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "minimum",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "maximum",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "onChange",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": 1,
+          "name": "step",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "NumberListItem": {
+      "accessibility": true,
+      "events": {
+        "onTap": "number"
+      },
+      "props": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "subtitle",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "icon",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "prefix",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "suffix",
+          "type": "string"
+        },
+        {
+          "default": 1,
+          "name": "minimumDigits",
+          "type": "number"
+        },
+        {
+          "default": -1,
+          "name": "decimals",
+          "type": "number"
+        },
+        {
+          "name": "onTap",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": 0,
+          "name": "eventValue",
+          "type": "number"
+        },
+        {
+          "default": true,
+          "name": "enabled",
+          "type": "boolean"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "NumberStat": {
+      "events": {},
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "supporting",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "icon",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "prefix",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "suffix",
+          "type": "string"
+        },
+        {
+          "default": 1,
+          "name": "minimumDigits",
+          "type": "number"
+        },
+        {
+          "default": -1,
+          "name": "decimals",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "NumberText": {
+      "events": {},
+      "props": [
+        {
+          "name": "value",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "prefix",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "suffix",
+          "type": "string"
+        },
+        {
+          "default": 1,
+          "name": "minimumDigits",
+          "type": "number"
+        },
+        {
+          "default": -1,
+          "name": "decimals",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Path": {
+      "accessibility": true,
+      "events": {
+        "onTap": "number"
+      },
+      "props": [
+        {
+          "name": "commands",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": 0,
+          "name": "spinPeriodMs",
+          "type": "number"
+        },
+        {
+          "name": "onTap",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": 0,
+          "name": "value",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Progress": {
+      "events": {},
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "maximum",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "ProgressRing": {
+      "events": {},
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "maximum",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "text",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Row": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Scroll": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Section": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "subtitle",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "SectionHeader": {
+      "events": {},
+      "props": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "subtitle",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "count",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Select": {
+      "accessibility": true,
+      "events": {
+        "onChange": "number"
+      },
+      "props": [
+        {
+          "name": "labels",
+          "required": true,
+          "type": "string[]"
+        },
+        {
+          "name": "selected",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "onChange",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Skeleton": {
+      "events": {},
+      "props": [
+        {
+          "name": "width",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "height",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": false,
+          "name": "rounded",
+          "type": "boolean"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Slider": {
+      "accessibility": true,
+      "events": {
+        "onChange": "number"
+      },
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "minimum",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "maximum",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "onChange",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Snackbar": {
+      "accessibility": true,
+      "events": {
+        "onAction": null
+      },
+      "props": [
+        {
+          "name": "message",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "actionText",
+          "type": "string"
+        },
+        {
+          "name": "onAction",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Spacer": {
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Sparkline": {
+      "events": {},
+      "props": [
+        {
+          "name": "series",
+          "required": true,
+          "type": "number[]"
+        },
+        {
+          "name": "maximum",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "label",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "seriesLabel",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "series2Label",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "series2Style",
+          "type": "string"
+        },
+        {
+          "default": false,
+          "name": "bars",
+          "type": "boolean"
+        },
+        {
+          "default": [],
+          "name": "series2",
+          "type": "number[]"
+        },
+        {
+          "default": [],
+          "name": "categories",
+          "type": "string[]"
+        },
+        {
+          "default": 0,
+          "name": "minimum",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Spinner": {
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "label",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Stage": {
+      "children": {
+        "required": true,
+        "types": [
+          "Transform"
+        ]
+      },
+      "events": {},
+      "props": [
+        {
+          "default": 900,
+          "name": "perspective",
+          "type": "number"
+        },
+        {
+          "default": 0,
+          "name": "height",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Stat": {
+      "events": {},
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "supporting",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "icon",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Surface": {
+      "accessibility": true,
+      "events": {
+        "onFrame": "number",
+        "onPointer": "graphics.Pointer"
+      },
+      "props": [
+        {
+          "name": "width",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "height",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "shapes",
+          "required": true,
+          "type": "graphics.Shape[]"
+        },
+        {
+          "name": "onFrame",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "name": "onPointer",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Table": {
+      "children": {
+        "required": true,
+        "types": [
+          "TableRow"
+        ]
+      },
+      "events": {},
+      "props": [
+        {
+          "default": [],
+          "name": "headers",
+          "type": "string[]"
+        },
+        {
+          "name": "columns",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "TableRow": {
+      "events": {},
+      "props": [
+        {
+          "name": "cells",
+          "required": true,
+          "type": "string[]"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Tabs": {
+      "accessibility": true,
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {
+        "onChange": "number"
+      },
+      "props": [
+        {
+          "name": "labels",
+          "required": true,
+          "type": "string[]"
+        },
+        {
+          "name": "selected",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "onChange",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Text": {
+      "events": {},
+      "props": [
+        {
+          "name": "text",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "TextField": {
+      "accessibility": true,
+      "events": {
+        "onChange": "string"
+      },
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "onChange",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "keyboardType",
+          "type": "string"
+        },
+        {
+          "default": false,
+          "name": "required",
+          "type": "boolean"
+        },
+        {
+          "default": false,
+          "name": "email",
+          "type": "boolean"
+        },
+        {
+          "default": 0,
+          "name": "minLength",
+          "type": "number"
+        },
+        {
+          "default": 0,
+          "name": "maxLength",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "pattern",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "requiredMessage",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "emailMessage",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "minLengthMessage",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "maxLengthMessage",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "patternMessage",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Ticker": {
+      "events": {
+        "onTick": "number"
+      },
+      "props": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "intervalMs",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "running",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "onTick",
+          "required": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Tile": {
+      "events": {},
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "supporting",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "icon",
+          "type": "string"
+        },
+        {
+          "default": 1,
+          "name": "span",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "TileGrid": {
+      "children": {
+        "required": true,
+        "types": [
+          "Tile"
+        ]
+      },
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "TimeField": {
+      "accessibility": true,
+      "events": {
+        "onChange": "number"
+      },
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "onChange",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Timeline": {
+      "children": {
+        "required": true,
+        "types": [
+          "TimelineItem",
+          "ActionBar"
+        ]
+      },
+      "events": {},
+      "props": [
+        {
+          "default": "",
+          "name": "title",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "TimelineItem": {
+      "accessibility": true,
+      "events": {
+        "onTap": "number"
+      },
+      "props": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "subtitle",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "trailing",
+          "type": "string"
+        },
+        {
+          "default": "",
+          "name": "icon",
+          "type": "string"
+        },
+        {
+          "name": "onTap",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": 0,
+          "name": "eventValue",
+          "type": "number"
+        },
+        {
+          "default": true,
+          "name": "enabled",
+          "type": "boolean"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Timer": {
+      "events": {},
+      "props": [
+        {
+          "name": "millis",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "down",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Toggle": {
+      "accessibility": true,
+      "events": {
+        "onChange": "boolean"
+      },
+      "props": [
+        {
+          "name": "label",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "checked",
+          "required": true,
+          "type": "boolean"
+        },
+        {
+          "name": "onChange",
+          "optional": true,
+          "type": "Action"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        },
+        {
+          "name": "accessibilityLabel",
+          "optional": true,
+          "type": "string"
+        }
+      ],
+      "style": ""
+    },
+    "Transform": {
+      "children": {
+        "required": false,
+        "types": []
+      },
+      "events": {},
+      "props": [
+        {
+          "name": "pose",
+          "required": true,
+          "type": "number[]"
+        },
+        {
+          "name": "durationMs",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "default": 0,
+          "name": "size",
+          "type": "number"
+        },
+        {
+          "default": "",
+          "name": "style",
+          "type": "string"
+        }
+      ],
+      "style": ""
+    }
+  },
+  "constraints": [
+    {
+      "class": "positive",
+      "prop": "AdaptiveColumns.minimumWidth"
+    },
+    {
+      "class": "integral-index",
+      "prop": "Grid.columns"
+    },
+    {
+      "class": "integral-index",
+      "prop": "KeyValueGroup.columns"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Layers.height"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Layers.width"
+    },
+    {
+      "class": "integral-index",
+      "prop": "MetricGroup.columns"
+    },
+    {
+      "class": "integral-index",
+      "prop": "NumberField.step"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Path.spinPeriodMs"
+    },
+    {
+      "class": "positive",
+      "prop": "Progress.maximum"
+    },
+    {
+      "class": "display-clamp",
+      "prop": "Progress.value"
+    },
+    {
+      "class": "positive",
+      "prop": "ProgressRing.maximum"
+    },
+    {
+      "class": "display-clamp",
+      "prop": "ProgressRing.value"
+    },
+    {
+      "class": "integral-index",
+      "prop": "Select.selected"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Skeleton.height"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Skeleton.width"
+    },
+    {
+      "class": "chart",
+      "prop": "Sparkline.maximum"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Stage.height"
+    },
+    {
+      "class": "positive",
+      "prop": "Stage.perspective"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Surface.height"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Surface.width"
+    },
+    {
+      "class": "integral-index",
+      "prop": "Table.columns"
+    },
+    {
+      "class": "integral-index",
+      "prop": "Tabs.selected"
+    },
+    {
+      "class": "positive",
+      "prop": "Ticker.intervalMs"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Timer.millis"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Transform.durationMs"
+    },
+    {
+      "class": "pose",
+      "prop": "Transform.pose"
+    },
+    {
+      "class": "nonnegative",
+      "prop": "Transform.size"
+    }
+  ],
+  "version": 2
+}

@@ -12,10 +12,33 @@ const state=()=>vm.runInContext("createDealUiCheckpoint(rt,checkpointSchema,entr
 assert.equal(state().f_calculation_triple,18);assert.equal(state().f_calculation_double,6);assert.equal(state().f_calculation_double_ready,true);
 const tree=JSON.parse(vm.runInContext('session.snapshot()',context)).tree;
 function slot(node){for(const prop of node.props)if(prop.kind==='action')return prop.actionSlot;for(const child of node.children){const found=slot(child);if(found!==undefined)return found;}}
+function actionSlot(node,names){for(const prop of node.props)if(prop.kind==='action'&&names.includes(prop.name))return prop.actionSlot;for(const child of node.children){const found=actionSlot(child,names);if(found!==undefined)return found;}}
+function componentSlot(tree,component,names){function visit(node){if(node.component.split('.').pop()===component){const found=actionSlot(node,names);if(found!==undefined)return found;}for(const child of node.children){const found=visit(child);if(found!==undefined)return found;}}return visit(tree);}
 const action=slot(tree);assert(Number.isInteger(action));context.action=action;
+const toggleSlot=componentSlot(tree,'Toggle',['onChange']);assert(Number.isInteger(toggleSlot),'the compiled view binds one Toggle change');context.toggleSlot=toggleSlot;
+// The compiled view binds the numeric text through its guarded branch.
+function numberTextValue(node){if(node.component.split('.').pop()==='NumberText'){const prop=node.props.find(item=>item.name==='value');if(prop!==undefined)return prop.numberValue;}for(const child of node.children){const found=numberTextValue(child);if(found!==undefined)return found;}return undefined;}
+assert.strictEqual(numberTextValue(tree),6,'the compiled NumberText shows the derived double');
+// The compiled Button carries its declared number `value` as the payload of its click.
+function buttonSlot(node){
+  if(node.component.split('.').pop()==='Button'){const props=Object.fromEntries(node.props.map(item=>[item.name,item]));
+    if(props.text!==undefined&&props.text.stringValue==='Load'){const action=props.onClick;return {slot:action.actionSlot,value:props.value.numberValue};}}
+  for(const child of node.children){const found=buttonSlot(child);if(found!==undefined)return found;}return undefined;}
+const load=buttonSlot(tree);assert(load!==undefined&&Number.isInteger(load.slot),'the compiled view binds a value-carrying Button');
+assert.strictEqual(load.value,3,'the Button binds the current number value');
+// The renderer reconstructs Button.onClick(number) from the bound value; the session delivers it.
+vm.runInContext(`session.dispatch(${load.slot},'${load.value}')`,context);
+assert.strictEqual(state().f_calculation_sequence,load.value,'the Button click delivers its declared number value unchanged');
+// The migrated toggle binding delivers the declared boolean, never a string spelling of it.
+vm.runInContext("session.dispatch(toggleSlot,'true')",context);assert.strictEqual(state().f_calculation_flag,true);assert.strictEqual(typeof state().f_calculation_flag,'boolean');
+vm.runInContext("session.dispatch(toggleSlot,'false')",context);assert.strictEqual(state().f_calculation_flag,false);
+assert.throws(()=>vm.runInContext("session.dispatch(toggleSlot,'maybe')",context),'a string spelling of a boolean dispatches nothing');
+assert.strictEqual(state().f_calculation_flag,false);
 vm.runInContext("session.dispatch(action,'9')",context);assert.equal(state().f_calculation_value,9);assert.equal(state().f_calculation_double,18);
+assert.strictEqual(numberTextValue(JSON.parse(vm.runInContext('session.snapshot()',context)).tree),18,'the compiled NumberText follows the dispatched value');
 vm.runInContext("session.dispatch(action,'-2')",context);assert.equal(state().f_calculation_value,-2);assert.equal(state().f_calculation_double,null);assert.equal(state().f_calculation_double_ready,false);assert.equal(state().f_calculation_double_reason,'Value must be nonnegative');assert.equal(state().f_calculation_triple,null);assert.equal(state().f_calculation_triple_ready,false);
+assert.strictEqual(numberTextValue(JSON.parse(vm.runInContext('session.snapshot()',context)).tree),undefined,'the guarded NumberText renders nothing while its value is unavailable');
 assert.equal(JSON.parse(vm.runInContext('session.snapshot()',context)).fault,'');
 // Checkpoint round-trip uses actual compiled nominal and array identities.
 vm.runInContext(`const checkpoint=JSON.parse(session.checkpoint());const restored=createDealUiSession(entry,rt,checkpoint,()=>{throw Error('No effect expected');},checkpointSchema);if(JSON.stringify(JSON.parse(restored.snapshot()).tree)!==JSON.stringify(JSON.parse(session.snapshot()).tree))throw Error('Restored display changed');restored.dispose();`,context);
-console.log('composed runtime: production compiler + FIFO store, owner updates, derived readiness and unavailable result passed');
+console.log('composed runtime: production compiler + FIFO store, owner updates, derived readiness, the boolean Toggle change and unavailable result passed');

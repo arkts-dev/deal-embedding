@@ -5,7 +5,7 @@ import pathlib
 import sys
 
 theme = json.loads(pathlib.Path(sys.argv[1]).read_text())
-assert theme['version'] == 1
+assert theme['version'] == 2
 geometry = theme['geometry']
 assert all(k.isidentifier() and type(v) is int and 0 < v <= 1024 for k, v in geometry.items())
 types = {'headlineMedium', 'titleMedium', 'headlineSmall', 'labelLarge', 'bodyLarge', 'bodySmall'}

@@ -70,5 +70,7 @@ internal class SuggestionSurface(context: Context, title: String, private val op
         }
         onDispose { synchronized(lock) { closed=true; owner?.let { worker.execute { it.close() } } }; worker.shutdown() }
     }
-    surface?.let { owner -> owner.tree?.let { DealRenderer(it,owner::dispatch) } }
+    // The fixed trusted suggestion view is not a candidate and carries no issued target; it is
+    // framework UI authored for the host default surface target, so no card profile applies.
+    surface?.let { owner -> owner.tree?.let { DealRenderer(it,"screen",owner::dispatch) } }
 }

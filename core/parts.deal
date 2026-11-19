@@ -108,8 +108,8 @@ export function buildWithProviders(plan: plans.Plan, definitions: Definitions, c
     helpers = helpers+"export function change_"+input.id+"(state: AppState, action: Change_"+input.id+"): AppState { return {"+changes+"}; }";
     let inputLabel: string = input.label; if (input.unit !== "") { inputLabel = inputLabel+" ("+input.unit+")"; }
     if (valueType === "string") { view = view+"ui.TextField(label: "+literals.quote(input.label)+", value: state."+input.id+", onChange: action app.Change_"+input.id+" {value: payload})"; }
-    else if (valueType === "boolean") { view = view+"ui.Toggle(text: "+literals.quote(input.label)+", checked: state."+input.id+", onChange: action app.Change_"+input.id+" {value: payload === \"true\"})"; }
-    else { view = view+"ui.TextField(label: "+literals.quote(inputLabel)+", value: state."+fieldName+", error: state."+input.id+"_reason, onChange: action app.Change_"+input.id+" {value: payload})"; }
+    else if (valueType === "boolean") { view = view+"ui.Toggle(label: "+literals.quote(input.label)+", checked: state."+input.id+", onChange: action app.Change_"+input.id+" {value: payload})"; }
+    else { view = view+"ui.TextField(label: "+literals.quote(inputLabel)+", value: state."+fieldName+", onChange: action app.Change_"+input.id+" {value: payload}) When(state."+input.id+"_reason !== \"\") {ui.Text(text: state."+input.id+"_reason, style: \"danger\")}"; }
   }
   if (reads !== null) {
     let built: scalar.Built = reads as scalar.Built;
@@ -140,7 +140,7 @@ export function buildWithProviders(plan: plans.Plan, definitions: Definitions, c
     if (figure.format === "time_of_day") { formatted = "timeText(state."+figure.need+" as number)"; }
     helpers = helpers+"export function text_"+figure.need+"(state: AppState): string { return "+literals.quote(figure.label+": ")+"+"+formatted+"+"+literals.quote(" "+figure.unit)+"; }";
     computations[computations.length] = {instance:"parts",field:figure.need+"_text",value:"text_"+figure.need+"(state)",ready:"true",reason:"\"Result unavailable\"",dependencies:["f_parts_"+figure.need]};
-    if (figure.shown) { view = view+"When(state."+figure.need+"_text_ready) {ui.Text(value: state."+figure.need+"_text_display)} When(!state."+figure.need+"_text_ready) {ui.Notice(text: state."+figure.need+"_text_reason)}"; } covers[covers.length] = figure.need;
+    if (figure.shown) { view = view+"When(state."+figure.need+"_text_ready) {ui.Text(text: state."+figure.need+"_text_display)} When(!state."+figure.need+"_text_ready) {ui.Text(text: state."+figure.need+"_text_reason, style: \"muted\")}"; } covers[covers.length] = figure.need;
   } }
 
   helpers = helpers+"export function numberText(value: number): string { return String(value); } export function twoDigits(value:number):string {if(value<10){return \"0\"+numberText(value);}return numberText(value);} export function timeText(value:number):string {let hours:number=Math.floor(value/60);return twoDigits(hours)+\":\"+twoDigits(value-hours*60);}";

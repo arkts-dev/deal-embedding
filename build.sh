@@ -18,6 +18,11 @@ for source in UiModel UiParser UiDiagnostic UiChecker UiBorrowedValueChecker UiD
     printf '%s/src/main/java/deal/ui/%s.java\n' "$DEAL_UI_ROOT" "$source" >> "$OUTPUT_DIR/sources.txt"
 done
 mkdir -p "$OUTPUT_DIR/generated"
+mkdir -p "$OUTPUT_DIR/aar/assets/embedding"
+# Validate the vocabulary before any projection, guidance, theme projection or packaging exists.
+python3 "$ROOT/tools/pack-conformance.py" --pack "$ROOT/ui/platform.dealui-pack" --theme "$ROOT/ui/theme.json" \
+    --constraints "$ROOT/ui/prop-constraints.json" --inventory "$ROOT/tools/ui-vocabulary.json" \
+    --assets "$OUTPUT_DIR/aar/assets/embedding" --kotlin "$OUTPUT_DIR/generated"
 : "${AIDL:?Set AIDL to the Android aidl executable}"
 while read -r source; do
     "$AIDL" -I"$ROOT/android/aidl" -o"$OUTPUT_DIR/generated" "$source"
@@ -31,9 +36,12 @@ for mechanism in FragmentSyntax FragmentRegions FragmentQualifier FragmentAnalys
     { printf 'package dev.deal.embedding;\n'; head -n -0 "$ROOT/tools/$mechanism.java"; } > "$OUTPUT_DIR/syntax-source/$mechanism.java"
 done
 javac --release 21 -proc:none -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$OUTPUT_DIR/syntax-source/"*.java
+javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/classes" "$ROOT/tools/PayloadConsumption.java"
 python3 "$ROOT/tools/theme-build.py" "$ROOT/ui/theme.json" "$OUTPUT_DIR/generated/PackTheme.kt"
-"$KOTLIN_HOME/bin/kotlinc" "$OUTPUT_DIR/generated/PackTheme.kt" "$OUTPUT_DIR/generated/CapabilityApi.kt" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect \
+"$KOTLIN_HOME/bin/kotlinc" "$OUTPUT_DIR/generated/PackTheme.kt" "$OUTPUT_DIR/generated/PackProjections.kt" "$OUTPUT_DIR/generated/CapabilityApi.kt" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect \
     -classpath "$ANDROID_JAR:$OUTPUT_DIR/classes:$RUNTIME_CP" -d "$OUTPUT_DIR/classes" $(find "$ROOT/android/src" -name '*.kt' | sort)
+# Renderer conformance runs after the classes exist and before anything is packaged.
+java -cp "$OUTPUT_DIR/classes:$KOTLIN_HOME/lib/kotlin-stdlib.jar" dev.deal.embedding.RendererConformance "$ROOT/ui/platform.dealui-pack"
 mkdir -p "$OUTPUT_DIR/generation/src" "$OUTPUT_DIR/guidance-tools"
 javac --release 21 -cp "$OUTPUT_DIR/classes" -d "$OUTPUT_DIR/guidance-tools" "$ROOT/tools/GenerationGuidance.java"
 cp -r "$ROOT/core/." "$OUTPUT_DIR/generation/src/"

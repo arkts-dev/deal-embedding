@@ -1,93 +1,91 @@
 package dev.deal.embedding
 
-import androidx.compose.animation.animateContentSize
-import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.animation.core.Animatable
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.constrainHeight
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import org.json.JSONArray
 import org.json.JSONObject
 
-/** One entry per implemented component. Compilation verifies agreement with the pack. */
-internal enum class RenderComponent(val component: String, val capability: String) {
-    Graphics("Surface", "renderer.graphics.surface"),
-    Column("Column", "renderer.compose.column"), Card("Card", "renderer.compose.card"),
-    Text("Text", "renderer.compose.text"), Hero("Hero", "renderer.compose.hero"),
-    Button("Button", "renderer.compose.button"), Toggle("Toggle", "renderer.compose.toggle"),
-    IntText("IntText", "renderer.compose.integer"), Time("Time", "renderer.compose.time"),
-    Spinner("Spinner", "renderer.compose.spinner"),
-    Section("Section", "renderer.compose.section"), Option("Option", "renderer.compose.option"),
-    IntField("IntField", "renderer.compose.intfield"), TextField("TextField", "renderer.compose.textfield"),
-    SearchField("SearchField", "renderer.compose.searchfield"), TimeField("TimeField", "renderer.input.time"),
-    SessionClock("SessionClock", "runtime.clock.session"),
-    Choice("Choice", "renderer.compose.choice"), Filters("Filters", "renderer.compose.filters"),
-    Notice("Notice", "renderer.compose.notice"), Progress("Progress", "renderer.compose.progress"),
-    Failure("Failure", "renderer.compose.failure"), Item("Item", "renderer.compose.item"),
-    KeyedList("KeyedList", "renderer.compose.keyedlist"),
-    Row("Row", "renderer.layout.row"), Heading("Heading", "renderer.text.heading"),
-    Caption("Caption", "renderer.text.caption"), PrimaryAction("PrimaryAction", "renderer.action.primary"),
-    SecondaryAction("SecondaryAction", "renderer.action.secondary"),
-    Money("Money", "renderer.value.money"), Metric("Metric", "renderer.value.metric"),
-    Comparison("Comparison", "renderer.value.comparison"),
-    Screen("Screen", "renderer.layout.screen"), InputGroup("InputGroup", "renderer.layout.inputs"),
-    MetricGroup("MetricGroup", "renderer.layout.metrics"), ActionGroup("ActionGroup", "renderer.layout.actions"),
-    ContentGroup("ContentGroup", "renderer.layout.content");
-
-    companion object {
-        fun verify(pack: deal.ui.UiModel.PackModule) {
-            val declared = pack.components().mapValues { (_, c) -> c.contracts().filterIsInstance<deal.ui.UiModel.Capability>().map { it.name() }.single() }
-            check(declared == entries.associate { it.component to it.capability }) { "Renderer and component pack disagree" }
-        }
-    }
+/** Resolved prop values; painters never read the pack or coerce a value. */
+private class Values(private val map: Map<String, UiValue>) {
+    fun text(name: String): String = (map[name] as? UiValue.Text)?.value ?: ""
+    fun number(name: String, fallback: Double = 0.0): Double = (map[name] as? UiValue.Num)?.value ?: fallback
+    fun flag(name: String, fallback: Boolean = false): Boolean = (map[name] as? UiValue.Flag)?.value ?: fallback
+    fun slot(name: String): Int? = (map[name] as? UiValue.Slot)?.value
+    fun json(name: String): JsonValue? = (map[name] as? UiValue.Json)?.value
+    fun numbers(name: String): List<Double> = ((json(name) as? JsonValue.Arr)?.items ?: emptyList())
+        .mapNotNull { (it as? JsonValue.Num)?.value }
+    fun strings(name: String): List<String> = ((json(name) as? JsonValue.Arr)?.items ?: emptyList())
+        .mapNotNull { (it as? JsonValue.Str)?.value }
+    val all: Map<String, UiValue> get() = map
 }
 
-private val LocalComparisonValue = compositionLocalOf { false }
 private val LocalFramed = compositionLocalOf { false }
+private val LocalCardTarget = compositionLocalOf { false }
 
-@Composable private fun LabeledValue(label: String, value: String) {
-    val comparison = LocalComparisonValue.current
-    val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
-    BoxWithConstraints(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
-        // Comparison rows share a label/value grid. At large text sizes stack
-        // within each cell rather than squeezing either explicit label or value.
-        if (comparison && maxWidth / fontScale >= 300.dp) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(value, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                    style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-            }
-        }
+@Composable private fun PackIcon(name: String, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current) {
+    if (name == "minus") { Text("\u2212", modifier = modifier, color = tint); return }
+    val vector: ImageVector = when (name) {
+        "check" -> Icons.Filled.Check
+        "close" -> Icons.Filled.Close
+        "plus" -> Icons.Filled.Add
+        "chevron-right" -> Icons.Filled.KeyboardArrowRight
+        "navigate" -> Icons.Filled.ArrowForward
+        "pin" -> Icons.Filled.Place
+        "calendar" -> Icons.Filled.DateRange
+        "clock" -> Icons.Filled.KeyboardArrowRight
+        "star" -> Icons.Filled.Star
+        "user" -> Icons.Filled.Person
+        "warning" -> Icons.Filled.Warning
+        "info" -> Icons.Filled.Info
+        "trash" -> Icons.Filled.Delete
+        "list" -> Icons.Filled.List
+        else -> Icons.Filled.Star
+    }
+    Icon(vector, contentDescription = null, modifier = modifier, tint = tint)
+}
+
+@Composable private fun LabeledValue(label: String, value: String, supporting: String = "") {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        if (supporting.isNotEmpty()) Text(supporting, style = MaterialTheme.typography.bodySmall)
     }
 }
 
-/** Measure every checked child at an equal share; wrap at font-scaled minimum widths.
- * A Layout rather than a row/column branch preserves child composition identity on resize. */
+/** Measure every child at an equal share; wrap at font-scaled minimum widths. */
 @Composable private fun AdaptiveRow(minimumChildWidth: Int, content: @Composable () -> Unit) {
     val density = LocalDensity.current
     val minimum = with(density) { minimumChildWidth.coerceAtLeast(48).dp.toPx() * density.fontScale.coerceAtLeast(1f) }.toInt()
@@ -109,263 +107,415 @@ private val LocalFramed = compositionLocalOf { false }
     }
 }
 
-/** Renders checked portable nodes with the same Compose quality as native app screens. */
-@Composable fun DealRenderer(node: JSONObject, dispatch: (Int, String?) -> Unit) {
-    val properties = node.getJSONArray("props")
-    fun prop(name: String): JSONObject? = (0 until properties.length()).map { properties.getJSONObject(it) }.firstOrNull { it.getString("name") == name }
-    fun text(name: String) = prop(name)?.optString("stringValue") ?: ""
-    fun flag(name: String, default: Boolean = false) = prop(name)?.optBoolean("booleanValue", default) ?: default
-    fun number(name: String, default: Int = 0): Int {
-        val value = prop(name)?.getDouble("numberValue") ?: return default
-        require(value.isFinite() && value == kotlin.math.floor(value) && value >= Int.MIN_VALUE && value <= Int.MAX_VALUE) { "Expected integral $name for ${node.getString("component")}" }
-        return value.toInt()
+@Composable private fun ProgressBar(fraction: Double) {
+    val background = PackTheme.muted.copy(alpha = .25f)
+    val accent = PackTheme.accent
+    Canvas(Modifier.fillMaxWidth().height(8.dp)) {
+        drawRoundRect(background, cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2))
+        drawRoundRect(accent, size = androidx.compose.ui.geometry.Size(size.width * fraction.toFloat(), size.height),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2))
     }
-    fun choices(actions: List<String>): List<Pair<String, Int?>> =
-        listOf("first", "second", "third").mapIndexed { index, name ->
-            Pair(prop(name)?.optString("stringValue") ?: "", prop(actions[index])?.optInt("actionSlot"))
-        }.filter { it.first.isNotEmpty() }
-    @Composable fun children() {
-        val nodes = node.getJSONArray("children")
-        for (i in 0 until nodes.length()) {
-            val child = nodes.getJSONObject(i)
-            key(child.getString("structural"), child.getString("keyKind"), child.getDouble("keyNumber"), child.getString("keyString")) { DealRenderer(child, dispatch) }
+}
+
+@Composable private fun ProgressDial(fraction: Double) {
+    val background = PackTheme.muted.copy(alpha = .25f)
+    val accent = PackTheme.accent
+    Canvas(Modifier.size(48.dp)) {
+        val stroke = Stroke(width = 6.dp.toPx())
+        drawArc(background, 0f, 360f, false, style = stroke)
+        drawArc(accent, -90f, 360f * fraction.toFloat(), false, style = stroke)
+    }
+}
+
+@Composable private fun SparklinePicture(series: List<Double>, second: List<Double>, maximum: Double, minimum: Double) {
+    val accent = PackTheme.accent
+    val muted = PackTheme.muted
+    Canvas(Modifier.fillMaxWidth().height(120.dp)) {
+        fun plot(points: List<Double>, color: Color) {
+            if (points.isEmpty() || maximum <= minimum) return
+            val path = Path()
+            points.forEachIndexed { index, value ->
+                val x = size.width * index / (points.size - 1).coerceAtLeast(1)
+                val y = size.height * (1f - ((value - minimum) / (maximum - minimum)).toFloat())
+                if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawPath(path, color, style = Stroke(width = 2.dp.toPx()))
+        }
+        plot(series, accent)
+        plot(second, muted)
+    }
+}
+
+/** Frame and pointer delivery for a Surface; the frame-target rule decides whether frames subscribe. */
+@Composable private fun FramedGraphicsSurface(width: Double, height: Double, shapes: JsonValue?, pointerSlot: Int?, frameSlot: Int?,
+                                             dispatch: (Int, String?) -> Unit) {
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(frameSlot) {
+        // A node without a declared onFrame is a static drawing: no frames are consumed or dispatched.
+        if (FrameTarget.plan(frameSlot, null, 0L) == FramePlan.None) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            var previous: Long? = null
+            while (true) {
+                val now = withFrameMillis { it }
+                when (val plan = FrameTarget.plan(frameSlot, previous, now)) {
+                    is FramePlan.Frame -> {
+                        previous = now
+                        dispatch(plan.slot, plan.deltaMillis.toString())
+                    }
+                    FramePlan.None -> return@repeatOnLifecycle
+                }
+            }
         }
     }
-    val name = node.getString("component").substringAfterLast('.')
-    val component = if (name == "root" || name == "__root") RenderComponent.Column else RenderComponent.entries.single { it.component == name }
+    GraphicsSurface(width, height, shapes, pointerSlot, dispatch)
+}
+
+@Composable private fun GraphicsSurface(width: Double, height: Double, shapes: JsonValue?, pointerSlot: Int?,
+                                        dispatch: (Int, String?) -> Unit) {
+    val encoded = androidx.compose.runtime.remember(shapes) { JSONArray(NeutralJson.render(shapes ?: JsonValue.Arr(emptyList()))) }
+    val emit by rememberUpdatedState(dispatch)
+    val slot by rememberUpdatedState(pointerSlot)
+    val card = LocalCardTarget.current
+    Canvas(Modifier.size(width.dp, height.dp).pointerInput(width, height) {
+        awaitPointerEventScope {
+            try {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    for (change in event.changes) {
+                        val phase = when { change.pressed && !change.previousPressed -> "down"; !change.pressed && change.previousPressed -> "up"; change.pressed -> "move"; else -> null }
+                        // A card Surface delivers down then up only: never a drag.
+                        if (phase != null && !(card && phase == "move")) slot?.let { target ->
+                            emit(target, JSONObject().put("phase", phase).put("id", change.id.value)
+                                .put("x", change.position.x * width / size.width.coerceAtLeast(1))
+                                .put("y", change.position.y * height / size.height.coerceAtLeast(1)).toString())
+                        }
+                        change.consume()
+                    }
+                }
+            } finally { slot?.let { emit(it, "{\"phase\":\"cancel\",\"id\":0,\"x\":0,\"y\":0}") } }
+        }
+    }) {
+        drawIntoCanvas { draw ->
+            val canvas = draw.nativeCanvas
+            val saved = canvas.save()
+            try {
+                canvas.scale(if (width == 0.0) 1f else size.width / width.toFloat(), if (height == 0.0) 1f else size.height / height.toFloat())
+                paintShapes(canvas, encoded, 0, intArrayOf(0))
+            } finally { canvas.restoreToCount(saved) }
+        }
+    }
+}
+
+/** Renders the checked tree. A fault draws nothing new: the last accepted tree stays in force. */
+@Composable fun DealRenderer(node: JSONObject, target: String?, dispatch: (Int, String?) -> Unit) {
+    val tree = treeFromJson(node)
+    val verdict = IngressValidation.validate(tree, target)
+    var previous by remember { mutableStateOf<UiNode?>(null) }
+    val painting = if (verdict is IngressVerdict.Accepted) tree else previous
+    SideEffect { if (verdict is IngressVerdict.Accepted) previous = tree }
+    painting?.let { paint ->
+        CompositionLocalProvider(LocalCardTarget provides (target == "card")) { PaintNode(paint, dispatch) }
+    }
+}
+
+@Composable private fun ChildNodes(node: UiNode, dispatch: (Int, String?) -> Unit) {
+    node.children.forEachIndexed { index, child ->
+        key(child.key.ifEmpty { child.component }, index) { PaintNode(child, dispatch) }
+    }
+}
+
+@Composable private fun PaintNode(node: UiNode, dispatch: (Int, String?) -> Unit) {
+    val name = if (node.component == "root" || node.component == "__root") "Column" else node.component
+    val component = RenderComponent.entry(name) ?: return
+    val values = when (val resolution = PropResolution.resolve(name, node.props)) {
+        is Resolution.Resolved -> Values(resolution.values)
+        is Resolution.Fault -> return
+    }
+    val emit: (String, String?) -> Unit = { event, raw ->
+        when (val payload = EventPayloads.reconstruct(name, event, values.all, raw)) {
+            is EventPayload.Delivered -> values.slot(event)?.let { dispatch(it, payload.spelling) }
+            else -> Unit
+        }
+    }
+    val children: @Composable () -> Unit = { ChildNodes(node, dispatch) }
+    val styleName = values.text("style")
     when (component) {
-        RenderComponent.Graphics -> GraphicsSurface(prop("width")!!.getDouble("numberValue"),prop("height")!!.getDouble("numberValue"),org.json.JSONArray(text("shapes")),prop("onPointer")?.getInt("actionSlot"),dispatch)
         RenderComponent.Column -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) { children() }
-        RenderComponent.Screen -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.screenGap)) { children() }
-        RenderComponent.InputGroup -> AdaptiveRow(PackTheme.inputMinimumWidth.value.toInt()) { children() }
-        RenderComponent.MetricGroup -> AdaptiveRow(PackTheme.metricMinimumWidth.value.toInt()) { children() }
-        RenderComponent.ActionGroup -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
-        RenderComponent.ContentGroup -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
-        RenderComponent.Row -> AdaptiveRow(number("minimumChildWidth", 240)) { children() }
-        RenderComponent.Heading -> Text(text("value"), style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
-        RenderComponent.Caption -> Text(text("value"), style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        RenderComponent.Money -> LabeledValue(text("label"), formatMoney(prop("minorUnits")!!.getDouble("numberValue"), prop("currency")?.getString("stringValue") ?: "EUR"))
-        RenderComponent.Metric -> LabeledValue(text("label"), listOf(text("value"), text("unit")).filter { it.isNotEmpty() }.joinToString(" "))
-        RenderComponent.Comparison -> {
-            val framed = LocalFramed.current
-            Surface(shape = RoundedCornerShape(PackTheme.surfaceRadius), color = if (framed) androidx.compose.ui.graphics.Color.Transparent else PackTheme.surface,
-                modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(if (framed) 0.dp else PackTheme.surfaceInset), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) {
-                    Text(text("status"), style = PackTheme.value, fontWeight = FontWeight.SemiBold,
-                        color = PackTheme.accent, modifier = Modifier.semantics { heading() })
-                    CompositionLocalProvider(LocalComparisonValue provides true, LocalFramed provides true) {
-                        AdaptiveRow(PackTheme.comparisonMinimumWidth.value.toInt()) { children() }
-                    }
-                }
-            }
-        }
+        RenderComponent.Row -> AdaptiveRow(PackTheme.inputMinimumWidth.value.toInt().coerceAtLeast(160)) { children() }
         RenderComponent.Card -> {
-            if (LocalFramed.current) {
-                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
-            } else {
-                Surface(shape = RoundedCornerShape(PackTheme.surfaceRadius), color = PackTheme.surface) {
-                    CompositionLocalProvider(LocalFramed provides true) {
-                        Column(Modifier.fillMaxWidth().padding(PackTheme.surfaceInset), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
-                    }
+            if (LocalFramed.current) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
+            else Surface(shape = RoundedCornerShape(PackTheme.surfaceRadius), color = PackTheme.surface) {
+                CompositionLocalProvider(LocalFramed provides true) {
+                    Column(Modifier.fillMaxWidth().padding(PackTheme.surfaceInset), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
                 }
             }
         }
-        RenderComponent.Text -> Text(text("value"), style = PackTheme.body)
-        RenderComponent.Hero -> Text(text("value"), style = PackTheme.hero, fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.semantics { heading() })
-        RenderComponent.Button, RenderComponent.PrimaryAction, RenderComponent.SecondaryAction -> {
-            val actionModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics {
-                contentDescription = text("accessibilityLabel").ifEmpty { text("text") }
-            }
-            val click = { prop("onClick")?.let { dispatch(it.getInt("actionSlot"), null) }; Unit }
-            if (component == RenderComponent.SecondaryAction) {
-                OutlinedButton(enabled = flag("enabled", true), onClick = click,
-                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("text") } },
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)) { Text(text("text")) }
-            } else {
-                Button(enabled = flag("enabled", true), onClick = click, modifier = actionModifier, contentPadding = PaddingValues(16.dp)) { Text(text("text")) }
-            }
-        }
-        RenderComponent.Toggle -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(text("text"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            Checkbox(flag("checked"), { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), text("value")) } }, modifier = Modifier.semantics { contentDescription = text("accessibilityLabel") })
-        }
-        RenderComponent.IntText -> Text(number("value").toString(), style = MaterialTheme.typography.headlineMedium)
-        RenderComponent.Time -> { val minute = number("value"); Text("%02d:%02d".format(minute / 60, minute % 60), style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary) }
-        RenderComponent.Spinner -> CircularProgressIndicator()
+        RenderComponent.Scroll -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
+        RenderComponent.ActionBar -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PackTheme.tightGap), verticalAlignment = Alignment.CenterVertically) { children() }
+        RenderComponent.TileGrid -> AdaptiveRow(PackTheme.metricMinimumWidth.value.toInt()) { children() }
+        RenderComponent.Canvas -> Box(Modifier.fillMaxWidth()) { children() }
+        RenderComponent.Layers -> Box(Modifier.size(values.number("width").dp, values.number("height").dp)) { children() }
+        RenderComponent.AppTheme -> Column(Modifier.fillMaxWidth()) { children() }
+        RenderComponent.Grid -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) { children() }
+        RenderComponent.MetricGroup -> AdaptiveRow(PackTheme.metricMinimumWidth.value.toInt()) { children() }
+        RenderComponent.KeyValueGroup -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) { children() }
+        RenderComponent.AdaptiveColumns -> AdaptiveRow(values.number("minimumWidth", 240.0).toInt()) { children() }
         RenderComponent.Section -> {
-            val framed = LocalFramed.current
-            Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(PackTheme.surfaceRadius),
-                color = if (framed) androidx.compose.ui.graphics.Color.Transparent else PackTheme.surface) {
+            if (LocalFramed.current) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) {
+                if (values.text("title").isNotEmpty()) Text(values.text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+                if (values.text("subtitle").isNotEmpty()) Text(values.text("subtitle"), style = PackTheme.caption, color = PackTheme.muted)
+                children()
+            } else Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(PackTheme.surfaceRadius), color = PackTheme.surface) {
                 CompositionLocalProvider(LocalFramed provides true) {
-                    Column(Modifier.fillMaxWidth().padding(if (framed) 0.dp else PackTheme.surfaceInset), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) {
-                        if (text("title").isNotEmpty()) Text(text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
-                        if (text("summary").isNotEmpty()) Text(text("summary"), style = PackTheme.caption, color = PackTheme.muted)
+                    Column(Modifier.fillMaxWidth().padding(PackTheme.surfaceInset), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) {
+                        if (values.text("title").isNotEmpty()) Text(values.text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+                        if (values.text("subtitle").isNotEmpty()) Text(values.text("subtitle"), style = PackTheme.caption, color = PackTheme.muted)
                         children()
                     }
                 }
             }
         }
-        RenderComponent.Option -> {
-            val selected = flag("selected")
-            val enabled = flag("enabled", true)
-            Surface(
-                onClick = { if (enabled) prop("onSelect")?.let { dispatch(it.getInt("actionSlot"), text("value")) } },
-                enabled = enabled,
-                shape = RoundedCornerShape(20.dp),
-                color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = text("accessibilityLabel") },
-            ) {
-                Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(text("title"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        if (text("detail").isNotEmpty()) Text(text("detail"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (text("meta").isNotEmpty()) Text(text("meta"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        val nested = node.getJSONArray("children")
-                        if (nested.length() > 0) children()
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        if (text("price").isNotEmpty()) Text(text("price"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        if (selected) Icon(Icons.Filled.Check, "Selected", tint = MaterialTheme.colorScheme.primary)
-                    }
-                }
+        RenderComponent.SectionHeader -> Column(Modifier.fillMaxWidth()) {
+            Text(values.text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+            Row(horizontalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) {
+                if (values.text("subtitle").isNotEmpty()) Text(values.text("subtitle"), style = PackTheme.caption, color = PackTheme.muted)
+                if (values.text("count").isNotEmpty()) Text(values.text("count"), style = PackTheme.caption, color = PackTheme.accent)
             }
         }
-        RenderComponent.IntField -> {
-            val value = number("value")
-            val lower = number("minimum"); val upper = number("maximum", 999); val step = number("step", 1).coerceAtLeast(1)
-            Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-              Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text("label"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() - step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value > lower,
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
-                        modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " decrease" }) { Text("−", fontWeight = FontWeight.Bold) }
-                    var draft by remember(value) { mutableStateOf(value.toString()) }
-                    OutlinedTextField(value = draft, onValueChange = { raw ->
-                        draft = raw
-                        raw.toIntOrNull()?.takeIf { it in lower..upper }?.let { entered ->
-                            prop("onChange")?.let { dispatch(it.getInt("actionSlot"), entered.toString()) }
-                        }
-                    }, enabled = flag("enabled", true), singleLine = true,
-                        label = if (text("format") == "euro-cents") ({ Text("EUR cents") }) else null,
-                        supportingText = if (text("format") == "euro-cents") ({ Text(formatMoney(value.toDouble(), "EUR")) }) else null,
-                        isError = draft.toIntOrNull()?.let { it !in lower..upper } ?: true,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-                        modifier = Modifier.weight(1f).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } })
-                    FilledTonalIconButton(onClick = { prop("onChange")?.let { dispatch(it.getInt("actionSlot"), (value.toLong() + step).coerceIn(lower.toLong(), upper.coerceAtLeast(lower).toLong()).toString()) } }, enabled = flag("enabled", true) && lower <= upper && value < upper,
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
-                        modifier = Modifier.size(48.dp).semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } + " increase" }) { Text("+", fontWeight = FontWeight.Bold) }
-                }
-                val hint = text("error").ifEmpty { text("supporting") }
-                if (hint.isNotEmpty()) Text(hint, color = if (text("error").isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-              }
+        RenderComponent.Header -> Column(Modifier.fillMaxWidth()) {
+            if (values.text("eyebrow").isNotEmpty()) Text(values.text("eyebrow"), style = PackTheme.caption, color = PackTheme.accent)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (values.text("icon").isNotEmpty()) PackIcon(values.text("icon"))
+                Text(values.text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+            }
+            if (values.text("supporting").isNotEmpty()) Text(values.text("supporting"), style = PackTheme.caption, color = PackTheme.muted)
+        }
+        RenderComponent.Hero -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) {
+            if (values.text("eyebrow").isNotEmpty()) Text(values.text("eyebrow"), style = PackTheme.caption, color = PackTheme.accent)
+            Text(values.text("title"), style = PackTheme.hero, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+            if (values.text("supporting").isNotEmpty()) Text(values.text("supporting"), style = PackTheme.body, color = PackTheme.muted)
+            children()
+        }
+        RenderComponent.Text -> Text(values.text("text"), style = if (StyleFamilies.resolve("Text", styleName) == "heading") PackTheme.heading else PackTheme.body)
+        RenderComponent.NumberText -> Text(NumericPresentation.display(values.number("value"), values.all), style = PackTheme.value)
+        RenderComponent.ClockText -> Text(NumericPresentation.format(values.number("minutes"), values.text("prefix"), values.text("suffix"), 2, 0))
+        RenderComponent.Image -> Text(values.text("alt"), style = PackTheme.caption, color = PackTheme.muted)
+        RenderComponent.Icon -> PackIcon(values.text("name"))
+        RenderComponent.Badge -> Surface(shape = RoundedCornerShape(999.dp), color = PackTheme.accent) {
+            Row(Modifier.padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (values.text("icon").isNotEmpty()) PackIcon(values.text("icon"), Modifier.size(12.dp))
+                Text(values.text("text"), style = PackTheme.caption)
             }
         }
-        RenderComponent.SessionClock -> {
-            val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-            val send by rememberUpdatedState { epoch: Long -> prop("onTick")?.let { dispatch(it.getInt("actionSlot"), epoch.toString()) }; Unit }
-            LaunchedEffect(lifecycle) {
-                lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
-                    // A fresh mount/resume cannot establish the age of restored provider data.
-                    send(-System.currentTimeMillis())
-                    while (true) { kotlinx.coroutines.delay(1000); send(System.currentTimeMillis()) }
-                }
-            }
+        RenderComponent.Stat -> LabeledValue(values.text("label"), values.text("value"), values.text("supporting"))
+        RenderComponent.Tile -> Box(Modifier.fillMaxWidth(if (values.number("span", 1.0) == 2.0) 1f else .5f)) {
+            LabeledValue(values.text("label"), values.text("value"), values.text("supporting"))
         }
-        RenderComponent.TimeField -> {
-            val value = number("value")
-            require(value in 0..1439) { "TimeField requires minute-of-day" }
-            var draft by remember(value) { mutableStateOf("%02d:%02d".format(value / 60, value % 60)) }
-            fun parsed(raw: String): Int? {
-                if (!raw.matches(Regex("[0-2][0-9]:[0-5][0-9]"))) return null
-                val hour = raw.substring(0, 2).toInt()
-                return if (hour < 24) hour * 60 + raw.substring(3).toInt() else null
-            }
-            OutlinedTextField(value = draft, onValueChange = { raw ->
-                draft = raw
-                parsed(raw)?.let { minute -> prop("onChange")?.let { dispatch(it.getInt("actionSlot"), minute.toString()) } }
-            }, label = { Text(text("label")) }, enabled = flag("enabled", true), singleLine = true,
-                isError = parsed(draft) == null || text("error").isNotEmpty(),
-                supportingText = { Text(text("error").ifEmpty { text("supporting").ifEmpty { "HH:mm" } }) },
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = text("accessibilityLabel").ifEmpty { text("label") } })
+        RenderComponent.NumberStat -> LabeledValue(values.text("label"), NumericPresentation.display(values.number("value"), values.all), values.text("supporting"))
+        RenderComponent.KeyValueItem -> LabeledValue(values.text("label"), values.text("value"), values.text("supporting"))
+        RenderComponent.ListGroup -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) {
+            if (values.text("title").isNotEmpty()) Text(values.text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold)
+            children()
         }
-        RenderComponent.TextField, RenderComponent.SearchField -> {
-            val multiline = flag("multiline")
-            val authoritative = text("value")
-            var draft by remember { mutableStateOf(authoritative) }
-            val pending = remember { mutableListOf<String>() }
-            // Keep IME edits responsive while the serialized DEAL worker acknowledges them.
-            // This is transport buffering, not application state or validation policy.
-            LaunchedEffect(authoritative) {
-                val acknowledged = pending.indexOf(authoritative)
-                if (acknowledged >= 0) {
-                    repeat(acknowledged + 1) { pending.removeAt(0) }
-                    if (pending.isEmpty()) draft = authoritative
-                } else { pending.clear(); draft = authoritative }
-            }
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { next -> prop("onChange")?.let { action -> draft = next; pending.add(next); dispatch(action.getInt("actionSlot"), next) } },
-                label = { Text(text("label")) },
-                enabled = flag("enabled", true),
-                isError = text("error").isNotEmpty(),
-                supportingText = { val hint = text("error").ifEmpty { text("supporting") }; if (hint.isNotEmpty()) Text(hint) },
-                singleLine = !multiline,
-                minLines = if (multiline) 2 else 1,
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = text("accessibilityLabel") },
-                shape = RoundedCornerShape(16.dp),
-            )
+        RenderComponent.Timeline -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) {
+            if (values.text("title").isNotEmpty()) Text(values.text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold)
+            children()
         }
-        RenderComponent.Choice -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (text("label").isNotEmpty()) Text(text("label"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                choices(listOf("onFirst", "onSecond", "onThird")).forEach { (option, slot) ->
-                    FilterChip(selected = option == text("value"), onClick = { slot?.let { dispatch(it, option) } }, label = { Text(option) })
-                }
-            }
-        }
-        RenderComponent.Filters -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            choices(listOf("onFirst", "onSecond", "onThird")).forEach { (option, slot) ->
-                FilterChip(selected = option == text("selected"), onClick = { slot?.let { dispatch(it, option) } }, label = { Text(option) })
-            }
-        }
-        RenderComponent.Notice -> {
-            val tone = text("tone")
-            val color = when (tone) { "error" -> MaterialTheme.colorScheme.error; "warning" -> MaterialTheme.colorScheme.tertiary; else -> MaterialTheme.colorScheme.primary }
-            Surface(shape = RoundedCornerShape(16.dp), color = color.copy(alpha = .12f), modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(if (tone == "info") Icons.Filled.Info else Icons.Filled.Warning, null, tint = color)
-                    Text(text("text"), style = MaterialTheme.typography.bodyMedium, color = color)
-                }
-            }
-        }
-        RenderComponent.Progress -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            Text(text("label").ifEmpty { "Loading" }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        RenderComponent.Failure -> Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(text("text"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { prop("onRetry")?.let { dispatch(it.getInt("actionSlot"), null) } }) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Try again") }
-                }
-            }
-        }
-        RenderComponent.Item -> Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        RenderComponent.ListItem, RenderComponent.TimelineItem -> Surface(
+            onClick = { if (values.flag("enabled", true)) emit("onTap", null) },
+            enabled = values.flag("enabled", true), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel") }) {
             Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (values.text("icon").isNotEmpty()) PackIcon(values.text("icon"))
                 Column(Modifier.weight(1f)) {
-                    Text(text("title"), style = MaterialTheme.typography.bodyLarge)
-                    if (text("detail").isNotEmpty()) Text(text("detail"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    val nested = node.getJSONArray("children")
-                    if (nested.length() > 0) children()
+                    Text(values.text("title"), style = PackTheme.body)
+                    if (values.text("subtitle").isNotEmpty()) Text(values.text("subtitle"), style = PackTheme.caption, color = PackTheme.muted)
                 }
-                if (text("meta").isNotEmpty()) Text(text("meta"), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                if (text("trailing").isNotEmpty()) Text(text("trailing"), style = MaterialTheme.typography.bodyMedium)
+                if (values.text("trailing").isNotEmpty()) Text(values.text("trailing"), style = PackTheme.caption)
             }
         }
-        RenderComponent.KeyedList -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 900.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { item { children() } }
+        RenderComponent.NumberListItem -> Surface(
+            onClick = { if (values.flag("enabled", true)) emit("onTap", null) },
+            enabled = values.flag("enabled", true), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel") }) {
+            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(values.text("title"), style = PackTheme.body)
+                    if (values.text("subtitle").isNotEmpty()) Text(values.text("subtitle"), style = PackTheme.caption, color = PackTheme.muted)
+                }
+                Text(NumericPresentation.display(values.number("value"), values.all), style = PackTheme.value)
+            }
+        }
+        RenderComponent.Table -> Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth()) { values.strings("headers").forEach { Text(it, Modifier.weight(1f), style = PackTheme.caption, color = PackTheme.muted) } }
+            children()
+        }
+        RenderComponent.TableRow -> Row(Modifier.fillMaxWidth()) { values.strings("cells").forEach { Text(it, Modifier.weight(1f), style = PackTheme.body) } }
+        RenderComponent.Button, RenderComponent.Cell -> {
+            val label = values.text("text")
+            val click = { if (values.flag("enabled", true)) emit("onClick", null) }
+            val description = values.text("accessibilityLabel").ifEmpty { label }
+            if (StyleFamilies.resolve(name, styleName) == "secondary") {
+                OutlinedButton(onClick = click, enabled = values.flag("enabled", true),
+                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = description },
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)) { Text(label) }
+            } else {
+                Button(onClick = click, enabled = values.flag("enabled", true),
+                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = description },
+                    contentPadding = PaddingValues(16.dp)) { Text(label) }
+            }
+        }
+        RenderComponent.IconButton -> IconButton(onClick = { if (values.flag("enabled", true)) emit("onClick", null) },
+            enabled = values.flag("enabled", true),
+            modifier = Modifier.size(48.dp).semantics { contentDescription = values.text("accessibilityLabel").ifEmpty { values.text("label") } }) {
+            PackIcon(values.text("icon"))
+        }
+        RenderComponent.TextField -> {
+            val authoritative = values.text("value")
+            val multiline = styleName == "multiline"
+            var draft by remember(authoritative) { mutableStateOf(authoritative) }
+            OutlinedTextField(value = draft, onValueChange = { next -> draft = next; emit("onChange", next) },
+                label = { Text(values.text("label")) }, singleLine = !multiline,
+                minLines = if (multiline) 2 else 1,
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel") },
+                shape = RoundedCornerShape(16.dp))
+        }
+        RenderComponent.NumberField -> {
+            val lower = values.number("minimum"); val upper = values.number("maximum")
+            val step = values.number("step", 1.0)
+            val value = values.number("value")
+            var draft by remember(value) { mutableStateOf(NumericPresentation.format(value, "", "", 1, 0)) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = draft, onValueChange = { raw ->
+                    draft = raw
+                    raw.toDoubleOrNull()?.takeIf { it.isFinite() && it in lower..upper }?.let { emit("onChange", it.toString()) }
+                }, label = { Text(values.text("label")) }, singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    modifier = Modifier.weight(1f).semantics { contentDescription = values.text("accessibilityLabel").ifEmpty { values.text("label") } })
+                Text("\u00b1" + NumericPresentation.format(step, "", "", 1, 0), style = PackTheme.caption)
+            }
+        }
+        RenderComponent.TimeField, RenderComponent.DateField -> {
+            val value = values.number("value")
+            val text = if (component == RenderComponent.TimeField) NumericPresentation.format(kotlin.math.floor(value / 60), "", "", 2, 0) + ":" +
+                NumericPresentation.format(value % 60, "", "", 2, 0) else NumericPresentation.format(value, "", "", 1, 0)
+            var draft by remember(value) { mutableStateOf(text) }
+            OutlinedTextField(value = draft, onValueChange = { raw -> draft = raw; raw.toDoubleOrNull()?.let { emit("onChange", it.toString()) } },
+                label = { Text(values.text("label")) }, singleLine = true,
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel").ifEmpty { values.text("label") } })
+        }
+        RenderComponent.Toggle, RenderComponent.Checkbox -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(values.text("label"), modifier = Modifier.weight(1f), style = PackTheme.body)
+            Checkbox(checked = values.flag("checked"), onCheckedChange = { next -> emit("onChange", next.toString()) },
+                modifier = Modifier.semantics { contentDescription = values.text("accessibilityLabel") })
+        }
+        RenderComponent.Slider -> Column(Modifier.fillMaxWidth()) {
+            Text(values.text("label"), style = PackTheme.caption)
+            Slider(value = values.number("value").toFloat(), valueRange = values.number("minimum").toFloat()..values.number("maximum").toFloat(),
+                onValueChange = { next -> emit("onChange", next.toString()) })
+        }
+        RenderComponent.Select -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) {
+            val selected = values.number("selected", -1.0).toInt()
+            values.strings("labels").forEachIndexed { index, label ->
+                FilterChip(selected = index == selected, onClick = { emit("onChange", index.toString()) }, label = { Text(label) },
+                    modifier = Modifier.semantics { contentDescription = values.text("accessibilityLabel") })
+            }
+        }
+        RenderComponent.Tabs -> {
+            val labels = values.strings("labels")
+            TabRow(selectedTabIndex = values.number("selected").toInt().coerceIn(0, (labels.size - 1).coerceAtLeast(0))) {
+                labels.forEachIndexed { index, label -> Tab(selected = index == values.number("selected").toInt(), onClick = { emit("onChange", index.toString()) }, text = { Text(label) }) }
+            }
+        }
+        RenderComponent.InsetBanner, RenderComponent.EmptyState -> Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(values.text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold)
+                Text(values.text("message"), style = PackTheme.body)
+                if (values.text("actionText").isNotEmpty()) TextButton(onClick = { emit("onAction", null) }) { Text(values.text("actionText")) }
+            }
+        }
+        RenderComponent.Progress -> {
+            val maximum = values.number("maximum")
+            val capped = values.number("value").coerceIn(0.0, maximum)
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(values.text("label"), style = PackTheme.caption)
+                ProgressBar(if (maximum > 0) capped / maximum else 0.0)
+            }
+        }
+        RenderComponent.ProgressRing -> {
+            val maximum = values.number("maximum")
+            val capped = values.number("value").coerceIn(0.0, maximum)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ProgressDial(if (maximum > 0) capped / maximum else 0.0)
+                Column { Text(values.text("label"), style = PackTheme.caption); if (values.text("text").isNotEmpty()) Text(values.text("text"), style = PackTheme.body) }
+            }
+        }
+        RenderComponent.Spinner -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            Text(values.text("label"), style = PackTheme.caption)
+        }
+        RenderComponent.Snackbar -> Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(values.text("message"), Modifier.weight(1f), style = PackTheme.body)
+                if (values.text("actionText").isNotEmpty()) TextButton(onClick = { emit("onAction", null) }) { Text(values.text("actionText")) }
+            }
+        }
+        RenderComponent.Skeleton -> Box(Modifier.size(values.number("width").dp, values.number("height").dp)
+            .background(PackTheme.muted.copy(alpha = .2f), RoundedCornerShape(if (values.flag("rounded")) 12.dp else 0.dp)))
+        RenderComponent.Divider -> Box(Modifier.fillMaxWidth().height(1.dp).background(PackTheme.muted.copy(alpha = .3f)))
+        RenderComponent.Spacer -> Spacer(Modifier.height(when (StyleFamilies.resolve("Spacer", styleName)) { "small" -> 4.dp; "large" -> 24.dp; "none" -> 0.dp; else -> 12.dp }))
+        RenderComponent.Timer -> {
+            val millis = values.number("millis")
+            Text(NumericPresentation.format(kotlin.math.floor(millis / 1000), "", "s", 1, 0) + if (values.flag("down")) " left" else " ago", style = PackTheme.body)
+        }
+        RenderComponent.Ticker -> {
+            val running = values.flag("running")
+            val interval = values.number("intervalMs").toLong().coerceAtLeast(1)
+            LaunchedEffect(running, interval) { while (running) { delay(interval); emit("onTick", System.currentTimeMillis().toString()) } }
+        }
+        RenderComponent.BackHandler -> BackHandler(enabled = true) { emit("onBack", null) }
+        RenderComponent.Path -> {
+            val commands = values.text("commands")
+            Canvas(Modifier.fillMaxWidth().height(160.dp).clickable { emit("onTap", null) }) {
+                drawIntoCanvas { draw ->
+                    val parsed = runCatching { androidx.core.graphics.PathParser.createPathFromPathData(commands) }.getOrNull() ?: return@drawIntoCanvas
+                    draw.nativeCanvas.drawPath(parsed, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                        style = android.graphics.Paint.Style.STROKE
+                        strokeWidth = 2.dp.toPx()
+                        color = android.graphics.Color.parseColor("#6540a1")
+                    })
+                }
+            }
+        }
+        RenderComponent.Motion -> {
+            val trigger = values.number("trigger")
+            val animated = remember { Animatable(1f) }
+            LaunchedEffect(trigger) { animated.snapTo(0f); animated.animateTo(1f) }
+            Column(Modifier.fillMaxWidth().graphicsLayer { alpha = animated.value }) { children() }
+        }
+        RenderComponent.Transform -> {
+            val pose = values.numbers("pose")
+            Column(Modifier.fillMaxWidth().graphicsLayer {
+                if (pose.size == 8) {
+                    rotationX = pose[0].toFloat(); rotationY = pose[1].toFloat(); rotationZ = pose[2].toFloat()
+                    translationX = pose[3].toFloat(); translationY = pose[4].toFloat(); scaleX = pose[6].toFloat(); scaleY = pose[6].toFloat()
+                    alpha = pose[7].toFloat()
+                }
+            }) { children() }
+        }
+        RenderComponent.Stage -> Box(Modifier.fillMaxWidth().heightIn(min = values.number("height").dp)) { children() }
+        RenderComponent.Surface ->
+            FramedGraphicsSurface(values.number("width"), values.number("height"), values.json("shapes"),
+                values.slot("onPointer"), values.slot("onFrame"), dispatch)
+        RenderComponent.Sparkline -> {
+            val series = values.numbers("series")
+            val second = values.numbers("series2")
+            if (series.isEmpty() && second.isEmpty()) Text("No chart data", style = PackTheme.caption, color = PackTheme.muted)
+            else Column {
+                if (values.text("label").isNotEmpty()) Text(values.text("label"), style = PackTheme.caption)
+                SparklinePicture(series, second, values.number("maximum"), values.number("minimum"))
+            }
+        }
     }
 }

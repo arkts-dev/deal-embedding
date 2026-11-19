@@ -104,7 +104,7 @@ export function build(plan: plans.Plan, candidates: Candidate[], first: selectin
     built.computations[built.computations.length] = {instance:"parts",field:candidate.need,value:"state."+prefix+"value",ready:"state."+prefix+"valid && state."+prefix+"argument === "+argument,reason:"\"Load the current input explicitly\"",dependencies:dependencies};
     built.helpers = built.helpers+"export function text_"+id+"(state:AppState):string {return "+literals.quote(candidate.label+": ")+"+String(state."+candidate.need+" as number)+"+literals.quote(" "+candidate.unit)+";}";
     built.computations[built.computations.length] = {instance:"parts",field:prefix+"text",value:"text_"+id+"(state)",ready:"true",reason:"\"Result unavailable\"",dependencies:["f_parts_"+candidate.need]};
-    built.view = built.view+"When(state."+prefix+"text_ready){ui.Text(value:state."+prefix+"text_display)} ui.Button(text:"+literals.quote("Load "+candidate.label)+",onClick:action app."+start+" {sequence:state."+prefix+"sequence}) ui.Text(value:state."+prefix+"status)";
+    built.view = built.view+"When(state."+prefix+"text_ready){ui.Text(text:state."+prefix+"text_display)} ui.Button(text:"+literals.quote("Load "+candidate.label)+",value:state."+prefix+"sequence,onClick:action app."+start+" {sequence: payload}) ui.Text(text:state."+prefix+"status)";
     built.covers[built.covers.length] = candidate.need;
   } }
   return built;

@@ -101,7 +101,7 @@ library_key=$(python3 tools/build-cache.py \
     build.sh android core api ui \
     tools/CapabilityApi.java tools/AssistanceUi.java tools/Fragment*.java \
     tools/GenerationBindings.java tools/GenerationGuidance.java \
-    tools/protocol-build.py tools/protocol-consumer.deal tools/application-consumer.deal \
+    tools/pack-conformance.py tools/ui-vocabulary.json tools/vocabulary-inventory.py tools/PayloadConsumption.java tools/protocol-build.py tools/protocol-consumer.deal tools/application-consumer.deal \
     tools/controller-mechanisms.d.deal tools/theme-build.py \
     "$DEAL/deal" "$DEAL/std" "$DEAL/skills/write-deal/references" \
     "$DEAL_UI/ui" "$DEAL_UI/runtime-js" "${ui_sources[@]}" "$ANDROID" \

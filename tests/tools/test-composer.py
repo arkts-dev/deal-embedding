@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real compiled DEAL composer with JVM syntax mechanisms; no model or alternate emitter."""
-import json, os, pathlib, shutil, subprocess
+import json, os, pathlib, shutil, subprocess, tempfile
 root=pathlib.Path(__file__).resolve().parents[2]
 deal=pathlib.Path(os.environ.get('DEAL_ROOT',root/'dependencies/deal')).resolve()
 deal_ui=pathlib.Path(os.environ.get('DEAL_UI_ROOT',root/'dependencies/deal-ui')).resolve()
@@ -22,5 +22,13 @@ for name in ['FragmentRegionsTest','FragmentQualifierTest']:
     subprocess.run(['java','-cp',str(classes)+':'+cp,name],check=True)
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',cp,'deal.Main','compile',str(source/'checks.deal'),'--backend','js','--output',str(stage/'js')],check=True)
 subprocess.run(['node',str(root/'tests/tools/test-composer.js'),str(stage),str(classes)+':'+cp],check=True)
-subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(classes)+':'+cp,'CompileComposer',str(root),str(stage)],check=True)
+subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(classes)+':'+cp,'CompileComposer',str(root),str(stage),'screen'],check=True)
+# The frozen target is a compile input: without one the composer rejects with ADMISSION_TARGET
+# before any manifest exists, and never supplies a default of its own.
+absent=pathlib.Path(tempfile.mkdtemp(prefix='composer-absent-'))/'stage';absent.mkdir()
+for name in ('experience.deal','experience.dealui'):shutil.copy(stage/name,absent/name)
+rejected=subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(classes)+':'+cp,'CompileComposer',str(root),str(absent)],capture_output=True,text=True)
+assert rejected.returncode!=0,'a compile input without a target must be rejected'
+assert 'ADMISSION_TARGET' in (rejected.stdout+rejected.stderr),rejected.stdout+rejected.stderr
+assert not (absent.parent/'composed-executable/js/admission.json').exists(),'a rejected compile input writes no manifest'
 subprocess.run(['node',str(root/'tests/tools/test-composed-runtime.js'),str(stage.parent/'composed-executable/js')],check=True)

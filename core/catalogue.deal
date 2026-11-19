@@ -97,45 +97,48 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
   if (!entry.accepted) { s.reject("Unfilled catalogue instance"); }
   let id: string = "section_"+entry.need; let kind: string = entry.definition.kind; let parameters: Record<string, unknown> = entry.parameters;
   let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let ports: screens.Port[] = []; let helpers: string = ""; let declarations: string = "";
-  let body: string = ""; let title: string = s.text(parameters.title); if (title !== "") { body = body+"ui.Text(value: "+await literal(title,"string")+")"; }
-  let subtitle: string = s.text(parameters.subtitle); if (subtitle !== "") { body = body+"ui.Text(value: "+await literal(subtitle,"string")+")"; }
+  let body: string = ""; let title: string = s.text(parameters.title); if (title !== "") { body = body+"ui.Text(text: "+await literal(title,"string")+")"; }
+  let subtitle: string = s.text(parameters.subtitle); if (subtitle !== "") { body = body+"ui.Text(text: "+await literal(subtitle,"string")+")"; }
   if (kind === "note" || kind === "filter_box") {
     let name: string = "text"; let initial: string = ""; if (kind === "filter_box") { name = "query"; } else { initial = s.text(parameters.text); }
     fields[0] = {name:name,type:"string",role:"authoritative",dependencies:[],initial:await literal(initial,"string"),owner:id};
     declarations = "export class Change { value: string; }"; updates[0] = {action:"Change",function:"change"}; helpers = "export function change(state: AppState, action: Change): AppState { return {"+name+":action.value}; }";
     body = body+"ui.TextField(label: "+await literal(title,"string")+", value: state."+name+", onChange: action app.Change {value: payload})";
     if (kind === "filter_box") { ports[0] = {name:"query",type:"string",direction:"publish",getter:"query",optional:false}; }
-  } else if (kind === "spotlight") { body = body+"ui.Text(value: "+await literal(parameters.message,"string")+")"; }
+  } else if (kind === "spotlight") { body = body+"ui.Text(text: "+await literal(parameters.message,"string")+")"; }
   else if (kind === "metrics" || kind === "key_facts") {
     let key: string = "values"; if (kind === "key_facts") { key = "items"; }
-    for (let row of s.records(parameters,key)) { body = body+"ui.Text(value: "+await literal(s.text(row.label)+": "+s.text(row.value),"string")+")"; }
-    if (s.records(parameters,key).length === 0) { body = body+"ui.Notice(text: \"No disclosed facts\")"; }
+    for (let row of s.records(parameters,key)) { body = body+"ui.Text(text: "+await literal(s.text(row.label)+": "+s.text(row.value),"string")+")"; }
+    if (s.records(parameters,key).length === 0) { body = body+"ui.Text(text: \"No disclosed facts\", style: \"muted\")"; }
   } else if (kind === "actions") {
-    fields[0] = {name:"selected",type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:id}; declarations = "export class Select { value: string; }"; updates[0] = {action:"Select",function:"select"};
+    fields[0] = {name:"selected",type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:id}; declarations = "export class Select { value: string; rank: number; }"; updates[0] = {action:"Select",function:"select"};
     helpers = "export function select(state: AppState, action: Select): AppState { return {selected:action.value}; }";
-    for (let label of s.stringArray(parameters.labels)) { body = body+"ui.Button(text: "+await literal(label,"string")+", onClick: action app.Select {value: "+await literal(label,"string")+"})"; } body = body+"ui.Text(value: state.selected)";
+    for (let label of s.stringArray(parameters.labels)) { body = body+"ui.Button(text: "+await literal(label,"string")+", onClick: action app.Select {value: "+await literal(label,"string")+", rank: payload})"; } body = body+"ui.Text(text: state.selected)";
   } else if (kind === "checklist") {
     let rows: Record<string, unknown>[] = s.records(parameters,"items"); let index: number = 0; let sum: string = "0";
-    declarations = "export class Toggle { id: string; }"; updates[0] = {action:"Toggle",function:"toggle"}; let changes: string = ""; let separator: string = "";
+    // An empty disclosed checklist binds no toggle control, so its action class and update stay unissued.
+    if (rows.length > 0) { declarations = "export class Toggle { id: string; rank: number; }"; updates[0] = {action:"Toggle",function:"toggle"}; }
+    let changes: string = ""; let separator: string = "";
     for (let row of rows) { let name: string = "checked_"+s.identifier(row.id); fields[fields.length] = {name:name,type:"boolean",role:"authoritative",dependencies:[],initial:s.encode(row.done),owner:id};
       helpers = helpers+"export function count_"+s.identifier(row.id)+"(state: AppState): number { if (state."+name+") {return 1;} return 0;}";
       sum = sum+"+count_"+s.identifier(row.id)+"(state)"; changes = changes+separator+name+":state."+name; separator = ", ";
-      body = body+"ui.Button(text: "+await literal(row.label,"string")+", onClick: action app.Toggle {id: "+await literal(row.id,"string")+"}) When(state."+name+") {ui.Text(value: \"Done\")}";
+      body = body+"ui.Button(text: "+await literal(row.label,"string")+", onClick: action app.Toggle {id: "+await literal(row.id,"string")+", rank: payload}) When(state."+name+") {ui.Text(text: \"Done\")}";
       index = index+1;
     }
-    helpers = helpers+"export function toggle(state: AppState, action: Toggle): AppState {";
-    for (let row of rows) { helpers = helpers+"if(action.id === "+await literal(row.id,"string")+") {return {"; let comma: string = ""; for (let other of rows) { let name: string = "checked_"+s.identifier(other.id); helpers = helpers+comma+name+":"; if (other.id === row.id) { helpers = helpers+"!state."+name; } else { helpers = helpers+"state."+name; } comma = ", "; } helpers = helpers+"};}"; }
-    helpers = helpers+"return state;} export function countDone(state: AppState): number { return "+sum+"; }";
+    if (rows.length > 0) { helpers = helpers+"export function toggle(state: AppState, action: Toggle): AppState {";
+      for (let row of rows) { helpers = helpers+"if(action.id === "+await literal(row.id,"string")+") {return {"; let comma: string = ""; for (let other of rows) { let name: string = "checked_"+s.identifier(other.id); helpers = helpers+comma+name+":"; if (other.id === row.id) { helpers = helpers+"!state."+name; } else { helpers = helpers+"state."+name; } comma = ", "; } helpers = helpers+"};}"; }
+      helpers = helpers+"return state;}"; }
+    helpers = helpers+" export function countDone(state: AppState): number { return "+sum+"; }";
     fields[fields.length] = {name:"done",type:"number",role:"derived",dependencies:[],initial:"null",owner:id};
     fields[fields.length] = {name:"total",type:"number",role:"derived",dependencies:[],initial:"null",owner:id};
     ports = [{name:"done",type:"number",direction:"publish",getter:"done",optional:false},{name:"total",type:"number",direction:"publish",getter:"total",optional:false}];
-    if (index === 0) { body = body+"ui.Notice(text: \"No disclosed items\")"; }
+    if (index === 0) { body = body+"ui.Text(text: \"No disclosed items\", style: \"muted\")"; }
   } else if (kind === "list_summary") {
     ports = [{name:"done",type:"number",direction:"read",getter:"done",optional:false},{name:"total",type:"number",direction:"read",getter:"total",optional:false}];
     fields[0] = {name:"summary",type:"string",role:"derived",dependencies:[],initial:"null",owner:id};
     declarations = "";
     helpers = "export function summarize(state: AppState): string { let done: number = state.done as number; let total: number = state.total as number; let remaining: number = total-done; return String(done)+\" / \"+String(total)+\"; remaining: \"+String(remaining); }";
-    body = body+"When(state.summary_ready) {ui.Text(value: state.summary_display)} When(!state.summary_ready) {ui.Notice(text: state.summary_reason)}";
+    body = body+"When(state.summary_ready) {ui.Text(text: state.summary_display)} When(!state.summary_ready) {ui.Text(text: state.summary_reason, style: \"muted\")}";
   }
   let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){"+body+"}}";
   return {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:[],helpers:helpers,view:view,options:[],content:[],ports:ports,holes:[],covers:[entry.need],owns:[id]},bodies:{}};

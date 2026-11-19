@@ -13,7 +13,7 @@ bash tests/run.sh
 
 Android instrumentation sources are in `android/`; the APK is `build/v08-cutover/device-test/tests.apk`. Installing/running is explicit, never part of the build. Existing package names and private test-resource cleanup behavior are unchanged.
 
-Do not overlap rebuilds with tests. Generation/composer tests share `build/v08-cutover/composed-executable/`; rebuild the composer fixture before probes that depend on it.
+Do not overlap rebuilds with tests. Generation/composer tests share `build/v08-cutover/composed-executable/`; the cutover harness clears it at the start of every mode, so only the last mode's compile remains. Rebuild the composer fixture before probes that depend on it.
 
 ## Original acceptance scenarios
 

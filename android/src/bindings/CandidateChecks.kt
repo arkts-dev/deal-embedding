@@ -11,9 +11,10 @@ import java.util.concurrent.TimeoutException
 internal class CandidateChecks(private val context:Context,private val config:RuntimeConfig,private val engine:JavaScriptSandbox,private val log:EmbeddingLog):AutoCloseable {
     private class Candidate(val source:ExperienceSource,val output:File,var isolate:SandboxProgram?=null,val restored:String?=null,val ownsOutput:Boolean=true)
     private val candidates=mutableMapOf<String,Candidate>()
-    fun compile(source:ExperienceSource):JSONObject {
+    /** The checker declaration supplies no target yet; an absent target rejects as ADMISSION_TARGET. */
+    fun compile(source:ExperienceSource,target:String?):JSONObject {
         return try {
-            val output=ExperienceCompiler(context,config,log).compile(source.deal,source.ui)
+            val output=ExperienceCompiler(context,config,log).compile(source.deal,source.ui,target)
             val id=UUID.randomUUID().toString();candidates[id]=Candidate(source,output)
             JSONObject().put("accepted",true).put("candidateId",id).put("diagnostics","").put("manifest",JSONObject(File(output,"admission.json").readText()))
         } catch(error:CandidateRejected) {
@@ -92,7 +93,7 @@ internal class CandidateChecks(private val context:Context,private val config:Ru
                     val request=requests.getJSONObject(i);check(request.getString("module")=="embedding/checker")
                     val args=request.getJSONArray("args")
                     val value:Any=when(request.getString("function")) {
-                        "compile"->compile(ExperienceSource(args.getString(0),args.getString(1)))
+                        "compile"->compile(ExperienceSource(args.getString(0),args.getString(1)),null)
                         "step"->step(args.getString(0),args.getString(1),args.getInt(2),args.getString(3))
                         "discard"->{discard(args.getString(0));JSONObject.NULL}
                         "finish"->{finish(args.getString(0));JSONObject.NULL}

@@ -80,7 +80,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         }
                         "embedding/policy-data"->when(function){
                             "catalogJson"->args.getJSONArray(0).toString()
-                            "capabilityDeclarations"->{val modules=args.getJSONArray(0);(0 until modules.length()).joinToString("\n"){index->val contract=CapabilityContract.parse(modules.getJSONObject(index).toString());"// "+contract.module+"\n"+dev.deal.embedding.capabilities.CapabilityBindings.declaration(contract)}}
+                            "capabilityDeclarations"->{val modules=args.getJSONArray(0);dev.deal.embedding.capabilities.CapabilityBindings.declarations((0 until modules.length()).map{index->CapabilityContract.parse(modules.getJSONObject(index).toString())})}
                             "sha256"->MessageDigest.getInstance("SHA-256").digest(args.getString(0).toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it)}
                             else->error("Unissued generation data mechanism: $function")
                         }
@@ -91,7 +91,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                                 "step"->checked.step(args.getString(0),args.getString(1),args.getInt(2),args.getString(3))
                                 "compile"->{
                                     progress("Checking constructed source")
-                                    checked.compile(ExperienceSource(args.getString(0),args.getString(1)))
+                                    checked.compile(ExperienceSource(args.getString(0),args.getString(1)),null)
                                 }
                                 else->error("Unissued checking mechanism")
                             }

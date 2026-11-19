@@ -1,8 +1,8 @@
 import * as host from "embedding/assistance";
 
 export class State { title: string; busy: boolean; }
-export class Open {}
-export class Dismiss {}
+export class Open { value: number; }
+export class Dismiss { value: number; }
 export class Done {}
 export function initialState(): State { return {title:"",busy:false}; }
 // @ui-update

@@ -1,83 +1,132 @@
 import * as graphics from "embedding/graphics";
-pack version "1";
-export class SurfaceProps { width: number; height: number; shapes: graphics.Shape[]; onFrame?: Action; onPointer?: Action; }
-export component Surface(props: SurfaceProps): View { event onFrame(payload: number); event onPointer(payload: graphics.Pointer); capability "renderer.graphics.surface"; }
-export class TextProps { value: string = ""; }
-export class ButtonProps { text: string = ""; enabled: boolean = true; onClick?: Action; accessibilityLabel?: string; }
-export class ToggleProps { value: string = ""; text: string = ""; checked: boolean = false; onChange?: Action; accessibilityLabel?: string; }
-export component Toggle(props: ToggleProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.toggle"; }
-export class EmptyProps {}
-export class MinuteProps { value: number = 0; }
-export component Time(props: MinuteProps): View { capability "renderer.compose.time"; }
-export component IntText(props: MinuteProps): View { capability "renderer.compose.integer"; }
-export component Text(props: TextProps): View { capability "renderer.compose.text"; }
-export component Hero(props: TextProps): View { capability "renderer.compose.hero"; }
-export component Button(props: ButtonProps): View { event onClick; accessibility accessibilityLabel; capability "renderer.compose.button"; }
-export component Column(props: EmptyProps): View { children optional; capability "renderer.compose.column"; }
-export component Card(props: EmptyProps): View { children optional; capability "renderer.compose.card"; }
-export component Spinner(props: EmptyProps): View { capability "renderer.compose.spinner"; }
+pack version "2";
 
-export class SectionProps { title: string = ""; summary: string = ""; }
-export component Section(props: SectionProps): View { children required; capability "renderer.compose.section"; }
+export class ColumnProps { style: string = ""; }
+export class RowProps { style: string = ""; }
+export class CardProps { style: string = ""; }
+export class ScrollProps { style: string = ""; }
+export class ActionBarProps { style: string = ""; }
+export class TileGridProps { style: string = ""; }
+export class CanvasProps { style: string = ""; }
+export class LayersProps { width: number; height: number; style: string = ""; }
+export class AppThemeProps { primary: string = ""; style: string = ""; }
+export class GridProps { columns: number = 1; style: string = ""; }
+export class MetricGroupProps { columns: number = 1; style: string = ""; }
+export class KeyValueGroupProps { columns: number = 1; style: string = ""; }
+export class AdaptiveColumnsProps { minimumWidth: number = 240; style: string = ""; }
+export class SectionProps { title: string; subtitle: string = ""; style: string = ""; }
+export class SectionHeaderProps { title: string; subtitle: string = ""; count: string = ""; style: string = ""; }
+export class HeaderProps { title: string; eyebrow: string = ""; supporting: string = ""; icon: string = ""; style: string = ""; }
+export class HeroProps { title: string; eyebrow: string = ""; supporting: string = ""; style: string = ""; }
+export class TextProps { text: string; style: string = ""; }
+export class NumberTextProps { value: number; prefix: string = ""; suffix: string = ""; minimumDigits: number = 1; decimals: number = -1; style: string = ""; }
+export class ClockTextProps { minutes: number; prefix: string = ""; suffix: string = ""; style: string = ""; }
+export class ImageProps { src: string; alt: string; style: string = ""; }
+export class IconProps { name: string; style: string = ""; }
+export class BadgeProps { text: string; icon: string = ""; style: string = ""; }
+export class StatProps { label: string; value: string; supporting: string = ""; icon: string = ""; style: string = ""; }
+export class TileProps { label: string; value: string; supporting: string = ""; icon: string = ""; span: number = 1; style: string = ""; }
+export class NumberStatProps { label: string; value: number; supporting: string = ""; icon: string = ""; prefix: string = ""; suffix: string = ""; minimumDigits: number = 1; decimals: number = -1; style: string = ""; }
+export class KeyValueItemProps { label: string; value: string; supporting: string = ""; style: string = ""; }
+export class ListGroupProps { title: string = ""; style: string = ""; }
+export class TimelineProps { title: string = ""; style: string = ""; }
+export class ListItemProps { title: string; subtitle: string = ""; trailing: string = ""; icon: string = ""; onTap?: Action; eventValue: number = 0; enabled: boolean = true; style: string = ""; accessibilityLabel?: string; }
+export class TimelineItemProps { title: string; subtitle: string = ""; trailing: string = ""; icon: string = ""; onTap?: Action; eventValue: number = 0; enabled: boolean = true; style: string = ""; accessibilityLabel?: string; }
+export class NumberListItemProps { title: string; value: number; subtitle: string = ""; icon: string = ""; prefix: string = ""; suffix: string = ""; minimumDigits: number = 1; decimals: number = -1; onTap?: Action; eventValue: number = 0; enabled: boolean = true; style: string = ""; accessibilityLabel?: string; }
+export class TableProps { headers: string[] = []; columns: number; style: string = ""; }
+export class TableRowProps { cells: string[]; style: string = ""; }
+export class ButtonProps { text: string; onClick?: Action; value: number = 0; enabled: boolean = true; style: string = ""; accessibilityLabel?: string; }
+export class CellProps { text: string; onClick?: Action; value: number = 0; enabled: boolean = true; style: string = ""; accessibilityLabel?: string; }
+export class IconButtonProps { icon: string; label: string; onClick?: Action; value: number = 0; enabled: boolean = true; style: string = ""; accessibilityLabel?: string; }
+export class TextFieldProps { label: string; value: string; onChange?: Action; keyboardType: string = ""; required: boolean = false; email: boolean = false; minLength: number = 0; maxLength: number = 0; pattern: string = ""; requiredMessage: string = ""; emailMessage: string = ""; minLengthMessage: string = ""; maxLengthMessage: string = ""; patternMessage: string = ""; style: string = ""; accessibilityLabel?: string; }
+export class NumberFieldProps { label: string; value: number; minimum: number; maximum: number; onChange?: Action; step: number = 1; style: string = ""; accessibilityLabel?: string; }
+export class TimeFieldProps { label: string; value: number; onChange?: Action; style: string = ""; accessibilityLabel?: string; }
+export class DateFieldProps { label: string; value: number; onChange?: Action; style: string = ""; accessibilityLabel?: string; }
+export class ToggleProps { label: string; checked: boolean; onChange?: Action; style: string = ""; accessibilityLabel?: string; }
+export class CheckboxProps { label: string; checked: boolean; onChange?: Action; style: string = ""; accessibilityLabel?: string; }
+export class SliderProps { label: string; value: number; minimum: number; maximum: number; onChange?: Action; style: string = ""; accessibilityLabel?: string; }
+export class SelectProps { labels: string[]; selected: number; onChange?: Action; style: string = ""; accessibilityLabel?: string; }
+export class TabsProps { labels: string[]; selected: number; onChange?: Action; style: string = ""; accessibilityLabel?: string; }
+export class InsetBannerProps { title: string; message: string; actionText: string = ""; icon: string = ""; onAction?: Action; style: string = ""; accessibilityLabel?: string; }
+export class EmptyStateProps { title: string; message: string; actionText: string = ""; icon: string = ""; onAction?: Action; style: string = ""; accessibilityLabel?: string; }
+export class ProgressProps { label: string; value: number; maximum: number; style: string = ""; }
+export class ProgressRingProps { label: string; value: number; maximum: number; text: string = ""; style: string = ""; }
+export class SpinnerProps { label: string = ""; style: string = ""; }
+export class SnackbarProps { message: string; actionText: string = ""; onAction?: Action; style: string = ""; accessibilityLabel?: string; }
+export class SkeletonProps { width: number; height: number; rounded: boolean = false; style: string = ""; }
+export class DividerProps { style: string = ""; }
+export class SpacerProps { style: string = ""; }
+export class TimerProps { millis: number; down: boolean; style: string = ""; }
+export class TickerProps { id: string; intervalMs: number; running: boolean; onTick: Action; style: string = ""; }
+export class BackHandlerProps { onBack: Action; }
+export class PathProps { commands: string; spinPeriodMs: number = 0; onTap?: Action; value: number = 0; style: string = ""; accessibilityLabel?: string; }
+export class MotionProps { trigger: number; style: string = "pop"; }
+export class TransformProps { pose: number[]; durationMs: number; size: number = 0; style: string = ""; }
+export class StageProps { perspective: number = 900; height: number = 0; style: string = ""; }
+export class SurfaceProps { width: number; height: number; shapes: graphics.Shape[]; onFrame?: Action; onPointer?: Action; style: string = ""; accessibilityLabel?: string; }
+export class SparklineProps { series: number[]; maximum: number; label: string = ""; seriesLabel: string = ""; series2Label: string = ""; series2Style: string = ""; bars: boolean = false; series2: number[] = []; categories: string[] = []; minimum: number = 0; style: string = ""; }
 
-export class OptionProps { value: string = ""; title: string = ""; detail: string = ""; price: string = ""; meta: string = ""; selected: boolean = false; enabled: boolean = true; onSelect?: Action; accessibilityLabel?: string; }
-export component Option(props: OptionProps): View { children optional; event onSelect(payload: string); accessibility accessibilityLabel; capability "renderer.compose.option"; }
-
-export class IntFieldProps { value: number = 0; label: string = ""; minimum: number = 0; maximum: number = 999; step: number = 1; format: string = "integer"; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
-export component IntField(props: IntFieldProps): View { event onChange(payload: number); accessibility accessibilityLabel; capability "renderer.compose.intfield"; }
-
-// SessionClock emits epoch milliseconds; a negative first/resume event invalidates age trust.
-export class SessionClockProps { onTick: Action; }
-export component SessionClock(props: SessionClockProps): View { event onTick(payload: number); capability "runtime.clock.session"; }
-
-export class TimeFieldProps { value: number = 0; label: string = ""; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
-export component TimeField(props: TimeFieldProps): View { event onChange(payload: number); accessibility accessibilityLabel; capability "renderer.input.time"; }
-
-export class TextFieldProps { value: string = ""; label: string = ""; multiline: boolean = false; enabled: boolean = true; supporting: string = ""; error: string = ""; onChange?: Action; accessibilityLabel?: string; }
-export component TextField(props: TextFieldProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.textfield"; }
-
-export component SearchField(props: TextFieldProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.compose.searchfield"; }
-
-export class ChoiceProps { value: string = ""; label: string = ""; first: string = ""; second: string = ""; third: string = ""; onFirst?: Action; onSecond?: Action; onThird?: Action; accessibilityLabel?: string; }
-export component Choice(props: ChoiceProps): View { event onFirst(payload: string); event onSecond(payload: string); event onThird(payload: string); accessibility accessibilityLabel; capability "renderer.compose.choice"; }
-
-export class FiltersProps { selected: string = ""; first: string = ""; second: string = ""; third: string = ""; onFirst?: Action; onSecond?: Action; onThird?: Action; accessibilityLabel?: string; }
-export component Filters(props: FiltersProps): View { event onFirst(payload: string); event onSecond(payload: string); event onThird(payload: string); accessibility accessibilityLabel; capability "renderer.compose.filters"; }
-
-export class NoticeProps { text: string = ""; tone: string = "info"; }
-export component Notice(props: NoticeProps): View { capability "renderer.compose.notice"; }
-
-export class ProgressProps { label: string = ""; }
-export component Progress(props: ProgressProps): View { capability "renderer.compose.progress"; }
-
-export class FailureProps { text: string = ""; onRetry?: Action; accessibilityLabel?: string; }
-export component Failure(props: FailureProps): View { event onRetry; accessibility accessibilityLabel; capability "renderer.compose.failure"; }
-
-export class ItemProps { value: string = ""; title: string = ""; detail: string = ""; meta: string = ""; trailing: string = ""; }
-export component Item(props: ItemProps): View { children optional; capability "renderer.compose.item"; }
-
-export class KeyedListProps { key: string = ""; }
-export component KeyedList(props: KeyedListProps): View { children required; capability "renderer.compose.keyedlist"; }
-
-// Semantic layout and value components.
-export class LayoutProps { minimumChildWidth: number = 240; }
-export component Row(props: LayoutProps): View { children required; capability "renderer.layout.row"; }
-export component Heading(props: TextProps): View { capability "renderer.text.heading"; }
-export component Caption(props: TextProps): View { capability "renderer.text.caption"; }
-export component PrimaryAction(props: ButtonProps): View { event onClick; accessibility accessibilityLabel; capability "renderer.action.primary"; }
-export component SecondaryAction(props: ButtonProps): View { event onClick; accessibility accessibilityLabel; capability "renderer.action.secondary"; }
-
-// Monetary values are integer minor units; formatting does not change the value.
-export class MoneyProps { label: string; minorUnits: number; currency: string = "EUR"; }
-export component Money(props: MoneyProps): View { capability "renderer.value.money"; }
-export class MetricProps { label: string; value: string; unit: string = ""; }
-export component Metric(props: MetricProps): View { capability "renderer.value.metric"; }
-export class ComparisonProps { status: string; }
-export component Comparison(props: ComparisonProps): View { children required Money | Metric; capability "renderer.value.comparison"; }
-
-// Screen recipes own placement; these semantic groups supply renderer-neutral roles.
-export component Screen(props: EmptyProps): View { children required Hero | MetricGroup | Section | ContentGroup | Progress | Notice; capability "renderer.layout.screen"; }
-export component InputGroup(props: EmptyProps): View { children required IntField | TimeField | TextField | Toggle; capability "renderer.layout.inputs"; }
-export component MetricGroup(props: EmptyProps): View { children required Money | Metric | Comparison; capability "renderer.layout.metrics"; }
-export component ActionGroup(props: EmptyProps): View { children required PrimaryAction | SecondaryAction; capability "renderer.layout.actions"; }
-export component ContentGroup(props: EmptyProps): View { children required; capability "renderer.layout.content"; }
+export component Column(props: ColumnProps): View { children optional; capability "renderer.Column"; }
+export component Row(props: RowProps): View { children optional; capability "renderer.Row"; }
+export component Card(props: CardProps): View { children optional; capability "renderer.Card"; }
+export component Scroll(props: ScrollProps): View { children optional; capability "renderer.Scroll"; }
+export component ActionBar(props: ActionBarProps): View { children required Button | IconButton | Badge; capability "renderer.ActionBar"; }
+export component TileGrid(props: TileGridProps): View { children required Tile; capability "renderer.TileGrid"; }
+export component Canvas(props: CanvasProps): View { children required Path; capability "renderer.Canvas"; }
+export component Layers(props: LayersProps): View { children optional; capability "renderer.Layers"; }
+export component AppTheme(props: AppThemeProps): View { children optional; capability "renderer.AppTheme"; }
+export component Grid(props: GridProps): View { children optional; capability "renderer.Grid"; }
+export component MetricGroup(props: MetricGroupProps): View { children required Stat | NumberStat; capability "renderer.MetricGroup"; }
+export component KeyValueGroup(props: KeyValueGroupProps): View { children required KeyValueItem; capability "renderer.KeyValueGroup"; }
+export component AdaptiveColumns(props: AdaptiveColumnsProps): View { children optional; capability "renderer.AdaptiveColumns"; }
+export component Section(props: SectionProps): View { children optional; capability "renderer.Section"; }
+export component SectionHeader(props: SectionHeaderProps): View { capability "renderer.SectionHeader"; }
+export component Header(props: HeaderProps): View { capability "renderer.Header"; }
+export component Hero(props: HeroProps): View { children optional; capability "renderer.Hero"; }
+export component Text(props: TextProps): View { capability "renderer.Text"; }
+export component NumberText(props: NumberTextProps): View { capability "renderer.NumberText"; }
+export component ClockText(props: ClockTextProps): View { capability "renderer.ClockText"; }
+export component Image(props: ImageProps): View { capability "renderer.Image"; }
+export component Icon(props: IconProps): View { capability "renderer.Icon"; }
+export component Badge(props: BadgeProps): View { capability "renderer.Badge"; }
+export component Stat(props: StatProps): View { capability "renderer.Stat"; }
+export component Tile(props: TileProps): View { capability "renderer.Tile"; }
+export component NumberStat(props: NumberStatProps): View { capability "renderer.NumberStat"; }
+export component KeyValueItem(props: KeyValueItemProps): View { capability "renderer.KeyValueItem"; }
+export component ListGroup(props: ListGroupProps): View { children required ListItem | NumberListItem | SectionHeader | ActionBar; capability "renderer.ListGroup"; }
+export component Timeline(props: TimelineProps): View { children required TimelineItem | ActionBar; capability "renderer.Timeline"; }
+export component ListItem(props: ListItemProps): View { event onTap(payload: number); accessibility accessibilityLabel; capability "renderer.ListItem"; }
+export component TimelineItem(props: TimelineItemProps): View { event onTap(payload: number); accessibility accessibilityLabel; capability "renderer.TimelineItem"; }
+export component NumberListItem(props: NumberListItemProps): View { event onTap(payload: number); accessibility accessibilityLabel; capability "renderer.NumberListItem"; }
+export component Table(props: TableProps): View { children required TableRow; capability "renderer.Table"; }
+export component TableRow(props: TableRowProps): View { capability "renderer.TableRow"; }
+export component Button(props: ButtonProps): View { event onClick(payload: number); accessibility accessibilityLabel; capability "renderer.Button"; }
+export component Cell(props: CellProps): View { event onClick(payload: number); accessibility accessibilityLabel; capability "renderer.Cell"; }
+export component IconButton(props: IconButtonProps): View { event onClick(payload: number); accessibility accessibilityLabel; capability "renderer.IconButton"; }
+export component TextField(props: TextFieldProps): View { event onChange(payload: string); accessibility accessibilityLabel; capability "renderer.TextField"; }
+export component NumberField(props: NumberFieldProps): View { event onChange(payload: number); accessibility accessibilityLabel; capability "renderer.NumberField"; }
+export component TimeField(props: TimeFieldProps): View { event onChange(payload: number); accessibility accessibilityLabel; capability "renderer.TimeField"; }
+export component DateField(props: DateFieldProps): View { event onChange(payload: number); accessibility accessibilityLabel; capability "renderer.DateField"; }
+export component Toggle(props: ToggleProps): View { event onChange(payload: boolean); accessibility accessibilityLabel; capability "renderer.Toggle"; }
+export component Checkbox(props: CheckboxProps): View { event onChange(payload: boolean); accessibility accessibilityLabel; capability "renderer.Checkbox"; }
+export component Slider(props: SliderProps): View { event onChange(payload: number); accessibility accessibilityLabel; capability "renderer.Slider"; }
+export component Select(props: SelectProps): View { event onChange(payload: number); accessibility accessibilityLabel; capability "renderer.Select"; }
+export component Tabs(props: TabsProps): View { event onChange(payload: number); accessibility accessibilityLabel; children optional; capability "renderer.Tabs"; }
+export component InsetBanner(props: InsetBannerProps): View { event onAction; accessibility accessibilityLabel; capability "renderer.InsetBanner"; }
+export component EmptyState(props: EmptyStateProps): View { event onAction; accessibility accessibilityLabel; capability "renderer.EmptyState"; }
+export component Progress(props: ProgressProps): View { capability "renderer.Progress"; }
+export component ProgressRing(props: ProgressRingProps): View { capability "renderer.ProgressRing"; }
+export component Spinner(props: SpinnerProps): View { capability "renderer.Spinner"; }
+export component Snackbar(props: SnackbarProps): View { event onAction; accessibility accessibilityLabel; capability "renderer.Snackbar"; }
+export component Skeleton(props: SkeletonProps): View { capability "renderer.Skeleton"; }
+export component Divider(props: DividerProps): View { capability "renderer.Divider"; }
+export component Spacer(props: SpacerProps): View { capability "renderer.Spacer"; }
+export component Timer(props: TimerProps): View { capability "renderer.Timer"; }
+export component Ticker(props: TickerProps): View { event onTick(payload: number); capability "renderer.Ticker"; }
+export component BackHandler(props: BackHandlerProps): View { event onBack; capability "renderer.BackHandler"; }
+export component Path(props: PathProps): View { event onTap(payload: number); accessibility accessibilityLabel; capability "renderer.Path"; }
+export component Motion(props: MotionProps): View { children optional; capability "renderer.Motion"; }
+export component Transform(props: TransformProps): View { children optional; capability "renderer.Transform"; }
+export component Stage(props: StageProps): View { children required Transform; capability "renderer.Stage"; }
+export component Surface(props: SurfaceProps): View { event onFrame(payload: number); event onPointer(payload: graphics.Pointer); accessibility accessibilityLabel; capability "renderer.Surface"; }
+export component Sparkline(props: SparklineProps): View { capability "renderer.Sparkline"; }
