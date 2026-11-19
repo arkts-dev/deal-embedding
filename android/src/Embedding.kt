@@ -19,7 +19,7 @@ class Embedding internal constructor(private val context: Context, internal val 
             var mechanisms: Embedding? = null
             try {
                 val owner = Embedding(application,registry,model,RuntimeConfig("experience",emptyList(),config.storageName,
-                    retainState=config.retainState,execution=config.execution))
+                    retainState=config.retainState,execution=config.execution,target=config.target))
                 mechanisms = owner
                 return ApplicationProtocol(application,owner,config.discovery)
             } catch (error: Throwable) {
@@ -29,6 +29,7 @@ class Embedding internal constructor(private val context: Context, internal val 
         }
     }
     internal val executionLimits get() = config.execution
+    internal val presentationTarget get() = config.target
     private val config=bootstrap.copy(contracts=bootstrap.contracts.map{CapabilityContract.parse(it.json().toString())})
     private data class RequestState(val title:String,val intent:String,val context:GenerationContext,val contracts:List<CapabilityContract>,val cancellation:GenerationCancellation,val log:EmbeddingLog,var used:Boolean=false)
     private val contexts=mutableMapOf<String,Pair<WireType,String>>()
@@ -112,6 +113,7 @@ class Embedding internal constructor(private val context: Context, internal val 
         check(!sessions.containsKey(session)){"Session token already active"}
         val candidate=candidates[e.id] ?: run {
             val saved=runtime.savedWorkspaces().firstOrNull{it.id==e.id} ?: throw ProtocolFailure("INVALID_HANDLE","Saved Experience missing")
+            if(saved.target != config.target)throw ProtocolFailure("ADMISSION_TARGET","Saved target is missing or differs from host configuration")
             val source=ExperienceStorage(context,config.storageName).source(e.id) ?: throw ProtocolFailure("INVALID_HANDLE","Saved source missing")
             runtime.check(source,saved.origin,saved.attempts).also{candidates[e.id]=it}
         }

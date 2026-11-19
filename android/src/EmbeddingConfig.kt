@@ -8,7 +8,11 @@ data class EmbeddingConfig(
     val retainState: Boolean = false,
     val inference: InferenceProvider? = null,
     val execution: ExecutionLimits = ExecutionLimits(),
-)
+    /** Host presentation mode, fixed for this protocol; never supplied by generated source. */
+    val target: String = "screen",
+) {
+    init { require(CompileInput.target(target) != null) { "Invalid host presentation target: $target" } }
+}
 
 /** Native containment, independent of generation/recovery policy. All limits are finite and positive. */
 data class ExecutionLimits(

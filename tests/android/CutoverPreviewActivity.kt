@@ -26,7 +26,7 @@ class CutoverPreviewActivity : ComponentActivity() {
                 val protocol=Embedding.open(this,EmbeddingConfig("v08-visual-"+java.util.UUID.randomUUID(),GenerationGatewayConfig("http://127.0.0.1:1/generate","fixture")))
                 api=protocol
                 val directory=File(filesDir,"scenario-results")
-                val candidate=protocol.load("Fresh $name",Source(File(directory,"$name.deal").readText(),File(directory,"$name.dealui").readText()))
+                val candidate=protocol.load("Fresh $name",if(name=="target")targetTransportSource() else Source(File(directory,"$name.deal").readText(),File(directory,"$name.dealui").readText()))
                 experience=candidate
                 val owner=ExperienceSurface(protocol,candidate);surface=owner
                 owner.activate { error->File(directory,"$name-preview-failure.txt").writeText(android.util.Log.getStackTraceString(error)) }

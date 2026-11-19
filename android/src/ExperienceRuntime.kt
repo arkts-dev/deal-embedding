@@ -7,10 +7,10 @@ import dev.deal.embedding.capabilities.*
 import java.io.File
 import java.util.UUID
 
-internal data class RuntimeConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val retainState: Boolean = false, val execution: ExecutionLimits = ExecutionLimits()) {
+internal data class RuntimeConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val retainState: Boolean = false, val execution: ExecutionLimits = ExecutionLimits(), val target: String = "screen") {
 }
 internal data class ExperienceSource(val deal: String, val ui: String)
-internal data class SavedWorkspace(val id: String, val title: String, val origin: WorkspaceOrigin, val attempts: Int)
+internal data class SavedWorkspace(val id: String, val title: String, val origin: WorkspaceOrigin, val attempts: Int, val target: String?)
 
 /** Issued metadata only; suppressed preparation isolates are discarded before retention. */
 internal class PreparedWorkspace(val token:String, val id:String, val title:String, val session:String, val candidate:CheckedCandidate, val trace:String, var persisted:Boolean=false)
@@ -56,7 +56,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     internal fun persistPrepared(token:String) {
         val store=prepared[token] ?: throw ProtocolFailure("INVALID_HANDLE","Unknown prepared store")
         val candidate=store.candidate
-        storage.saveWorkspace(store.id,store.title,candidate.source,candidate.origin,candidate.attempts)
+        storage.saveWorkspace(store.id,store.title,candidate.source,candidate.origin,candidate.attempts,config.target)
         store.persisted=true
     }
     internal fun activatePrepared(token:String):Pair<LiveWorkspace,JSONObject> {

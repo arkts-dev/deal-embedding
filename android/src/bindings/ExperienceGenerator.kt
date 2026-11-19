@@ -40,7 +40,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
         fun reject(request:JSONObject,code:String,message:String)=program.evaluate("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id",request.getInt("id")).put("ok",false).put("error",JSONObject().put("code",code).put("message",message)))})")
         try {
             log.event("request","started",detail=JSONObject().put("intent",intent).put("context",disclosedContext).put("catalog",canonicalCatalog(config)).toString())
-            val input=JSONObject().put("intent",intent).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map{it.json()}))
+            val input=JSONObject().put("intent",intent).put("target",config.target).put("context",JSONObject().put("id",contextId)).put("capabilities",JSONArray(config.contracts.map{it.json()}))
             val configure="protocolContexts[${JSONObject.quote(contextId)}]={value:${JSONObject.quote(disclosedContext)},schema:$contextSchema};"
             val bundle=log.stage("generation-bundle"){SandboxBundle.build(context,listOf("generation-contracts.js","protocol-contracts.js","protocol-host.js","generation-session.js"),configure,"runGeneration(factories, $input)",assetRoot=config.generationAssets)}
             log.stage("generation-initialize"){program.evaluate(bundle)}
@@ -91,7 +91,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                                 "step"->checked.step(args.getString(0),args.getString(1),args.getInt(2),args.getString(3))
                                 "compile"->{
                                     progress("Checking constructed source")
-                                    checked.compile(ExperienceSource(args.getString(0),args.getString(1)),null)
+                                    checked.compile(ExperienceSource(args.getString(0),args.getString(1)))
                                 }
                                 else->error("Unissued checking mechanism")
                             }

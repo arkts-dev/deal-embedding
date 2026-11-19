@@ -9,7 +9,8 @@ import org.json.JSONObject
 import java.util.concurrent.Executors
 
 /** Explicit session owner. Composition attaches observation, never execution ownership. */
-class ExperienceSurface(private val protocol:ApplicationProtocol, val experience:Experience, val target:String?=null) : AutoCloseable {
+class ExperienceSurface(private val protocol:ApplicationProtocol, val experience:Experience, val target:String=protocol.presentationTarget) : AutoCloseable {
+    init { require(target == protocol.presentationTarget) { "Surface target differs from host configuration" } }
     private val main=Handler(Looper.getMainLooper())
     private val actions=Executors.newSingleThreadExecutor()
     @Volatile private var session:Session?=null

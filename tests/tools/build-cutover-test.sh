@@ -14,7 +14,7 @@ RESOURCE_ARGS=();for res in "${RESOURCES[@]}";do RESOURCE_ARGS+=(-R "$res");done
 "$TOOLS/aapt2" link --auto-add-overlay -I "$ANDROID" --manifest "$OUT/AndroidManifest.xml" --java "$OUT/rjava" --extra-packages "$(<build/compose/packages.txt)" "${RESOURCE_ARGS[@]}" -A build/embedding-consumer/assets -o "$OUT/unsigned.apk"
 find "$OUT/rjava" -name '*.java' -print0 | xargs -0 javac --release 21 -classpath "$ANDROID" -d "$OUT/classes"
 CP="build/embedding-consumer/classes.jar:$KOTLIN_HOME/lib/kotlin-stdlib.jar:build/toolchain/jsengine.jar:build/toolchain/guava.jar:build/toolchain/failureaccess.jar:$(<build/compose/classpath.txt)"
-"$KOTLIN_HOME/bin/kotlinc" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect -classpath "$ANDROID:$CP" -d "$OUT/classes" tests/android/CutoverInstrumentation.kt tests/android/CutoverPreviewActivity.kt tests/android/BudgetAssertions.kt tests/android/BudgetAssertionsTest.kt
+"$KOTLIN_HOME/bin/kotlinc" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect -classpath "$ANDROID:$CP" -d "$OUT/classes" tests/android/CutoverInstrumentation.kt tests/android/CutoverPreviewActivity.kt tests/android/BudgetAssertions.kt tests/android/BudgetAssertionsTest.kt tests/android/TargetTransportChecks.kt
 jar --create --file "$OUT/test.jar" -C "$OUT/classes" .
 IFS=: read -ra JARS <<< "$CP"; ARGS=();for j in "${JARS[@]}";do ARGS+=(--classpath "$j");done
 java -Xmx768m -cp build/toolchain/r8.jar com.android.tools.r8.D8 --release --min-api 36 --lib "$ANDROID" --desugared-lib build/toolchain/desugar.json "${ARGS[@]}" --output "$OUT/dex" "$OUT/test.jar"
