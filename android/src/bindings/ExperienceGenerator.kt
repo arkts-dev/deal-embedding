@@ -64,7 +64,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                         "embedding/construction-identity"->{check(function=="issue");UUID.randomUUID().toString()}
                         "embedding/inference"->{
                             check(function=="dispatch");val raw=args.getJSONObject(0)
-                            val inference=InferenceRequest(raw.getString("input"),raw.getString("previous"),raw.getString("diagnostics"),raw.getString("operation"),raw.getString("stage"),raw.getInt("ask"),raw.getInt("maxTokens"),raw.getBoolean("thinking"))
+                            val inference=InferenceRequest(raw.getString("input"),raw.getString("previous"),raw.getString("diagnostics"),raw.getString("operation"),raw.getString("stage"),raw.getInt("ask"),raw.getInt("maxTokens"),raw.getBoolean("thinking"),raw.getString("questions"))
                             progress("Constructing tool · ${inference.stage}")
                             val response=log.operation("inference",operation=inference.operation,target=inference.stage,detail=raw.toString()){child->model.dispatch(inference,cancellation,child)}
                             JSONObject().put("content",response.content).put("finish",response.finish).put("refusal",response.refusal)

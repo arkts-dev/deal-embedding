@@ -26,10 +26,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def validate(body):
-    required = {'input','previous','diagnostics','capture','operation','stage','ask','maxTokens','thinking'}
+    required = {'input','previous','diagnostics','capture','operation','stage','ask','maxTokens','thinking','questions'}
     if not isinstance(body, dict) or set(body) != required:
         raise ValueError('Invalid typed inference envelope')
-    if any(type(body[key]) is not str for key in ('input','previous','diagnostics','operation','stage')):
+    if any(type(body[key]) is not str for key in ('input','previous','diagnostics','operation','stage','questions')):
         raise ValueError('Expected inference text')
     if not body['operation'] or not body['stage']:
         raise ValueError('Missing operation or stage')
@@ -63,6 +63,56 @@ def payload_for(body, backend, provider):
     return payload
 
 
+def jev_payload(body, model):
+    # Questions are a separate typed field issued by DEAL, never parsed from prompts.
+    issued = json.loads(body['questions'])
+    if not isinstance(issued, list) or not issued:
+        raise ValueError('Expected issued selection questions')
+    questions = {}
+    for question in issued:
+        name = question['id']
+        if not isinstance(name, str) or not name or name in questions:
+            raise ValueError('Invalid question identity')
+        criteria = {}
+        for option in question['options']:
+            key, description = option['id'], option['criteria']
+            if not isinstance(key, str) or not key or key in criteria or not isinstance(description, str) or not description:
+                raise ValueError('Invalid issued option')
+            criteria[key] = description
+        if not criteria or not isinstance(question['instructions'], str):
+            raise ValueError('Invalid issued question')
+        questions[name] = {'type':'choice','instructions':question['instructions'],'criteria':criteria}
+    # Step 1 deliberately retains the ENTIRE current prompt, including its spec.
+    state = body['input']
+    if body['previous']:
+        state += '\nPREVIOUS RESPONSE\n' + body['previous']
+    if body['diagnostics']:
+        state += '\nDIAGNOSTICS\n' + body['diagnostics']
+    return {'model':model,'state':state,'questions':questions}
+
+
+def jev_content(data, questions):
+    # Translate representation only. DEAL still validates sum, maximum, ties and
+    # thresholds. Never renormalize rounded probabilities or fabricate answers.
+    answers = data.get('answers')
+    invalid = json.dumps({'answers':[]})
+    if not isinstance(answers, dict) or set(answers) != set(questions):
+        return invalid
+    result = []
+    for name in questions:
+        answer = answers[name]
+        if not isinstance(answer, dict) or answer.get('type') != 'choice' or not isinstance(answer.get('choice'), str):
+            return invalid
+        probabilities = answer.get('probabilities')
+        if not isinstance(probabilities, dict) or set(probabilities) != set(questions[name]['criteria']):
+            return invalid
+        if any(type(p) not in (int, float) or not 0 <= p <= 1 for p in probabilities.values()):
+            return invalid
+        result.append({'id':name,'selected':answer['choice'],
+                       'probabilities':[{'id':key,'p':probabilities[key]} for key in questions[name]['criteria']]})
+    return json.dumps({'answers':result},allow_nan=False)
+
+
 def strip_reasoning(data):
     for choice in data.get('choices', []):
         for key in ('message','delta'):
@@ -73,9 +123,10 @@ def strip_reasoning(data):
 
 
 class Gateway:
-    def __init__(self, providers, default_backend, discovery_backend, counts=None, limit=None, deadline=240):
+    def __init__(self, providers, default_backend, discovery_backend, counts=None, limit=None, deadline=240, selector_backend=None):
         self.providers, self.default_backend, self.discovery_backend = providers, default_backend, discovery_backend
         self.counts, self.limit, self.deadline = counts, limit, deadline
+        self.selector_backend = selector_backend
         self.opener = urllib.request.build_opener(NoRedirect())
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
@@ -95,9 +146,15 @@ class Gateway:
         entered = time.monotonic()
         if backend not in self.providers:
             raise GatewayFailure('BACKEND_UNAVAILABLE','Requested configured backend is not enabled')
+        if body['questions'] and self.selector_backend is not None:
+            backend = self.selector_backend
+        if backend == 'jev' and not body['questions']:
+            raise GatewayFailure('BACKEND_UNAVAILABLE','Jev requires issued selection questions')
+        if backend not in self.providers:
+            raise GatewayFailure('BACKEND_UNAVAILABLE','Requested configured backend is not enabled')
         self.admit(body)
         provider = self.providers[backend]
-        payload = payload_for(body,backend,provider)
+        payload = jev_payload(body,provider['model']) if backend == 'jev' else payload_for(body,backend,provider)
         encoded = json.dumps(payload).encode()
         if len(encoded) > MAX_BYTES:
             raise GatewayFailure('GATEWAY_REQUEST_LIMIT','Provider envelope exceeds byte limit',413)
@@ -119,7 +176,10 @@ class Gateway:
                     raise GatewayFailure('GATEWAY_RESPONSE_LIMIT','Provider response exceeds byte limit',502)
             data = json.loads(chunks)
         strip_reasoning(data)
-        choice = data['choices'][0]
+        if backend == 'jev':
+            choice = {'message':{'content':jev_content(data,payload['questions'])},'finish_reason':'stop'}
+        else:
+            choice = data['choices'][0]
         message = choice['message']
         content, refusal = message.get('content'), message.get('refusal') or ''
         finish = choice.get('finish_reason')
@@ -136,14 +196,14 @@ class Gateway:
         def count(value):
             return value if type(value) is int and 0 <= value <= 2147483647 else None
         complete_ms = (time.monotonic()-started)*1000
-        metadata = {'in':count(usage.get('prompt_tokens')), 'out':count(usage.get('completion_tokens')),
+        metadata = {'in':count(usage.get('input_tokens') if backend == 'jev' else usage.get('prompt_tokens')), 'out':count(usage.get('output_tokens') if backend == 'jev' else usage.get('completion_tokens')),
                     'cached':count((usage.get('prompt_tokens_details') or {}).get('cached_tokens',usage.get('prompt_cache_hit_tokens'))),
                     'reasoning':count((usage.get('completion_tokens_details') or {}).get('reasoning_tokens')),
                     'finish':finish,'max_tokens':body['maxTokens'],'thinkingRequested':body['thinking'],
                     'operation':body['operation'],'stage':body['stage'],'ask':body['ask'],
                     'totalMs':complete_ms,'receiptTiming':{'requestPreparationMs':(started-entered)*1000,
                     'responseHeadersMs':headers_ms,'responseCompleteMs':complete_ms}}
-        result = {'content':content,'finish':finish,'refusal':refusal,'model':provider['model'],'metadata':metadata}
+        result = {'content':content,'finish':finish,'refusal':refusal,'model':data.get('model',provider['model']),'metadata':metadata}
         if body['capture']:
             result.update(request=payload,response=data)
             if len(json.dumps(result).encode()) > MAX_BYTES:
@@ -163,7 +223,7 @@ def handler_for(gateway):
             if self.path != '/health':
                 self.send_error(404); return
             self.reply(200,{'configured':True,'automaticRetries':False,'defaultBackend':gateway.default_backend,
-                           'discoveryBackend':gateway.discovery_backend,'models':{k:v['model'] for k,v in gateway.providers.items()}})
+                           'discoveryBackend':gateway.discovery_backend,'selectorBackend':gateway.selector_backend,'models':{k:v['model'] for k,v in gateway.providers.items()}})
         def do_POST(self):
             if self.path not in ('/generate','/discover'):
                 self.send_error(404); return
@@ -206,6 +266,9 @@ def main():
     parser.add_argument('--enable-cortex',action='store_true'); parser.add_argument('--enable-cerebras',action='store_true')
     parser.add_argument('--discovery-backend',choices=('disabled','deepseek-flash'),default='disabled')
     parser.add_argument('--cerebras-key-file',type=pathlib.Path,default=pathlib.Path.home()/'cerebras.key')
+    parser.add_argument('--selector-backend',choices=('jev',),help='Explicit backend for DEAL-issued bounded questions; no fallback')
+    parser.add_argument('--jev-key-file',type=pathlib.Path,default=pathlib.Path.home()/'jev.key')
+    parser.add_argument('--jev-model',default='jev-latest')
     parser.add_argument('--counts',type=pathlib.Path); parser.add_argument('--audit',action='store_true')
     parser.add_argument('--limit',type=int); parser.add_argument('--deadline',type=float,default=240)
     parser.add_argument('--port',type=int,default=8787)
@@ -222,9 +285,11 @@ def main():
         providers['cerebras'] = {'key':args.cerebras_key_file.read_text().strip(),'model':'qwen-3.8-27b','endpoint':'https://api.cerebras.ai/v1/chat/completions'}
     if args.discovery_backend == 'deepseek-flash':
         providers['deepseek-flash'] = {'key':os.environ.get('DEXTER_DEEPSEEK_API_KEY',''),'model':'deepseek-flash','endpoint':'https://api.deepseek.com/chat/completions'}
+    if args.selector_backend == 'jev':
+        providers['jev'] = {'key':args.jev_key_file.read_text().strip(),'model':args.jev_model,'endpoint':'https://api.typesafe.ai/v1/systemone'}
     if any(not p['key'] or any(c.isspace() for c in p['key']) for p in providers.values()):
         parser.error('Enabled backend requires nonempty single-token credential')
-    gateway = Gateway(providers,args.backend,args.discovery_backend,args.counts,args.limit,args.deadline)
+    gateway = Gateway(providers,args.backend,args.discovery_backend,args.counts,args.limit,args.deadline,selector_backend=args.selector_backend)
     server = http.server.ThreadingHTTPServer(('127.0.0.1',args.port),handler_for(gateway))
     try:
         server.serve_forever()

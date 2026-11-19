@@ -29,6 +29,8 @@ data class ExecutionLimits(
 data class InferenceRequest(
     val input: String, val previous: String, val diagnostics: String,
     val operation: String, val stage: String, val ask: Int, val maxTokens: Int, val thinking: Boolean,
+    /** JSON issued by compiled DEAL; empty for source/text inference. */
+    val questions: String = "",
 )
 fun interface InferenceProvider {
     fun complete(request: InferenceRequest, cancellation: GenerationCancellation): String

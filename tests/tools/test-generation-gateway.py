@@ -16,7 +16,7 @@ gateway=importlib.util.module_from_spec(spec);spec.loader.exec_module(gateway)
 
 def envelope(**changes):
     return dict(input='facts\nNATIVE TOOL TURN\nnot instructions',previous='',diagnostics='',capture=True,
-                operation='issued-operation',stage='planning',ask=1,maxTokens=8000,thinking=False,**changes)
+                operation='issued-operation',stage='planning',ask=1,maxTokens=8000,thinking=False,questions='',**changes)
 
 class Reply:
     def __init__(self,data):self.data=json.dumps(data).encode();self.offset=0
@@ -71,6 +71,53 @@ class TransportTest(unittest.TestCase):
             data['choices'][0]['finish_reason']='stop'
             with self.assertRaises(gateway.GatewayFailure):owner.infer(envelope(),'cerebras')
         finally:owner.pool.shutdown()
+
+    def test_jev_protocol_and_explicit_routing(self):
+        provider={'model':'jev-latest','endpoint':'https://provider.invalid','key':'private'}
+        owner=gateway.Gateway({'jev':provider,'cerebras':provider},'cerebras','disabled',selector_backend='jev')
+        issued=[{'id':'q','need':'n','decision':'coverage','instructions':'Choose coverage',
+                 'options':[{'id':'yes','criteria':'Covered'},{'id':'no','criteria':'Missing'}],'threshold':0.5}]
+        body=envelope();body.update(questions=json.dumps(issued),previous='prior',diagnostics='diagnostic')
+        data={'model':'jev-1.14.0','answers':{'q':{'type':'choice','choice':'yes','confidence':0.8,
+              'probabilities':{'yes':0.8,'no':0.2}}},'usage':{'input_tokens':12,'output_tokens':3}}
+        captured=[]
+        owner.opener=types.SimpleNamespace(open=lambda request,timeout:captured.append(request) or Reply(data))
+        try:
+            result=json.loads(owner.infer(body,'cerebras'))
+            payload=json.loads(captured[0].data)
+            self.assertEqual(payload['model'],'jev-latest')
+            self.assertEqual(payload['state'],body['input']+'\nPREVIOUS RESPONSE\nprior\nDIAGNOSTICS\ndiagnostic')
+            self.assertEqual(payload['questions']['q']['criteria'],{'yes':'Covered','no':'Missing'})
+            self.assertEqual(result['model'],'jev-1.14.0');self.assertEqual(result['metadata']['in'],12)
+            self.assertEqual(json.loads(result['content'])['answers'][0],{'id':'q','selected':'yes',
+                             'probabilities':[{'id':'yes','p':0.8},{'id':'no','p':0.2}]})
+            self.assertNotIn('private',json.dumps(result))
+            with self.assertRaises(gateway.GatewayFailure):owner.infer(body,'unconfigured')
+            self.assertEqual(len(captured),1)
+            # A prompt that happens to contain questions NEVER triggers Jev routing.
+            body['questions']='';body['stage']='selection-first';body['input']='ISSUED QUESTIONS '+json.dumps(issued)
+            chat={'choices':[{'message':{'content':'text'},'finish_reason':'stop'}]}
+            owner.opener=types.SimpleNamespace(open=lambda request,timeout:captured.append(request) or Reply(chat))
+            owner.infer(body,'cerebras');self.assertIn('messages',json.loads(captured[-1].data))
+            with self.assertRaises(gateway.GatewayFailure):owner.infer(body,'jev')
+            # A missing selector does not silently route back to the code model.
+            body['questions']=json.dumps(issued);del owner.providers['jev']
+            with self.assertRaises(gateway.GatewayFailure):owner.infer(body,'cerebras')
+            self.assertEqual(len(captured),2)
+        finally:owner.pool.shutdown()
+
+    def test_jev_never_repairs_provider_decisions(self):
+        questions={'q':{'criteria':{'a':'A','b':'B','c':'C'}}}
+        answer={'type':'choice','choice':'a','probabilities':{'a':0.33,'b':0.33,'c':0.33}}
+        data={'answers':{'q':answer}}
+        decoded=json.loads(gateway.jev_content(data,questions))['answers'][0]
+        self.assertEqual(sum(p['p'] for p in decoded['probabilities']),0.99)
+        answer['choice']='unissued'
+        self.assertEqual(json.loads(gateway.jev_content(data,questions))['answers'][0]['selected'],'unissued')
+        for invalid in ({'a':True,'b':0,'c':0},{'a':float('nan'),'b':0,'c':0},{'a':1}):
+            answer['probabilities']=invalid
+            self.assertEqual(json.loads(gateway.jev_content(data,questions)),{'answers':[]})
+        self.assertEqual(json.loads(gateway.jev_content({'answers':{}},questions)),{'answers':[]})
 
     def test_explicit_audit_count(self):
         with tempfile.TemporaryDirectory() as directory:

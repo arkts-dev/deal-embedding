@@ -38,7 +38,7 @@ export async function review(input: Input, result: Result): Promise<Result> {
   // Review the proposed batch once before showing at most two admitted questions.
   for (let question of plan.questions) { issued[issued.length] = selection.question(question.id,"","human-question",question.text,options); }
   let operation: inference.Operation = inference.operation(await identity.issue(),1);
-  let response: host.Response = await inference.ask(operation,"question-review",prompt(input)+"\nCURRENT PLAN\n"+s.encode(plan)+"\nISSUED QUESTIONS\n"+s.encode(issued)+"\nReturn {answers:[{id,selected,probabilities:[{id,p}]}]}. One answer per issued question, all options exactly once; probabilities sum to 1; maximum wins, ties follow issued order.","","",2000,false);
+  let response: host.Response = await inference.choose(operation,"question-review",prompt(input)+"\nCURRENT PLAN\n"+s.encode(plan)+"\nISSUED QUESTIONS\n"+s.encode(issued)+"\nReturn {answers:[{id,selected,probabilities:[{id,p}]}]}. One answer per issued question, all options exactly once; probabilities sum to 1; maximum wins, ties follow issued order.","","",2000,s.encode(issued));
   let answers: selection.Answer[] = [];
   if (response.refusal === "") {
     try { answers = selection.decode(response.content,issued); }

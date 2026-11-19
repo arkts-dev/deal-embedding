@@ -86,6 +86,9 @@ async function run(mode){
      else throw Error('Unexpected policy data');break;
     case 'embedding/inference':{
      const r=request.args[0];asks.push(r);assert(r.input.includes('Double the edited value'));assert(r.input.includes('SPECIFICATION'));assert(r.ask>=1);
+     if(['selection-first','selection-second','alignment','coverage','question-review'].includes(r.stage)) {
+      assert.deepEqual(JSON.parse(r.questions),JSON.parse(r.input.split('\nISSUED QUESTIONS\n')[1].split('\nReturn ')[0]),'Typed questions match the unchanged prompt');
+     } else assert.equal(r.questions,'');
      if(mode==='failure'||mode==='construction-failure'&&r.stage==='selection-first'){error={code:'PROVIDER_HTTP',message:'Original provider failure'};break;}
      if(mode==='budget' && r.stage==='custom-edit'){value={content:'invalid exact edit',finish:'stop',refusal:''};break;}
      if(mode==='budget' && r.stage==='custom-whole' && r.ask>1){value={content:'invalid fragment',finish:'stop',refusal:''};break;}

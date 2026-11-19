@@ -39,7 +39,7 @@ internal class GatewayModelClient(private val config: GenerationGatewayConfig) :
         val capture = log.capturesContent
         val body = JSONObject().put("input", request.input).put("previous", request.previous).put("diagnostics", request.diagnostics)
             .put("operation",request.operation).put("stage",request.stage).put("ask",request.ask).put("maxTokens",request.maxTokens)
-            .put("thinking",request.thinking).put("capture", capture).toString().toByteArray(Charsets.UTF_8)
+            .put("thinking",request.thinking).put("questions",request.questions).put("capture", capture).toString().toByteArray(Charsets.UTF_8)
         if (body.size > config.requestBytes) throw ProtocolFailure("GATEWAY_REQUEST_LIMIT", "Generation request exceeds configured byte limit")
         val connection = URI(config.endpoint).toURL().openConnection() as HttpURLConnection
         connection.requestMethod = "POST"

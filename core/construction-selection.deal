@@ -22,7 +22,7 @@ export async function batch(stage: string, context: Context, plan: plans.Plan, q
   while (operation.used < operation.cap) {
     // Native failures escape. Only an empty selection response permits the single retry.
     let completion: string = ""; let refusal: string = "";
-    let result = await inference.ask(operation,stage,prompt(context,plan,questions),previous,"",2000,false);
+    let result = await inference.choose(operation,stage,prompt(context,plan,questions),previous,"",2000,s.encode(questions));
     completion = result.content; refusal = result.refusal;
     if (strings.trim(completion) === "" && refusal === "") { previous = completion; }
     else {

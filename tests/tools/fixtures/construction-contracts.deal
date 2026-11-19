@@ -47,6 +47,7 @@ export function schemas(): null {
   insist(answers[0].accepted && answers[0].selected === "first","Inclusive threshold / issued-order tie");
   let rejected: boolean = false; try { selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"second\",\"probabilities\":[{\"id\":\"first\",\"p\":0.5},{\"id\":\"second\",\"p\":0.5}]}]}",issued); } catch (error) { rejected = true; } insist(rejected,"Wrong tie winner");
   rejected = false; try { selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"first\",\"probabilities\":[{\"id\":\"first\",\"p\":1}]}]}",issued); } catch (error) { rejected = true; } insist(rejected,"Missing option");
+  rejected = false; try { selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"first\",\"probabilities\":[{\"id\":\"first\",\"p\":0.66},{\"id\":\"second\",\"p\":0.33}]}]}",issued); } catch (error) { rejected = true; } insist(rejected,"Rounded sum is invalid; never renormalize Jev answers");
   let screen: screens.Screen = screens.reserve(plan,"chat"); insist(screen.target === "chat" && screen.slots[0].status === "open","Need reservation");
   insist(screens.catalogueKinds().length === 36,"Catalogue vocabulary");
   let ledger: coverage.Ledger = coverage.judge(plan,screen,[]);

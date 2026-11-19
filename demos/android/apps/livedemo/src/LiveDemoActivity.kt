@@ -21,6 +21,16 @@ import dev.deal.shell.*
 class LiveDemoActivity : ComponentActivity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        // Optional isolated measurement run. Existing tools and their links stay intact.
+        val run = intent.getStringExtra("run").orEmpty()
+        require(run.isEmpty() || run.matches(Regex("[a-z0-9-]{1,40}")))
+        val store = if (run.isEmpty()) "assistance" else "picnic-$run"
+        val runHooks = if (run.isEmpty()) null else object : DemoAssistanceHooks(this) {
+            override fun saved(identity: String) = super.saved("$store.$identity")
+            override fun save(identity: String, experience: String) = super.save("$store.$identity", experience)
+            override fun dismissed(identity: String) = super.dismissed("$store.$identity")
+            override fun dismiss(identity: String) = super.dismiss("$store.$identity")
+        }
         setContent { AppTheme(Accent.Deal) {
             var enabled by remember { mutableStateOf(consented()) }
             var menu by remember { mutableStateOf(false) }
@@ -38,16 +48,16 @@ class LiveDemoActivity : ComponentActivity() {
                     if (!enabled) Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text("A little help with the budget", style = MaterialTheme.typography.headlineSmall)
                         Text("Discover a useful tool from the picnic note, then open it to generate an interactive screen.")
-                        Text("The note goes to DeepSeek Flash for discovery and Cerebras for generation. Real AI requests may cost money. No other apps or private records are accessed.")
+                        Text("The note goes to DeepSeek Flash for discovery and Cerebras for planning/source generation and, when configured, Jev for selection/coverage. Real AI requests may cost money. No other apps or private records are accessed.")
                         Button(onClick = {
                             check(Connections.settings(this@LiveDemoActivity).edit()
                                 .putBoolean("discovery.deepseek-flash", true).putBoolean("generation", true).commit())
                             enabled = true
                         }) { Text("Enable live AI") }
                     } else AssistedTask(
-                        facts = picnicFacts, storageName = "assistance", title = "Your picnic",
+                        facts = picnicFacts, storageName = store, title = "Your picnic", hooks = runHooks,
                         protocolFactory = { context ->
-                            Embedding.open(context, EmbeddingConfig("assistance", GenerationBuild.gateway(),
+                            Embedding.open(context, EmbeddingConfig(store, GenerationBuild.gateway(),
                                 checkNotNull(AssistanceBuild.discoveryGateway()) { "Build with cloud discovery enabled" }, retainState = true))
                                 .also { it.capture(true) } // Inspect retains real model input/output for this disclosed demo note.
                         },
