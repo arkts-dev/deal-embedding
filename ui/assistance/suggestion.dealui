@@ -6,8 +6,8 @@ export view Suggestion(state: app.State): View {
         ui.Text(text: "Suggestion", style: "caption")
         ui.Text(text: state.title, style: "heading")
         ui.Row() {
-            ui.Button(text: "Open", enabled: !state.busy, onClick: action app.Open {value: payload}, style: "primary")
-            ui.Button(text: "Dismiss", enabled: !state.busy, onClick: action app.Dismiss {value: payload}, style: "secondary")
+            ui.Button(text: "Open", value: 0, enabled: !state.busy, onClick: action app.Open {value: payload}, style: "primary")
+            ui.Button(text: "Dismiss", value: 0, enabled: !state.busy, onClick: action app.Dismiss {value: payload}, style: "secondary")
         }
     }
 }

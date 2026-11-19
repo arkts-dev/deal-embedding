@@ -23,7 +23,15 @@ internal class SuggestionSurface(context: Context, title: String, private val op
         try {
             val contract = "[{module:'embedding/assistance',functions:[{name:'open',parameters:[],result:{kind:'null'}},{name:'dismiss',parameters:[],result:{kind:'null'}}]}]"
             program.evaluate(SandboxBundle.build(context,listOf("dealui-session.js","ui-session.js"),
-                "configureDealCapabilities($contract);", "mountDealUi(factories,'experience_entry.js',${JSONObject().put("title",title).put("busy",false)})",assetRoot="assistance"))
+                "configureDealCapabilities($contract);", """
+                    (() => {
+                      const {entry,rt,checkpointSchema}=dealLoad(factories,'experience_entry.js');
+                      const state=entry.bridgeInitialState.${'$'}f();
+                      rt.setProp(state,'title',${JSONObject.quote(title)});
+                      const checkpoint=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.${'$'}f()).encode(state);
+                      return mountDealUi(factories,'experience_entry.js',checkpoint);
+                    })()
+                """.trimIndent(),assetRoot="assistance"))
             tree = JSONObject(program.evaluate(DealSessionBindings.snapshot)).getJSONObject("tree")
         } catch (error: Throwable) {
             runCatching { close() }.onFailure(error::addSuppressed); throw error

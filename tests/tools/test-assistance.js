@@ -17,6 +17,7 @@ const context = vm.createContext({ sources, hostCalls: [] });
 vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/sandbox.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT || 'dependencies/deal-ui', 'runtime-js/checkpoint.js'), 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT || 'dependencies/deal-ui', 'runtime-js/session.js'), 'utf8'), context);
+vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/ui-session.js', 'utf8'), context);
 vm.runInContext(`
   const factories = Object.fromEntries(Object.entries(sources).map(([id, source]) => [id, new Function('require','module','exports','process','console', source)]));
   // The native transport supplies the assistance capability module; only its two calls are stubbed.
@@ -24,8 +25,16 @@ vm.runInContext(`
     'exports.open = async function () { globalThis.hostCalls.push("open"); return null; };' +
     'exports.dismiss = async function () { globalThis.hostCalls.push("dismiss"); return null; };');
   const {entry, rt, checkpointSchema} = dealLoad(factories, 'experience_entry.js');
+  // Native suggestion presentation supplies a typed checkpoint, not raw JSON state.
+  const title = 'Picnic €120';
+  const initial = entry.bridgeInitialState.$f();
+  rt.setProp(initial, 'title', title);
+  const checkpoint = createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f()).encode(initial);
+  mountDealUi(factories,'experience_entry.js',checkpoint);
+  if (!dealUi.snapshot().includes(title)) throw Error('Suggestion title lost at native mount');
+  dealUi.dispose();
   const pending = [];
-  const session = createDealUiSession(entry, rt, null, (run, complete, fail, exit) => {
+  const session = createDealUiSession(entry, rt, checkpoint, (run, complete, fail, exit) => {
     pending.push({run, complete, fail, exit});
   }, checkpointSchema);
   globalThis.__session = session;
@@ -42,6 +51,8 @@ const buttons = [];
   for (const child of node.children) visit(child);
 })(tree);
 assert.equal(buttons.length, 2, 'the migrated assistance view still has exactly two controls');
+for (const button of buttons) assert.equal(button.props.find(p => p.name === 'value').numberValue, 0,
+  'native click reconstruction requires the declared numeric value');
 const slotOf = node => node.props.find(prop => prop.kind === 'action');
 const enabled = () => {
   const root = snapshot().tree;
