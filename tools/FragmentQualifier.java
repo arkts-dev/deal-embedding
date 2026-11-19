@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
  */
 public final class FragmentQualifier {
     private final Map<String,String> names, fields;
+    private String source = "";
     private final Map<String,ClassDeclaration> classes = new LinkedHashMap<>();
     private final Map<String,FunctionDeclaration> functions = new LinkedHashMap<>();
     private final Map<String,TypeNode> stateTypes = new LinkedHashMap<>();
@@ -44,7 +45,7 @@ public final class FragmentQualifier {
         }
         var parsedView = UiParser.parseViews(Path.of("fragment.dealui"),view);
         Map<String,String> qualifiedTypes = new LinkedHashMap<>(); stateTypes.forEach((key,text) -> qualifiedTypes.put(key,printer.type(parseType(text))));
-        return Map.of("declarations",printer.program(first),"helpers",printer.program(second),
+        return Map.of("declarations",printer.program(first,declarations),"helpers",printer.program(second,helpers),
             "view",printer.view(parsedView),"types",qualifiedTypes);
     }
     public static String expression(String source, Map<String,String> names, Map<String,String> fields,
@@ -53,6 +54,7 @@ public final class FragmentQualifier {
         stateTypes.forEach((key,value) -> printer.stateTypes.put(key,parseType(value)));
         var scope = new LinkedHashMap<String,TypeNode>(); variables.forEach((key,value) -> scope.put(key,parseType(value)));
         var declaration = (VariableDeclaration)FragmentSyntax.parse("let value = " + source + ";").statements().getFirst();
+        printer.source = "let value = " + source + ";";
         return printer.expression(declaration.initializer(),scope,parseType(expected));
     }
     public static String qualifiedType(String value, Map<String,String> names) {
@@ -76,9 +78,10 @@ public final class FragmentQualifier {
     }
     private String result(TypeNode type, boolean async) { return async ? "Promise<" + type(type) + ">" : type(type); }
     private String parameters(List<Parameter> parameters) {
-        return parameters.stream().map(p -> p.name() + ": " + type(p.type())).collect(Collectors.joining(", "));
+        return parameters.stream().map(p -> p.name() + (p.type()==null ? "" : ": " + type(p.type()))).collect(Collectors.joining(", "));
     }
-    private String program(ProgramNode program) {
+    private String program(ProgramNode program, String source) {
+        this.source = source;
         return program.statements().stream().filter(s -> !(unwrap(s) instanceof ImportDeclaration)).map(s -> statement(s,new LinkedHashMap<>(),null,0)).collect(Collectors.joining());
     }
     private static String indent(int level) { return "  ".repeat(level); }
@@ -159,7 +162,7 @@ public final class FragmentQualifier {
             case ConditionalExpr c -> "("+expression(c.condition(),scope,null)+" ? "+expression(c.consequent(),scope,expected)+" : "+expression(c.alternate(),scope,expected)+")";
             case OptionalChainExpr c -> "("+expression(c.expression(),scope,expected)+")";
             case OptionalGuardExpr g -> expression(g.value(),scope,null);
-            case AssignmentExpr a -> expression(a.target(),scope,null) + " = " + expression(a.value(),scope,resolved(a.target(),scope));
+            case AssignmentExpr a -> FragmentSyntax.assignment(a,expression(a.target(),scope,null),()->expression(a.value(),scope,resolved(a.target(),scope)),source);
             case ArrayLiteralExpr a -> a.elements().stream().map(e -> expression(e,scope,unnull(expected) instanceof ArrayType array ? array.elementType() : null)).collect(Collectors.joining(", ","[","]"));
             case ObjectLiteralExpr o -> {
               List<String> properties = new ArrayList<>();
@@ -188,13 +191,23 @@ public final class FragmentQualifier {
                 yield expression(c.callee(),scope,null) + (c.callee() instanceof OptionalGuardExpr ? "?.(" : "(") + String.join(", ",args) + ")";
             }
             case FunctionExpr f -> {
-                var local = new LinkedHashMap<>(scope); f.params().forEach(p -> local.put(p.name(),p.type()));
+                var local = new LinkedHashMap<>(scope);
+                var contextual=unnull(expected) instanceof FunctionType ft?ft.params():List.<FunctionTypeParam>of();
+                for(int index=0;index<f.params().size();index++) {
+                    var p=f.params().get(index);
+                    local.put(p.name(),p.type()!=null?p.type():index<contextual.size()?contextual.get(index).type():null);
+                }
+                if(f.expressionBody()) {
+                    var first=f.body().statements().getFirst();
+                    ExpressionNode value=first instanceof ReturnStatement r?r.expr().orElseThrow():((ExpressionStatement)first).expr();
+                    yield (f.isAsync()?"async ":"")+"("+parameters(f.params())+"): "+result(f.returnType(),f.isAsync())+" => ("+expression(value,local,f.returnType())+")";
+                }
                 yield (f.isAsync()?"async ":"") + "function(" + parameters(f.params()) + "): " + result(f.returnType(),f.isAsync()) + " " + block(f.body(),local,f.returnType(),0);
             }
             case HasExpr h -> "Object.hasOwn(" + expression(h.object(),scope,null) + ", " + (h.key() instanceof LiteralExpr l && l.value() instanceof LiteralValue.StringLiteral text && state(resolved(h.object(),scope)) ? quote(stateField(text.value())) : expression(h.key(),scope,null)) + ")";
             case TemplateLiteralExpr t -> {
-                List<String> pieces = t.parts().stream().map(e -> "String("+expression(e,scope,null)+")").toList();
-                yield "(" + String.join(" + ",pieces) + ")";
+                List<String> pieces = t.parts().stream().map(e -> "${"+expression(e,scope,null)+"}").toList();
+                yield "`" + String.join("",pieces) + "`";
             }
         };
     }

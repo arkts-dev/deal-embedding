@@ -8,6 +8,7 @@ python3 tools/dependencies.py check
 node tests/tools/test-protocol.js
 python3 tests/tools/test-construction-contracts.py
 python3 tests/tools/test-composer.py
+python3 tests/tools/test-fragment-semantics.py
 node tests/tools/test-generation-cutover.js
 node tests/tools/test-emitted-runtime.js
 node tests/tools/test-assistance.js

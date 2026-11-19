@@ -22,7 +22,7 @@ public final class FragmentQualifierTest {
         String chains="export class Box { value: number; } export function chain(box: Box | undefined, rows: number[] | undefined, fn: (() => number) | undefined): number { const text: string = `values ${box?.value} ${rows?.[0]} ${fn?.()}`; return box?.value ?? 0; }";
         String printed=FragmentSyntax.qualify(chains,Map.of()); FragmentSyntax.parse(printed);
         String qualified=(String)FragmentQualifier.qualify(chains,"",view,names,fields,types).get("declarations"); FragmentSyntax.parse(qualified);
-        for(String source:List.of(printed,qualified))if(!source.contains("?.[")||!source.contains("?.(")||!source.contains("?.value")||!source.contains("String("))throw new AssertionError("Lost optional/template semantics: "+source);
+        for(String source:List.of(printed,qualified))if(!source.contains("?.[")||!source.contains("?.(")||!source.contains("?.value")||!source.contains("`") || source.contains("String("))throw new AssertionError("Lost optional/template semantics: "+source);
         if(args.length>0){Files.createDirectories(Path.of(args[0]));Files.writeString(Path.of(args[0],"qualified.deal"),(String)result.get("declarations")+"export class AppState { f_a_value: number; f_a_rows: f_a_Row[]; }\n"+code);}
         System.out.println("fragment qualifier: contextual state/member/action identities, locals, Unicode and parsed views passed");
     }

@@ -37,9 +37,10 @@ public final class FragmentRegions {
             if (depth < 0) throw new IllegalArgumentException("Unbalanced field syntax");
             if (token.type() == TokenType.SEMICOLON && depth == 0) {
                 String field = slice(fields,start,token.endScalarOffset()); start = token.endScalarOffset();
-                var parsed = FragmentSyntax.parse("let " + field).statements();
+                String fieldSource="let " + field;
+                var parsed = FragmentSyntax.parse(fieldSource).statements();
                 if (parsed.size() != 1 || !(parsed.getFirst() instanceof VariableDeclaration v) || v.typeAnnotation().isEmpty()) throw new IllegalArgumentException("Expected name: Type = expression field");
-                state.add(Map.of("name",v.name(),"type",FragmentSyntax.type(v.typeAnnotation().get()),"initial",FragmentSyntax.expression(v.initializer())));
+                state.add(Map.of("name",v.name(),"type",FragmentSyntax.type(v.typeAnnotation().get()),"initial",FragmentSyntax.expression(v.initializer(),fieldSource)));
             }
         }
         if (depth != 0 || !slice(fields,start,fields.length()).isBlank()) throw new IllegalArgumentException("Unterminated field declaration");
