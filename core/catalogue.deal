@@ -9,7 +9,6 @@ import * as syntax from "embedding/fragment-syntax";
 import * as bindings from "./bindings";
 import * as composer from "./composer";
 import * as s from "./construction-schema";
-import * as strings from "std/string";
 import * as literals from "./source-literals";
 
 // Only executable definitions are issued. Unsupported kinds remain open for custom sections.
@@ -63,10 +62,10 @@ export function disclosed(entry: Configured, original: string, facts: string, us
   let data: string = original+"\n"+facts;
   if (entry.definition.kind === "metrics" || entry.definition.kind === "key_facts") {
     let key: string = "values"; if (entry.definition.kind === "key_facts") { key = "items"; }
-    for (let row of s.records(entry.parameters,key)) { if (!strings.contains(data,s.text(row.label)) || !strings.contains(data,s.text(row.value))) { return false; } }
+    for (let row of s.records(entry.parameters,key)) { if (!data.includes(s.text(row.label)) || !data.includes(s.text(row.value))) { return false; } }
   }
-  if (entry.definition.kind === "checklist") { for (let row of s.records(entry.parameters,"items")) { if (!strings.contains(data,s.text(row.label)) || !strings.contains(data,s.text(row.detail))) { return false; } } }
-  if (userOwned && entry.definition.kind === "note" && !strings.contains(data,s.text(entry.parameters.text))) { return false; }
+  if (entry.definition.kind === "checklist") { for (let row of s.records(entry.parameters,"items")) { if (!data.includes(s.text(row.label)) || !data.includes(s.text(row.detail))) { return false; } } }
+  if (userOwned && entry.definition.kind === "note" && !data.includes(s.text(entry.parameters.text))) { return false; }
   return true;
 }
 export function selected(plan: plans.Plan, choices: selecting.Choice[]): Configured[] {

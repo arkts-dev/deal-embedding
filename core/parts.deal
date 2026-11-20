@@ -7,15 +7,13 @@ import * as composer from "./composer";
 import * as formula from "./formula";
 import * as s from "./construction-schema";
 import * as literals from "./source-literals";
-import * as strings from "std/string";
-import * as math from "std/math";
 import * as tables from "std/table";
 import * as scalar from "./scalar-read";
 
 export class Figure { need: string; expression: formula.Expression; label: string; unit: string; format: string; shown: boolean; }
 export class Definitions { alternatives: selecting.Alternative[]; figures: Figure[]; }
 export class Built { instance: screens.Instance; computations: composer.Computation[]; }
-function minorUnits(unit: string): boolean { return strings.endsWith(unit,"cents") || strings.endsWith(unit,"minor units"); }
+function minorUnits(unit: string): boolean { return unit.endsWith("cents") || unit.endsWith("minor units"); }
 function type(input: plans.Input): string { if (input.kind === "text") { return "string"; } if (input.kind === "toggle") { return "boolean"; } return "number"; }
 export function operands(plan: plans.Plan): formula.Operand[] {
   let result: formula.Operand[] = [];
@@ -43,10 +41,10 @@ export function defineWithProviders(plan: plans.Plan, providerOperands: formula.
         for (let key of tables.keys(examples)) { let known: boolean = false; for (let operand of issued) { if (operand.id === key) { known = true; } } if (!known) { s.reject("Unissued example operand"); } }
         let tested: formula.Expression = formula.compile(s.text(need.spec.formula),testOperands); let expected: number = s.finite(example.result);
         if (!Object.hasOwn(tested,"number")) { s.reject("Incomplete numeric example"); }
-        let actual: number = tested.number as number; let tolerance: number = math.absNumber(expected)*0.006; if (tolerance < 0.011) { tolerance = 0.011; }
-        if (actual-actual !== 0 || math.absNumber(actual-expected) > tolerance) { s.reject("Formula fails the issued numeric example"); }
+        let actual: number = tested.number as number; let tolerance: number = Math.abs(expected)*0.006; if (tolerance < 0.011) { tolerance = 0.011; }
+        if (!Number.isFinite(actual) || Math.abs(actual-expected) > tolerance) { s.reject("Formula fails the issued numeric example"); }
         let valid: boolean = true;
-        for (let dependency of expression.dependencies) { let original: string = strings.substring(dependency,8,strings.length(dependency)); if (!s.contains(need.reads,original)) { valid = false; } }
+        for (let dependency of expression.dependencies) { const original = dependency.substring(8); if (!s.contains(need.reads,original)) { valid = false; } }
         if (valid && expression.type === "number") {
           definitions.figures[definitions.figures.length] = {need:need.id,expression:expression,label:s.nonblank(need.spec.label),unit:s.text(need.spec.unit),format:s.text(need.spec.format),shown:need.spec.shown as boolean};
           definitions.alternatives[definitions.alternatives.length] = {id:"part_"+need.id,need:need.id,origin:"part",kind:"figure",criteria:"Pure checked numeric formula "+s.text(need.spec.formula)+" over issued inputs/constants. Preserves numeric value, explicit readiness and units; no provider work, timer, records or external action.",eligible:true,reason:""};
@@ -71,8 +69,7 @@ export function build(plan: plans.Plan, definitions: Definitions, choices: selec
 export function buildWithProviders(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry, reads: scalar.Built | null): Built {
   let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let effects: screens.Handler[] = []; let declarations: string = ""; let helpers: string = ""; let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() {";
   let computations: composer.Computation[] = []; let covers: string[] = [];
-  declarations = declarations+"import * as inputString from \"std/string\"; import * as inputMath from \"std/math\";";
-  helpers = helpers+"export function decimalDraft(text: string): boolean { let digits: number = 0; let dot: boolean = false; let index: number = 0; for (let ch of text) { if ((ch === \"+\" || ch === \"-\") && index === 0) {} else if (ch === \".\" && !dot) {dot = true;} else if (inputString.contains(\"0123456789\",ch)) {digits = digits+1;} else {return false;} index = index+1; } return digits > 0; } export function parseDraft(text: string): number { let negative: boolean = false; let whole: number = 0; let scale: number = 1; let dot: boolean = false; for (let ch of text) { if (ch === \"-\") {negative = true;} else if (ch === \".\") {dot = true;} else if (ch !== \"+\") { let digit: number = 0; for (let n of [0,1,2,3,4,5,6,7,8,9]) { if (inputString.substring(\"0123456789\",n,n+1) === ch) {digit = n;} } whole = whole*10+digit; if(dot) {scale = scale*10;} } } let value: number = whole/scale; if(negative) {return -value;} return value; }";
+  helpers += "export function decimalDraft(text: string): boolean { let digits = 0; let dot = false; let index = 0; for (let ch of text) { if ((ch === \"+\" || ch === \"-\") && index === 0) {} else if (ch === \".\" && !dot) {dot = true;} else if (ch >= \"0\" && ch <= \"9\") {digits++;} else {return false;} index++; } return digits > 0 && Number.isFinite(Number(text)); } export function parseDraft(text: string): number { return Number(text); }";
   for (let input of plan.inputs) {
     if (!s.contains(["text","toggle","amount","percent","count","time","date"],input.kind)) { continue; }
     let valueType: string = type(input); let initial: string = s.encode(input.value);
@@ -82,10 +79,10 @@ export function buildWithProviders(plan: plans.Plan, definitions: Definitions, c
       fields[fields.length] = {name:input.id,type:"number",role:"derived",dependencies:[fieldName],initial:"null",owner:"parts"};
       let ready: string = "decimalDraft(state."+fieldName+")";
       let parsed: string = "parseDraft(state."+fieldName+")";
-      if (input.kind === "count" || input.kind === "time" || input.kind === "date") { ready = ready+" && inputMath.floor("+parsed+") === "+parsed; }
+      if (input.kind === "count" || input.kind === "time" || input.kind === "date") { ready += " && Math.floor("+parsed+") === "+parsed; }
       if (input.measure === "money") {
-        ready = ready+" && inputMath.absNumber("+parsed+") <= 9007199254740991";
-        if (minorUnits(input.unit)) { ready = ready+" && inputMath.floor("+parsed+") === "+parsed; }
+        ready += " && Math.abs("+parsed+") <= 9007199254740991";
+        if (minorUnits(input.unit)) { ready += " && Math.floor("+parsed+") === "+parsed; }
       }
       if (input.kind === "time") { ready = ready+" && "+parsed+" >= 0 && "+parsed+" <= 1439"; }
       if (Object.hasOwn(input,"min")) { ready = ready+" && "+parsed+" >= "+s.encode(input.min); }
@@ -121,12 +118,12 @@ export function buildWithProviders(plan: plans.Plan, definitions: Definitions, c
     declarations = declarations+built.declarations; helpers = helpers+built.helpers; view = view+built.view;
   }
   let selected: string[] = []; for (let choice of choices) {
-    if (strings.startsWith(choice.alternative,"part_")) { selected[selected.length] = choice.need; }
+    if (choice.alternative.startsWith("part_")) { selected[selected.length] = choice.need; }
     if (choice.alternative === "input_"+choice.need) { covers[covers.length] = choice.need; }
   }
   for (let figure of definitions.figures) { if (s.contains(selected,figure.need)) {
     let dependenciesReady: boolean = true;
-    for (let dependency of figure.expression.dependencies) { let name: string = strings.substring(dependency,8,strings.length(dependency)); let issued: boolean = false; for (let input of plan.inputs) { if (input.id === name) { issued = true; } } if (s.contains(covers,name)) { issued = true; } if (!issued) { dependenciesReady = false; } for (let other of definitions.figures) { if (other.need === name && !s.contains(covers,name)) { dependenciesReady = false; } } }
+    for (let dependency of figure.expression.dependencies) { const name = dependency.substring(8); let issued: boolean = false; for (let input of plan.inputs) { if (input.id === name) { issued = true; } } if (s.contains(covers,name)) { issued = true; } if (!issued) { dependenciesReady = false; } for (let other of definitions.figures) { if (other.need === name && !s.contains(covers,name)) { dependenciesReady = false; } } }
     if (!dependenciesReady) { continue; }
     fields[fields.length] = {name:figure.need,type:"number",role:"derived",dependencies:figure.expression.dependencies,initial:"null",owner:"parts"};
     bindings.reserve(registry,{id:figure.need,type:"number",schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+figure.need,ready:"f_parts_"+figure.need+"_ready"});

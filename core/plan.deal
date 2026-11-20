@@ -1,5 +1,4 @@
 import * as tables from "std/table";
-import * as math from "std/math";
 import * as s from "./construction-schema";
 
 export class Requirement { id: string; text: string; sources: string[]; needs: string[]; }

@@ -1,13 +1,11 @@
 import * as decoded from "./decoded";
-import * as strings from "std/string";
 import * as tables from "std/table";
 
 export class Suggestion { title: string; brief: string; supportingFactIds: string[]; capabilityIds: string[]; }
 export class Capture { facts: Record<string, unknown>[]; capabilityIds: string[]; catalogue: string; }
 
-function require(condition: boolean, message: string): null {
+function require(condition: boolean, message: string): void {
     if (!condition) { throw {name:"INVALID_REPLY",message:message}; }
-    return null;
 }
 function contains(values: string[], value: string): boolean {
     for (let item of values) { if (item === value) { return true; } }
@@ -23,11 +21,11 @@ function references(values: string[], allowed: string[], minimum: number): strin
     return result;
 }
 export function validate(text: string, capture: Capture): Suggestion | null {
-    if (strings.trim(text) === "null") { return null; }
+    if (text.trim() === "null") { return null; }
     const value: Suggestion = JSON.parse(text);
     const title = value.title; const brief = value.brief;
-    require(strings.length(strings.trim(title)) > 0 && strings.length(title) <= 120, "Invalid discovery title");
-    require(strings.length(strings.trim(brief)) > 0 && strings.length(brief) <= 4096, "Invalid discovery brief");
+    require(title.trim().length > 0 && title.length <= 120, "Invalid discovery title");
+    require(brief.trim().length > 0 && brief.length <= 4096, "Invalid discovery brief");
     let allowedFacts: string[] = [];
     for (let fact of capture.facts) { let id: string = (fact.id as string); allowedFacts[allowedFacts.length] = id; }
     const facts = value.supportingFactIds; const capabilities = value.capabilityIds;

@@ -1,4 +1,3 @@
-import * as strings from "std/string";
 
 // Canonical logging policy. Only trusted adapters submit events; application source cannot.
 export class LogEvent {

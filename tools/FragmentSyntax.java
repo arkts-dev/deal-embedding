@@ -126,10 +126,11 @@ public final class FragmentSyntax {
     /** Preserve parsed assignment/update spelling and target evaluation, without lowering it. */
     static String assignment(AssignmentExpr node, String target, java.util.function.Supplier<String> value, String source) {
         if(source.isEmpty())throw new IllegalArgumentException("Assignment printing requires originating source");
-        int start=source.offsetByCodePoints(0,node.span().startScalarOffset());
-        int targetStart=source.offsetByCodePoints(0,node.target().span().startScalarOffset());
-        int targetEnd=source.offsetByCodePoints(0,node.target().span().endScalarOffset());
-        int end=source.offsetByCodePoints(0,node.span().endScalarOffset());
+        // Compiler spans are half-open UTF-16 offsets, as are Java substring indices.
+        int start=node.span().startScalarOffset();
+        int targetStart=node.target().span().startScalarOffset();
+        int targetEnd=node.target().span().endScalarOffset();
+        int end=node.span().endScalarOffset();
         var before=new Lexer(source.substring(start,targetStart),"assignment.deal").tokenize().tokens().stream().filter(t->t.type()!=TokenType.EOF).toList();
         var after=new Lexer(source.substring(targetEnd,end),"assignment.deal").tokenize().tokens().stream().filter(t->t.type()!=TokenType.EOF).toList();
         var prefix=before.stream().map(t->t.lexeme()).filter(t->t.equals("++") || t.equals("--")).findFirst();

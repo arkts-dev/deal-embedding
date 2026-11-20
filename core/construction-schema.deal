@@ -1,25 +1,23 @@
 import * as tables from "std/table";
-import * as strings from "std/string";
-import * as math from "std/math";
 import * as decoded from "./decoded";
 
-export function reject(message: string): void { throw {name:"CONSTRUCTION_SCHEMA",message:message}; }
+export function reject(message: string): never { throw {name:"CONSTRUCTION_SCHEMA",message:message}; }
 export function closed(value: Record<string, unknown>, required: string[], optional: string[]): void {
   for (let key of required) { if (!Object.hasOwn(value,key)) { reject("Missing field: "+key); } }
   for (let key of tables.keys(value)) { if (!contains(required,key) && !contains(optional,key)) { reject("Unknown field: "+key); } }
 }
 export function contains(values: string[], value: string): boolean { return values.includes(value); }
-export function finite(value: unknown): number { let n: number = value as number; if (n-n !== 0) { reject("Expected finite number"); } return n; }
-export function integral(value: unknown): number { let n: number = finite(value); if (math.floor(n) !== n) { reject("Expected integral number"); } return n; }
+export function finite(value: unknown): number { let n: number = value as number; if (!Number.isFinite(n)) { reject("Expected finite number"); } return n; }
+export function integral(value: unknown): number { let n: number = finite(value); if (Math.floor(n) !== n) { reject("Expected integral number"); } return n; }
 export function text(value: unknown): string { return value as string; }
-export function nonblank(value: unknown): string { let result: string = value as string; if (strings.trim(result) === "") { reject("Expected nonblank text"); } return result; }
+export function nonblank(value: unknown): string { let result: string = value as string; if (result.trim() === "") { reject("Expected nonblank text"); } return result; }
 export function identifier(value: unknown): string {
   let name: string = value as string; let index: number = 0;
   for (let ch of name) {
     let alphabet: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     if (index > 0) { alphabet = alphabet+"0123456789_"; }
-    if (!strings.contains(alphabet,ch)) { reject("Invalid identifier: "+name); }
-    index = index+1;
+    if (!alphabet.includes(ch)) { reject("Invalid identifier: "+name); }
+    index++;
   }
   if (index < 1 || index > 64) { reject("Identifier length"); }
   return name;

@@ -2,7 +2,6 @@ import * as plans from "./plan";
 import * as s from "./construction-schema";
 import * as data from "embedding/policy-data";
 import * as host from "embedding/questions";
-import * as strings from "std/string";
 
 export class Resolution { answers: Record<string, unknown>[]; changed: boolean; }
 export async function resolve(requestId: string, questions: plans.HumanQuestion[]): Promise<Resolution> {
@@ -24,7 +23,7 @@ export async function resolve(requestId: string, questions: plans.HumanQuestion[
     let optionId: string | null = response.optionId; let text: string | null = response.text;
     if (text !== null) {
       let answer: string = text as string;
-      if (strings.trim(answer) === "" || answer.length > 4096) { s.reject("Question text length"); }
+      if (answer.trim() === "" || answer.length > 4096) { s.reject("Question text length"); }
       result.changed = true;
     } else {
       if (optionId === null) { optionId = question.default; }

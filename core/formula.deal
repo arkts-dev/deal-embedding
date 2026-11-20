@@ -1,5 +1,4 @@
 import * as s from "./construction-schema";
-import * as strings from "std/string";
 
 // Restricted formula grammar, not source rewriting. Only controller-issued operands resolve.
 export class Operand { id: string; expression: string; type: string; dependency: string; value?: number; }
@@ -7,28 +6,28 @@ export class Expression { source: string; type: string; dependencies: string[]; 
 class Parser { tokens: string[]; index: number; operands: Operand[]; dependencies: string[]; }
 function tokenize(source: string): string[] {
   let tokens: string[] = []; let index: number = 0;
-  while (index < strings.length(source)) {
-    let ch: string = strings.substring(source,index,index+1);
-    if (strings.contains(" \t\n",ch)) { index = index+1; }
+  while (index < source.length) {
+    let ch = source.substring(index,index+1);
+    if (" \t\n".includes(ch)) { index = index+1; }
     else {
       let start: number = index;
-      if (strings.contains("0123456789.",ch)) {
+      if ("0123456789.".includes(ch)) {
         index = index+1;
-        while (index < strings.length(source) && strings.contains("0123456789.eE",strings.substring(source,index,index+1))) {
-          let next: string = strings.substring(source,index,index+1); index = index+1;
-          if ((next === "e" || next === "E") && index < strings.length(source) && strings.contains("+-",strings.substring(source,index,index+1))) { index = index+1; }
+        while (index < source.length && "0123456789.eE".includes(source.substring(index,index+1))) {
+          let next = source.substring(index,index+1); index = index+1;
+          if ((next === "e" || next === "E") && index < source.length && "+-".includes(source.substring(index,index+1))) { index = index+1; }
         }
-      } else if (strings.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",ch)) {
+      } else if ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".includes(ch)) {
         index = index+1;
-        while (index < strings.length(source) && strings.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_",strings.substring(source,index,index+1))) { index = index+1; }
+        while (index < source.length && "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_".includes(source.substring(index,index+1))) { index = index+1; }
       } else {
         index = index+1;
-        let three: string = strings.substring(source,start,start+3); let two: string = strings.substring(source,start,start+2);
+        const three = source.substring(start,start+3); const two = source.substring(start,start+2);
         if (three === "===" || three === "!==") { index = start+3; }
         else if (s.contains(["<=",">=","&&","||"],two)) { index = start+2; }
-        else if (!strings.contains("()+-!*/,<>",ch)) { s.reject("Unsupported formula token"); }
+        else if (!"()+-!*/,<>".includes(ch)) { s.reject("Unsupported formula token"); }
       }
-      tokens[tokens.length] = strings.substring(source,start,index);
+      tokens.push(source.substring(start,index));
     }
   }
   return tokens;
@@ -47,7 +46,7 @@ function atom(parser: Parser): Expression {
   if (token === "(" ) { let value: Expression = parse(parser,1); expect(parser,")"); return value; }
   if (token === "-" || token === "!") { let value: Expression = atom(parser); let type: string = "number"; if (token === "!") { type = "boolean"; } if (value.type !== type) { s.reject("Unary formula type"); } let result: Expression = {source:"("+token+value.source+")",type:type,dependencies:[]}; if (type === "number" && Object.hasOwn(value,"number")) { result.number = -(value.number as number); } if (type === "boolean" && Object.hasOwn(value,"boolean")) { result.boolean = !(value.boolean as boolean); } return result; }
   if (token === "true" || token === "false") { return {source:token,type:"boolean",dependencies:[],boolean:token === "true"}; }
-  if (strings.contains("0123456789.",strings.substring(token,0,1))) {
+  if ("0123456789.".includes(token.substring(0,1))) {
     let number: number = JSON.parse(token); s.finite(number);
     return {source:s.encode(number),type:"number",dependencies:[],number:number};
   }
@@ -64,10 +63,10 @@ function atom(parser: Parser): Expression {
       }
       return result;
     }
-    if (!["floor","ceil","sqrt","abs","round","min","max"].includes(token) || !args.every((arg: Expression): boolean => arg.type === "number")) { s.reject("Unissued formula call"); }
+    if (!["floor","ceil","sqrt","abs","round","min","max"].includes(token) || !args.every((arg): boolean => arg.type === "number")) { s.reject("Unissued formula call"); }
     const binary = token === "min" || token === "max";
     if (args.length !== (binary ? 2 : 1)) { s.reject("Formula call arity"); }
-    let result: Expression = {source:"Math."+token+"("+args.map((arg: Expression): string => arg.source).join(",")+")",type:"number",dependencies:[]};
+    let result: Expression = {source:"Math."+token+"("+args.map((arg): string => arg.source).join(",")+")",type:"number",dependencies:[]};
     const n = args[0].number;
     if (n !== undefined) {
       if (token === "floor") { result.number = Math.floor(n); } else if (token === "ceil") { result.number = Math.ceil(n); } else if (token === "sqrt") { result.number = Math.sqrt(n); } else if (token === "abs") { result.number = Math.abs(n); } else if (token === "round") { result.number = Math.round(n); }
@@ -76,7 +75,7 @@ function atom(parser: Parser): Expression {
     return result;
   }
   for (let operand of parser.operands) { if (operand.id === token) { if (operand.dependency !== "" && !s.contains(parser.dependencies,operand.dependency)) { parser.dependencies[parser.dependencies.length] = operand.dependency; } let result: Expression = {source:operand.expression,type:operand.type,dependencies:[]}; if (Object.hasOwn(operand,"value")) { result.number = operand.value as number; } return result; } }
-  s.reject("Unissued formula operand: "+token); return {source:"0",type:"number",dependencies:[]};
+  return s.reject("Unissued formula operand: "+token);
 }
 function parse(parser: Parser, minimum: number): Expression {
   let left: Expression = atom(parser); let precedence: number = power(peek(parser));
@@ -97,7 +96,7 @@ function parse(parser: Parser, minimum: number): Expression {
   return left;
 }
 export function compile(source: string, operands: Operand[]): Expression {
-  if (strings.length(source) > 300) { s.reject("Formula length"); }
+  if (source.length > 300) { s.reject("Formula length"); }
   let parser: Parser = {tokens:tokenize(source),index:0,operands:operands,dependencies:[]};
   let result: Expression = parse(parser,1); if (parser.index !== parser.tokens.length) { s.reject("Trailing formula syntax"); } result.dependencies = parser.dependencies; return result;
 }

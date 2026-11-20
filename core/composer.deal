@@ -39,7 +39,7 @@ function importSource(imports: Import[]): string {
 }
 function field(fields: Field[], instance: string, local: string): Field {
   for (let item of fields) { if (item.instance === instance && item.local === local) { return item; } }
-  s.reject("Unissued field producer/read"); throw {name:"CONSTRUCTION_SCHEMA",message:"Unissued field"};
+  return s.reject("Unissued field producer/read");
 }
 function placeholder(type: string): string { if (type === "string") { return "\"\""; } if (type === "boolean") { return "false"; } if (type === "number") { return "0"; } return "null"; }
 function primitive(type: string): boolean { return s.contains(["string","boolean","number"],type); }

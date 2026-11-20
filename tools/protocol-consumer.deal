@@ -1,5 +1,4 @@
 import * as embedding from "embedding";
-import * as strings from "std/string";
 
 function insist(value:boolean, message:string):null { if(!value){throw {name:"PROOF_FAILED",message:message};}return null; }
 export function contexts():string {

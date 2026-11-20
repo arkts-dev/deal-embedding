@@ -50,6 +50,7 @@ globalThis.dealLoad = function(factories, entryId) {
 
   }
   const process = Object.seal({
+    env: Object.freeze({DEAL_DIAGNOSTICS_JSON: "1"}),
     stdout: Object.freeze({write: log}),
     stderr: Object.freeze({write: log}),
     exitCode: 0

@@ -67,30 +67,32 @@ internal class ExperienceCompiler(private val context: Context, private val conf
                 .put("target",issuedTarget).toString())
             return output
         } catch (error: deal.ui.UiDiagnostic) {
-            val rejection=CandidateRejected(JSONArray().put(JSONObject().put("stage", "ui").put("code", error.code()).put("message", error.message)
-                .put("file", error.file()?.fileName?.toString()).put("line", error.line()).put("column", error.column()).put("expected", error.expected()).put("actual", error.actual())).toString())
+            val producer = error.compilerDiagnostic()
+            if (producer != null && (deal.diagnostics.DiagnosticClassification.forCode(producer.code()).responsibility() !=
+                    deal.diagnostics.DiagnosticClassification.Responsibility.SOURCE_CONTRACT ||
+                    producer.range().origin() != deal.diagnostics.RangeOrigin.SOURCE ||
+                    producer.range().file() != File(project, "src/${config.sourceName}.deal").absolutePath)) {
+                val failure = CompilerOperationFailed(1, listOf(producer.code()))
+                runCatching { StagingReclamation.remove(context, project) }.onFailure { failure.addSuppressed(it) }
+                throw failure
+            }
+            val evidence = if (producer != null) {
+                deal.diagnostics.DiagnosticStructuredOutput.toJson(listOf(producer))
+            } else {
+                JSONObject().put("version", 2).put("diagnostics", JSONArray().put(JSONObject()
+                    .put("stage", "ui").put("code", error.code()).put("message", error.message)
+                    .put("range", JSONObject().put("file", error.file()?.fileName?.toString())
+                        .put("startLine", error.line()).put("startColumn", error.column())
+                        .put("endLine", error.endLine()).put("endColumn", error.endColumn() + 1))
+                    .put("expected", error.expected()).put("actual", error.actual())
+                    .put("notes", JSONArray(error.notes().map { note -> JSONObject().put("message", note.message()) })))).toString()
+            }
+            val rejection=CandidateRejected(evidence.replace(project.absolutePath + "/", ""))
             runCatching{StagingReclamation.remove(context,project)}.onFailure{rejection.addSuppressed(it)}
             throw rejection
         } catch (error: Throwable) { runCatching{StagingReclamation.remove(context,project)}.onFailure{error.addSuppressed(it)};throw error }
     }
 }
-
-// A nonzero exit alone does not establish invalid generated source. Publication/I/O
-// failures can also return 1, and backend defects must never trigger model repair.
-internal fun classifyCompilerOutcome(status: Int, raw: String?, appPath: String, projectPath: String) {
-    if (status == 0) return
-    val report = raw?.let { runCatching { JSONObject(it) }.getOrNull() }
-    val diagnostics = report?.optJSONArray("diagnostics")
-    val errors = diagnostics?.let { list -> (0 until list.length()).mapNotNull { list.optJSONObject(it) }.filter { it.optString("severity") == "error" } } ?: emptyList()
-    val repairable = status == 1 && report?.optInt("version") == 1 && errors.isNotEmpty() && errors.all { diagnostic ->
-        val code = diagnostic.optString("code")
-        val file = diagnostic.optJSONObject("range")?.optString("file")
-        file == appPath && (code.matches(Regex("E[1-5][0-9]{3}")) || code == "E6006") && code != "E2010"
-    }
-    if (!repairable) throw CompilerOperationFailed(status, errors.map { it.optString("code") }.filter { it.matches(Regex("E[0-9]{4}")) })
-    throw CandidateRejected(raw!!.replace(projectPath + "/", "").take(16000))
-}
-internal class CompilerOperationFailed(val status: Int, val codes: List<String>) : IllegalStateException("Compiler operation failed (status=$status, codes=${codes.joinToString(",")})")
 
 /** The experience's frozen target is a compile input; nothing here supplies, derives or promotes one. */
 private fun issueTarget(target: String?): String = CompileInput.target(target) ?: throw CandidateRejected(JSONArray().put(JSONObject().put("stage", "admission").put("code", "ADMISSION_TARGET")

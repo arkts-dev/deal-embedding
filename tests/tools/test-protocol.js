@@ -9,6 +9,15 @@ const sources={};
 function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(base,file)]=fs.readFileSync(file,'utf8');}}
 walk(base);context.sources=sources;
 vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));protocolInitialize(factories,'application.js',{seed:'fixture',saved:[],contracts:[],health:{incomplete:false,active:false,code:'',lost:0}});`,context);
+// The restricted host exposes only the diagnostic switch, never the host environment.
+const runtimeEvidence=JSON.parse(vm.runInContext(`(() => {
+ try { publicRuntime.checkType('number','wrong','candidate.deal',3,7); throw Error('expected checked failure'); }
+ catch(error) { return publicRuntime.runtimeDiagnostic(error); }
+})()`,context)).runtime;
+assert.equal(runtimeEvidence.file,'candidate.deal');
+assert.equal(runtimeEvidence.expected,'number');
+assert.equal(runtimeEvidence.actual,'string');
+assert.equal(runtimeEvidence.line,3);
 let sequence=0;
 async function call(name,args,handler){
  const key=String(++sequence);context.args=args;context.key=key;context.name=name;

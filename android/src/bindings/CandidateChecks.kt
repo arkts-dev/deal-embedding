@@ -32,6 +32,7 @@ internal class CandidateChecks(private val context:Context,private val config:Ru
         return try {
             if(operation=="start")isolate.evaluate(SandboxBundle.build(context,listOf("checking-session.js"),dev.deal.embedding.capabilities.CapabilityBindings.script(config.contracts),"openChecking(factories,\"$ENTRY_NAME.js\",${candidate.restored ?: "null"})",output=candidate.output))
             JSONObject(isolate.evaluateString("checkingStep(${JSONObject.quote(operation)},$index,JSON.parse(${JSONObject.quote(payload)}))")).also { report ->
+                if (!report.getBoolean("ok")) report.put("diagnostics", report.getString("diagnostics").replace(candidate.output.parentFile!!.absolutePath + "/", ""))
                 if(report.getBoolean("ok")) {
                     fun render(node:JSONObject){
                         if(node.getString("component").substringAfterLast('.')=="Surface") {

@@ -4,7 +4,6 @@ import * as selections from "./selection";
 import * as inference from "./inference";
 import * as identity from "embedding/construction-identity";
 import * as s from "./construction-schema";
-import * as strings from "std/string";
 
 // Alternatives are issued by part/catalogue definitions, not authored by the selector.
 export class Alternative { id: string; need: string; origin: string; kind: string; criteria: string; eligible: boolean; reason: string; }
@@ -24,7 +23,7 @@ export async function batch(stage: string, context: Context, plan: plans.Plan, q
     let completion: string = ""; let refusal: string = "";
     let result = await inference.choose(operation,stage,prompt(context,plan,questions),previous,"",2000,s.encode(questions));
     completion = result.content; refusal = result.refusal;
-    if (strings.trim(completion) === "" && refusal === "") { previous = completion; }
+    if (completion.trim() === "" && refusal === "") { previous = completion; }
     else {
       if (refusal !== "") { return []; }
       try {

@@ -73,7 +73,7 @@ globalThis.openChecking = function(factories, entryId, restoredState = null) {
         render(candidate,action);
       }
       return response(true);
-    } catch(error) {return response(false,'CHECK_EXECUTION: '+(rt.reifyError(error).message||String(error)));}
+    } catch(error) {return response(false,'CHECK_EXECUTION: '+rt.runtimeDiagnostic(rt.reifyError(error)));}
   };
   return '';
 };

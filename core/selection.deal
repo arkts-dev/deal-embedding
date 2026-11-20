@@ -1,4 +1,3 @@
-import * as math from "std/math";
 import * as s from "./construction-schema";
 export class Option { id: string; criteria: string; }
 export class Question { id: string; need: string; decision: string; instructions: string; options: Option[]; threshold: number; }
@@ -47,7 +46,7 @@ export function decode(raw: string, questions: Question[]): Answer[] {
           }
           if (!present) { s.reject("Missing issued probability"); }
         }
-        if (math.absNumber(total-1) > 0.000001 || value.selected !== winner) { s.reject("Probability sum or selected maximum"); }
+        if (Math.abs(total-1) > 0.000001 || value.selected !== winner) { s.reject("Probability sum or selected maximum"); }
         result[result.length] = {id:id,selected:winner,probability:best,accepted:best >= question.threshold,probabilities:probabilities};
       }
     }

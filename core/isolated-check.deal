@@ -2,13 +2,12 @@ import * as host from "embedding/checker";
 import * as decoded from "./decoded";
 import * as s from "./construction-schema";
 import * as graphics from "./graphics";
-import * as strings from "std/string";
 
 export class Result { accepted: boolean; candidateId: string; diagnostics: string; }
 function tree(report: Record<string, unknown>): Record<string, unknown> { return JSON.parse(report.tree as string); }
-function surfaces(node: Record<string, unknown>, result: Record<string, unknown>[]): null {
-  if (strings.endsWith(node.component as string,".Surface") || (node.component as string) === "Surface") { result[result.length] = node; }
-  for (let child of decoded.records(node.children)) { surfaces(child,result); } return null;
+function surfaces(node: Record<string, unknown>, result: Record<string, unknown>[]): void {
+  if ((node.component as string).endsWith(".Surface") || (node.component as string) === "Surface") { result[result.length] = node; }
+  for (let child of decoded.records(node.children)) { surfaces(child,result); }
 }
 function prop(node: Record<string, unknown>, name: string): Record<string, unknown> | null { for (let value of decoded.records(node.props)) { if ((value.name as string) === name) { return value; } } return null; }
 function numeric(node: Record<string, unknown>, name: string): number { let value = prop(node,name); if (value === null) { s.reject("Missing Surface "+name); } return s.finite((value as Record<string, unknown>).numberValue); }
@@ -25,10 +24,10 @@ async function event(id: string, report: Record<string, unknown>, target: Record
   let action: number = -1; for (let node of pictures) { if (sameNode(node,target)) { action = slot(node,name); } } if (action < 0) { return report; }
   return await host.step(id,"event",action,s.encode(payload));
 }
-function buttonSlots(node: Record<string, unknown>, result: number[]): null {
+function buttonSlots(node: Record<string, unknown>, result: number[]): void {
   let name: string = node.component as string;
-  if (strings.endsWith(name,".Button") || strings.endsWith(name,".PrimaryAction") || strings.endsWith(name,".SecondaryAction")) { let action: number = slot(node,"onClick"); if (action >= 0) { result[result.length] = action; } }
-  for (let child of decoded.records(node.children)) { buttonSlots(child,result); } return null;
+  if (name.endsWith(".Button") || name.endsWith(".PrimaryAction") || name.endsWith(".SecondaryAction")) { let action: number = slot(node,"onClick"); if (action >= 0) { result[result.length] = action; } }
+  for (let child of decoded.records(node.children)) { buttonSlots(child,result); }
 }
 async function execute(id: string): Promise<Result> {
   try {
