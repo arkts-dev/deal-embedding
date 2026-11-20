@@ -27,6 +27,9 @@ class Reply:
 
 class TransportTest(unittest.TestCase):
     def test_default_selector_and_deepseek_configuration(self):
+        defaults=gateway.argument_parser().parse_args([])
+        self.assertEqual(defaults.backend,'cerebras')
+        self.assertEqual(defaults.selector_backend,'jev')
         args=gateway.argument_parser().parse_args(['--backend','deepseek-flash'])
         self.assertEqual(args.selector_backend,'jev')
         self.assertEqual(args.backend,'deepseek-flash')

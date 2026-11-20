@@ -262,7 +262,7 @@ def handler_for(gateway):
 
 def argument_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--backend',choices=('cortex','cerebras','deepseek-flash'),default='cortex')
+    parser.add_argument('--backend',choices=('cortex','cerebras','deepseek-flash'),default='cerebras')
     parser.add_argument('--enable-cortex',action='store_true'); parser.add_argument('--enable-cerebras',action='store_true')
     parser.add_argument('--discovery-backend',choices=('disabled','deepseek-flash'),default='disabled')
     parser.add_argument('--cerebras-key-file',type=pathlib.Path,default=pathlib.Path.home()/'cerebras.key')
