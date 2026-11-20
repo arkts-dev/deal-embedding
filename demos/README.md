@@ -43,6 +43,6 @@ adb shell am instrument --user 0 -w dev.deal.cutover.tests/.CutoverInstrumentati
 adb shell am instrument --user 0 -w -e providers true dev.deal.cutover.tests/.CutoverInstrumentation
 ```
 
-Generation selection `cerebras`/`cortex` and discovery `nano`/`deepseek-flash` retain their existing behavior. Remote discovery needs separate explicit opt-in. Credentials stay host-side in the gateway, never copied into the repository or APKs. No automatic retries or backend switches. `tools/embedding-log.py` and the opt-in `review-demo-screen.py` are copied demo utilities; neither runs during builds/tests.
+Generation selects `cerebras` (APK default), `cortex` or `deepseek-flash`; discovery selects independently `nano`/`deepseek-flash`. The gateway uses Jev by default for DEAL-issued bounded questions and requires its host-side key; it never falls back to the general model. Remote discovery needs separate explicit opt-in. Credentials stay host-side in the gateway, never copied into the repository or APKs. No automatic retries or backend switches. `tools/embedding-log.py` and the opt-in `review-demo-screen.py` are copied demo utilities; neither runs during builds/tests.
 
 Application IDs, permissions, manifests, source behavior and backend defaults are unchanged. Reorganization/build success is not new functional, actual-provider, original-scenario or human visual acceptance. Never clear installed app data; preserve domain/authority/failed evidence. Root copies were retained deliberately; future development belongs here.

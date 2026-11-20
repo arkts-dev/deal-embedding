@@ -123,7 +123,7 @@ def strip_reasoning(data):
 
 
 class Gateway:
-    def __init__(self, providers, default_backend, discovery_backend, counts=None, limit=None, deadline=240, selector_backend=None):
+    def __init__(self, providers, default_backend, discovery_backend, counts=None, limit=None, deadline=240, selector_backend='jev'):
         self.providers, self.default_backend, self.discovery_backend = providers, default_backend, discovery_backend
         self.counts, self.limit, self.deadline = counts, limit, deadline
         self.selector_backend = selector_backend
@@ -237,7 +237,7 @@ def handler_for(gateway):
                 if self.path == '/discover':
                     if backend != gateway.discovery_backend or body['stage'] != 'discovery':
                         raise GatewayFailure('BACKEND_UNAVAILABLE','Requested discovery backend is not enabled')
-                elif backend == gateway.discovery_backend and backend not in ('cortex','cerebras'):
+                elif backend == 'deepseek-flash' and gateway.default_backend != 'deepseek-flash':
                     raise GatewayFailure('BACKEND_UNAVAILABLE','Requested generation backend is not enabled')
                 output = gateway.pool.submit(gateway.infer,body,backend).result(timeout=gateway.deadline)
                 self.send_response(200); self.send_header('Content-Type','application/json')
@@ -260,18 +260,23 @@ def handler_for(gateway):
     return Handler
 
 
-def main():
+def argument_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--backend',choices=('cortex','cerebras'),default='cortex')
+    parser.add_argument('--backend',choices=('cortex','cerebras','deepseek-flash'),default='cortex')
     parser.add_argument('--enable-cortex',action='store_true'); parser.add_argument('--enable-cerebras',action='store_true')
     parser.add_argument('--discovery-backend',choices=('disabled','deepseek-flash'),default='disabled')
     parser.add_argument('--cerebras-key-file',type=pathlib.Path,default=pathlib.Path.home()/'cerebras.key')
-    parser.add_argument('--selector-backend',choices=('jev',),help='Explicit backend for DEAL-issued bounded questions; no fallback')
+    parser.add_argument('--selector-backend',choices=('jev',),default='jev',help='Backend for DEAL-issued bounded questions (default: Jev); no fallback')
     parser.add_argument('--jev-key-file',type=pathlib.Path,default=pathlib.Path.home()/'jev.key')
     parser.add_argument('--jev-model',default='jev-latest')
     parser.add_argument('--counts',type=pathlib.Path); parser.add_argument('--audit',action='store_true')
     parser.add_argument('--limit',type=int); parser.add_argument('--deadline',type=float,default=240)
     parser.add_argument('--port',type=int,default=8787)
+    return parser
+
+
+def main():
+    parser = argument_parser()
     args = parser.parse_args()
     if not args.deadline > 0 or args.audit and (args.counts is None or args.limit is None or args.limit <= 0) or not args.audit and args.limit is not None:
         parser.error('Audit needs counts/positive limit; deadline must be positive')
@@ -283,7 +288,7 @@ def main():
         providers['cortex'] = {'key':key,'model':'cortex','endpoint':config['baseUrl'].rstrip('/')+'/chat/completions'}
     if args.backend == 'cerebras' or args.enable_cerebras:
         providers['cerebras'] = {'key':args.cerebras_key_file.read_text().strip(),'model':'qwen-3.8-27b','endpoint':'https://api.cerebras.ai/v1/chat/completions'}
-    if args.discovery_backend == 'deepseek-flash':
+    if args.backend == 'deepseek-flash' or args.discovery_backend == 'deepseek-flash':
         providers['deepseek-flash'] = {'key':os.environ.get('DEXTER_DEEPSEEK_API_KEY',''),'model':'deepseek-flash','endpoint':'https://api.deepseek.com/chat/completions'}
     if args.selector_backend == 'jev':
         providers['jev'] = {'key':args.jev_key_file.read_text().strip(),'model':args.jev_model,'endpoint':'https://api.typesafe.ai/v1/systemone'}

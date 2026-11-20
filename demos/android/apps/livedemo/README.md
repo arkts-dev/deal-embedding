@@ -6,38 +6,42 @@ inference, external-app access, purchases or bookings.
 
 1. Open the app and enable live AI (separate discovery and generation consent).
 2. DeepSeek Flash reads the disclosed note and returns a suggestion.
-3. Tap **Open**. Cerebras performs real planning/source generation. With the
-   optional Jev selector enabled, DEAL-issued selection/coverage questions go to
-   Jev instead. Both use the public embedding protocol.
+3. Tap **Open**. The configured general model performs real planning/source
+   generation. DEAL-issued selection/coverage questions go to Jev by default.
+   Both use the public embedding protocol.
 4. Edit the generated amounts and observe the result. Saved tools reopen without
    making new inference calls.
 
 ## Run
 
-From the repository root, with the normal host-side Cerebras key and
-`DEXTER_DEEPSEEK_API_KEY` configured:
+From the repository root, with host-side `~/jev.key` and
+`DEXTER_DEEPSEEK_API_KEY` configured (DeepSeek Flash planning/writing trial):
 
 ```sh
-python3 demos/tools/generation-gateway.py --backend cerebras \
-  --discovery-backend deepseek-flash --selector-backend jev --port 8788 \
+python3 demos/tools/generation-gateway.py --backend deepseek-flash \
+  --discovery-backend deepseek-flash --port 8790 \
   --counts build/live-demo/gateway-counts.json
 ```
 
 In another terminal:
 
 ```sh
-JAVA_OPTS=-Xmx768m DEAL_GATEWAY_PORT=8788 \
-  DEAL_DISCOVERY_BACKEND=deepseek-flash bash demos/build.sh livedemo
-adb -s PHONE_SERIAL reverse tcp:8788 tcp:8788
+JAVA_OPTS=-Xmx768m DEAL_GATEWAY_PORT=8790 \
+  DEAL_GENERATION_BACKEND=deepseek-flash DEAL_DISCOVERY_BACKEND=deepseek-flash \
+  bash demos/build.sh livedemo
+adb -s PHONE_SERIAL reverse tcp:8790 tcp:8790
 adb -s PHONE_SERIAL install --user 0 -r build/livedemo.apk
 adb -s PHONE_SERIAL shell am start --user 0 \
   -n dev.deal.apps.livedemo/.LiveDemoActivity
 ```
 
-Jev reads `~/jev.key` host-side (override with `--jev-key-file`); omit
-`--selector-backend jev` to keep all generation inference on Cerebras. There is
-no provider fallback. The adapter sends the entire unchanged prompt as Jev state,
+Jev reads `~/jev.key` host-side (override with `--jev-key-file`) and is the
+selector default even when `--selector-backend` is omitted. There is no general-model
+fallback if Jev is unavailable. The adapter sends the full stage prompt as Jev state,
 plus separately issued questions; DEAL retains probability/threshold validation.
+To use Cerebras for planning/writing, select `--backend cerebras` in the gateway
+and `DEAL_GENERATION_BACKEND=cerebras` in the APK build, with `~/cerebras.key`
+configured. APK generation still defaults to Cerebras; the DeepSeek trial is explicit.
 
 For a fresh measured run without deleting any existing tool or state, launch with
 `--es run jev-01` (letters/digits/hyphens, maximum 40 characters). Reuse that value
@@ -115,10 +119,10 @@ repairs/truncations. Failures and source are retained, not reset.
 | Generation input / output tokens | 71,602 / 3,818 | 51,041 / 12,027 |
 
 The complete run needed one syntax repair (`Expected ')'`). Input tokens fell
-28.7%, but output/reasoning and the extra writer ask erased the generation saving:
-**no generation speed improvement demonstrated**. End-to-end processing was lower
-on this success, including faster independent discovery; small stochastic cohorts
-cannot establish a causal latency or reliability gain.
+28.7%; planning/selection/coverage were faster in the measured successes, while
+an extra writer ask offset those stage savings in this run. Outputs and retries
+are stochastic: one success cannot establish typical total speedup or its absence.
+End-to-end processing was lower on this success, including faster independent discovery.
 
 Initial 120/84 → 36/Under; both amounts edited, under/equal/over checked, blank input
 withdrew results, and cold reopen retained 120/130 → -10/Over without inference.
@@ -132,6 +136,53 @@ dependency checks passed after that assertion update. APK build passed.
 Local receipts and test/build results: ignored `build/prompt-step2/`; raw phone
 archives/screenshots also remain under `build/jev-step1/lean-*`. Human visual
 acceptance and monetary billing remain unmeasured.
+
+## Step 3: default Jev selector, DeepSeek Flash planning/writing trial
+
+The demo gateway now defaults to Jev for every DEAL-issued bounded question.
+Omitting `--selector-backend` no longer puts selections on the general model;
+a missing Jev credential/backend fails without fallback. General generation remains
+explicit: this trial uses `deepseek-flash` in both the APK and gateway. The APK's
+normal general-model default remains Cerebras. No vendor policy was added to DEAL.
+
+Three fresh isolated runs on the same physical phone/task and trimmed prompts:
+**0/3 complete, 3/3 partial**, all with editable amounts and remaining 36 but no
+required status and explicit missing-behavior notices. These are failures of the
+complete journey, not successful generated tools.
+
+| Measurement | Cerebras + Jev, step 2 | DeepSeek Flash + Jev |
+|---|---:|---:|
+| Complete / attempts | 1/3 | 0/3 |
+| Request → first published UI, each attempt | 44.68 / 40.21 / 17.31 s | 109.21 / 139.40 / 125.06 s |
+| Median time to published UI (including partials) | 40.21 s | 125.06 s |
+| Generation calls, each attempt | 12 / 12 / 7 | 11 / 11 / 11 |
+| Generation input tokens, each attempt | 116,642 / 127,386 / 51,041 | 88,697 / 89,361 / 77,792 |
+| Generation output tokens, each attempt | 30,840 / 22,020 / 12,027 | 16,803 / 27,064 / 22,262 |
+
+DeepSeek planning took three asks in every attempt: the first two rejected with
+`expected table`; the third used DEAL's existing thinking escalation. Summed planning
+times were 47.50 / 34.16 / 34.97 s. Custom writing took four asks each (47.57 / 90.67 /
+77.69 s), with repeated foreign-field writes, unissued AppState fields and one
+unsupported view function call. No adapter retries or backend fallback were added.
+Jev remained `jev-1.14.0`, 0.305–0.429 s per bounded call. Discovery remained DeepSeek
+Flash, 1.42 / 1.26 / 1.62 s. Actual generation model was reported as `deepseek-flash`.
+Reported generation reasoning tokens were 11,832 / 20,669 / 16,258; Jev reasoning
+usage is unknown. Monetary cost remains unknown without billing.
+
+For this small cohort DeepSeek was slower and yielded no complete tool. These are
+observed attempt results, not a universal model ranking; the earlier cohorts were
+not interleaved controls. No complete success exists here to claim edit/reopen
+acceptance. Existing saved files remained byte-identical and all original preference
+entries unchanged. Nothing was reset. An install-time Activity relaunch initially
+reopened the prior tool with zero gateway calls; it was excluded before the three
+fresh runs, and its automation log was retained.
+
+Full deterministic `bash tests/run.sh` passed (exit 0), including the nine gateway
+transport tests; public-AAR APK build passed. Regressions cover the default Jev
+selector, explicit DeepSeek generation versus independent discovery, unchanged
+retry messages/token/thinking settings, and missing-selector failure. Trial files,
+all requests/responses/failures, preservation comparison and receipts are under
+ignored `build/deepseek-step3/`. Human visual acceptance remains open.
 
 ## Earlier observed phone run
 

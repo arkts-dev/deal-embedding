@@ -26,6 +26,23 @@ class Reply:
         result=self.data[self.offset:self.offset+count];self.offset+=len(result);return result
 
 class TransportTest(unittest.TestCase):
+    def test_default_selector_and_deepseek_configuration(self):
+        args=gateway.argument_parser().parse_args(['--backend','deepseek-flash'])
+        self.assertEqual(args.selector_backend,'jev')
+        self.assertEqual(args.backend,'deepseek-flash')
+        owner=gateway.Gateway({},'deepseek-flash','disabled')
+        try:self.assertEqual(owner.selector_backend,'jev')
+        finally:owner.pool.shutdown()
+        provider={'model':'deepseek-flash'}
+        body=envelope();body.update(previous='prior',diagnostics='fix',maxTokens=24000)
+        payload=gateway.payload_for(body,'deepseek-flash',provider)
+        self.assertEqual(payload['thinking'],{'type':'disabled'})
+        self.assertEqual(payload['max_tokens'],24000)
+        self.assertEqual(payload['messages'],[{'role':'user','content':body['input']},
+                         {'role':'assistant','content':'prior'},{'role':'user','content':'fix'}])
+        body['thinking']=True
+        self.assertEqual(gateway.payload_for(body,'deepseek-flash',provider)['thinking'],{'type':'enabled'})
+
     def test_closed_envelope(self):
         self.assertEqual(gateway.validate(envelope())['maxTokens'],8000)
         for field,value in [('ask',True),('thinking',1),('maxTokens',0),('stage','')]:
@@ -74,7 +91,7 @@ class TransportTest(unittest.TestCase):
 
     def test_jev_protocol_and_explicit_routing(self):
         provider={'model':'jev-latest','endpoint':'https://provider.invalid','key':'private'}
-        owner=gateway.Gateway({'jev':provider,'cerebras':provider},'cerebras','disabled',selector_backend='jev')
+        owner=gateway.Gateway({'jev':provider,'cerebras':provider},'cerebras','disabled',)
         issued=[{'id':'q','need':'n','decision':'coverage','instructions':'Choose coverage',
                  'options':[{'id':'yes','criteria':'Covered'},{'id':'no','criteria':'Missing'}],'threshold':0.5}]
         body=envelope();body.update(questions=json.dumps(issued),previous='prior',diagnostics='diagnostic')
@@ -127,6 +144,32 @@ class TransportTest(unittest.TestCase):
                 with self.assertRaises(gateway.GatewayFailure):owner.admit(envelope())
                 counts=json.loads(owner.counts.read_text());self.assertEqual(counts,{'total':2,'stages':{'planning':2}})
             finally:owner.pool.shutdown()
+
+    def test_deepseek_generation_is_explicit_and_discovery_stays_separate(self):
+        for default in ('deepseek-flash','cerebras'):
+            owner=gateway.Gateway({'deepseek-flash':{'model':'deepseek-flash','key':'private'}},default,'deepseek-flash')
+            routed=[]
+            owner.infer=lambda body,backend:routed.append((body,backend)) or b'{"content":"done"}'
+            server=http.server.ThreadingHTTPServer(('127.0.0.1',0),gateway.handler_for(owner))
+            thread=threading.Thread(target=server.serve_forever);thread.start()
+            try:
+                url='http://127.0.0.1:'+str(server.server_port)
+                def request(path,body):
+                    return urllib.request.Request(url+path,data=json.dumps(body).encode(),
+                                                  headers={'X-Deal-Generation-Backend':'deepseek-flash'})
+                if default=='deepseek-flash':
+                    with urllib.request.urlopen(request('/generate',envelope())) as response:
+                        self.assertEqual(json.load(response)['content'],'done')
+                else:
+                    with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(request('/generate',envelope()))
+                    self.assertEqual(routed,[])
+                body=envelope();body['stage']='discovery'
+                with urllib.request.urlopen(request('/discover',body)) as response:
+                    self.assertEqual(json.load(response)['content'],'done')
+                self.assertEqual(routed[-1][1],'deepseek-flash')
+                with urllib.request.urlopen(url+'/health') as response:
+                    self.assertEqual(json.load(response)['selectorBackend'],'jev')
+            finally:server.shutdown();server.server_close();thread.join();owner.pool.shutdown()
 
     def test_http_contract(self):
         owner=gateway.Gateway({'cerebras':{'model':'fixed','key':'private-key'}},'cerebras','disabled')

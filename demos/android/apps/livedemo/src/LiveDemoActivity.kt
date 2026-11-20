@@ -48,7 +48,7 @@ class LiveDemoActivity : ComponentActivity() {
                     if (!enabled) Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text("A little help with the budget", style = MaterialTheme.typography.headlineSmall)
                         Text("Discover a useful tool from the picnic note, then open it to generate an interactive screen.")
-                        Text("The note goes to DeepSeek Flash for discovery and Cerebras for planning/source generation and, when configured, Jev for selection/coverage. Real AI requests may cost money. No other apps or private records are accessed.")
+                        Text("The note goes to DeepSeek Flash for discovery, ${GenerationBuild.label} for planning/source generation and Jev for selection/coverage. Real AI requests may cost money. No other apps or private records are accessed.")
                         Button(onClick = {
                             check(Connections.settings(this@LiveDemoActivity).edit()
                                 .putBoolean("discovery.deepseek-flash", true).putBoolean("generation", true).commit())
