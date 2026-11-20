@@ -34,6 +34,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
         require(intent.isNotBlank())
         val revision=catalogRevision(config)
         val checked=CandidateChecks(context,config,engine,log)
+        val syntax=FragmentMechanisms.Session()
         val program=SandboxProgram(engine,512*1024,config.execution)
         var failure:Throwable?=null; var accepted:CheckedCandidate?=null
         fun deliver(request:JSONObject,value:Any)=program.evaluate("dealCapabilities.deliver(${JSONArray().put(JSONObject().put("id",request.getInt("id")).put("ok",true).put("value",value))})")
@@ -70,7 +71,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             JSONObject().put("content",response.content).put("finish",response.finish).put("refusal",response.refusal)
                         }
                         "embedding/fragment-syntax"->{
-                            try{FragmentMechanisms.invoke(function,args.getString(0))}
+                            try{syntax.invoke(function,args.getString(0))}
                             catch(error:deal.ui.UiDiagnostic){reject(request,"FRAGMENT_SYNTAX",error.message ?: "Invalid fragment view syntax");continue}
                             catch(error:IllegalArgumentException){reject(request,"FRAGMENT_SYNTAX",error.message ?: "Invalid fragment syntax");continue}
                         }

@@ -184,6 +184,44 @@ retry messages/token/thinking settings, and missing-selector failure. Trial file
 all requests/responses/failures, preservation comparison and receipts are under
 ignored `build/deepseek-step3/`. Human visual acceptance remains open.
 
+## Generation mechanism optimization: captured-response phone replay
+
+Replayed the successful step-2 response sequence on the same physical phone through
+public-AAR demo APKs. Both variants used the same pinned compiler, checks and exact
+responses; no fresh inference or paid model calls. Uninstrumented runs were grouped
+optimized → control → optimized → control, in fresh isolated namespaces.
+
+| Request → first published UI | Control | Optimized |
+|---|---:|---:|
+| Included runs, seconds | 5.925 / 5.628 / 5.952 / 6.802 / 5.886 / 5.618 | 5.374 / 5.190 / 5.070 / 5.199 / 5.002 |
+| Median | 5.906 s | 5.190 s |
+| Generation bridge evaluations per run | 309 | 147 |
+
+Observed median saving: **0.716 s (12.1%)**. All twelve generated source pairs were
+byte-identical, including one additional optimized run excluded from timing because
+its request-start event had rotated out. Every run compiled, passed the production
+candidate checks, and published the same editable 120/84 → 36 / Under budget screen.
+The optimized APK also passed spent edits to 130/120/84 (over/equal/under), cold
+saved reopen, and no new inference on reopen. Original saved preference entries
+remained unchanged; no package reset or uninstall.
+
+The reusable mechanisms batch each computation's six independent syntax operations,
+then consume per-item results in the original DEAL validation order. Bounded caches
+retain only exact syntax-input/output strings: one per loaded syntax host in an
+isolate, another per native generation invocation. No mutable Session, authority,
+admission result or compiler object is cached. Purity and composition decisions stay
+in DEAL. Compiler, pins and candidate checks are unchanged.
+
+Full deterministic suite and public-AAR APK builds passed. Tests cover exact cache
+keys, binding changes, bounds, lifetime, uncached failures, non-syntax hosts, per-item
+batch errors and preservation of policy-error ordering. Earlier polling-only batching
+was rejected because fewer calls did not establish a latency improvement.
+
+This is a small deterministic replay comparison, not fresh-model latency/reliability,
+original-journey acceptance or human visual acceptance. Private receipts and the
+excluded stale install-time Activity run are retained in ignored
+`build/generation-perf/` and `build/perf-investigation/`.
+
 ## Earlier observed phone run
 
 - Live suggestion: “Picnic budget reconciliation”.

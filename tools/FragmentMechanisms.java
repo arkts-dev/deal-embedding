@@ -5,8 +5,38 @@ import java.util.*;
 /** JSON transport for compiler syntax mechanisms. No composition, admission or recovery policy. */
 public final class FragmentMechanisms {
     private FragmentMechanisms() {}
+    /** One generation invocation; caches immutable successful transport strings, never compiler objects. */
+    public static final class Session {
+        private final Map<String,String> values = new LinkedHashMap<>();
+        private int retained;
+        public String invoke(String function, String input) {
+            String key = function+"\n"+input;
+            String cached = values.get(key);
+            if (cached != null) return cached;
+            String result = FragmentMechanisms.invoke(function,input,this::invoke);
+            int size = key.length()+result.length();
+            if (!function.equals("batch") && retained+size <= 524288) { values.put(key,result); retained+=size; }
+            return result;
+        }
+    }
     public static String invoke(String function, String input) {
+        return invoke(function,input,FragmentMechanisms::invoke);
+    }
+    private static String invoke(String function, String input, java.util.function.BiFunction<String,String,String> call) {
         Map<String,Object> value = object(decode(JvmJson.decode(input,"record",new deal.semantic.ir.SourceOrigin("syntax transport",deal.semantic.ir.SourceSpan.synthetic("syntax transport"),deal.semantic.ir.SourceOriginKind.SYNTHETIC,new deal.semantic.ir.AnchorId(0),null),"syntax transport",Map.of())));
+        if (function.equals("batch")) {
+            List<Object> results = new ArrayList<>();
+            for (Object item : (List<?>)value.get("requests")) {
+                Map<String,Object> request = object(item);
+                String operation = text(request,"function");
+                if (!Set.of("describe","qualify","expression","analyzeFunctions","analyzeExpression").contains(operation)) throw new IllegalArgumentException("Unknown batched syntax mechanism");
+                try { results.add(Map.of("value",call.apply(operation,text(request,"input")),"code","","message","")); }
+                catch (deal.ui.UiDiagnostic | IllegalArgumentException error) {
+                    results.add(Map.of("value","","code","FRAGMENT_SYNTAX","message",error.getMessage() == null ? "Invalid fragment syntax" : error.getMessage()));
+                }
+            }
+            return encode(results);
+        }
         if (function.equals("expression")) return FragmentQualifier.expression(text(value,"source"),strings(value,"names"),strings(value,"fields"),strings(value,"types"),text(value,"expected"),strings(value,"variables"));
         return encode(switch(function) {
             case "imports" -> FragmentSyntax.parse(text(value,"source")).statements().stream().filter(statement -> statement instanceof deal.ast.ImportDeclaration).map(statement -> ((deal.ast.ImportDeclaration)statement).modulePath()).toList();

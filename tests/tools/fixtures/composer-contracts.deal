@@ -23,6 +23,10 @@ export async function rejects(): Promise<null> {
   let instance: screens.Instance = fragment("calculation","3"); cleanView(instance);
   let calculation: composer.Computation = {instance:"calculation",field:"double",value:"state.value * 2",ready:"true",reason:"\"Unavailable\"",dependencies:[]};
   let rejected: boolean = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Undeclared state read admitted");
+  // A later syntax failure must not mask the earlier undeclared-read policy error.
+  calculation.reason = "(";
+  rejected = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Batched syntax reordered policy rejection");
+  calculation.reason = "\"Unavailable\"";
   calculation.dependencies = ["f_calculation_value"];
   calculation.value = "clock.nowMillis()"; instance.fragment.declarations = instance.fragment.declarations+" import * as clock from \"std/time\";";
   rejected = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Clock admitted in recompute");

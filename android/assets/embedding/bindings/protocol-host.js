@@ -58,9 +58,24 @@ globalThis.protocolHost = function(id, declarations, rt) {
     return record('@$external/embedding/controller-mechanisms/ContextValue',{schema:plainSchema,json:JSON.stringify(value)});
   }
   const raw={};
+  // Syntax is a pure input-string -> output-string mechanism. This module-load
+  // cache belongs to one isolate; it never retains Session state or authority.
+  const syntaxValues=new Map();let syntaxUnits=0;
   for(const [name,spec]of Object.entries(declarations)) {
     if(spec.$k==='class') {
       raw[name]={$kind:'class',$classname:spec.$d};
+    } else if(id==='embedding/fragment-syntax') {
+      raw[name]=async input=>{
+        const key=name+'\n'+input;
+        if(syntaxValues.has(key))return syntaxValues.get(key);
+        try {
+          const value=await dealCapabilities.request(id,name,[input]);
+          // Failed operations are never cached, including per-item batch errors.
+          const success=name!=='batch'||JSON.parse(value).every(item=>item.code==='');
+          if(success&&syntaxUnits+key.length+value.length<=524288){syntaxValues.set(key,value);syntaxUnits+=key.length+value.length;}
+          return value;
+        }catch(error){const translated=rt.errorValue(error.code||'HOST_FAILED',error.message||'Host operation failed');translated.suppressed=error.suppressed||[];throw translated;}
+      };
     } else if(id==='embedding/controller-mechanisms') {
       if(name==='context')raw[name]=checkedContext;
       else raw[name]=async(...args)=>{try{return record(spec.$d.slice(spec.$d.lastIndexOf('->')+2),await dealCapabilities.request('embedding',name,args.map(plain)));}catch(error){const translated=rt.errorValue(error.code||'HOST_FAILED',error.message||'Host operation failed');translated.suppressed=error.suppressed||[];throw translated;}};

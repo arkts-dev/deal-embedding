@@ -17,8 +17,8 @@ for p in (embedding/'core/host').glob('*.d.deal'):
 (stage/'deal.json').write_text(json.dumps({'languageVersion':'1.6','backend':'js','moduleRoots':['src','ui'],'externals':externals}))
 cp=str(root/'build/embedding-library/classes')
 classes=stage/'classes';classes.mkdir(exist_ok=True)
-subprocess.run(['javac','--release','21','-cp',cp,'-d',str(classes),*[str(embedding/'tools'/f'{name}.java') for name in ['FragmentSyntax','FragmentRegions','FragmentQualifier','FragmentMechanisms','FragmentAnalysis']],*[str(root/'tests/tools/fixtures'/f'{name}.java') for name in ['CompileComposer','FragmentRegionsTest','FragmentQualifierTest']]],check=True)
-for name in ['FragmentRegionsTest','FragmentQualifierTest']:
+subprocess.run(['javac','--release','21','-cp',cp,'-d',str(classes),*[str(embedding/'tools'/f'{name}.java') for name in ['FragmentSyntax','FragmentRegions','FragmentQualifier','FragmentMechanisms','FragmentAnalysis']],*[str(root/'tests/tools/fixtures'/f'{name}.java') for name in ['CompileComposer','FragmentRegionsTest','FragmentQualifierTest','FragmentMechanismsTest']]],check=True)
+for name in ['FragmentRegionsTest','FragmentQualifierTest','FragmentMechanismsTest']:
     subprocess.run(['java','-cp',str(classes)+':'+cp,name],check=True)
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',cp,'deal.Main','compile',str(source/'checks.deal'),'--backend','js','--output',str(stage/'js')],check=True)
 subprocess.run(['node',str(root/'tests/tools/test-composer.js'),str(stage),str(classes)+':'+cp],check=True)

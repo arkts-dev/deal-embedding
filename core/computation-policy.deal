@@ -33,8 +33,11 @@ function check(fact: Record<string, unknown>, facts: Facts, reads: string[], pat
     } else { s.reject("Effectful or unverified recomputation call: "+call); }
   }
 }
-export async function expression(source: string, facts: Facts, reads: string[]): Promise<void> {
-  let fact: Record<string, unknown> = JSON.parse(await syntax.analyzeExpression(s.encode({source:source})));
+export function checkedExpression(encoded: string, facts: Facts, reads: string[]): void {
+  let fact: Record<string, unknown> = JSON.parse(encoded);
   check(fact,facts,reads,[]);
+}
+export async function expression(source: string, facts: Facts, reads: string[]): Promise<void> {
+  checkedExpression(await syntax.analyzeExpression(s.encode({source:source})),facts,reads);
 }
 export function main(): void { return; }

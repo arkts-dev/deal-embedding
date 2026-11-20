@@ -14,6 +14,12 @@ export class Prepared { id: string; declarations: string; helpers: string; view:
 export class Source { deal: string; dealui: string; }
 export class Result { source: Source; fields: Field[]; computations: string[]; }
 function qualified(id: string, name: string): string { return "f_"+id+"_"+name; }
+class SyntaxRequest { function: string; input: string; }
+class SyntaxResult { value: string; code: string; message: string; }
+function syntaxValue(result: SyntaxResult): string {
+  if (result.code !== "") { throw {name:result.code,message:result.message}; }
+  return result.value;
+}
 function addImport(imports: Import[], module: string, alias: string): void {
   for (let item of imports) {
     if (item.alias === alias && item.module !== module) { s.reject("Conflicting resolved import alias"); }
@@ -179,15 +185,28 @@ export async function assemble(composition: screens.Composition, computations: C
             if (!found) { s.reject("Unissued computation dependency"); }
           }
           let purity: policy.Facts = factsByInstance[instance.id] as policy.Facts;
-          await policy.expression(computation.ready,purity,allowedReads);
-          await policy.expression(computation.value,purity,allowedReads);
-          await policy.expression(computation.reason,purity,allowedReads);
-          let ready: string = await expression(computation.ready,"boolean",instance,names,fields,types,"state");
+          // Mechanisms are independent; DEAL consumes results in the original validation order.
+          // Per-item failures remain classified, so a later syntax error cannot hide a prior policy rejection.
+          let requests: SyntaxRequest[] = [];
+          for (let source of [computation.ready,computation.value,computation.reason]) {
+            requests[requests.length] = {function:"analyzeExpression",input:s.encode({source:source})};
+          }
+          let sources: string[] = [computation.ready,computation.value,computation.reason];
+          let expected: string[] = ["boolean",types[computation.field] as string,"string"];
+          let variables: Record<string, unknown> = {state:"AppState"};
+          for (let index of [0,1,2]) {
+            requests[requests.length] = {function:"expression",input:s.encode({source:sources[index],expected:expected[index],names:names,fields:fields,types:types,variables:variables})};
+          }
+          let results: SyntaxResult[] = JSON.parse(await syntax.batch(s.encode({requests:requests})));
+          policy.checkedExpression(syntaxValue(results[0]),purity,allowedReads);
+          policy.checkedExpression(syntaxValue(results[1]),purity,allowedReads);
+          policy.checkedExpression(syntaxValue(results[2]),purity,allowedReads);
+          let ready: string = syntaxValue(results[3]);
           // Readiness is a composer dependency guard, not an optional writer predicate.
           // Short-circuit before any getter when an upstream derived value is unavailable.
           for (let dependency of computation.dependencies) { for (let input of allFields) { if (input.name === dependency && input.role === "derived") { ready = "state."+input.name+"_ready && ("+ready+")"; } } }
-          let value: string = await expression(computation.value,types[computation.field] as string,instance,names,fields,types,"state");
-          let reason: string = await expression(computation.reason,"string",instance,names,fields,types,"state");
+          let value: string = syntaxValue(results[4]);
+          let reason: string = syntaxValue(results[5]);
           let changes: Record<string, unknown> = {}; changes[target.name] = "null"; changes[target.name+"_ready"] = "false"; changes[target.name+"_reason"] = reason; if (primitive(target.type)) { changes[target.name+"_display"] = placeholder(target.type); }
           recompute = recompute+"  if ("+ready+") {\n    let value: "+target.type+" = "+value+";\n";
           let finite: string = "true"; if (target.type === "number") { finite = "value - value === 0"; }

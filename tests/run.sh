@@ -7,6 +7,7 @@ export DEAL_UI_ROOT=$(cd "${DEAL_UI_ROOT:-dependencies/deal-ui}" && pwd)
 python3 tools/dependencies.py check
 python3 tests/tools/test-generation-guidance.py
 node tests/tools/test-protocol.js
+node tests/tools/test-syntax-cache.js
 python3 tests/tools/test-construction-contracts.py
 python3 tests/tools/test-composer.py
 python3 tests/tools/test-fragment-semantics.py
