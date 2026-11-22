@@ -128,7 +128,19 @@ internal class AssistanceController(private val context: Context, private val fa
                     hooks.save(captured.identity, experience.id)
                 }
                 post(version) { busy = false; status = "" }
-            } catch (error: Throwable) { post(version) { busy = false; failed = true; status = "Couldn’t create this tool" } }
+            } catch (error: Throwable) {
+                // A superseded suggestion or rejected evidence is an invalidation, not a broken tool.
+                val rejection = (error as? ProtocolFailure)?.takeIf { it.code == "STALE" || it.code == "INVALID" }
+                // The located reason is evidence for Inspect, never user copy.
+                if (rejection != null) runCatching { EmbeddingLog.traced(context, trace).event("host", "rejected", target = "Assistance", code = rejection.code, detail = rejection.message) }
+                post(version) {
+                    busy = false
+                    if (rejection != null) suggestion = null
+                    // A superseded suggestion is an invalidation; rejected evidence is this attempt's failure.
+                    if (rejection != null && rejection.code == "STALE") status = "This suggestion is no longer current"
+                    else { failed = true; status = "Couldn’t create this tool" }
+                }
+            }
             finally { request = null }
         }
     }

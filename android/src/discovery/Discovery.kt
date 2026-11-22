@@ -16,11 +16,17 @@ internal class DiscoveryFacts(facts: List<DiscoveryFact>) {
     internal val supportingFactIds: Set<String>
     val identity: String
     init {
-        require(facts.size in 1..16 && facts.map { it.id }.distinct().size == facts.size)
-        facts.forEach { require(it.id.matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")) && it.text.isNotBlank() && it.text.length <= 2048) }
+        if (facts.size !in 1..16) throw ProtocolFailure("INVALID", "Facts: 1-16 unique fact identifiers")
+        if (facts.map { it.id }.distinct().size != facts.size) throw ProtocolFailure("INVALID", "Facts: 1-16 unique fact identifiers")
+        facts.forEach { fact ->
+            if (!fact.id.matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}"))) throw ProtocolFailure("INVALID", "Fact identifier: [A-Za-z][A-Za-z0-9_-]{0,63}")
+            if (fact.text.isBlank()) throw ProtocolFailure("INVALID", "Fact text: nonblank")
+            if (fact.text.length > 2048) throw ProtocolFailure("INVALID", "Fact text: at most 2048 UTF-16 units")
+        }
         factsJson = JSONArray(facts.sortedBy { it.id }.map { JSONObject().put("id", it.id).put("text", it.text) }).toString()
         supportingFactIds = facts.map { it.id }.toSet()
-        require(contextJson().toByteArray(Charsets.UTF_8).size <= 8192) { "Discovery context exceeds generation context bound" }
+        // Discovery input bound: inadmissible evidence is rejected before any inference is paid for.
+        if (contextJson().toByteArray(Charsets.UTF_8).size > 8192) throw ProtocolFailure("INVALID", "Facts context: at most 8192 UTF-8 bytes")
         identity = digest(factsJson)
     }
     internal fun contextJson() = JSONObject().put("facts", JSONArray(factsJson)).toString()
@@ -36,12 +42,17 @@ internal class CapturedDiscoveryFacts(val evidence: DiscoveryFacts, contracts: L
     val catalogueJson: String
     val capabilityIds: Set<String>
     init {
-        require(contracts.size <= 32) { "Discovery catalogue exceeds 32 modules" }
-        CapabilityBoundary.validate(contracts)
+        if (contracts.size > 32) throw ProtocolFailure("INVALID", "Catalogue: at most 32 modules, got ${contracts.size}")
+        // One contract validator owns every per-contract bound and module uniqueness. Admission
+        // reports any rejected catalogue as the discovery handoff's located INVALID.
+        try { CapabilityBoundary.validate(contracts) } catch (error: ProtocolFailure) {
+            if (error.code == "INVALID_ARGUMENT") throw ProtocolFailure("INVALID", "Catalogue: " + (error.message ?: "rejected")) else throw error
+        }
         catalogueJson = JSONArray(contracts.sortedBy { it.module }.map { c ->
             c.json().put("functions", JSONArray(c.functions.sortedBy { it.name }.map { it.json() }))
         }).toString()
-        require(catalogueJson.toByteArray(Charsets.UTF_8).size <= 32768) { "Discovery catalogue too large" }
+        val bytes = catalogueJson.toByteArray(Charsets.UTF_8).size
+        if (bytes > 32768) throw ProtocolFailure("INVALID", "Catalogue: at most 32768 UTF-8 bytes, got $bytes")
         capabilityIds = contracts.flatMap { c -> c.functions.map { "${c.module}.${it.name}" } }.toSet()
     }
 }
@@ -89,6 +100,7 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
             val code = when {
                 error == null -> ""
                 error is CancellationException -> "CANCELLED"
+                error is ProtocolFailure -> error.code
                 error is IllegalArgumentException -> "INVALID_REPLY"
                 else -> "INFERENCE_FAILED"
             }
@@ -134,13 +146,14 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
     /** Admission uses the exact brief/evidence and verifies the executable catalogue again. */
     fun request(suggestion: DiscoverySuggestion, currentFacts: List<DiscoveryFact>): GenerationRequest = request(suggestion,DiscoveryFacts(currentFacts))
     internal fun request(suggestion: DiscoverySuggestion, current: DiscoveryFacts): GenerationRequest {
-        val (epoch, log) = synchronized(this) {
-            check(!closed && issued === suggestion && current.identity == suggestion.input.evidence.identity) { "Stale or unissued suggestion" }
-            revision to checkNotNull(issuedLog)
+        // Captured evidence and ownership are re-admitted by compiled policy, before any request exists.
+        val (epoch, log, owned) = synchronized(this) {
+            if (closed) throw ProtocolFailure("CANCELLED", "Discovery is closed")
+            Triple(revision, issuedLog ?: throw ProtocolFailure("STALE", "Stale or unissued suggestion"), issued === suggestion)
         }
         return log.stage("opportunity-admission", detail = proposalJson(suggestion)) {
         // Catalogue discovery can block: cancellation must remain callable while it runs.
-        policy.admit(suggestion.input, CapturedDiscoveryFacts(current, catalogue()), true)
+        policy.admit(suggestion.input, CapturedDiscoveryFacts(current, catalogue()), owned)
         val references = WireType("array", maximum = 16, element = WireType("string", maximum = 512))
         val schema = WireType("record", fields = listOf(
             WireField("facts", WireType("array", maximum = 16, element = WireType("record", fields = listOf(
@@ -149,10 +162,13 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
         // Preserve the proposal in discovery observation/Inspect, not in source-model context.
         // Opportunity recognition must not inject its own implementation plan into synthesis.
         val context = JSONObject(suggestion.input.evidence.contextJson()).put("supportingFactIds", JSONArray(suggestion.supportingFactIds)).put("capabilityIds", JSONArray(suggestion.capabilityIds)).toString()
-        require(context.toByteArray(Charsets.UTF_8).size <= 8192) { "Captured discovery handoff exceeds context bound" }
         synchronized(this) {
-            check(!closed && revision == epoch && issued === suggestion) { "Discovery invalidated during admission" }
-            api.request(suggestion.title, policy.intent(), api.snapshot(schema, context)).also { request ->
+            if (closed || revision != epoch || issued !== suggestion) throw ProtocolFailure("STALE", "Suggestion invalidated during admission")
+            // The context mechanism is the one validator of this handoff context; every rejection is located.
+            val handoff = try { api.snapshot(schema, context) } catch (error: ProtocolFailure) {
+                if (error.code == "INVALID_ARGUMENT") throw ProtocolFailure("INVALID", "Discovery context: " + (error.message ?: "rejected")) else throw error
+            }
+            api.request(suggestion.title, policy.intent(), handoff).also { request ->
                 issued = null; issuedLog = null
                 log.event("opportunity-handoff", "admitted", target = runCatching { api.requestTrace(request) }.getOrDefault(""))
             }

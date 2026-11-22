@@ -9,7 +9,7 @@ import java.util.concurrent.*
  * The controller owns synchronous state; workers implement asynchronous mechanisms.
  * The evaluation pump never waits for a mechanism to finish, so controls remain serviceable.
  */
-class ProtocolController(private val context:Context, private val embedding:Embedding, assets:String="protocol-consumer", consumer:String="consumer.js"):AutoCloseable {
+class ProtocolController(private val context:Context, private val embedding:Embedding, assets:String, consumer:String, private val updateWaits:Int):AutoCloseable {
     internal val startupTimings = JSONObject()
     private fun <T> startup(name:String, block:()->T):T {
         val start=System.nanoTime();val cpu=android.os.Debug.threadCpuTimeNanos()
@@ -45,7 +45,7 @@ class ProtocolController(private val context:Context, private val embedding:Embe
     init {
         try {
             val saved=startup("saved-load"){embedding.saved().map{e->JSONObject().put("experience",experience(e)).put("source",source(embedding.source(e)))}}
-            val bootstrap=JSONObject().put("seed",UUID.randomUUID().toString()).put("saved",JSONArray(saved)).put("contracts",JSONArray(startup("capability-discovery"){embedding.refresh().map{it.json()}})).put("health",health())
+            val bootstrap=JSONObject().put("seed",UUID.randomUUID().toString()).put("saved",JSONArray(saved)).put("contracts",JSONArray(startup("capability-discovery"){embedding.refresh().map{it.json()}})).put("health",health()).put("waits",updateWaits)
             val bundle=startup("bundle-build"){SandboxBundle.build(context,listOf("protocol-contracts.js","protocol-host.js","public-protocol.js"),"","protocolInitialize(factories,${JSONObject.quote(consumer)},$bootstrap)",assetRoot=assets)}
             startup("bundle-evaluate"){program.evaluate(bundle)}
             embedding.registry.permissions { module -> program.evaluate("JSON.stringify(publicProtocol.permitted(${JSONObject.quote(module)}))").let{if(it=="null")null else JSONArray("[$it]").getString(0)} }

@@ -4,18 +4,26 @@
   let nextId = 1;
   const outgoing = [];
   const pending = new Map();
+  // Requests counted by the containment pool; admitted update waits are not among them.
+  let pooled = 0;
   globalThis.dealCapabilities = Object.freeze({
+    // Update waits are admitted by compiled controller policy; this pool bounds every other
+    // native request, so an admitted wait can never starve control or observation transport.
     request: (module, functionName, args) => new Promise((resolve, reject) => {
-      if (pending.size >= 8) { reject({code: "LIMIT", message: "Too many pending requests"}); return; }
+      const counted = !(module === "embedding" && functionName === "next");
+      if (counted && pooled >= 8) { reject({code: "LIMIT", message: "Too many pending requests"}); return; }
+      if (counted) pooled += 1;
       const id = nextId++;
-      pending.set(id, {resolve, reject, owner:globalThis.protocolInvocation});
+      pending.set(id, {resolve, reject, owner:globalThis.protocolInvocation, counted});
       outgoing.push({id, module, function: functionName, args});
     }),
     notify: (module, functionName, args) => { outgoing.push({id: 0, module, function: functionName, args}); },
     take: () => JSON.stringify(outgoing.splice(0)),
     cancelOwner: owner => {
       const ids=[];
-      for(const [id,operation] of pending)if(operation.owner===owner){pending.delete(id);ids.push(id);operation.reject({code:'DETACHED',message:'Observer detached'});}
+      for(const [id,operation] of pending)if(operation.owner===owner){
+        pending.delete(id);if(operation.counted)pooled-=1;ids.push(id);operation.reject({code:'DETACHED',message:'Observer detached'});
+      }
       for(let i=outgoing.length-1;i>=0;i--)if(ids.includes(outgoing[i].id))outgoing.splice(i,1);
       return JSON.stringify(ids);
     },
@@ -23,7 +31,7 @@
       for (const reply of replies) {
         const operation = pending.get(reply.id);
         if (!operation) continue;
-        pending.delete(reply.id);
+        pending.delete(reply.id);if(operation.counted)pooled-=1;
         if (reply.ok) operation.resolve(reply.value);
         else operation.reject(reply.error);
       }

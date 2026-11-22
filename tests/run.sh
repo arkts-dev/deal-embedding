@@ -8,7 +8,9 @@ python3 tools/dependencies.py check
 python3 tests/tools/test-generation-guidance.py
 python3 tests/tools/test-compiler-diagnostics.py
 node tests/tools/test-protocol.js
+python3 tests/tools/test-admission-policy.py
 python3 tests/tools/test-capability-boundary.py
+node tests/tools/test-discovery.js
 node tests/tools/test-syntax-cache.js
 python3 tests/tools/test-construction-contracts.py
 python3 tests/tools/test-source-edits.py

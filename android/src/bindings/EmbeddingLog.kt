@@ -31,7 +31,7 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
         event(name, "started", candidate, workspace, operation, target = target, detail = detail, span = span)
         try { return block(child(span)).also { event(name, "completed", candidate, workspace, operation, durationMs = SystemClock.elapsedRealtime() - start, target = target, span = span) } }
         catch (error: Throwable) {
-            val code = when (error) { is CandidateRejected -> "CANDIDATE_REJECTED"; is deal.ui.UiDiagnostic -> error.code(); is java.util.concurrent.CancellationException -> "CANCELLED"; else -> error.javaClass.simpleName }
+            val code = when (error) { is CandidateRejected -> "CANDIDATE_REJECTED"; is deal.ui.UiDiagnostic -> error.code(); is ProtocolFailure -> error.code; is java.util.concurrent.CancellationException -> "CANCELLED"; else -> error.javaClass.simpleName }
             event(name, "failed", candidate, workspace, operation, code, SystemClock.elapsedRealtime() - start, target = target, detail = if (error is CandidateRejected) error.diagnostics else null, span = span)
             throw error
         }

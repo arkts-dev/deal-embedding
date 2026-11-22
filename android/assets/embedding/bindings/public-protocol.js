@@ -35,7 +35,11 @@ globalThis.publicProtocol = (() => {
           else if(admission.phase==='pending')result=starts.get(id);
           else {result=Promise.resolve(policy('run',id)).then(protocolPlain).finally(()=>starts.delete(id));starts.set(id,result);}break;}
         case 'dispatch':policy(name,args[0].id,args[1]);result=native(name,args);break;
-        case 'next':policy('session',args[0].id);result=native(name,args).then(update=>{policy('produced',args[0].id,update.snapshot.version);return update;});break;
+        case 'next':{const id=args[0].id,waiting=args[1]!=='';
+          // Compiled controller policy owns wait admission, rejection and the configured bound.
+          if(waiting)policy('beginWait',id);else policy('session',id);
+          const settle=()=>{if(waiting)policy('endWait',id);};
+          result=native(name,args).then(update=>{settle();policy('produced',id,update.snapshot.version);return update;},error=>{settle();throw error;});break;}
         case 'published':policy(name,args[0].id,args[1]);control('published',args);result=null;break;
         case 'sessionTrace':result=policy(name,args[0].id);break;
         case 'close':policy('session',args[0].id);result=native('close',args).then(()=>policy('closed',args[0].id));break;
@@ -63,7 +67,7 @@ globalThis.protocolInitialize=function(factories,consumer,input){
   const loaded=dealLoad(factories,consumer);globalThis.publicRuntime=loaded.rt;
   globalThis.protocolUi=dealLoad(factories,'ui/core.js').entry;
   const compiled=dealLoad(factories,'controller.js').entry;
-  const controller=compiled.create.$f(input.seed,protocolRecord('[@$external/embedding/CapabilityContract]',input.contracts));
+  const controller=compiled.create.$f(input.seed,protocolRecord('[@$external/embedding/CapabilityContract]',input.contracts),input.waits);
   globalThis.publicConsumer=loaded.entry;globalThis.publicResults=new Map();publicProtocol.bootstrap(input,controller);return '';
 };
 globalThis.protocolInvoke=function(name,args){

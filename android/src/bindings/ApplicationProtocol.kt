@@ -5,11 +5,11 @@ import org.json.*
 import java.util.concurrent.Executors
 
 /** Rendering/lifecycle adapter to the compiled DEAL consumer. It never drives sessions. */
-class ApplicationProtocol internal constructor(private val context:Context, mechanisms:Embedding, private val discoveryGateway: GenerationGatewayConfig? = null):AutoCloseable {
+class ApplicationProtocol internal constructor(private val context:Context, mechanisms:Embedding, private val discoveryGateway: GenerationGatewayConfig?, updateWaits: Int):AutoCloseable {
     internal val presentationTarget = mechanisms.presentationTarget
     /** Host-configured containment bounds carried to renderer resources; never public API. */
     internal val resourceLimits = mechanisms.executionLimits
-    private val controller=ProtocolController(context,mechanisms,"protocol-application","application.js")
+    private val controller=ProtocolController(context,mechanisms,"protocol-application","application.js",updateWaits)
     internal fun startupTimings()=JSONObject(controller.startupTimings.toString())
     private var discoveryOwner: dev.deal.embedding.discovery.Discovery? = null
     @Volatile private var closed = false

@@ -8,7 +8,7 @@ for(const name of ['sandbox.js','protocol-contracts.js','protocol-host.js','publ
 const sources={};
 function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(base,file)]=fs.readFileSync(file,'utf8');}}
 walk(base);context.sources=sources;
-vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));protocolInitialize(factories,'application.js',{seed:'fixture',saved:[],contracts:[],health:{incomplete:false,active:false,code:'',lost:0}});`,context);
+vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));protocolInitialize(factories,'application.js',{seed:'fixture',saved:[],contracts:[],health:{incomplete:false,active:false,code:'',lost:0},waits:2});`,context);
 // The restricted host exposes only the diagnostic switch, never the host environment.
 const runtimeEvidence=JSON.parse(vm.runInContext(`(() => {
  try { publicRuntime.checkType('number','wrong','candidate.deal',3,7); throw Error('expected checked failure'); }
@@ -97,6 +97,66 @@ async function call(name,args,handler){
  const tree={component:'Text',structural:'root',keyKind:'number',keyNumber:1.25,keyString:'',props:[prop],children:[]};
  const update=await call('next',[sessionId,''],request=>{assert.equal(request.function,'next');return {snapshot:{tree,version:1,fault:''},cursor:'cursor'};});
  assert.equal(update.snapshot.tree.keyNumber,1.25);assert.equal(update.snapshot.tree.props[0].numberValue,1.5);
+ // The configured wait bound (two, not the former adapter literal) is compiled controller policy.
+ function startInvocation(name,args){const key=String(++sequence);context.args=args;context.key=key;context.name=name;vm.runInContext('protocolCall(key,name,args)',context);return key;}
+ const settleTurn=()=>new Promise(resolve=>setImmediate(resolve));
+ function outcome(key){return JSON.parse(vm.runInContext(`JSON.stringify(protocolPlain(publicResults.get(${JSON.stringify(key)})))`,context));}
+ function take(){return JSON.parse(vm.runInContext('dealCapabilities.take()',context));}
+ function answer(request,version){context.reply={id:request.id,ok:true,value:{snapshot:{tree,version,fault:''},cursor:'cursor-'+version}};vm.runInContext('dealCapabilities.deliver([reply])',context);}
+ // A second Experience proves waits are admitted per Session, not process-wide.
+ await call('load',['Second',source.deal,source.dealui],()=>({experience:{id:'second',title:'Second',origin:'supplied',attempts:0},source}));
+ const secondRunHandler=request=>{
+  if(request.function==='prepareStart')return {id:'second-prepared',session:request.args[1],trace:'second-trace'};
+  assert(['persistStart','activateStart'].includes(request.function));return null;
+ };
+ const secondSession=await call('run',['second'],secondRunHandler);
+ const secondUpdate=await call('next',[secondSession.id,''],request=>{assert.equal(request.function,'next');return {snapshot:{tree,version:1,fault:''},cursor:'second-cursor'};});
+ const held=update.cursor;
+ const first=startInvocation('next',[sessionId,held]);
+ const second=startInvocation('next',[sessionId,held]);
+ await settleTurn();
+ const heldRequests=take();
+ assert.equal(heldRequests.length,2,'the configured bound admits both waits');
+ const refused=startInvocation('next',[sessionId,held]);
+ await settleTurn();
+ assert.deepEqual(take(),[],'a rejected wait registers no mechanism call');
+ assert.equal(outcome(refused).error.code,'LIMIT');
+ // Another Session is unaffected while this one is full.
+ const other=startInvocation('next',[secondSession.id,secondUpdate.cursor]);
+ await settleTurn();
+ const otherRequests=take();
+ assert.equal(otherRequests.length,1,'waits are counted per Session');
+ // A rejected native next frees its slot: a transport failure must not starve later waits.
+ context.reply={id:otherRequests[0].id,ok:false,error:{code:'SESSION_FAILED',message:'Session faulted'}};
+ vm.runInContext('dealCapabilities.deliver([reply])',context);
+ await settleTurn();
+ assert.equal(outcome(other).error.code,'SESSION_FAILED');
+ // Both remaining slots must be free again: a leaked slot would refuse the second wait.
+ const recoveredA=startInvocation('next',[secondSession.id,secondUpdate.cursor]);
+ const recoveredB=startInvocation('next',[secondSession.id,secondUpdate.cursor]);
+ await settleTurn();
+ const again=take();
+ assert.equal(again.length,2,'a rejected wait releases its slot');
+ answer(again[0],2);
+ answer(again[1],3);
+ await settleTurn();
+ assert.equal(outcome(recoveredA).done,true);
+ assert.equal(outcome(recoveredB).done,true);
+ // A completed wait releases its slot for the next wait under the same configured bound.
+ answer(heldRequests[0],1);
+ await settleTurn();
+ assert.equal(outcome(first).done,true);
+ const third=startInvocation('next',[sessionId,held]);
+ await settleTurn();
+ const freed=take();
+ assert.equal(freed.length,1);
+ answer(heldRequests[1],2);
+ answer(freed[0],3);
+ await settleTurn();
+ assert.equal(outcome(second).done,true);
+ assert.equal(outcome(third).done,true);
+ await call('close',[secondSession.id],()=>null);
+ await call('forget',['second'],()=>null);
  for(const [name,args] of [['dispatch',[sessionId,0.5,null]],['published',[sessionId,0.5]],['events',['','',1.5]]]){
   await assert.rejects(call(name,args),error=>error.code==='INVALID_ARGUMENT');
  }
@@ -125,5 +185,41 @@ async function call(name,args,handler){
  await call('close',[retried.id],()=>null);await call('forget',['retry'],()=>null);
  await call('forget',['e'],request=>{assert.equal(request.function,'forget');return null;});
  await assert.rejects(call('source',['e']),error=>error.code==='INVALID_HANDLE');
+ // A wait that settles after shutdown must release its slot only: the settle path may not re-enter
+ // controller policy (that would replace the transport code with STOPPED). The no-resurrection
+ // invariant is asserted structurally in tests/tools/test-admission-policy.py.
+ await call('load',['Final',source.deal,source.dealui],()=>({experience:{id:'final',title:'Final',origin:'supplied',attempts:0},source}));
+ const finalSession=await call('run',['final'],request=>request.function==='prepareStart'?{id:'final-prepared',session:request.args[1],trace:'final-trace'}:null);
+ await call('next',[finalSession.id,''],request=>{assert.equal(request.function,'next');return {snapshot:{tree,version:1,fault:''},cursor:'final-cursor'};});
+ const finalWait=startInvocation('next',[finalSession.id,'final-cursor']);
+ await settleTurn();
+ const finalRequests=take();
+ assert.equal(finalRequests.length,1);
+ await call('shutdown',[],request=>{assert.equal(request.function,'shutdown');return null;});
+ context.reply={id:finalRequests[0].id,ok:false,error:{code:'CLOSED',message:'Session closed'}};
+ vm.runInContext('dealCapabilities.deliver([reply])',context);
+ await settleTurn();
+ assert.equal(outcome(finalWait).error.code,'CLOSED','settling after shutdown preserves the transport failure');
+ // Waits are admitted by compiled controller policy, so they never consume the transport containment
+ // pool that bounds every other native request.
+ const pool=vm.createContext({});
+ vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings/sandbox.js'),'utf8'),pool);
+ const pooled=JSON.parse(vm.runInContext(`(() => { for(let i=0;i<20;i++)dealCapabilities.request('embedding','next',[]).catch(()=>{}); dealCapabilities.request('embedding','dispatch',['s',0,null]).catch(()=>{}); return dealCapabilities.take(); })()`,pool));
+ assert.equal(pooled.filter(request=>request.function==='next').length,20,'admitted waits are not pooled');
+ assert.equal(pooled.filter(request=>request.function==='dispatch').length,1,'a wait never starves control transport');
+ // Only the embedding's own wait is exempt: a host capability function named `next` stays contained.
+ const hostPool=vm.createContext({});
+ vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings/sandbox.js'),'utf8'),hostPool);
+ vm.runInContext(`globalThis.poolOutcomes=[]; for(let i=0;i<9;i++)dealCapabilities.request('host/probe','next',[]).then(()=>poolOutcomes.push('ok'),error=>poolOutcomes.push(error.code)); ''`,hostPool);
+ await settleTurn();
+ assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(poolOutcomes)',hostPool)),['LIMIT'],'a host function named next is still pooled');
+ assert.equal(JSON.parse(vm.runInContext('dealCapabilities.take()',hostPool)).length,8);
+ // A host wait bound outside the validated domain registers no consumer at all.
+ for(const waits of [0,1,65]){
+  const invalid=vm.createContext({});
+  for(const name of ['sandbox.js','protocol-contracts.js','protocol-host.js','public-protocol.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),invalid);
+  invalid.sources=sources;
+  assert.throws(()=>vm.runInContext(`(function(){const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));protocolInitialize(factories,'application.js',{seed:'invalid',saved:[],contracts:[],health:{incomplete:false,active:false,code:'',lost:0},waits:${waits}});})()`,invalid),error=>error.code==='INVALID_ARGUMENT','waits='+waits);
+ }
  console.log('PASS packaged compiled controller: frozen requests, context bounds, cancellation, grant epochs, single-flight/live Session reuse, saved-release rejection, closure/forget and public transport');
 })().catch(error=>{console.error(error);process.exitCode=1;});

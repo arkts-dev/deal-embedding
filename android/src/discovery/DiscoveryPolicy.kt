@@ -22,6 +22,13 @@ internal class DiscoveryPolicy(context: Context) : AutoCloseable {
         .put("capabilityIds", JSONArray(input.capabilityIds.sorted())).put("catalogue", input.catalogueJson).toString()
     @Synchronized private fun call(name: String, vararg arguments: String): String = program.evaluateString(
         "discoveryPolicy[${JSONObject.quote(name)}].\$f(...${JSONArray(arguments.toList())})")
+    /** Decision errors keep their compiled code across the isolate boundary; genuine faults stay faults. */
+    @Synchronized private fun decision(name: String, vararg arguments: String) {
+        val failure = program.evaluateString("(() => { try { discoveryPolicy[${JSONObject.quote(name)}].\$f(...${JSONArray(arguments.toList())}); return ''; } catch (error) { if (!(error && error.\$classname === 'Error')) { throw error; } return JSON.stringify({code: error.name || 'FAILED', message: error.message || 'Rejected by compiled discovery policy'}); } })()")
+        if (failure.isEmpty()) return
+        val rejected = JSONObject(failure)
+        throw ProtocolFailure(rejected.getString("code"), rejected.getString("message"))
+    }
     fun prompt(input: CapturedDiscoveryFacts) = call("prompt", capture(input))
     fun parse(text: String, input: CapturedDiscoveryFacts): DiscoverySuggestion? {
         require(text.toByteArray(Charsets.UTF_8).size <= 8192) { "Discovery reply too large" }
@@ -34,7 +41,7 @@ internal class DiscoveryPolicy(context: Context) : AutoCloseable {
     }
     fun intent() = call("intent")
     fun admit(input: CapturedDiscoveryFacts, fresh: CapturedDiscoveryFacts, issued: Boolean) {
-        call("admit",input.evidence.identity,fresh.evidence.identity,input.catalogueJson,fresh.catalogueJson,issued.toString())
+        decision("admit",input.evidence.identity,fresh.evidence.identity,input.catalogueJson,fresh.catalogueJson,issued.toString())
     }
     override fun close() = teardown({ program.close() }, { SandboxEngine.release(engine) })
 }

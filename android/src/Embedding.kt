@@ -21,7 +21,7 @@ class Embedding internal constructor(private val context: Context, internal val 
                 val owner = Embedding(application,registry,model,RuntimeConfig("experience",emptyList(),config.storageName,
                     retainState=config.retainState,execution=config.execution,target=config.target))
                 mechanisms = owner
-                return ApplicationProtocol(application,owner,config.discovery)
+                return ApplicationProtocol(application,owner,config.discovery,config.updateWaits)
             } catch (error: Throwable) {
                 runCatching { mechanisms?.shutdown() ?: registry.close() }.onFailure(error::addSuppressed)
                 throw error
@@ -52,7 +52,6 @@ class Embedding internal constructor(private val context: Context, internal val 
     @Synchronized internal fun nextAsync(session:Session,cursor:String):java.util.concurrent.CompletableFuture<SessionUpdate> {
         val d=deliveries[session.id] ?: throw ProtocolFailure("INVALID_HANDLE","Unissued or closed session")
         val revision=if(cursor.isEmpty())-1L else d.cursors.revision(cursor,d.revision)
-        if(d.waiters.size>=8)throw ProtocolFailure("LIMIT","Too many pending update waits")
         val result=java.util.concurrent.CompletableFuture<SessionUpdate>()
         if(revision<d.revision)result.complete(SessionUpdate(UiSnapshot.parse(d.snapshot.json()),d.cursor))else if(d.failure!=null)result.completeExceptionally(ProtocolFailure("SESSION_FAILED",d.snapshot.fault))else {
             d.waiters.add(revision to result)
@@ -63,21 +62,17 @@ class Embedding internal constructor(private val context: Context, internal val 
     fun next(session:Session,cursor:String):SessionUpdate=try{nextAsync(session,cursor).get()}catch(e:java.util.concurrent.ExecutionException){throw e.cause!!}
     private fun endDelivery(key:String){deliveries.remove(key)?.let{d->val waits=d.waiters.toList();d.waiters.clear();waits.forEach{it.second.completeExceptionally(ProtocolFailure("CLOSED","Session closed"))}}}
     private fun id()=UUID.randomUUID().toString()
-    @Synchronized fun snapshot(schema:WireType,valueJson:String):GenerationContext {
-        check(!stopped)
-        schema.validateSchema();val copy=WireType.parse(schema.json());val value=JSONTokener(valueJson).let{parser->val v=parser.nextValue();require(parser.nextClean()=='\u0000'){"Trailing JSON"};v};copy.validate(value)
-        val normalized=JSONArray().put(value).toString().let{it.substring(1,it.length-1)}
-        return GenerationContext(id()).also{contexts[it.id]=copy to normalized}
-    }
     @Synchronized fun contextSchema(context:GenerationContext)=WireType.parse((contexts[context.id] ?: error("Invalid context")).first.json())
     @Synchronized fun contextJson(context:GenerationContext)=(contexts[context.id] ?: error("Invalid context")).second
+    /** The context mechanism validated and normalized this pair; store the issued data without a second validator. */
+    @Synchronized private fun storeContext(schema:WireType,json:String):GenerationContext = GenerationContext(id()).also{contexts[it.id]=schema to json}
     @Synchronized fun request(title:String,intent:String,context:GenerationContext):GenerationRequest {
         check(!stopped);require(title.isNotBlank()&&intent.isNotBlank());contextJson(context)
         return GenerationRequest(id()).also{requests[it.id]=RequestState(title,intent,context,config.contracts.map{CapabilityContract.parse(it.json().toString())},GenerationCancellation(),EmbeddingLog(this.context))}
     }
     /** Controller-to-mechanism admission preserves the controller's frozen catalogue and trace. */
     @Synchronized internal fun protocolRequest(title:String,intent:String,schema:WireType,json:String,contracts:JSONArray,trace:String):GenerationRequest {
-        val facts=snapshot(schema,json);val request=request(title,intent,facts)
+        val facts=storeContext(schema,json);val request=request(title,intent,facts)
         val state=requests.getValue(request.id)
         requests[request.id]=state.copy(contracts=(0 until contracts.length()).map{CapabilityContract.parse(contracts.getJSONObject(it).toString())},log=EmbeddingLog.traced(context,trace))
         return request
