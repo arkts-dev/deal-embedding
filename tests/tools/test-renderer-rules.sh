@@ -17,6 +17,8 @@ rm -rf "$OUT"; mkdir -p "$OUT"
   android/src/rendering/FrameTarget.kt \
   android/src/rendering/ImageLoad.kt \
   android/src/rendering/HttpImageTransport.kt \
+  android/src/rendering/TabPanels.kt \
+  android/src/rendering/DraftText.kt \
   android/src/rendering/CompileInput.kt \
   android/src/rendering/TreePresentation.kt \
   android/src/rendering/RendererMetadata.kt \

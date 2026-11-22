@@ -4,7 +4,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /** Deterministic rule items: metadata, prop resolution, classes, presentation, style, events,
- * graphics, card profile, frame targeting, dispatch completeness and the display vocabulary. */
+ * graphics, card profile, frame targeting, Tabs panels, draft presentation, dispatch completeness
+ * and the display vocabulary. */
 
 private fun text(name: String, value: String) = UiProp(name, UiValue.Text(value))
 private fun number(name: String, value: Double) = UiProp(name, UiValue.Num(value))
@@ -113,6 +114,27 @@ fun main(args: Array<String>) {
     accepted(node("Select", listOf(structured("labels", "[]"), number("selected", -1.0))))
     rejected(node("Select", listOf(structured("labels", """["a"]"""), number("selected", 3.0))),
         "PROP_FAULT", "Select", "selected", "integral-index")
+    // Tabs require one label per child, string labels and an integral index-valid selection.
+    fun tabs(labels: String, selected: Double, children: List<UiNode>) =
+        node("Tabs", listOf(structured("labels", labels), number("selected", selected), action("onChange")), children)
+    val firstTab = UiNode("Column", emptyList(), listOf(node("TextField", listOf(text("label", "Note"), text("value", "a"), action("onChange")))), key = "first")
+    val secondTab = UiNode("Column", emptyList(), listOf(node("Button", listOf(text("text", "Apply"), action("onClick")))), key = "second")
+    val tabChildren = listOf(firstTab, secondTab)
+    accepted(tabs("""["first","second"]""", 0.0, tabChildren))
+    accepted(tabs("""["first","second"]""", 1.0, tabChildren))
+    rejected(tabs("""["first","second"]""", -1.0, tabChildren), "PROP_FAULT", "Tabs", "selected", "integral-index")
+    rejected(tabs("""["first","second"]""", 2.0, tabChildren), "PROP_FAULT", "Tabs", "selected", "integral-index")
+    rejected(tabs("""["first","second"]""", 0.5, tabChildren), "PROP_FAULT", "Tabs", "selected", "integral-index")
+    rejected(tabs("""["first","second"]""", Double.NaN, tabChildren), "PROP_FAULT", "Tabs", "selected", "integral-index")
+    // One label per child, in both directions.
+    rejected(tabs("""["first"]""", 0.0, tabChildren), "PROP_FAULT", "Tabs")
+    rejected(tabs("""["first","second","third"]""", 0.0, tabChildren), "PROP_FAULT", "Tabs")
+    // Unlike Select, Tabs never accepts the empty -1 selection.
+    rejected(tabs("[]", -1.0, emptyList()), "PROP_FAULT", "Tabs", "selected", "integral-index")
+    rejected(tabs("""["first",1]""", 1.0, tabChildren), "PROP_FAULT", "Tabs", "labels")
+    // A label defect stays a label defect even where the selection is also out of range.
+    rejected(tabs("""["first",1]""", 5.0, tabChildren), "PROP_FAULT", "Tabs", "labels")
+    rejected(tabs("5", 0.0, tabChildren), "PROP_FAULT", "Tabs", "labels")
     accepted(node("Sparkline", listOf(structured("series", "[1,2]"), number("maximum", 5.0))))
     accepted(node("Sparkline", listOf(structured("series", "[]"), number("maximum", 0.0))))
     accepted(node("Sparkline", listOf(structured("series", "[]"), structured("series2", "[]"), number("maximum", 0.0))))
@@ -187,6 +209,8 @@ fun main(args: Array<String>) {
     check(payload("Button", "onFrame", emptyMap(), "1") == EventPayload.Undeclared)
     check(payload("Surface", "onFrame", emptyMap(), "16") == EventPayload.Delivered("16"))
     check(payload("Surface", "onFrame", emptyMap(), "-4") is EventPayload.Rejected)
+    check(payload("Tabs", "onChange", emptyMap(), "1") == EventPayload.Delivered("1")) { "Tabs.onChange carries a number payload" }
+    check(payload("Tabs", "onChange", emptyMap(), "second") is EventPayload.Rejected) { "a tab label is never a number payload" }
     check(payload("Surface", "onPointer", emptyMap(), """{"phase":"down","id":1,"x":2,"y":3}""") is EventPayload.Delivered)
     check(payload("Surface", "onPointer", emptyMap(), """{"phase":"hover","id":1,"x":2,"y":3}""") is EventPayload.Rejected)
 
@@ -261,6 +285,58 @@ fun main(args: Array<String>) {
     check(FrameTarget.plan(frame, null, 900L) == FramePlan.Frame(frame, 0L)) { "a frame after a resume starts from an absent previous value, so its delta is zero" }
     check(FrameTarget.plan(frame, 900L, 908L) == FramePlan.Frame(frame, 8L))
     check(FrameTarget.plan(frame, 908L, 900L) == FramePlan.Frame(frame, 0L)) { "a delta is never negative" }
+
+    // Tabs panels: the rule returns exactly the selected child, never a sibling in its place.
+    // These items pin the production rules as pure functions. The painter's composition of that panel,
+    // its event delivery and its saveable state holder are observed by the device renderer check
+    // (tests/android/TabChecks.kt, instrumentation argument `tabs`), not by this deterministic lane.
+    val tabLabels = listOf("first", "second")
+    val firstPanel = checkNotNull(TabPanels.select(tabLabels, 0.0, tabChildren))
+    val secondPanel = checkNotNull(TabPanels.select(tabLabels, 1.0, tabChildren))
+    check(firstPanel.index == 0 && firstPanel.node == firstTab) { "selection 0 renders the first child" }
+    check(secondPanel.index == 1 && secondPanel.node == secondTab) { "selection 1 renders the second child" }
+    val tabIdentities = TabPanels.identities(tabChildren)
+    check(firstPanel.identity == tabIdentities[0]) { "the panel keeps the first child's identity" }
+    check(secondPanel.identity == tabIdentities[1]) { "the panel keeps the second child's identity" }
+    check(TabPanels.select(tabLabels, -1.0, tabChildren) == null) { "a negative selection renders no panel" }
+    check(TabPanels.select(tabLabels, 0.5, tabChildren) == null) { "a non-integral selection renders no panel" }
+    check(TabPanels.select(tabLabels, Double.NaN, tabChildren) == null) { "a nonfinite selection renders no panel" }
+    check(TabPanels.select(listOf("first"), 0.0, tabChildren) == null) { "a missing label renders no panel" }
+    check(TabPanels.select(listOf("first", "second", "third"), 0.0, tabChildren) == null) { "an extra label renders no panel" }
+    // Retention identity: the child's own node identity, never the selection or the panel index, so
+    // two panels share no state and a returned panel is restored under the identity it saved.
+    check(tabIdentities[0] != tabIdentities[1]) { "two panels share no state" }
+    check(TabPanels.identities(listOf(firstTab.copy(props = emptyList(), children = emptyList()), secondTab)) == tabIdentities) {
+        "a panel identity ignores props and children"
+    }
+    check(TabPanels.identities(listOf(firstTab, secondTab))[0] ==
+        TabPanels.identities(listOf(secondTab, firstTab))[1]) {
+        "with distinct carried identities, a panel identity ignores the panel index"
+    }
+    check(TabPanels.identities(listOf(node("Column").copy(key = "first"), node("Column").copy(key = "second"))) == tabIdentities) {
+        "two panels with identical content and different identities share no state"
+    }
+    check(TabPanels.identities(listOf(firstTab, firstTab)).toSet().size == 2) {
+        "siblings that carry one identity do not share state"
+    }
+    check(TabPanels.identities(listOf(node("Column"), node("Column"))).toSet().size == 2) {
+        "children that carry no key do not share state"
+    }
+
+    // Draft presentation: a retentive draft applies only while its authoritative identity is unchanged.
+    check(DraftText.shown(Draft("typed", "0.5"), "0.5", "0.5") == "typed") { "a returned panel keeps the draft typed against the same value" }
+    check(DraftText.shown(Draft("typed", "0.5"), "0.50", "0.50") == "0.50") { "a changed authoritative identity wins over the stale draft" }
+    check(DraftText.shown(Draft("typed", "2.4"), "2.4", "2") == "typed") { "the value identity, not the rounded text, decides the draft" }
+    check(DraftText.identity(2.4) != DraftText.identity(2.49)) {
+        "the draft identity separates values that render the same text"
+    }
+    check(NumericPresentation.format(2.4, "", "", 1, 0) == NumericPresentation.format(2.49, "", "", 1, 0)) {
+        "the rendered text alone cannot separate them"
+    }
+    check(DraftText.reconciled(Draft("typed", "0.5"), "0.50", "0.50") == Draft("0.50", "0.50")) {
+        "a superseded draft is replaced by the authoritative presentation"
+    }
+    check(DraftText.reconciled(Draft("typed", "0.5"), "0.5", "1") == Draft("typed", "0.5")) { "a live draft is kept" }
 
     // Dispatch completeness and the root wrapper mapping.
     accepted(node("root", children = listOf(node("Text", listOf(text("text", "x"))))))
@@ -345,5 +421,5 @@ fun main(args: Array<String>) {
     check(CompileInput.target("chat") == "chat")
     check(CompileInput.target("card") == "card")
 
-    println("renderer rules: metadata, resolution, seven classes, presentation, style, payloads, graphics, card, dispatch and display vocabulary passed")
+    println("renderer rules: metadata, resolution, seven classes, presentation, style, payloads, graphics, card, dispatch, tabs panels, drafts and display vocabulary passed")
 }

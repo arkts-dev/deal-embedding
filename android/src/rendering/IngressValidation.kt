@@ -69,6 +69,18 @@ internal object IngressValidation {
             val number = (value as? UiValue.Num)?.value ?: continue
             NumericPresentation.fault(name, prop, number)?.let { return it }
         }
+        // A tab label is a string, and one label is required per child. A non-string item is
+        // rejected here, before the selection rule, because Values.strings would otherwise drop it
+        // and leave an accepted tree with fewer labels than children and therefore no panel. The
+        // remaining string[] props (Select labels, Sparkline categories, Table headers, TableRow
+        // cells) still rely on the loose json declaration kind; a strict strings kind shared by them
+        // is a separate ingress item, not this one.
+        if (name == "Tabs") {
+            val labels = (resolved["labels"] as? UiValue.Json)?.value
+            if (labels !is JsonValue.Arr || labels.items.any { it !is JsonValue.Str }) {
+                return IngressFault("PROP_FAULT", name, "labels", detail = "labels must be an array of strings")
+            }
+        }
         for ((prop, value) in resolved) {
             val field = presentation.firstOrNull { it.prop == prop } ?: continue
             if (field.kind == "number" || field.kind == "json" || field.kind == "numbers") {

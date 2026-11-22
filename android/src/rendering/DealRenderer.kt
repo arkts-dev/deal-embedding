@@ -15,6 +15,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -103,6 +106,22 @@ internal val LocalExecutionLimits = staticCompositionLocalOf { ExecutionLimits()
         ) { CircularProgressIndicator(Modifier.align(Alignment.Center).size(20.dp), strokeWidth = 2.dp) }
         is ImagePainting.Blank -> if (alt.isNotEmpty()) Box(Modifier.semantics { contentDescription = alt })
     }
+}
+
+/** Saves a typed draft together with the authoritative value identity it was typed against. */
+private val DraftSaver = listSaver<Draft, String>(
+    save = { listOf(it.text, it.origin) },
+    restore = { if (it.size == 2) Draft(it[0], it[1]) else null },
+)
+
+/**
+ * A draft that outlives the composition which typed it and is replaced once the authoritative value
+ * identity it was typed against changes, so a returning panel never revives superseded input.
+ */
+@Composable private fun draftOf(identity: String, authoritative: String): MutableState<Draft> {
+    val state = rememberSaveable(identity, stateSaver = DraftSaver) { mutableStateOf(Draft(authoritative, identity)) }
+    SideEffect { state.value = DraftText.reconciled(state.value, identity, authoritative) }
+    return state
 }
 
 @Composable private fun PackIcon(name: String, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current) {
@@ -228,6 +247,7 @@ internal val LocalExecutionLimits = staticCompositionLocalOf { ExecutionLimits()
     val card = LocalCardTarget.current
     Canvas(Modifier.size(width.dp, height.dp).pointerInput(width, height) {
         awaitPointerEventScope {
+            var down = emptyList<Long>()
             try {
                 while (true) {
                     val event = awaitPointerEvent()
@@ -241,8 +261,15 @@ internal val LocalExecutionLimits = staticCompositionLocalOf { ExecutionLimits()
                         }
                         change.consume()
                     }
+                    down = event.changes.filter { it.pressed }.map { it.id.value }
                 }
-            } finally { slot?.let { emit(it, "{\"phase\":\"cancel\",\"id\":0,\"x\":0,\"y\":0}") } }
+            } finally {
+                // A gesture still down when the surface leaves the composition ends with one cancel
+                // per pointer; an idle surface never fabricates one, so a covered page or a switched
+                // tab panel dispatches no pointer event of its own.
+                val target = slot
+                if (target != null) for (id in down) emit(target, JSONObject().put("phase", "cancel").put("id", id).put("x", 0).put("y", 0).toString())
+            }
         }
     }) {
         drawIntoCanvas { draw ->
@@ -423,8 +450,9 @@ internal val LocalExecutionLimits = staticCompositionLocalOf { ExecutionLimits()
         RenderComponent.TextField -> {
             val authoritative = values.text("value")
             val multiline = styleName == "multiline"
-            var draft by remember(authoritative) { mutableStateOf(authoritative) }
-            OutlinedTextField(value = draft, onValueChange = { next -> draft = next; emit("onChange", next) },
+            var draft by draftOf(authoritative, authoritative)
+            OutlinedTextField(value = DraftText.shown(draft, authoritative, authoritative),
+                onValueChange = { next -> draft = Draft(next, authoritative); emit("onChange", next) },
                 label = { Text(values.text("label")) }, singleLine = !multiline,
                 minLines = if (multiline) 2 else 1,
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel") },
@@ -434,10 +462,13 @@ internal val LocalExecutionLimits = staticCompositionLocalOf { ExecutionLimits()
             val lower = values.number("minimum"); val upper = values.number("maximum")
             val step = values.number("step", 1.0)
             val value = values.number("value")
-            var draft by remember(value) { mutableStateOf(NumericPresentation.format(value, "", "", 1, 0)) }
+            // The draft belongs to the bound value, not to a rounded rendering of it.
+            val identity = DraftText.identity(value)
+            val authoritative = NumericPresentation.format(value, "", "", 1, 0)
+            var draft by draftOf(identity, authoritative)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value = draft, onValueChange = { raw ->
-                    draft = raw
+                OutlinedTextField(value = DraftText.shown(draft, identity, authoritative), onValueChange = { raw ->
+                    draft = Draft(raw, identity)
                     raw.toDoubleOrNull()?.takeIf { it.isFinite() && it in lower..upper }?.let { emit("onChange", it.toString()) }
                 }, label = { Text(values.text("label")) }, singleLine = true,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
@@ -449,8 +480,10 @@ internal val LocalExecutionLimits = staticCompositionLocalOf { ExecutionLimits()
             val value = values.number("value")
             val text = if (component == RenderComponent.TimeField) NumericPresentation.format(kotlin.math.floor(value / 60), "", "", 2, 0) + ":" +
                 NumericPresentation.format(value % 60, "", "", 2, 0) else NumericPresentation.format(value, "", "", 1, 0)
-            var draft by remember(value) { mutableStateOf(text) }
-            OutlinedTextField(value = draft, onValueChange = { raw -> draft = raw; raw.toDoubleOrNull()?.let { emit("onChange", it.toString()) } },
+            val identity = DraftText.identity(value)
+            var draft by draftOf(identity, text)
+            OutlinedTextField(value = DraftText.shown(draft, identity, text),
+                onValueChange = { raw -> draft = Draft(raw, identity); raw.toDoubleOrNull()?.let { emit("onChange", it.toString()) } },
                 label = { Text(values.text("label")) }, singleLine = true,
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel").ifEmpty { values.text("label") } })
         }
@@ -474,8 +507,20 @@ internal val LocalExecutionLimits = staticCompositionLocalOf { ExecutionLimits()
         }
         RenderComponent.Tabs -> {
             val labels = values.strings("labels")
-            TabRow(selectedTabIndex = values.number("selected").toInt().coerceIn(0, (labels.size - 1).coerceAtLeast(0))) {
-                labels.forEachIndexed { index, label -> Tab(selected = index == values.number("selected").toInt(), onClick = { emit("onChange", index.toString()) }, text = { Text(label) }) }
+            // Only the selected child is composed and it keeps the renderer's dispatch, so its
+            // controls stay live; ingress guarantees a panel for an accepted tree.
+            val panel = TabPanels.select(labels, values.number("selected"), node.children)
+            val selected = panel?.index ?: -1
+            val retained = rememberSaveableStateHolder()
+            Column(Modifier.fillMaxWidth()) {
+                TabRow(selectedTabIndex = selected.coerceAtLeast(0),
+                    modifier = Modifier.semantics { contentDescription = values.text("accessibilityLabel") }) {
+                    labels.forEachIndexed { index, label -> Tab(selected = index == selected, onClick = { emit("onChange", index.toString()) }, text = { Text(label) }) }
+                }
+                if (panel != null) {
+                    // The holder restores the saveable state of a panel that left the composition.
+                    retained.SaveableStateProvider(panel.identity) { PaintNode(panel.node, dispatch) }
+                }
             }
         }
         RenderComponent.InsetBanner, RenderComponent.EmptyState -> Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {

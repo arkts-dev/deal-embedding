@@ -42,9 +42,10 @@ adb reverse tcp:8787 tcp:8787
 adb shell am instrument --user 0 -w dev.deal.cutover.tests/.CutoverInstrumentation
 adb shell am instrument --user 0 -w -e providers true dev.deal.cutover.tests/.CutoverInstrumentation
 adb shell am instrument --user 0 -w -e images true dev.deal.cutover.tests/.CutoverInstrumentation
+adb shell am instrument --user 0 -w -e tabs true dev.deal.cutover.tests/.CutoverInstrumentation
 ```
 
-The `providers` lane executes the provider fixtures; the `images` lane renders the Image painter over controlled loopback pictures (content, failure with alt text, source replacement and removal) against the production renderer and transport. A device lane is evidence only for the states it observed, never for human visual acceptance.
+The `providers` lane executes the provider fixtures; the `images` lane renders the Image painter over controlled loopback pictures (content, failure with alt text, source replacement and removal) against the production renderer and transport; the `tabs` lane renders Tabs trees (only the selected child composed, its controls and the tab row delivered, a panel's surface ending only the gestures it owns, and each keyed child's typed state kept across a switch and a position change without reviving superseded input). These renderer preview lanes run self-instrumented: they read the composed window of the built test APK's own activities, so build it without an `INSTRUMENTATION_TARGET` that names another package, and keep the device awake and unlocked with its window focused. A device lane is evidence only for the states it observed, never for human visual acceptance.
 
 Generated `Image` content is fetched over the same rule as the gateway (HTTPS, or loopback HTTP), and no dependency, permission or manifest entry is added to the packaged AAR: an application that shows images declares `android.permission.INTERNET` in its own manifest, and a loopback `http` source also follows the platform's cleartext policy for that host. Without the permission a resource reports `IMAGE_UNAVAILABLE`; a host that denies cleartext to loopback through its network security configuration gets `IMAGE_TRANSPORT` before any request. The renderer never switches transport.
 
