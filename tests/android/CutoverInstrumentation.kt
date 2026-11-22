@@ -152,7 +152,10 @@ export function initialState(): AppState { let shapes: graphics.Shape[] = [{tag:
 // @ui-update
 export function frame(state: AppState, action: Frame): AppState { let x: number = state.x+action.delta; let shapes: graphics.Shape[] = [{tag:"circle",x:x,y:12,radius:8,color:"#ff0000"}]; return {shapes:shapes,x:x}; }
 // @ui-update
-export function touch(state: AppState, action: Touch): AppState { let shapes: graphics.Shape[] = [{tag:"circle",x:action.pointer.x,y:action.pointer.y,radius:8,color:"#ff0000"}]; return {shapes:shapes,x:action.pointer.x}; }"""
+export function touch(state: AppState, action: Touch): AppState { let shapes: graphics.Shape[] = [{tag:"circle",x:action.pointer.x,y:action.pointer.y,radius:8,color:"#ff0000"}]; return {shapes:shapes,x:action.pointer.x}; }
+// A host-authored source issues its own persistence roles: both fields are authoritative state.
+export function bridgePersistedState(state: AppState): Record<string, unknown> { let result: Record<string, unknown> = {}; result["shapes"] = state.shapes; result["x"] = state.x; return result; }
+export function bridgeRestoredState(source: Record<string, unknown>): AppState { for (let key of Object.keys(source)) { if (key !== "shapes" && key !== "x") { throw {name:"PERSISTENCE_SCHEMA",message:"Unsupported persisted field: "+key}; } } if (!Object.hasOwn(source,"shapes") || !Object.hasOwn(source,"x")) { throw {name:"PERSISTENCE_SCHEMA",message:"Missing persisted field"}; } return {shapes:(source["shapes"] as graphics.Shape[]),x:(source["x"] as number)}; }"""
             val graphicsView="""import * as app from "./experience"; import * as ui from "./platform.dealui-pack";
 // @ui-root
 export view Picture(state: app.AppState): View { ui.Surface(width:200,height:200,shapes:state.shapes,onFrame:action app.Frame {delta:payload},onPointer:action app.Touch {pointer:payload}) }"""
@@ -197,10 +200,17 @@ export view Picture(state: app.AppState): View { ui.Surface(width:200,height:200
                 val session=api.run(experience);check(api.next(session,"").snapshot.tree.toString().contains("73"));api.close(session)
                 val preferences=targetContext.getSharedPreferences("v08-preparation-restore",0)
                 val retained=preferences.getString("workspace.$savedId.state",null)!!
-                check(preferences.edit().putString("workspace.$savedId.state","{\"shapes\":[],\"x\":\"invalid\"}").commit())
+                // Poison one authoritative value inside the saved record: the typed restore rejects it,
+                // and the record's own bytes stay untouched until the host replaces them.
+                val poisoned=JSONObject(retained);val entries=poisoned.getJSONArray("value").getJSONArray(2)
+                var poisonedField=false
+                for(i in 0 until entries.length()){val pair=entries.getJSONArray(i);if(pair.getString(0)=="x"){pair.put(1,JSONArray().put("string").put("invalid"));poisonedField=true}}
+                check(poisonedField){"Saved record does not carry the authoritative position"}
+                val poisonedText=poisoned.toString()
+                check(preferences.edit().putString("workspace.$savedId.state",poisonedText).commit())
                 check(runCatching{api.run(experience)}.isFailure)
                 check(api.source(experience)==source && api.saved().any{it.id==savedId})
-                check(preferences.getString("workspace.$savedId.state",null)=="{\"shapes\":[],\"x\":\"invalid\"}")
+                check(preferences.getString("workspace.$savedId.state",null)==poisonedText)
                 check(preferences.edit().putString("workspace.$savedId.state",retained).commit())
                 val retried=api.run(experience);check(api.next(retried,"").snapshot.tree.toString().contains("73"));api.close(retried);api.forget(experience)
             }

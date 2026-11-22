@@ -73,7 +73,7 @@ export async function assemble(composition: screens.Composition, computations: C
     let raw: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
     let names: Record<string, unknown> = {}; let fieldNames: Record<string, unknown> = {}; let types: Record<string, unknown> = {};
     for (let category of ["classes","functions","views"]) {
-      for (let declaration of decoded.records(raw[category])) { let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
+      for (let declaration of decoded.records(raw[category])) { let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent" || name === "bridgePersistedState" || name === "bridgeRestoredState") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
     }
     for (let item of decoded.records(raw.imports)) { let alias: string = s.identifier(item.alias); if (Object.hasOwn(names,alias)) { s.reject("Import/declaration conflict"); } let bound: string = qualified(instance.id,alias); names[alias] = bound; addImport(imports,s.nonblank(item.module),bound); }
     let views: Record<string, unknown>[] = decoded.records(raw.views);
@@ -222,7 +222,27 @@ export async function assemble(composition: screens.Composition, computations: C
   recompute = recompute+"  return state;\n}\n";
   let initial: Record<string, unknown> = {};
   for (let item of allFields) { initial[item.name] = item.initial; if (item.role === "derived") { initial[item.name+"_ready"] = "false"; initial[item.name+"_reason"] = "\"Not ready\""; if (primitive(item.type)) { initial[item.name+"_display"] = placeholder(item.type); } } }
-  declarations = declarations+recompute+"export function initialState(): AppState {\n  let capturedTime: number = embeddingClock.nowMillis();\n  let candidate: AppState = "+copyExpression(allFields,initial,"")+";\n  return recompute(candidate);\n}\nexport function main(): void { return; }\n";
+  declarations = declarations+recompute+"export function initialState(): AppState {\n  let capturedTime: number = embeddingClock.nowMillis();\n  let candidate: AppState = "+copyExpression(allFields,initial,"")+";\n  return recompute(candidate);\n}\n";
+  // The projection keeps only issued-authoritative fields; restore allocates the typed state,
+  // then rebuilds derived fields with the same recompute before any view exists.
+  let projection: string = ""; let unsupported: string = ""; let required: string = ""; let restored: Record<string, unknown> = {};
+  for (let item of allFields) {
+    if (item.role === "authoritative") {
+      projection = projection+"  result["+literals.quote(item.name)+"] = state."+item.name+";\n";
+      if (unsupported !== "") { unsupported = unsupported+" && "; }
+      unsupported = unsupported+"key !== "+literals.quote(item.name);
+      required = required+"  if (!Object.hasOwn(source,"+literals.quote(item.name)+")) { throw {name:\"PERSISTENCE_SCHEMA\",message:\"Missing persisted field "+item.name+"\"}; }\n";
+      restored[item.name] = "(source["+literals.quote(item.name)+"] as "+item.type+")";
+    } else {
+      // Restore placeholders are the same initial values `initialState` recomputes from.
+      restored[item.name] = initial[item.name] as string; restored[item.name+"_ready"] = initial[item.name+"_ready"] as string; restored[item.name+"_reason"] = initial[item.name+"_reason"] as string;
+      if (primitive(item.type)) { restored[item.name+"_display"] = initial[item.name+"_display"] as string; }
+    }
+  }
+  let rejection: string = "    throw {name:\"PERSISTENCE_SCHEMA\",message:\"No issued authoritative field\"};\n"; if (unsupported !== "") { rejection = "    if ("+unsupported+") { throw {name:\"PERSISTENCE_SCHEMA\",message:\"Unsupported persisted field: \"+key}; }\n"; }
+  declarations = declarations+"export function bridgePersistedState(state: AppState): Record<string, unknown> {\n  let result: Record<string, unknown> = {};\n"+projection+"  return result;\n}\n";
+  declarations = declarations+"export function bridgeRestoredState(source: Record<string, unknown>): AppState {\n  for (let key of Object.keys(source)) {\n"+rejection+"  }\n"+required+"  let candidate: AppState = "+copyExpression(allFields,restored,"")+";\n  return recompute(candidate);\n}\n";
+  declarations = declarations+"export function main(): void { return; }\n";
   viewSource = viewSource+"// @ui-root\nexport view Main(state: app.AppState): View {\n  ui.Column() {\n";
   for (let item of prepared) { viewSource = viewSource+"    "+item.viewName+"(state: state)\n"; }
   viewSource = viewSource+"  }\n}\n";

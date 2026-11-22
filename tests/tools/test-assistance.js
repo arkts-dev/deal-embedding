@@ -25,14 +25,13 @@ vm.runInContext(`
     'exports.open = async function () { globalThis.hostCalls.push("open"); return null; };' +
     'exports.dismiss = async function () { globalThis.hostCalls.push("dismiss"); return null; };');
   const {entry, rt, checkpointSchema} = dealLoad(factories, 'experience_entry.js');
-  // Native suggestion presentation supplies a typed checkpoint, not raw JSON state.
+  // Native suggestion presentation supplies the title to the initial state before the first
+  // tree; it never fabricates a saved record or overlays state after mount.
   const title = 'Picnic €120';
-  const initial = entry.bridgeInitialState.$f();
-  rt.setProp(initial, 'title', title);
-  const checkpoint = createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f()).encode(initial);
-  mountDealUi(factories,'experience_entry.js',checkpoint);
+  mountDealUi(factories,'experience_entry.js',null,null,(initial)=> { rt.setProp(initial,'title',title); return initial; });
   if (!dealUi.snapshot().includes(title)) throw Error('Suggestion title lost at native mount');
   dealUi.dispose();
+  const checkpoint = createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f()).encode(entry.bridgeInitialState.$f());
   const pending = [];
   const session = createDealUiSession(entry, rt, checkpoint, (run, complete, fail, exit) => {
     pending.push({run, complete, fail, exit});

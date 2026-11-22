@@ -1,13 +1,20 @@
 "use strict";
 // Isolate mechanics only. Compiled DEAL chooses checks and admission. No live Session,
 // provider broker, effect scheduling, persistence, mounting, or platform drivers exist here.
-globalThis.openChecking = function(factories, entryId, restoredState = null) {
+globalThis.openChecking = function(factories, entryId, restoredState = null, appModule = null) {
   const NativeDate = Date;
   globalThis.Date = class extends NativeDate { constructor(...args) { super(...(args.length ? args : [0])); } static now() { return 0; } };
   let providerCalls = 0;
   globalThis.dealCapabilities = Object.freeze({...dealCapabilities,request: () => { providerCalls++; throw Error('Provider access during isolated checking'); }});
-  let entry, rt, checkpointSchema;
-  try { ({entry, rt, checkpointSchema} = dealLoad(factories, entryId)); }
+  let entry, rt, checkpointSchema, app;
+  try {
+    ({entry, rt, checkpointSchema, app} = dealLoad(factories, entryId, appModule));
+    // A retaining host requires the compiled role facts at admission, not after a committed action.
+    if(appModule !== null && (app === undefined || app === null
+        || app.bridgeRestoredState === undefined || app.bridgeRestoredState.$kind !== 'function'
+        || app.bridgePersistedState === undefined || app.bridgePersistedState.$kind !== 'function'))
+      throw Error('PERSISTENCE_ROLES: compiled source issues no authoritative state roles');
+  }
   catch(error) {
     globalThis.checkingStep=()=>JSON.stringify({ok:false,diagnostics:'CHECK_STARTUP: '+(error.message||String(error)),tree:'',handlers:0,providerCalls});
     return '';
@@ -50,7 +57,11 @@ globalThis.openChecking = function(factories, entryId, restoredState = null) {
       if(operation==='start') {
         store=call('initialStore');
         let initial=call('bridgeInitialState');
-        if(restoredState !== null) initial=createDealUiCheckpoint(rt,checkpointSchema,call('bridgeSchemaDigest')).decode(restoredState,entry.bridgeInitialState.$sig.substring(4));
+        if(restoredState !== null) {
+          // Restore facts shared with the live session: digest/tag checks, nominal allocation, then
+          // the compiled recompute before any tree is rendered.
+          initial=app.bridgeRestoredState.$f(createDealUiCheckpoint(rt,checkpointSchema,call('bridgeSchemaDigest')).decode(restoredState,'record'));
+        }
         render(initial,null);
       }
       else {

@@ -85,7 +85,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     }
     fun workspace(id: String): LiveWorkspace? = workspaces[id]
     private fun checkpoint(live: LiveWorkspace) {
-        if (config.retainState) live.session.state()?.let { state ->
+        if (config.retainState) live.session.persistedState()?.let { state ->
             if (retainedStates[live.id] != state) { storage.saveState(live.id,live.source,state); retainedStates[live.id] = state }
         }
     }

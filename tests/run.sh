@@ -12,8 +12,10 @@ node tests/tools/test-syntax-cache.js
 python3 tests/tools/test-construction-contracts.py
 python3 tests/tools/test-source-edits.py
 python3 tests/tools/test-composer.py
+node tests/tools/test-persistence.js build/v08-cutover/composed-executable/js
 python3 tests/tools/test-fragment-semantics.py
 node tests/tools/test-generation-cutover.js
+node tests/tools/test-persistence-provider.js build/v08-cutover/emitted/scalar-read/js
 node tests/tools/test-emitted-runtime.js
 node tests/tools/test-assistance.js
 python3 tests/tools/test-generation-gateway.py

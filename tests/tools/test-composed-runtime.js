@@ -39,6 +39,15 @@ assert.strictEqual(numberTextValue(JSON.parse(vm.runInContext('session.snapshot(
 vm.runInContext("session.dispatch(action,'-2')",context);assert.equal(state().f_calculation_value,-2);assert.equal(state().f_calculation_double,null);assert.equal(state().f_calculation_double_ready,false);assert.equal(state().f_calculation_double_reason,'Value must be nonnegative');assert.equal(state().f_calculation_triple,null);assert.equal(state().f_calculation_triple_ready,false);
 assert.strictEqual(numberTextValue(JSON.parse(vm.runInContext('session.snapshot()',context)).tree),undefined,'the guarded NumberText renders nothing while its value is unavailable');
 assert.equal(JSON.parse(vm.runInContext('session.snapshot()',context)).fault,'');
-// Checkpoint round-trip uses actual compiled nominal and array identities.
-vm.runInContext(`const checkpoint=JSON.parse(session.checkpoint());const restored=createDealUiSession(entry,rt,checkpoint,()=>{throw Error('No effect expected');},checkpointSchema);if(JSON.stringify(JSON.parse(restored.snapshot()).tree)!==JSON.stringify(JSON.parse(session.snapshot()).tree))throw Error('Restored display changed');restored.dispose();`,context);
+// The compiled persistence roles project the live state; restore rebuilds the typed state and
+// recomputes derived values before the session publishes its tree (see test-persistence.js).
+vm.runInContext(`const {app:compiled}=dealLoad(factories,'experience_entry.js','experience.js');
+const codec=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f());
+const live=codec.decode(JSON.parse(session.checkpoint()),entry.bridgeInitialState.$sig.substring(4));
+const projection=codec.encode(compiled.bridgePersistedState.$f(live));
+if(Object.keys(projection).length!==2||projection.value[0]!=='record')throw Error('Projection is not the authoritative record');
+if(projection.value[2].some(pair=>pair[0]==='f_calculation_double'))throw Error('Projection carried a derived value');
+const restored=createDealUiSession(entry,rt,codec.encode(compiled.bridgeRestoredState.$f(codec.decode(projection,'record'))),()=>{throw Error('No effect expected');},checkpointSchema);
+if(JSON.stringify(JSON.parse(restored.snapshot()).tree)!==JSON.stringify(JSON.parse(session.snapshot()).tree))throw Error('Restored display changed');
+restored.dispose();`,context);
 console.log('composed runtime: production compiler + FIFO store, owner updates, derived readiness, the boolean Toggle change and unavailable result passed');

@@ -11,6 +11,9 @@ export class Change { value: number; }
 export function initialState(): AppState { return {value:3}; }
 // @ui-update
 export function change(state: AppState, action: Change): AppState { return {value:action.value}; }
+// A host-authored source issues its own persistence roles; `value` is authoritative state.
+export function bridgePersistedState(state: AppState): Record<string, unknown> { let result: Record<string, unknown> = {}; result["value"] = state.value; return result; }
+export function bridgeRestoredState(source: Record<string, unknown>): AppState { for (let key of Object.keys(source)) { if (key !== "value") { throw {name:"PERSISTENCE_SCHEMA",message:"Unsupported persisted field: "+key}; } } if (!Object.hasOwn(source,"value")) { throw {name:"PERSISTENCE_SCHEMA",message:"Missing persisted field"}; } return {value:(source["value"] as number)}; }
 """.trimIndent(), """
 import * as app from "./experience";
 import * as ui from "./platform.dealui-pack";

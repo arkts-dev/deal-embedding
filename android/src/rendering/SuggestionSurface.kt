@@ -24,13 +24,11 @@ internal class SuggestionSurface(context: Context, title: String, private val op
             val contract = "[{module:'embedding/assistance',functions:[{name:'open',parameters:[],result:{kind:'null'}},{name:'dismiss',parameters:[],result:{kind:'null'}}]}]"
             program.evaluate(SandboxBundle.build(context,listOf("dealui-session.js","ui-session.js"),
                 "configureDealCapabilities($contract);", """
-                    (() => {
-                      const {entry,rt,checkpointSchema}=dealLoad(factories,'experience_entry.js');
-                      const state=entry.bridgeInitialState.${'$'}f();
-                      rt.setProp(state,'title',${JSONObject.quote(title)});
-                      const checkpoint=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.${'$'}f()).encode(state);
-                      return mountDealUi(factories,'experience_entry.js',checkpoint);
-                    })()
+                    mountDealUi(factories,'experience_entry.js',null,null,(initial,rt) => {
+                      // Native presentation supplies the title to the initial state before the first tree.
+                      rt.setProp(initial,'title',${JSONObject.quote(title)});
+                      return initial;
+                    })
                 """.trimIndent(),assetRoot="assistance"))
             tree = JSONObject(program.evaluate(DealSessionBindings.snapshot)).getJSONObject("tree")
         } catch (error: Throwable) {

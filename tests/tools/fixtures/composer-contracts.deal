@@ -4,16 +4,22 @@ import * as s from "./construction-schema";
 
 // The accepted composition binds every migrated spec component the items name: a numeric field,
 // a guarded numeric text, a boolean toggle, a value-carrying button and an authored text.
-function panelView(): string { return "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Text(text: \"Authored text 😀\") ui.NumberField(label: \"Value\", value: state.value, minimum: 0, maximum: 999, step: 1, onChange: action app.Change {value: payload}) When(state.double_ready) { ui.NumberText(value: state.double_display) } ui.Toggle(label: \"Flag\", checked: state.flag, onChange: action app.Switch {value: payload}) ui.Button(text: \"Load\", value: state.value, onClick: action app.Load {sequence: payload}) } }"; }
+function panelView(): string { return "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Text(text: \"Authored text 😀\") ui.NumberField(label: \"Value\", value: state.value, minimum: 0, maximum: 999, step: 1, onChange: action app.Change {value: payload}) When(state.double_ready) { ui.NumberText(value: state.double_display) } ui.Toggle(label: \"Flag\", checked: state.flag, onChange: action app.Switch {value: payload}) ui.Button(text: \"Load\", value: state.value, onClick: action app.Load {sequence: payload}) ui.Button(text: \"Link\", value: state.value, onClick: action app.Link {value: payload}) } }"; }
 function fragment(id: string, initial: string): screens.Instance {
   let fields: screens.Field[] = [
     {name:"value",type:"number",role:"authoritative",dependencies:[],initial:initial,owner:id},
     {name:"double",type:"number",role:"derived",dependencies:["value"],initial:"null",owner:id},
     {name:"flag",type:"boolean",role:"authoritative",dependencies:[],initial:"false",owner:id},
-    {name:"sequence",type:"number",role:"authoritative",dependencies:[],initial:"0",owner:id}
+    {name:"sequence",type:"number",role:"authoritative",dependencies:[],initial:"0",owner:id},
+    {name:"display",type:"number",role:"authoritative",dependencies:[],initial:"1",owner:id},
+    {name:"head",type:"Entry | null",role:"authoritative",dependencies:[],initial:"null",owner:id},
+    {name:"mirror",type:"Entry | null",role:"authoritative",dependencies:[],initial:"null",owner:id},
+    {name:"leaf",type:"Entry | null",role:"authoritative",dependencies:[],initial:"null",owner:id}
   ];
-  let updates: screens.Handler[] = [{action:"Change",function:"change"},{action:"Switch",function:"switchValue"},{action:"Load",function:"load"}];
-  let fragment: screens.Fragment = {declarations:"export class Change { value: number; } export class Switch { value: boolean; } export class Load { sequence: number; }",fields:fields,updates:updates,effects:[],helpers:"export function change(state: AppState, action: Change): AppState { return {value: action.value, double: state.double}; } export function switchValue(state: AppState, action: Switch): AppState { return {flag: action.value}; } export function load(state: AppState, action: Load): AppState { return {sequence: action.sequence}; }",view:panelView(),options:[],content:[],ports:[],holes:[],covers:[],owns:[id]};
+  let updates: screens.Handler[] = [{action:"Change",function:"change"},{action:"Switch",function:"switchValue"},{action:"Load",function:"load"},{action:"Link",function:"link"}];
+  // head and mirror alias one another, their optional `next` fields form a cycle, and leaf
+  // omits `next` entirely: the saved graph must keep identity, cycles and absence.
+  let fragment: screens.Fragment = {declarations:"export class Change { value: number; } export class Switch { value: boolean; } export class Load { sequence: number; } export class Link { value: number; } export class Entry { value: number; next?: Entry; }",fields:fields,updates:updates,effects:[],helpers:"export function change(state: AppState, action: Change): AppState { return {value: action.value, double: state.double}; } export function switchValue(state: AppState, action: Switch): AppState { return {flag: action.value}; } export function load(state: AppState, action: Load): AppState { return {sequence: action.sequence}; } export function link(state: AppState, action: Link): AppState { let head: Entry = {value: action.value}; let mirror: Entry = {value: action.value+1}; let leaf: Entry = {value: action.value+2}; head.next = mirror; mirror.next = head; return {head: head, mirror: mirror, leaf: leaf}; }",view:panelView(),options:[],content:[],ports:[],holes:[],covers:[],owns:[id]};
   return {id:id,kind:"custom",origin:"custom",parameters:{},fragment:fragment,bodies:{}};
 }
 function composition(instances: screens.Instance[]): screens.Composition { return {screen:{title:"Counter",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:instances},bindings:{},actions:{},connections:[]}; }
@@ -34,6 +40,11 @@ export async function rejects(): Promise<null> {
   rejected = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Transitive clock read admitted");
   calculation.value = "state.value * 2";
   rejected = false; try { await composer.assemble(composition([instance]),[]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Missing producer admitted");
+  // A fragment may not shadow the composer-owned persistence roles.
+  let shadowed: screens.Instance = fragment("shadow","3"); cleanView(shadowed);
+  shadowed.fragment.helpers = shadowed.fragment.helpers+" export function bridgeRestoredState(state: AppState): AppState { return state; }";
+  let producer: composer.Computation = {instance:"shadow",field:"double",value:"state.value * 2",ready:"true",reason:"\"Unavailable\"",dependencies:["f_shadow_value"]};
+  rejected = false; try { await composer.assemble(composition([shadowed]),[producer]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA" && error.message.includes("Composer-owned declaration"); } insist(rejected,"Composer-owned persistence role shadowed");
   return null;
 }
 export async function construct(): Promise<string> {

@@ -14,9 +14,13 @@ internal object DealSessionBindings {
         }
         return SandboxBundle.build(
             context, listOf("dealui-session.js", "ui-session.js"), CapabilityBindings.script(config.contracts),
-            "mountDealUi(factories,\"$ENTRY_NAME.js\",${restored ?: "null"})", output = output)
+            "mountDealUi(factories,\"$ENTRY_NAME.js\",${record(restored)},${appModule(config)?.let { JSONObject.quote(it) } ?: "null"})", output = output)
     }
-    const val checkpoint = "dealUi.checkpoint()"
+    /** The compiled app module owns the issued persistence roles; only retaining hosts name it. */
+    fun appModule(config: RuntimeConfig): String? = if (config.retainState) "${config.sourceName}.js" else null
+    /** Saved bytes stay data: pass them as a quoted literal parsed inside the isolate. */
+    fun record(saved: String?): String = saved?.let { "dealPersisted(${JSONObject.quote(it)})" } ?: "null"
+    const val checkpoint = "persistDealUi()"
     const val snapshot = "dealUi.snapshot()"
     const val requests = "dealCapabilities.take()"
     const val dispose = "if (globalThis.dealUi) dealUi.dispose(); ''"

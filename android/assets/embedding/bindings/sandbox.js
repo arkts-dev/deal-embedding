@@ -31,6 +31,11 @@
     }
   });
 })();
+// Saved bytes stay data: the host passes a quoted literal, and an unparseable record is refused
+// with a typed incompatibility instead of a syntax error inside the isolate.
+globalThis.dealPersisted = function(text) {
+  try { return JSON.parse(text); } catch (error) { throw Error('PERSISTENCE_RECORD: saved record is not valid JSON'); }
+};
 let dealHostContracts = Object.create(null);
 globalThis.configureDealCapabilities = function(contracts) {
   const modules = Object.create(null);
@@ -40,7 +45,7 @@ globalThis.configureDealCapabilities = function(contracts) {
   }
   dealHostContracts = Object.freeze(modules);
 };
-globalThis.dealLoad = function(factories, entryId) {
+globalThis.dealLoad = function(factories, entryId, appModule = null) {
   const cache = Object.create(null);
   let messageBytes = 0;
   function log(value) {
@@ -143,5 +148,9 @@ globalThis.dealLoad = function(factories, entryId) {
     factories[id](require, module, module.exports, process, console);
     return module.exports;
   }
-  return {rt: load("deal/runtime.js"), entry: load(entryId), checkpointSchema: Object.hasOwn(factories,'checkpoint-schema.js') ? load('checkpoint-schema.js') : null};
+  const loaded = {rt: load("deal/runtime.js"), entry: load(entryId), checkpointSchema: Object.hasOwn(factories,'checkpoint-schema.js') ? load('checkpoint-schema.js') : null};
+  // A host that restores or projects state names the bundle module owning the compiled
+  // persistence roles; it shares this module cache, so nominal identity is never duplicated.
+  if (appModule !== null) loaded.app = load(appModule);
+  return loaded;
 };
