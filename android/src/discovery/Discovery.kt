@@ -2,6 +2,7 @@ package dev.deal.embedding.discovery
 
 import android.content.Context
 import dev.deal.embedding.*
+import dev.deal.embedding.capabilities.CapabilityBoundary
 import org.json.*
 import java.security.MessageDigest
 import java.util.concurrent.*
@@ -35,8 +36,8 @@ internal class CapturedDiscoveryFacts(val evidence: DiscoveryFacts, contracts: L
     val catalogueJson: String
     val capabilityIds: Set<String>
     init {
-        require(contracts.size <= 32 && contracts.map { it.module }.distinct().size == contracts.size)
-        contracts.forEach { it.validateSchema() }
+        require(contracts.size <= 32) { "Discovery catalogue exceeds 32 modules" }
+        CapabilityBoundary.validate(contracts)
         catalogueJson = JSONArray(contracts.sortedBy { it.module }.map { c ->
             c.json().put("functions", JSONArray(c.functions.sortedBy { it.name }.map { it.json() }))
         }).toString()

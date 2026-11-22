@@ -55,6 +55,11 @@ internal class CapabilityDiscovery(private val context: Context, private val tru
                 val endpoint = Endpoint(component, info.applicationInfo.uid, contract, remote)
                 binder.linkToDeath({ release(component) }, 0)
                 synchronized(this) { if (!closed) endpoints[component] = endpoint }
+            } catch (rejected: CapabilityRejected) {
+                // The provider is not disclosable; the located refusal stays in observation evidence.
+                log.event("contract", "rejected", target = component.flattenToShortString(), code = rejected.code,
+                    operation = (rejected.message ?: "").take(200), detail = rejected.message)
+                release(component)
             } catch (_: Exception) { release(component) }
             }
         }

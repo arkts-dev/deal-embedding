@@ -5,8 +5,6 @@ import org.json.*
 import java.util.UUID
 import java.util.concurrent.*
 
-open class ProtocolFailure(val code:String, message:String):IllegalStateException(message)
-
 /** Native bootstrap for a trusted compiled DEAL consumer. Never installed in a UI isolate.
  * The controller owns synchronous state; workers implement asynchronous mechanisms.
  * The evaluation pump never waits for a mechanism to finish, so controls remain serviceable.

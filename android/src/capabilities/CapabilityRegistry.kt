@@ -21,8 +21,10 @@ internal interface CapabilityHost {
 internal class CapabilityRegistry(private val context: Context, private val discovery: CapabilityDiscovery, local: List<NativeCapabilities>) : CapabilityHost, AutoCloseable {
     private val log = dev.deal.embedding.EmbeddingLog(context)
     private data class Provider(val contract: CapabilityContract, val local: NativeCapabilities? = null, val endpoint: CapabilityDiscovery.Endpoint? = null)
-    private val locals = local.associateBy { it.contract.module }
-    private var providers = locals.mapValues { Provider(it.value.contract, it.value) }
+    private val locals = local.toList()
+    /** One atomic disclosure: a rejected proposal keeps these providers, their bindings and grants. */
+    private val disclosure = CapabilityDisclosure(locals.map { Provider(it.contract, it) }) { it.contract }
+    private val providers: Map<String, Provider> get() = disclosure.accepted()
     private var permission: ((String) -> String?)? = null
     /** Trusted controller-local permission is authoritative; providers still enforce consent. */
     @Synchronized internal fun permissions(check: (String) -> String?) { check(!closed && sessions.isEmpty()); permission = check }
@@ -32,21 +34,16 @@ internal class CapabilityRegistry(private val context: Context, private val disc
     private data class Pending(val id: Int, val key: String, val provider: Provider, val deadline: Long, val permission: String, val bytes:Int)
     private val sessions = mutableSetOf<Session>()
     private var closed = false
-    init { require(locals.size == local.size) }
     fun refresh(): List<CapabilityContract> {
         val discovered = discovery.discover()
-        val next = locals.mapValues { Provider(it.value.contract, it.value) }.toMutableMap()
-        for (endpoint in discovered) {
-            require(!next.containsKey(endpoint.contract.module)) { "Ambiguous capability module: ${endpoint.contract.module}" }
-            next[endpoint.contract.module] = Provider(endpoint.contract, endpoint = endpoint)
-        }
+        val proposal = locals.map { Provider(it.contract, it) } + discovered.map { Provider(it.contract, endpoint = it) }
         return synchronized(this) {
             check(!closed) { "Capability registry is closed" }
-            if (sessions.isNotEmpty()) require(providers.all { (module, p) -> next[module]?.contract?.json()?.toString() == p.contract.json().toString() }) { "Close active sessions before changing existing capability contracts" }
-            providers = next; contracts()
+            // The whole proposal is inside the boundary before any contract, binding or grant changes.
+            disclosure.admit(proposal, sessions.isNotEmpty())
         }
     }
-    @Synchronized fun contracts(): List<CapabilityContract> = providers.values.map { it.contract }
+    @Synchronized fun contracts(): List<CapabilityContract> = disclosure.contracts()
     @Synchronized override fun openSession(log: dev.deal.embedding.EmbeddingLog): CapabilitySession {
         check(!closed) { "Capability registry is closed" }
         return Session(log).also { sessions.add(it) }
