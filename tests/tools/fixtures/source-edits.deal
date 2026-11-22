@@ -1,0 +1,112 @@
+// Production source-edit mechanism: revision-bound atomic edits over the DEAL/Deal UI pair.
+// Only construction identity and digest are host mechanisms; every decision is the compiled policy.
+import * as revisions from "./source-revisions";
+import * as s from "./construction-schema";
+
+function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
+class WireEdit { file: string; search: string; replace: string; }
+class EditRequest { revision: string; digest: string; edits: WireEdit[]; }
+function edit(file: string, search: string, replace: string): WireEdit { return {file:file,search:search,replace:replace}; }
+function request(revision: string, digest: string, edits: WireEdit[]): string {
+  const value: EditRequest = {revision:revision,digest:digest,edits:edits};
+  return JSON.stringify(value) as string;
+}
+function envelope(revision: string, digest: string, edits: string): string {
+  return "{\"revision\":"+revision+",\"digest\":"+digest+",\"edits\":"+edits+"}";
+}
+function exact(label: string, applied: revisions.Applied, base: revisions.Revision): void {
+  insist(!applied.accepted,label+": a rejected edit was admitted");
+  insist(applied.current.revision === base.revision,label+": rejection replaced the revision");
+  insist(applied.current.digest === base.digest,label+": rejection replaced the digest");
+  insist(applied.current.source.deal === base.source.deal && applied.current.source.dealui === base.source.dealui,label+": rejection changed accepted source bytes");
+  insist(applied.diagnostics !== "",label+": rejection lost its diagnostic");
+}
+async function rejected(label: string, base: revisions.Revision, response: string): Promise<void> {
+  exact(label,await revisions.apply(base,response),base);
+}
+async function rejectedAs(label: string, base: revisions.Revision, response: string, reason: string): Promise<void> {
+  const applied: revisions.Applied = await revisions.apply(base,response);
+  exact(label,applied,base);
+  insist(applied.diagnostics.includes(reason),label+": diagnostic '"+applied.diagnostics+"' omits '"+reason+"'");
+}
+export async function sourceEdits(): Promise<revisions.Revision> {
+  const dealSource: string = "line one\r\nline two\r\nvalue: 1;\nemoji: 😀 \ud800 \u0001\r\nend\r\n";
+  const uiSource: string = "import * as ui from \"./platform.dealui-pack\";\nexport view Panel(state: app.AppState): View { ui.Text(text: \"a😀b\") }\r\n";
+  const base: revisions.Revision = await revisions.issue({deal:dealSource,dealui:uiSource});
+  // Disjoint edits in both files apply atomically, in source order, using UTF-16 code-unit spans.
+  // The request lists the later DEAL span first; the applied bytes stay in source order.
+  const applied: revisions.Applied = await revisions.apply(base,request(base.revision,base.digest,[
+    edit("dealui","a😀b","c😀d\ud800e"),
+    edit("deal","emoji: 😀","emoji: 🚀"),
+    edit("deal","value: 1;","value: 2;")]));
+  insist(applied.accepted,"Disjoint edits across both files were rejected");
+  insist(applied.diagnostics === "","Accepted edit retained a rejection diagnostic");
+  insist(applied.current.source.deal === "line one\r\nline two\r\nvalue: 2;\nemoji: 🚀 \ud800 \u0001\r\nend\r\n","DEAL bytes are not the exact UTF-16 result");
+  insist(applied.current.source.dealui === "import * as ui from \"./platform.dealui-pack\";\nexport view Panel(state: app.AppState): View { ui.Text(text: \"c😀d\ud800e\") }\r\n","Deal UI bytes are not the exact UTF-16 result");
+  insist(applied.current.revision !== base.revision && applied.current.digest !== base.digest,"Accepted edit reused the issued identity");
+  insist(base.source.deal === dealSource && base.source.dealui === uiSource,"Accepted edit mutated the original revision bytes");
+  // Abutting spans are disjoint; they apply exactly and preserve the remaining CRLF bytes.
+  const abutting: revisions.Applied = await revisions.apply(base,request(base.revision,base.digest,[
+    edit("deal","line one\r\n","LINE "),
+    edit("deal","line two","TWO")]));
+  insist(abutting.accepted,"Abutting disjoint edits were rejected");
+  insist(abutting.current.source.deal === "LINE TWO\r\nvalue: 1;\nemoji: 😀 \ud800 \u0001\r\nend\r\n","Abutting edits did not preserve exact bytes");
+  insist(abutting.current.source.dealui === uiSource,"A single-file edit changed the other source");
+  // Stale, foreign and superseded identities never authorize an overwrite.
+  await rejectedAs("Stale revision",base,request("revision-unissued",base.digest,[edit("deal","value: 1;","value: 3;")]),"Unissued");
+  await rejectedAs("Stale digest",base,request(base.revision,"0000000000000000000000000000000000000000000000000000000000000000",[edit("deal","value: 1;","value: 3;")]),"Unissued");
+  const other: revisions.Revision = await revisions.issue({deal:dealSource+"extra",dealui:uiSource});
+  await rejectedAs("Foreign digest",base,request(base.revision,other.digest,[edit("deal","value: 1;","value: 3;")]),"Unissued");
+  await rejectedAs("Superseded revision",applied.current,request(base.revision,base.digest,[edit("deal","value: 2;","value: 3;")]),"Unissued");
+  // File names, wire types, record closure and the nonempty edit set all reject.
+  await rejectedAs("Unknown file",base,request(base.revision,base.digest,[edit("ui","value: 1;","x")]),"Unknown alternative");
+  await rejectedAs("Empty edit set",base,request(base.revision,base.digest,[]),"Empty source edit set");
+  await rejected("Numeric search",base,envelope(s.encode(base.revision),s.encode(base.digest),"[{\"file\":\"deal\",\"search\":7,\"replace\":\"x\"}]"));
+  await rejected("Numeric replacement",base,envelope(s.encode(base.revision),s.encode(base.digest),"[{\"file\":\"deal\",\"search\":\"value: 1;\",\"replace\":7}]"));
+  await rejected("Missing replacement",base,envelope(s.encode(base.revision),s.encode(base.digest),"[{\"file\":\"deal\",\"search\":\"value: 1;\"}]"));
+  await rejected("Extra edit field",base,envelope(s.encode(base.revision),s.encode(base.digest),"[{\"file\":\"deal\",\"search\":\"value: 1;\",\"replace\":\"x\",\"start\":0}]"));
+  await rejected("Unknown request field",base,envelope(s.encode(base.revision),s.encode(base.digest),"[{\"file\":\"deal\",\"search\":\"value: 1;\",\"replace\":\"x\"}],\"extra\":1"));
+  await rejected("Malformed request",base,"{\"revision\":");
+  await rejected("Null edit list",base,envelope(s.encode(base.revision),s.encode(base.digest),"null"));
+  await rejected("Non-record edit",base,envelope(s.encode(base.revision),s.encode(base.digest),"[\"deal\"]"));
+  await rejected("Numeric revision",base,envelope("7",s.encode(base.digest),"[{\"file\":\"deal\",\"search\":\"value: 1;\",\"replace\":\"x\"}]"));
+  await rejected("Missing edit list",base,"{\"revision\":"+s.encode(base.revision)+",\"digest\":"+s.encode(base.digest)+"}");
+  // Searches are nonempty, exact, unique in the originals and never line-ending normalised.
+  await rejectedAs("Empty search",base,request(base.revision,base.digest,[edit("deal","","x")]),"Empty edit search");
+  await rejectedAs("Missing search",base,request(base.revision,base.digest,[edit("deal","absent","x")]),"Missing edit search");
+  await rejectedAs("Ambiguous search",base,request(base.revision,base.digest,[edit("deal","line","x")]),"Ambiguous edit search");
+  await rejectedAs("Normalised search",base,request(base.revision,base.digest,[edit("deal","one\nline","x")]),"Missing edit search");
+  await rejectedAs("Missing CRLF span",base,request(base.revision,base.digest,[edit("dealui","\r\n\r\n","x")]),"Missing edit search");
+  // Searches are resolved in the originals, never against text an earlier edit produced.
+  await rejectedAs("Search created by an earlier edit",base,request(base.revision,base.digest,[edit("deal","value: 1;","value: 2;"),edit("deal","value: 2;","value: 3;")]),"Missing edit search");
+  // Overlapping and duplicate spans reject; one invalid edit rejects the whole set.
+  await rejectedAs("Overlapping edit",base,request(base.revision,base.digest,[edit("deal","value: 1","x"),edit("deal","1;","y")]),"Overlapping");
+  await rejectedAs("Duplicate edit",base,request(base.revision,base.digest,[edit("deal","value: 1;","x"),edit("deal","value: 1;","y")]),"Overlapping");
+  await rejected("Invalid after valid",base,request(base.revision,base.digest,[edit("deal","value: 1;","value: 9;"),edit("dealui","a😀b","X"),edit("deal","absent","Y")]));
+  await rejected("Invalid before valid",base,request(base.revision,base.digest,[edit("deal","absent","Y"),edit("deal","value: 1;","value: 9;")]));
+  await rejected("Overlap among valid",base,request(base.revision,base.digest,[edit("dealui","a😀b","X"),edit("deal","value: 1;","v"),edit("deal","1;","z")]));
+  insist(base.source.deal === dealSource && base.source.dealui === uiSource,"Rejections changed the accepted source pair");
+  return applied.current;
+}
+async function operational(label: string, expected: string): Promise<null> {
+  const base: revisions.Revision = await revisions.issue({deal:"atomic",dealui:"view"});
+  let thrown: boolean = false;
+  try {
+    await revisions.apply(base,request(base.revision,base.digest,[edit("deal","atomic","changed")]));
+  } catch (unknownError) {
+    const error: Error = unknownError as Error;
+    thrown = error.name === expected;
+  }
+  insist(thrown,label+" outage was not the operational failure the controller must handle");
+  // A failed issue leaves the accepted revision intact: the same base still accepts a real edit.
+  const recovered: revisions.Applied = await revisions.apply(base,request(base.revision,base.digest,[edit("deal","atomic","usable")]));
+  insist(recovered.accepted && recovered.current.source.deal === "usable",label+" outage authorized or lost the accepted revision");
+  return null;
+}
+export async function sourceEditIdentityFailure(): Promise<null> {
+  return await operational("An identity","IDENTITY_FAILURE");
+}
+export async function sourceEditHashFailure(): Promise<null> {
+  return await operational("A digest","DIGEST_FAILURE");
+}
+export function main(): void { return; }

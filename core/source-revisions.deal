@@ -20,11 +20,14 @@ function match(source: string, search: string): number {
   return found;
 }
 function edited(source: string, file: string, edits: Edit[]): string {
-  let result: string = ""; let offset: number = 0; let left: number = edits.length;
+  let result: string = ""; let offset: number = 0; let left: number = 0;
+  for (let edit of edits) { if (edit.file === file) { left = left+1; } }
   while (left > 0) {
     let next: Edit | null = null;
     for (let edit of edits) { if (edit.file === file && edit.start >= offset) { if (next === null) { next = edit; } else if (edit.start < (next as Edit).start) { next = edit; } } }
-    if (next === null) { break; }
+    // Defense in depth: a validated disjoint set always applies completely, so a skipped span
+    // becomes a rejection instead of a silently truncated pair.
+    if (next === null) { s.reject("Incomplete source edit"); }
     let selected: Edit = next as Edit;
     result = result+source.substring(offset,selected.start)+selected.replace; offset = selected.end; left = left-1;
   }
@@ -35,6 +38,7 @@ export async function apply(current: Revision, response: string): Promise<Applie
   try {
     const raw: EditRequest = JSON.parse(response);
     if (raw.revision !== current.revision || raw.digest !== current.digest) { s.reject("Unissued source revision or digest"); }
+    if (raw.edits.length === 0) { s.reject("Empty source edit set"); }
     let edits: Edit[] = [];
     for (let value of raw.edits) {
       let file: string = s.oneOf(value.file,["deal","dealui"]); const search = value.search;
@@ -43,11 +47,10 @@ export async function apply(current: Revision, response: string): Promise<Applie
       for (let prior of edits) { if (prior.file === edit.file && edit.start < prior.end && prior.start < edit.end) { s.reject("Overlapping source edits"); } }
       edits[edits.length] = edit;
     }
-    if (edits.length === 0) { s.reject("Empty source edit set"); }
     next = {deal:edited(current.source.deal,"deal",edits),dealui:edited(current.source.dealui,"dealui",edits)};
   } catch (unknownError) {
     let error: Error = unknownError as Error;
-    if (error.name !== "CONSTRUCTION_SCHEMA" && error.name !== "E8001" && error.name !== "E8007" && error.name !== "E8010") { throw error; }
+    if (error.name !== "CONSTRUCTION_SCHEMA" && error.name !== "E8001" && error.name !== "E8007") { throw error; }
     return {accepted:false,current:current,diagnostics:error.message};
   }
   // Identity/hash failures are operational; they never authorize another model edit.
