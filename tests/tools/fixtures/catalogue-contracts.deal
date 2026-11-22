@@ -1,0 +1,297 @@
+import * as catalogue from "./catalogue";
+import * as screens from "./screen";
+import * as composer from "./composer";
+import * as bindings from "./bindings";
+import * as plans from "./plan";
+import * as selecting from "./construction-selection";
+import * as s from "./construction-schema";
+
+// The four read-only sections and the two fact sections, driven through the compiled catalogue
+// policy itself: closed decoding, row bounds, the one disclosure predicate, initialized fragments
+// and real assembly. No copy of the decoder lives here; every check calls the production functions.
+function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
+function definition(kind: string): catalogue.Definition {
+  for (let entry of catalogue.definitions()) { if (entry.kind === kind) { return entry; } }
+  throw {name:"TEST_FAILED",message:"Missing catalogue kind: "+kind};
+}
+async function accepts(kind: string, json: string): Promise<Record<string, unknown>> {
+  return await catalogue.decode(definition(kind),JSON.parse(json));
+}
+async function rejects(kind: string, json: string, message: string): Promise<number> {
+  let refused: boolean = false;
+  try { await catalogue.decode(definition(kind),JSON.parse(json)); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw {name:"TEST_FAILED",message:message+" raised "+error.name+": "+error.message}; } refused = true; }
+  if (!refused) { throw {name:"TEST_FAILED",message:"Admitted "+message}; }
+  return 1;
+}
+async function configured(kind: string, json: string): Promise<catalogue.Configured> {
+  let entry: catalogue.Configured = {need:kind,definition:definition(kind),parameters:await accepts(kind,json),accepted:true,reason:""};
+  return entry;
+}
+function label(units: number): string { let result: string = ""; let index: number = 0; while (index < units) { result = result+"a"; index = index+1; } return result; }
+
+// Escaping and exactness: every decoded text keeps its UTF-16 units, and bounds count units.
+export async function decoding(): Promise<string> {
+  let result: Record<string, unknown> = {};
+  result.data_table = await accepts("data_table","{\"title\":\"Spend table \\ud83d\\ude00\",\"subtitle\":\"\",\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"paid\"],[\"Food\",\"2.5\",\"quote \\\" and \\\\ and \\n and \\u0001\"]]}");
+  result.timeline = await accepts("timeline","{\"rows\":[{\"minute\":0,\"title\":\"Wake\"},{\"minute\":570,\"title\":\"Standup\",\"detail\":\"daily\"},{\"minute\":1439,\"title\":\"Sleep\",\"detail\":\"\"}]}");
+  result.bar_chart = await accepts("bar_chart","{\"points\":[{\"label\":\"Mon\",\"value\":0},{\"label\":\"Tue\",\"value\":2.5},{\"label\":\"Wed\",\"value\":10}],\"maximum\":10}");
+  result.trend_chart = await accepts("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":-2},{\"label\":\"b\",\"value\":0.25},{\"label\":\"c\",\"value\":3}],\"minimum\":-3,\"maximum\":3}");
+  // Neither chart kind sorts its supplied points: labels and values keep the given order.
+  result.unsorted_bars = await accepts("bar_chart","{\"points\":[{\"label\":\"Wed\",\"value\":10},{\"label\":\"Mon\",\"value\":0},{\"label\":\"Tue\",\"value\":2.5}],\"maximum\":10}");
+  result.unsorted_trend = await accepts("trend_chart","{\"points\":[{\"label\":\"c\",\"value\":3},{\"label\":\"a\",\"value\":-2},{\"label\":\"b\",\"value\":0.25}],\"minimum\":-3,\"maximum\":3}");
+  result.empty_table = await accepts("data_table","{\"headers\":[\"A\",\"B\",\"C\"],\"rows\":[]}");
+  result.empty_timeline = await accepts("timeline","{\"rows\":[]}");
+  result.empty_chart = await accepts("bar_chart","{\"points\":[],\"maximum\":4}");
+  // The declared upper bounds are accepted whole: twelve rows, twelve rail rows and twelve points.
+  let table: string = ""; let rails: string = ""; let points: string = "";
+  let minutes: string[] = ["0","15","30","45","60","75","90","105","120","135","150","165"];
+  let index: number = 0;
+  for (let minute of minutes) {
+    if (index > 0) { table = table+","; rails = rails+","; points = points+","; }
+    table = table+"[\"a\",\"b\",\"c\"]";
+    rails = rails+"{\"minute\":"+minute+",\"title\":\"t"+String(index)+"\"}";
+    points = points+"{\"label\":\"p"+String(index)+"\",\"value\":"+minute+"}";
+    index = index+1;
+  }
+  result.twelve_rows = await accepts("data_table","{\"headers\":[\"a\",\"b\",\"c\"],\"rows\":["+table+"]}");
+  result.twelve_rail = await accepts("timeline","{\"rows\":["+rails+"]}");
+  result.twelve_points = await accepts("bar_chart","{\"points\":["+points+"],\"maximum\":165}");
+  // The shared text domains: 32 UTF-16 units fit a label, 512 fit a cell, and an astral pair counts
+  // as two units rather than one scalar.
+  result.bounds = await accepts("data_table","{\"headers\":[\""+label(32)+"\",\"b\",\"c\"],\"rows\":[[\""+label(512)+"\",\"b\",\"c\"],[\"\ud83d\ude00\ud83d\ude00\",\"\",\"\"]]}");
+  result.max_rail = await accepts("timeline","{\"rows\":[{\"minute\":1,\"title\":\"a\",\"detail\":\""+label(512)+"\"}]}");
+  return s.encode(result);
+}
+
+export async function rejectionMatrix(): Promise<number> {
+  let count: number = 0;
+  count = count+await rejects("data_table","{\"title\":\""+label(513)+"\",\"headers\":[\"a\",\"b\",\"c\"],\"rows\":[]}","title over its bound");
+  count = count+await rejects("data_table","{\"headers\":[\"a\",\"b\",\"c\"],\"rows\":[],\"extra\":1}","unknown data_table field");
+  count = count+await rejects("data_table","{\"headers\":[\"a\",\"b\",\"c\"],\"rows\":[[\"a\",\"b\",\"c\",\"d\"]]}","four-cell table row");
+  count = count+await rejects("data_table","{\"headers\":[\"a\",\"b\",\"c\"],\"rows\":[[\"a\",\"b\"]]}","short table row");
+  count = count+await rejects("data_table","{\"headers\":[\"a\",\"b\"],\"rows\":[]}","two-column headers");
+  count = count+await rejects("data_table","{\"headers\":[\"a\",\"b\",\"c\",\"d\"],\"rows\":[]}","four-column headers");
+  count = count+await rejects("data_table","{\"headers\":5,\"rows\":[]}","nonarray headers");
+  // A text would decode to three single-character headers, so only the array rule refuses it.
+  count = count+await rejects("data_table","{\"headers\":\"abc\",\"rows\":[[\"a\",\"b\",\"c\"]]}","text headers");
+  count = count+await rejects("data_table","{\"headers\":[\"a\",\"b\",\"c\"],\"rows\":5}","nonarray table rows");
+  count = count+await rejects("data_table","{\"headers\":[\"a\",\"b\",\"c\"],\"rows\":[\"abc\"]}","row that is not a cell array");
+  count = count+await rejects("data_table","{\"headers\":[\"a\",\"b\",\"c\"],\"rows\":[[1,\"b\",\"c\"]]}","numeric table cell");
+  count = count+await rejects("data_table","{\"headers\":[\"a\",\"b\",\"c\"],\"rows\":[[\""+label(513)+"\",\"b\",\"c\"]]}","cell over its bound");
+  count = count+await rejects("data_table","{\"headers\":[\" \" ,\"b\",\"c\"],\"rows\":[]}","blank header");
+  count = count+await rejects("data_table","{\"headers\":[\""+label(33)+"\",\"b\",\"c\"],\"rows\":[]}","header over its bound");
+  count = count+await rejects("data_table","{\"headers\":[\"a\",\"b\",\"c\"],\"rows\":[[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"],[\"a\",\"b\",\"c\"]]}","thirteen table rows");
+  count = count+await rejects("data_table","{\"rows\":[]}","missing table headers");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":10,\"title\":\"a\",\"extra\":1}]}","unknown timeline field");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":10}]}","timeline row without a title");
+  count = count+await rejects("timeline","{\"rows\":5}","nonarray timeline rows");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":10,\"title\":5}]}","numeric timeline title");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":10,\"title\":\"a\"},{\"minute\":5,\"title\":\"b\"}]}","decreasing timeline minutes");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":1440,\"title\":\"a\"}]}","minute past the shared domain");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":-1,\"title\":\"a\"}]}","negative minute");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":1.5,\"title\":\"a\"}]}","fractional minute");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":1e999,\"title\":\"a\"}]}","nonfinite minute");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":1,\"title\":\""+label(33)+"\"}]}","timeline title over its bound");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":1,\"title\":\"a\",\"detail\":\""+label(513)+"\"}]}","timeline detail over its bound");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":1,\"title\":\"a\",\"detail\":null}]}","null timeline detail");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":1,\"title\":\"a\",\"detail\":5}]}","numeric timeline detail");
+  count = count+await rejects("timeline","{\"rows\":[5]}","timeline row that is not a record");
+  count = count+await rejects("timeline","{\"rows\":[{\"minute\":1,\"title\":\"a\"},{\"minute\":2,\"title\":\"a\"},{\"minute\":3,\"title\":\"a\"},{\"minute\":4,\"title\":\"a\"},{\"minute\":5,\"title\":\"a\"},{\"minute\":6,\"title\":\"a\"},{\"minute\":7,\"title\":\"a\"},{\"minute\":8,\"title\":\"a\"},{\"minute\":9,\"title\":\"a\"},{\"minute\":10,\"title\":\"a\"},{\"minute\":11,\"title\":\"a\"},{\"minute\":12,\"title\":\"a\"},{\"minute\":13,\"title\":\"a\"}]}","thirteen rail rows");
+  count = count+await rejects("bar_chart","{\"points\":5,\"maximum\":5}","nonarray chart points");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":1,\"extra\":1}],\"maximum\":5}","unknown point field");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":5,\"value\":1}],\"maximum\":5}","numeric point label");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":\"1\"}],\"maximum\":5}","text chart value");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":-1}],\"maximum\":5}","negative bar value");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":6}],\"maximum\":5}","bar value above maximum");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":1}],\"maximum\":0}","nonpositive maximum");
+  // With a zero value the scale check admits maximum 0, so only the positive rule refuses this.
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":0}],\"maximum\":0}","positive maximum rule");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":1}],\"maximum\":1e999}","nonfinite maximum");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":1}],\"maximum\":\"5\"}","text chart maximum");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":1}],\"maximum\":false}","boolean chart maximum");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":1e999}],\"maximum\":5}","nonfinite point value");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\""+label(33)+"\",\"value\":1}],\"maximum\":5}","point label over its bound");
+  count = count+await rejects("bar_chart","{\"points\":[{\"label\":\"a\",\"value\":1},{\"label\":\"b\",\"value\":1},{\"label\":\"c\",\"value\":1},{\"label\":\"d\",\"value\":1},{\"label\":\"e\",\"value\":1},{\"label\":\"f\",\"value\":1},{\"label\":\"g\",\"value\":1},{\"label\":\"h\",\"value\":1},{\"label\":\"i\",\"value\":1},{\"label\":\"j\",\"value\":1},{\"label\":\"k\",\"value\":1},{\"label\":\"l\",\"value\":1},{\"label\":\"m\",\"value\":1}],\"maximum\":5}","thirteen chart points");
+  count = count+await rejects("bar_chart","{\"points\":[5],\"maximum\":5}","chart point that is not a record");
+  count = count+await rejects("bar_chart","{\"points\":[]}","chart without its scale");
+  count = count+await rejects("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":1}],\"minimum\":0,\"maximum\":2}","single trend point");
+  count = count+await rejects("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":1},{\"label\":\"b\",\"value\":1}],\"minimum\":2,\"maximum\":2}","empty trend scale");
+  count = count+await rejects("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":1},{\"label\":\"b\",\"value\":1}],\"minimum\":3,\"maximum\":2}","reversed trend scale");
+  count = count+await rejects("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":4},{\"label\":\"b\",\"value\":1}],\"minimum\":0,\"maximum\":3}","trend value above maximum");
+  count = count+await rejects("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":-4},{\"label\":\"b\",\"value\":1}],\"minimum\":-3,\"maximum\":3}","trend value below minimum");
+  count = count+await rejects("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":1},{\"label\":\"b\",\"value\":1}],\"minimum\":0,\"maximum\":1e999}","nonfinite trend maximum");
+  count = count+await rejects("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":1},{\"label\":\"b\",\"value\":1}],\"minimum\":\"0\",\"maximum\":3}","text trend minimum");
+  count = count+await rejects("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":1},{\"label\":\"b\",\"value\":1}],\"maximum\":3}","trend chart without its minimum");
+  // The existing fact sections must refuse the same wrong types instead of re-spelling them.
+  count = count+await rejects("metrics","{\"values\":5}","nonarray metric values");
+  count = count+await rejects("metrics","{\"values\":[{\"label\":\"a\",\"value\":5}]}","numeric metric value");
+  count = count+await rejects("metrics","{\"values\":[{\"label\":5,\"value\":\"a\"}]}","numeric metric label");
+  count = count+await rejects("metrics","{\"values\":[{\"label\":\"a\",\"value\":\"b\",\"extra\":1}]}","unknown metric row field");
+  count = count+await rejects("metrics","{\"values\":[{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"}]}","thirteen metric rows");
+  count = count+await rejects("key_facts","{\"items\":[{\"label\":\"a\",\"value\":true}]}","boolean key-fact value");
+  count = count+await rejects("key_facts","{}","key facts without items");
+  // The shared entry row refuses a non-boolean completion instead of emitting a cast value.
+  count = count+await rejects("checklist","{\"items\":[{\"id\":\"a\",\"label\":\"b\",\"done\":\"yes\"}]}","text checklist completion");
+  count = count+await rejects("checklist","{\"items\":[{\"id\":5,\"label\":\"b\"}]}","numeric checklist identity");
+  count = count+await rejects("checklist","{\"items\":[{\"id\":\"a\",\"label\":\"b\",\"detail\":null}]}","null checklist detail");
+  // A label list is an array of texts, not a text or a collection of other wire kinds.
+  count = count+await rejects("actions","{\"labels\":5}","nonarray action labels");
+  count = count+await rejects("actions","{\"labels\":[5]}","numeric action label");
+  return count;
+}
+
+
+// One predicate, two call sites: every supplied value is admitted only by request or fact evidence.
+function admits(entry: catalogue.Configured, original: string, facts: string, userOwned: boolean): boolean {
+  return catalogue.disclosed(entry,original,facts,userOwned) === "";
+}
+// Each disclosure case counts once, so deleting a case fails the exact-count check.
+function checked(condition: boolean, message: string): number { insist(condition,message); return 1; }
+export async function disclosure(): Promise<number> {
+  let request: string = "Show what I paid";
+  let count: number = 0;
+  // The table supplies its headers and cells; each needs evidence and an empty cell needs none.
+  let headers: string = "{\"headers\":[\"Item\",\"Amount\",\"Note\"]";
+  let admitted: catalogue.Configured = await configured("data_table","{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"paid\"],[\"Food\",\"\",\"\"]]}");
+  count = count+checked(admits(admitted,request,headers+",\"row\":{\"item\":\"Rent\",\"amount\":\"40\",\"note\":\"paid\"},\"item\":{\"name\":\"Food\"}}",false),"Disclosed table refused");
+  let invented: catalogue.Configured = await configured("data_table","{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"pending\"]]}");
+  let located: string = catalogue.disclosed(invented,request,headers+",\"row\":{\"item\":\"Rent\",\"amount\":\"40\"}}",false);
+  count = count+checked(located !== "","Invented table cell admitted");
+  // A refusal carries the need and the offending row and field, never a bare verdict.
+  count = count+checked(located.includes("data_table row 0 cell 2"),"Unlocated table refusal: "+located);
+  // A heading names the displayed column, so an invented heading is refused like any other value.
+  let invented_header: catalogue.Configured = await configured("data_table","{\"headers\":[\"Item\",\"Category\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"paid\"]]}");
+  let located_header: string = catalogue.disclosed(invented_header,request,headers+",\"row\":{\"item\":\"Rent\",\"amount\":\"40\",\"note\":\"paid\"}}",false);
+  count = count+checked(located_header.includes("data_table header 1"),"Unlocated header refusal: "+located_header);
+  // The identical cell is admitted from the request text instead of a disclosed fact.
+  let quoted: catalogue.Configured = await configured("data_table","{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Food\",\"25\",\"paid\"]]}");
+  count = count+checked(admits(quoted,request+" on Food and label it paid",headers+",\"row\":{\"amount\":\"25\"}}",false),"Request-provenance cell refused");
+  let hidden_row: catalogue.Configured = await configured("data_table","{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"paid\"],[\"Food\",\"25\",\"unpaid\"]]}");
+  let located_row: string = catalogue.disclosed(hidden_row,request,headers+",\"row\":{\"item\":\"Rent\",\"amount\":\"40\",\"note\":\"paid\"}}",false);
+  count = count+checked(located_row.includes("data_table row 1 cell 0"),"Unlocated second-row refusal: "+located_row);
+  // Atomic rejection: the production call site installs a decoded record only when the whole record
+  // decodes, so a rejected row list leaves the instance unfilled instead of a shortened table.
+  let entry: catalogue.Configured = {need:"table",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
+  let refused: boolean = false;
+  try { entry.parameters = await catalogue.decode(definition("data_table"),JSON.parse("{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"paid\"],[\"Food\",\"25\"]]}")); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } refused = true; }
+  count = count+checked(refused,"Short row list admitted");
+  count = count+checked(s.encode(entry.parameters) === "{}","A rejected row list installed partial parameters");
+  // The rail supplies its minute, title and detail; an invented minute is refused like a title.
+  let rail: string = "{\"rail\":[{\"at\":\"Standup\",\"note\":\"daily\",\"minute\":570}";
+  let timeline: catalogue.Configured = await configured("timeline","{\"rows\":[{\"minute\":570,\"title\":\"Standup\",\"detail\":\"daily\"},{\"minute\":600,\"title\":\"Review\"}]}");
+  count = count+checked(admits(timeline,"",rail+",{\"at\":\"Review\",\"minute\":600}]}",false),"Disclosed rail refused");
+  let invented_detail: catalogue.Configured = await configured("timeline","{\"rows\":[{\"minute\":570,\"title\":\"Standup\",\"detail\":\"secret\"}]}");
+  let located_detail: string = catalogue.disclosed(invented_detail,"",rail+"]}",false);
+  count = count+checked(located_detail.includes("timeline row 0 detail"),"Unlocated rail detail refusal: "+located_detail);
+  let invented_minute: catalogue.Configured = await configured("timeline","{\"rows\":[{\"minute\":601,\"title\":\"Standup\",\"detail\":\"daily\"}]}");
+  let located_minute: string = catalogue.disclosed(invented_minute,"",rail+"]}",false);
+  count = count+checked(located_minute.includes("timeline row 0 minute"),"Unlocated rail minute refusal: "+located_minute);
+  let invented_title: catalogue.Configured = await configured("timeline","{\"rows\":[{\"minute\":570,\"title\":\"Invented\",\"detail\":\"daily\"}]}");
+  let located_title: string = catalogue.disclosed(invented_title,"",rail+"]}",false);
+  count = count+checked(located_title.includes("timeline row 0 title"),"Unlocated rail title refusal: "+located_title);
+  let empty_detail: catalogue.Configured = await configured("timeline","{\"rows\":[{\"minute\":570,\"title\":\"Standup\"}]}");
+  count = count+checked(admits(empty_detail,"",rail+"]}",false),"Empty detail demanded evidence");
+  // A section with no rows displays nothing, so it supplies no value to evidence.
+  let empty_table: catalogue.Configured = await configured("data_table","{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[]}");
+  count = count+checked(admits(empty_table,"","",false),"An empty table demanded evidence");
+  // A row of a kind the historical four-kind rule never covered is refused by the same predicate.
+  let bars: catalogue.Configured = await configured("bar_chart","{\"points\":[{\"label\":\"Mon\",\"value\":0},{\"label\":\"Tue\",\"value\":2.5}],\"maximum\":10}");
+  count = count+checked(admits(bars,"","{\"days\":[{\"day\":\"Mon\",\"spent\":0},{\"day\":\"Tue\",\"spent\":2.5}]}",false),"Disclosed bar points refused");
+  let wrong_bar: catalogue.Configured = await configured("bar_chart","{\"points\":[{\"label\":\"Mon\",\"value\":0},{\"label\":\"Tue\",\"value\":7}],\"maximum\":10}");
+  let located_bar: string = catalogue.disclosed(wrong_bar,"","{\"days\":[{\"day\":\"Mon\",\"spent\":0},{\"day\":\"Tue\",\"spent\":2.5}]}",false);
+  count = count+checked(located_bar.includes("bar_chart point 1 value"),"Unlocated chart refusal: "+located_bar);
+  let trend: catalogue.Configured = await configured("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":-2},{\"label\":\"b\",\"value\":0.25}],\"minimum\":-3,\"maximum\":3}");
+  count = count+checked(admits(trend,"","{\"series\":[{\"at\":\"a\",\"delta\":-2},{\"at\":\"b\",\"delta\":0.25}]}",false),"Disclosed trend points refused");
+  // A number is matched like a text value: its shortest round-trip spelling occurs in the evidence, so
+  // a disclosed amount written directly before prose punctuation ("Spent 5. Show Mon.") still admits
+  // its value; a rule that treats that adjacent punctuation as part of the number refuses it and
+  // drops a disclosed section.
+  let punctuated: catalogue.Configured = await configured("bar_chart","{\"points\":[{\"label\":\"Mon\",\"value\":5}],\"maximum\":10}");
+  count = count+checked(admits(punctuated,"Spent 5. Show Mon.","",false),"A value before prose punctuation was refused");
+  let invented_label: catalogue.Configured = await configured("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":-2},{\"label\":\"c\",\"value\":0.25}],\"minimum\":-3,\"maximum\":3}");
+  let located_trend: string = catalogue.disclosed(invented_label,"","{\"series\":[{\"at\":\"a\",\"delta\":-2},{\"at\":\"b\",\"delta\":0.25}]}",false);
+  count = count+checked(located_trend.includes("trend_chart point 1 label"),"Unlocated trend refusal: "+located_trend);
+  // The existing fact sections keep the decisions the one predicate already made.
+  let metrics: catalogue.Configured = await configured("metrics","{\"values\":[{\"label\":\"first\",\"value\":\"items\"}]}");
+  count = count+checked(admits(metrics,"","{\"facts\":[{\"label\":\"first\",\"value\":\"items\"}]}",false),"Disclosed metric refused");
+  let located_metric: string = catalogue.disclosed(metrics,"","{\"facts\":[{\"label\":\"first\",\"value\":\"other\"}]}",false);
+  count = count+checked(located_metric.includes("metrics row 0 value"),"Unlocated metric refusal: "+located_metric);
+  let invented_metric_label: catalogue.Configured = await configured("metrics","{\"values\":[{\"label\":\"third\",\"value\":\"items\"}]}");
+  let located_metric_label: string = catalogue.disclosed(invented_metric_label,"","{\"facts\":[{\"label\":\"first\",\"value\":\"items\"}]}",false);
+  count = count+checked(located_metric_label.includes("metrics row 0 label"),"Unlocated metric label refusal: "+located_metric_label);
+  // The existing checklist keeps the same one-predicate decision for an invented row label.
+  let invented_checklist: catalogue.Configured = await configured("checklist","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\"}]}");
+  let located_checklist: string = catalogue.disclosed(invented_checklist,request,"",false);
+  count = count+checked(located_checklist.includes("checklist row 0 label"),"Unlocated checklist refusal: "+located_checklist);
+  let invented_detail_row: catalogue.Configured = await configured("checklist","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\",\"detail\":\"secret\"}]}");
+  let located_detail_row: string = catalogue.disclosed(invented_detail_row,"Alpha","",false);
+  count = count+checked(located_detail_row.includes("checklist row 0 detail"),"Unlocated checklist detail refusal: "+located_detail_row);
+  // A user-owned note keeps exact disclosed text; the same note not marked user-owned is admitted.
+  let owned_note: catalogue.Configured = await configured("note","{\"text\":\"invented\"}");
+  let located_note: string = catalogue.disclosed(owned_note,"","",true);
+  count = count+checked(located_note.includes(": note note text"),"Unlocated user-owned note refusal: "+located_note);
+  count = count+checked(admits(owned_note,"","",false),"A note that is not user-owned was refused");
+  // An empty text carries no content, so an empty user-owned note is admitted like any other empty value.
+  let empty_note: catalogue.Configured = await configured("note","{\"text\":\"\"}");
+  count = count+checked(admits(empty_note,"","",true),"An empty user-owned note demanded evidence");
+  // The user-owned rule belongs to notes only: a fact section under a user-owned answer is admitted.
+  count = count+checked(admits(metrics,"","{\"facts\":[{\"label\":\"first\",\"value\":\"items\"}]}",true),"A user-owned fact section was refused");
+  let facts_owned: catalogue.Configured = await configured("key_facts","{\"items\":[{\"label\":\"second\",\"value\":\"done\"}]}");
+  count = count+checked(admits(facts_owned,"here: second done","",false),"Request-provenance fact refused");
+  return count;
+}
+
+// Initialization copies the disclosed values once, keeps them immutable and explains empty datasets.
+export async function initialization(): Promise<string> {
+  let result: Record<string, unknown> = {};
+  result.data_table = s.encode(await catalogue.instantiate(await configured("data_table","{\"title\":\"Spend\",\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"paid\"],[\"Food\",\"2.5\",\"quote \\\" \\u0001 \ud83d\ude00 \ud800\"]]}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.timeline = s.encode(await catalogue.instantiate(await configured("timeline","{\"rows\":[{\"minute\":570,\"title\":\"Standup\",\"detail\":\"quote \\\" and \\\\ and \\n and \ud83d\ude00\"},{\"minute\":600,\"title\":\"Review\"}]}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.bar_chart = s.encode(await catalogue.instantiate(await configured("bar_chart","{\"points\":[{\"label\":\"Mon\",\"value\":0},{\"label\":\"Tue\",\"value\":2.5},{\"label\":\"Wed\",\"value\":10}],\"maximum\":10}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  // The emitted initializers keep the supplied point order, never a sorted copy.
+  result.unsorted_bars = s.encode(await catalogue.instantiate(await configured("bar_chart","{\"points\":[{\"label\":\"Wed\",\"value\":10},{\"label\":\"Mon\",\"value\":0},{\"label\":\"Tue\",\"value\":2.5}],\"maximum\":10}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.unsorted_trend = s.encode(await catalogue.instantiate(await configured("trend_chart","{\"points\":[{\"label\":\"c\",\"value\":3},{\"label\":\"a\",\"value\":-2},{\"label\":\"b\",\"value\":0.25}],\"minimum\":-3,\"maximum\":3}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.trend_chart = s.encode(await catalogue.instantiate(await configured("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":-2},{\"label\":\"b\",\"value\":0.25},{\"label\":\"c\",\"value\":3}],\"minimum\":-3,\"maximum\":3}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.empty_table = s.encode(await catalogue.instantiate(await configured("data_table","{\"headers\":[\"A\",\"B\",\"C\"],\"rows\":[]}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.empty_timeline = s.encode(await catalogue.instantiate(await configured("timeline","{\"rows\":[]}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.empty_chart = s.encode(await catalogue.instantiate(await configured("bar_chart","{\"points\":[],\"maximum\":4}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.zero_chart = s.encode(await catalogue.instantiate(await configured("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":0},{\"label\":\"b\",\"value\":0}],\"minimum\":-1,\"maximum\":1}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.metrics = s.encode(await catalogue.instantiate(await configured("metrics","{\"values\":[{\"label\":\"first\",\"value\":\"items\"},{\"label\":\"second\",\"value\":\"done\"}]}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.key_facts = s.encode(await catalogue.instantiate(await configured("key_facts","{\"items\":[{\"label\":\"first\",\"value\":\"items\"}]}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.empty_facts = s.encode(await catalogue.instantiate(await configured("metrics","{\"values\":[]}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  return s.encode(result);
+}
+
+// Assembly: every emitted section joins one real composition and assembles without a computation.
+export async function assembly(): Promise<string> {
+  let registry: bindings.Registry = bindings.create([]);
+  let composition: screens.Composition = {screen:{title:"Read only",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[]},bindings:{},actions:{},connections:[]};
+  composition.screen.instances[0] = await catalogue.instantiate({need:"table",definition:definition("data_table"),parameters:await accepts("data_table","{\"title\":\"Table\",\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"paid\"]]}"),accepted:true,reason:""},registry);
+  composition.screen.instances[1] = await catalogue.instantiate({need:"bars",definition:definition("bar_chart"),parameters:await accepts("bar_chart","{\"points\":[{\"label\":\"Mon\",\"value\":0},{\"label\":\"Tue\",\"value\":2.5}],\"maximum\":10}"),accepted:true,reason:""},registry);
+  composition.screen.instances[2] = await catalogue.instantiate({need:"trend",definition:definition("trend_chart"),parameters:await accepts("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":-2},{\"label\":\"b\",\"value\":0.25}],\"minimum\":-3,\"maximum\":3}"),accepted:true,reason:""},registry);
+  composition.screen.instances[3] = await catalogue.instantiate({need:"rail",definition:definition("timeline"),parameters:await accepts("timeline","{\"title\":\"Rail\",\"rows\":[{\"minute\":570,\"title\":\"Standup\",\"detail\":\"daily\"},{\"minute\":600,\"title\":\"Review\"}]}"),accepted:true,reason:""},registry);
+  composition.screen.instances[4] = await catalogue.instantiate({need:"facts",definition:definition("metrics"),parameters:await accepts("metrics","{\"values\":[{\"label\":\"first\",\"value\":\"items\"}]}"),accepted:true,reason:""},registry);
+  composition.screen.instances[5] = await catalogue.instantiate({need:"details",definition:definition("key_facts"),parameters:await accepts("key_facts","{\"items\":[{\"label\":\"second\",\"value\":\"done\"}]}"),accepted:true,reason:""},registry);
+  composition.screen.instances[6] = await catalogue.instantiate({need:"empty",definition:definition("data_table"),parameters:await accepts("data_table","{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[]}"),accepted:true,reason:""},registry);
+  let assembled: composer.Result = await composer.assemble(composition,[]);
+  return s.encode(assembled.source);
+}
+
+// The production fill: one real model answer decodes every issued section at the one call site
+// construction uses, so an empty table, a fabricated cell and a short row are decided as at runtime.
+export async function fillPath(): Promise<string> {
+  let context: selecting.Context = {original:"Show what I paid",facts:"{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"row\":{\"item\":\"Rent\",\"amount\":\"40\"}}",contracts:"[]",specification:"specification"};
+  let plan: plans.Plan = {title:"Table",eyebrow:"",subtitle:"",inputs:[],constants:[],requirements:[],needs:[{id:"empty",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"fabricated",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"short",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"nulled",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}}],questions:[]};
+  let empty: catalogue.Configured = {need:"empty",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
+  let fabricated: catalogue.Configured = {need:"fabricated",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
+  let short: catalogue.Configured = {need:"short",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
+  let nulled: catalogue.Configured = {need:"nulled",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
+  await catalogue.fill(context,plan,[empty,fabricated,short,nulled]);
+  // Construction applies the one predicate after an accepted fill; a rejected decode never reaches it.
+  let admittedEmpty: boolean = catalogue.disclosed(empty,context.original,context.facts,false) === "";
+  let locatedFabricated: string = catalogue.disclosed(fabricated,context.original,context.facts,false);
+  return s.encode({empty:empty,fabricated:fabricated,short:short,nulled:nulled,admittedEmpty:admittedEmpty,locatedFabricated:locatedFabricated});
+}
+
+export function main(): void { return; }

@@ -1,20 +1,20 @@
 import * as plans from "./plan";
 import * as screens from "./screen";
 import * as selecting from "./construction-selection";
-import * as selections from "./selection";
 import * as inference from "./inference";
 import * as identity from "embedding/construction-identity";
-import * as data from "embedding/policy-data";
 import * as syntax from "embedding/fragment-syntax";
 import * as bindings from "./bindings";
 import * as composer from "./composer";
 import * as s from "./construction-schema";
-import * as literals from "./source-literals";
 
 // Only executable definitions are issued. Unsupported kinds remain open for custom sections.
 export class Parameter { name: string; type: string; required: boolean; fallback: unknown; maximum: number; }
 export class Definition { kind: string; criteria: string; parameters: Parameter[]; mutable: boolean; }
 export class Configured { need: string; definition: Definition; parameters: Record<string, unknown>; accepted: boolean; reason: string; }
+// `maximum` is the row/text bound of a list or text parameter and the exact column count of
+// `headers`; a heading itself decodes with the label bound of the shared row contract. Numeric
+// parameters keep 0 there because their domains are declared by the spec row, not by a count.
 export function definitions(): Definition[] {
   return [
     {kind:"note",criteria:"Editable retained text, not structured records, calculations or provider work.",parameters:[{name:"text",type:"string",required:false,fallback:"",maximum:512}],mutable:true},
@@ -24,7 +24,11 @@ export function definitions(): Definition[] {
     {kind:"actions",criteria:"Local label selection and last-tapped label only. No external operation or completion claims.",parameters:[{name:"labels",type:"labels",required:true,fallback:null,maximum:12}],mutable:true},
     {kind:"checklist",criteria:"Keyed toggles with checked and total counts; not records, assignments or external operations.",parameters:[{name:"items",type:"entries",required:false,fallback:null,maximum:12}],mutable:true},
     {kind:"filter_box",criteria:"Editable query publishing query:string for an issued reader. No search provider or external effect.",parameters:[],mutable:true},
-    {kind:"list_summary",criteria:"Read-only done/total/remaining from exact typed publishers; cannot create or replace a publisher.",parameters:[],mutable:false}
+    {kind:"list_summary",criteria:"Read-only done/total/remaining from exact typed publishers; cannot create or replace a publisher.",parameters:[],mutable:false},
+    {kind:"data_table",criteria:"Read-only disclosed cells in three columns whose rows match their headers; never calculations, estimates or provider data.",parameters:[{name:"headers",type:"headers",required:true,fallback:null,maximum:3},{name:"rows",type:"cells",required:true,fallback:null,maximum:12}],mutable:false},
+    {kind:"timeline",criteria:"Read-only chronological rail of disclosed minute-ordered rows in their supplied order; no records, actions or external data.",parameters:[{name:"rows",type:"timeline",required:true,fallback:null,maximum:12}],mutable:false},
+    {kind:"bar_chart",criteria:"Read-only zero-based labelled bars of disclosed values inside one declared positive scale; never an estimate or calculation.",parameters:[{name:"points",type:"points",required:true,fallback:null,maximum:12},{name:"maximum",type:"positive",required:true,fallback:null,maximum:0}],mutable:false},
+    {kind:"trend_chart",criteria:"Read-only ordered line chart of two to twelve grounded disclosed points inside one declared scale; never an estimate or calculation.",parameters:[{name:"points",type:"points",required:true,fallback:null,maximum:12},{name:"minimum",type:"number",required:true,fallback:null,maximum:0},{name:"maximum",type:"number",required:true,fallback:null,maximum:0}],mutable:false}
   ];
 }
 export function alternatives(plan: plans.Plan): selecting.Alternative[] {
@@ -34,39 +38,168 @@ export function alternatives(plan: plans.Plan): selecting.Alternative[] {
   } }
   return result;
 }
-async function text(value: unknown, maximum: number, nonblank: boolean): Promise<string> { let result: string = s.text(value); if (nonblank) { s.nonblank(result); } if (result.length > maximum) { s.reject("Catalogue text bound"); } return result; }
-export async function decode(definition: Definition, raw: Record<string, unknown>): Promise<Record<string, unknown>> {
+// Decoded values carry real JSON kinds, so their wire spelling identifies the type: a text begins
+// with a quote, an array with a bracket and a row with a brace. A wrong-typed field or collection of
+// these kinds then rejects instead of being read as an empty value or re-spelled by a later emitter.
+async function text(value: unknown, maximum: number, nonblank: boolean): Promise<string> {
+  if (!s.encode(value).startsWith("\"")) { s.reject("Catalogue text required"); }
+  let result: string = s.text(value); if (nonblank) { s.nonblank(result); } if (result.length > maximum) { s.reject("Catalogue text bound"); } return result;
+}
+function list(value: unknown, name: string): void { if (!s.encode(value).startsWith("[")) { s.reject("Catalogue array required: "+name); } }
+function record(value: unknown, name: string): void { if (!s.encode(value).startsWith("{")) { s.reject("Catalogue row required: "+name); } }
+// Number.isFinite is the only total numeric test for a dynamic value: it never coerces, so a text
+// or boolean value rejects here instead of reaching a checked numeric cast.
+function number(value: unknown, name: string): number { if (!Number.isFinite(value)) { s.reject("Catalogue number required: "+name); } return s.finite(value); }
+function integer(value: unknown, name: string): number { let result: number = number(value,name); if (Math.floor(result) !== result) { s.reject("Catalogue integral required: "+name); } return result; }
+// An empty text carries no content and needs no evidence; any supplied text must occur in it.
+function supplied(value: string, data: string): boolean { return value === "" || data.includes(value); }
+// An optional row field returns its dynamic value so the wire-kind guard of `text` runs before any
+// typed cast; a typed accessor would raise the runtime type error instead of a schema rejection.
+function optionalValue(owner: Record<string, unknown>, name: string): unknown { if (!Object.hasOwn(owner,name)) { return ""; } return owner[name]; }
+// A row identity is a JSON string before it is a plan identifier; a wrong wire kind rejects like any
+// other text field instead of raising the runtime type error.
+function rowIdentity(value: unknown, name: string): string { if (!s.encode(value).startsWith("\"")) { s.reject("Catalogue text required: "+name); } return s.identifier(value); }
+// A row boolean is admitted only as a JSON boolean, never through a cast of another wire kind.
+function flag(owner: Record<string, unknown>, name: string, fallback: boolean): boolean {
+  if (!Object.hasOwn(owner,name)) { return fallback; }
+  let encoded: string = s.encode(owner[name]); if (encoded !== "true" && encoded !== "false") { s.reject("Catalogue boolean required: "+name); }
+  return owner[name] as boolean;
+}
+// Timeline minutes are the shared minute-of-day domain; the rail keeps the supplied order and shows
+// the minute as zero-padded 24-hour text, because the pack's rail item carries display text only.
+function clock(minute: number): string { let hours: number = Math.floor(minute/60); let rest: number = minute-hours*60; let text: string = String(hours); if (hours < 10) { text = "0"+text; } let minutes: string = String(rest); if (rest < 10) { minutes = "0"+minutes; } return text+":"+minutes; }
+// The parameter record arrives as dynamic JSON, so a null or scalar answer reaches the guard here
+// and rejects like any row instead of raising a runtime type error at the call boundary.
+export async function decode(definition: Definition, raw: unknown): Promise<Record<string, unknown>> {
+  if (!s.encode(raw).startsWith("{")) { s.reject("Catalogue parameters required"); }
+  let given: Record<string, unknown> = raw as Record<string, unknown>;
   let required: string[] = []; let optional: string[] = ["title","subtitle"];
   for (let parameter of definition.parameters) { if (parameter.required) { required[required.length] = parameter.name; } else { optional[optional.length] = parameter.name; } }
-  s.closed(raw,required,optional); let result: Record<string, unknown> = {title:"",subtitle:""};
-  for (let key of ["title","subtitle"]) { if (Object.hasOwn(raw,key)) { result[key] = await text(raw[key],512,false); } }
+  s.closed(given,required,optional); let result: Record<string, unknown> = {title:"",subtitle:""};
+  // Decoded lists keep their typed identity for the relations no single parameter can check.
+  let headers: string[] = []; let table: string[][] = []; let points: Record<string, unknown>[] = [];
+  let minimum: number = 0; let maximum: number = 0;
+  for (let key of ["title","subtitle"]) { if (Object.hasOwn(given,key)) { result[key] = await text(given[key],512,false); } }
   for (let parameter of definition.parameters) {
-    let value: unknown = parameter.fallback; if (value === null) { let empty: Record<string, unknown>[] = []; value = empty; } if (Object.hasOwn(raw,parameter.name)) { value = raw[parameter.name]; }
+    let value: unknown = parameter.fallback; if (value === null) { let empty: Record<string, unknown>[] = []; value = empty; } if (Object.hasOwn(given,parameter.name)) { value = given[parameter.name]; }
     if (parameter.type === "string") { result[parameter.name] = await text(value,parameter.maximum,false); }
+    else if (parameter.type === "number" || parameter.type === "positive") {
+      let checked: number = number(value,parameter.name); if (parameter.type === "positive" && checked <= 0) { s.reject("Catalogue positive bound: "+parameter.name); } result[parameter.name] = checked;
+      if (parameter.name === "minimum") { minimum = checked; } else if (parameter.name === "maximum") { maximum = checked; }
+    }
     else if (parameter.type === "labels") {
-      let labels: string[] = s.stringArray(value); if (labels.length < 1 || labels.length > parameter.maximum) { s.reject("Catalogue labels bound"); }
-      for (let label of labels) { await text(label,32,true); } result[parameter.name] = labels;
-    } else {
-      let rows: Record<string, unknown>[] = s.records({rows:value},"rows"); if (rows.length > parameter.maximum) { s.reject("Catalogue rows bound"); }
-      let checked: Record<string, unknown>[] = []; let ids: string[] = [];
-      for (let row of rows) {
-        if (parameter.type === "facts") { s.closed(row,["label","value"],[]); checked[checked.length] = {label:await text(row.label,32,true),value:await text(row.value,512,false)}; }
-        else { s.closed(row,["id","label"],["detail","done"]); let id: string = s.identifier(row.id); s.unique(ids,id); checked[checked.length] = {id:id,label:await text(row.label,32,true),detail:await text(s.optionalText(row,"detail"),512,false),done:s.optionalBoolean(row,"done",false)}; }
+      list(value,parameter.name); let entries: unknown[] = value as unknown[]; if (entries.length < 1 || entries.length > parameter.maximum) { s.reject("Catalogue labels bound"); }
+      let labels: string[] = [];
+      for (let label of entries) { labels[labels.length] = await text(label,32,true); }
+      result[parameter.name] = labels;
+    }
+    else if (parameter.type === "headers") {
+      list(value,parameter.name); let entries: unknown[] = value as unknown[]; if (entries.length !== parameter.maximum) { s.reject("Catalogue headers bound"); }
+      let names: string[] = [];
+      for (let name of entries) { names[names.length] = await text(name,32,true); }
+      headers = names; result[parameter.name] = names;
+    } else if (parameter.type === "cells") {
+      list(value,parameter.name); let entries: unknown[] = value as unknown[]; if (entries.length > parameter.maximum) { s.reject("Catalogue rows bound"); }
+      for (let row of entries) {
+        list(row,"cells"); let cells: string[] = [];
+        for (let cell of row as unknown[]) { cells[cells.length] = await text(cell,512,false); }
+        table[table.length] = cells;
       }
+      result[parameter.name] = table;
+    } else {
+      list(value,parameter.name); let entries: unknown[] = value as unknown[]; if (entries.length > parameter.maximum) { s.reject("Catalogue rows bound"); }
+      let checked: Record<string, unknown>[] = []; let ids: string[] = [];
+      let previous: number = -1;
+      for (let entry of entries) {
+        record(entry,parameter.name); let row: Record<string, unknown> = entry as Record<string, unknown>;
+        if (parameter.type === "facts") { s.closed(row,["label","value"],[]); checked[checked.length] = {label:await text(row.label,32,true),value:await text(row.value,512,false)}; }
+        else if (parameter.type === "timeline") {
+          s.closed(row,["minute","title"],["detail"]); let minute: number = integer(row.minute,"minute");
+          if (minute < 0 || minute > 1439) { s.reject("Catalogue timeline minute domain"); }
+          if (minute < previous) { s.reject("Catalogue timeline order"); } previous = minute;
+          checked[checked.length] = {minute:minute,title:await text(row.title,32,true),detail:await text(optionalValue(row,"detail"),512,false)};
+        }
+        else if (parameter.type === "points") { s.closed(row,["label","value"],[]); checked[checked.length] = {label:await text(row.label,32,true),value:number(row.value,"value")}; }
+        else if (parameter.type === "entries") { s.closed(row,["id","label"],["detail","done"]); let id: string = rowIdentity(row.id,"id"); s.unique(ids,id); checked[checked.length] = {id:id,label:await text(row.label,32,true),detail:await text(optionalValue(row,"detail"),512,false),done:flag(row,"done",false)}; }
+        // A kind table typo must reject instead of decoding another row schema silently.
+        else { s.reject("Catalogue parameter row type: "+parameter.type); }
+      }
+      if (parameter.type === "points") { points = checked; }
       result[parameter.name] = checked;
     }
   }
+  // Relations that no single parameter can check are decided once every row is decoded.
+  if (definition.kind === "data_table") {
+    // Every row carries exactly one cell per declared header.
+    for (let row of table) { if (row.length !== headers.length) { s.reject("Catalogue columns match headers"); } }
+  } else if (definition.kind === "bar_chart" || definition.kind === "trend_chart") {
+    if (definition.kind === "trend_chart") { if (minimum >= maximum) { s.reject("Catalogue chart scale"); } if (points.length < 2) { s.reject("Catalogue chart points bound"); } }
+    for (let point of points) { let value: number = s.finite(point.value); if (value < minimum || value > maximum) { s.reject("Catalogue chart value outside scale"); } }
+  }
   return result;
 }
-export function disclosed(entry: Configured, original: string, facts: string, userOwned: boolean): boolean {
+// The empty string admits the instance; a refusal names the need and the supplied row or field that
+// no evidence admits, so a rejected instance keeps its located reason instead of a bare verdict.
+function refusal(entry: Configured, where: string): string { return "Undisclosed personal or factual content: "+entry.need+" "+where; }
+// A number value contributes its shortest round-trip decimal spelling, matched the way a text value is
+// matched: the spelling occurs in the evidence. The one predicate of
+// `plan-schemas-values-and-parts` "Seed disclosure" is deliberately string-based, so a label likewise
+// matches inside a longer word and a digit likewise matches inside a longer number. This domain
+// applies that predicate and never a second, stricter numeric rule of its own.
+function numeric(value: number, data: string): boolean { return data.includes(String(value)); }
+export function disclosed(entry: Configured, original: string, facts: string, userOwned: boolean): string {
   let data: string = original+"\n"+facts;
   if (entry.definition.kind === "metrics" || entry.definition.kind === "key_facts") {
     let key: string = "values"; if (entry.definition.kind === "key_facts") { key = "items"; }
-    for (let row of s.records(entry.parameters,key)) { if (!data.includes(s.text(row.label)) || !data.includes(s.text(row.value))) { return false; } }
+    let index: number = 0;
+    for (let row of s.records(entry.parameters,key)) {
+      if (!supplied(s.text(row.label),data)) { return refusal(entry,"row "+String(index)+" label"); }
+      if (!supplied(s.text(row.value),data)) { return refusal(entry,"row "+String(index)+" value"); }
+      index = index+1;
+    }
   }
-  if (entry.definition.kind === "checklist") { for (let row of s.records(entry.parameters,"items")) { if (!data.includes(s.text(row.label)) || !data.includes(s.text(row.detail))) { return false; } } }
-  if (userOwned && entry.definition.kind === "note" && !data.includes(s.text(entry.parameters.text))) { return false; }
-  return true;
+  if (entry.definition.kind === "checklist") {
+    let index: number = 0;
+    for (let row of s.records(entry.parameters,"items")) {
+      if (!supplied(s.text(row.label),data)) { return refusal(entry,"row "+String(index)+" label"); }
+      if (!supplied(s.text(row.detail),data)) { return refusal(entry,"row "+String(index)+" detail"); }
+      index = index+1;
+    }
+  }
+  // The same row mapping covers the read-only sections: every supplied header, cell, rail title,
+  // detail and minute, and chart label with its shortest round-trip decimal spelling needs evidence,
+  // so an invented row is refused as a whole rather than kept in a shortened list. A section with no
+  // rows, and an unfilled instance, display nothing and so supply no value.
+  if (entry.definition.kind === "data_table" && Object.hasOwn(entry.parameters,"rows") && Object.hasOwn(entry.parameters,"headers")) {
+    let table: string[][] = entry.parameters.rows as string[][];
+    if (table.length > 0) {
+      let column: number = 0;
+      for (let header of entry.parameters.headers as string[]) { if (!supplied(header,data)) { return refusal(entry,"header "+String(column)); } column = column+1; }
+      let index: number = 0;
+      for (let row of table) { let cell: number = 0; for (let value of row) { if (!supplied(value,data)) { return refusal(entry,"row "+String(index)+" cell "+String(cell)); } cell = cell+1; } index = index+1; }
+    }
+  }
+  if (entry.definition.kind === "timeline" && Object.hasOwn(entry.parameters,"rows")) {
+    let index: number = 0;
+    for (let row of entry.parameters.rows as Record<string, unknown>[]) {
+      if (!supplied(s.text(row.title),data)) { return refusal(entry,"row "+String(index)+" title"); }
+      if (!supplied(s.text(row.detail),data)) { return refusal(entry,"row "+String(index)+" detail"); }
+      if (!numeric(s.finite(row.minute),data)) { return refusal(entry,"row "+String(index)+" minute"); }
+      index = index+1;
+    }
+  }
+  if ((entry.definition.kind === "bar_chart" || entry.definition.kind === "trend_chart") && Object.hasOwn(entry.parameters,"points")) {
+    let index: number = 0;
+    for (let point of entry.parameters.points as Record<string, unknown>[]) {
+      if (!supplied(s.text(point.label),data)) { return refusal(entry,"point "+String(index)+" label"); }
+      if (!numeric(s.finite(point.value),data)) { return refusal(entry,"point "+String(index)+" value"); }
+      index = index+1;
+    }
+  }
+  // The chart scale is a declared configuration of the picture, like the section title, and not a
+  // supplied value: only the plotted labels and values must be evidenced.
+  if (userOwned && entry.definition.kind === "note" && !supplied(s.text(entry.parameters.text),data)) { return refusal(entry,"note text"); }
+  return "";
 }
 export function selected(plan: plans.Plan, choices: selecting.Choice[]): Configured[] {
   let result: Configured[] = []; let kinds: string[] = [];
@@ -82,7 +215,7 @@ export async function fill(context: selecting.Context, plan: plans.Plan, entries
     let raw: Record<string, unknown> = JSON.parse(response.content); s.closed(raw,["sections"],[]); let rows: Record<string, unknown>[] = s.records(raw,"sections"); let ids: string[] = [];
     for (let row of rows) { s.closed(row,["need","parameters"],[]); let need: string = s.identifier(row.need); s.unique(ids,need); let issued: boolean = false; for (let entry of entries) { if (entry.need === need) { issued = true; } } if (!issued) { s.reject("Unissued catalogue fill"); } }
     for (let entry of entries) { for (let row of rows) { if ((row.need as string) === entry.need) {
-      try { entry.parameters = await decode(entry.definition,row.parameters as Record<string, unknown>); entry.accepted = true; entry.reason = ""; }
+      try { entry.parameters = await decode(entry.definition,row.parameters); entry.accepted = true; entry.reason = ""; }
       catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } entry.reason = error.message; }
     } } }
   } catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8007"],error.name)) { throw error; } }
@@ -107,8 +240,50 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
   } else if (kind === "spotlight") { body = body+"ui.Text(text: "+await literal(parameters.message,"string")+")"; }
   else if (kind === "metrics" || kind === "key_facts") {
     let key: string = "values"; if (kind === "key_facts") { key = "items"; }
-    for (let row of s.records(parameters,key)) { body = body+"ui.Text(text: "+await literal(s.text(row.label)+": "+s.text(row.value),"string")+")"; }
-    if (s.records(parameters,key).length === 0) { body = body+"ui.Text(text: \"No disclosed facts\", style: \"muted\")"; }
+    let rows: Record<string, unknown>[] = s.records(parameters,key);
+    // Stat is the pack's labelled value and is valid on every target's component subset, unlike the
+    // key/value group, so a fact section renders on a card as well as on a screen or chat target.
+    let group: string = "ui.MetricGroup() {";
+    for (let row of rows) { group = group+"ui.Stat(label: "+await literal(s.text(row.label),"string")+", value: "+await literal(s.text(row.value),"string")+")"; }
+    if (rows.length === 0) { body = body+"ui.Text(text: \"No disclosed facts\", style: \"muted\")"; } else { body = body+group+"}"; }
+  } else if (kind === "data_table") {
+    // Array props have no view literal, so the supplied cells are seeded into authoritative state and
+    // reach the table through the compiler mechanism instead of being re-spelled in view syntax.
+    let rows: string[][] = parameters.rows as string[][]; let rowsBody: string = ""; let index: number = 0;
+    // The declared column count is the decoded header count, so it is three by the row contract.
+    let columns: number = (parameters.headers as string[]).length;
+    // A section with no rows binds no table node, so it seeds no state at all.
+    if (rows.length > 0) { fields[0] = {name:"headers",type:"string[]",role:"authoritative",dependencies:[],initial:await literal(parameters.headers as string[],"string[]"),owner:id}; }
+    for (let row of rows) {
+      let name: string = "row_"+String(index);
+      fields[fields.length] = {name:name,type:"string[]",role:"authoritative",dependencies:[],initial:await literal(row,"string[]"),owner:id};
+      rowsBody = rowsBody+"ui.TableRow(cells: state."+name+")"; index = index+1;
+    }
+    if (rows.length === 0) { body = body+"ui.Text(text: \"No disclosed rows\", style: \"muted\")"; }
+    else { body = body+"ui.Table(headers: state.headers, columns: "+await literal(columns,"number")+") {"+rowsBody+"}"; }
+  } else if (kind === "timeline") {
+    let rows: Record<string, unknown>[] = parameters.rows as Record<string, unknown>[]; let rowsBody: string = "";
+    for (let row of rows) {
+      rowsBody = rowsBody+"ui.TimelineItem(title: "+await literal(s.text(row.title),"string")+", subtitle: "+await literal(s.text(row.detail),"string")+", trailing: "+await literal(clock(s.integral(row.minute)),"string")+")";
+    }
+    // The container requires children, so an empty rail is only its explanation.
+    if (rows.length === 0) { body = body+"ui.Text(text: \"No disclosed entries\", style: \"muted\")"; }
+    else { body = body+"ui.Timeline() {"+rowsBody+"}"; }
+  } else if (kind === "bar_chart" || kind === "trend_chart") {
+    let points: Record<string, unknown>[] = parameters.points as Record<string, unknown>[]; let values: number[] = []; let labels: string[] = []; let zero: boolean = true;
+    for (let point of points) { let value: number = s.finite(point.value); values[values.length] = value; labels[labels.length] = s.text(point.label); if (value !== 0) { zero = false; } }
+    if (points.length > 0) {
+      fields[0] = {name:"series",type:"number[]",role:"authoritative",dependencies:[],initial:await literal(values,"number[]"),owner:id};
+      fields[1] = {name:"categories",type:"string[]",role:"authoritative",dependencies:[],initial:await literal(labels,"string[]"),owner:id};
+      // The scale is issued through the same compiler literal mechanism as every other value, so
+      // the declared number reaches the view exactly and no spelling is assembled by hand.
+      let chart: string = "ui.Sparkline(series: state.series, maximum: "+await literal(s.finite(parameters.maximum),"number")+", categories: state.categories";
+      if (kind === "bar_chart") { chart = chart+", bars: true, minimum: "+await literal(0,"number")+")"; }
+      else { chart = chart+", minimum: "+await literal(s.finite(parameters.minimum),"number")+")"; }
+      body = body+chart;
+    }
+    if (points.length === 0) { body = body+"ui.Text(text: \"No disclosed points\", style: \"muted\")"; }
+    else if (zero) { body = body+"ui.Text(text: \"All values are zero\", style: \"muted\")"; }
   } else if (kind === "actions") {
     fields[0] = {name:"selected",type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:id}; declarations = "export class Select { value: string; rank: number; }"; updates[0] = {action:"Select",function:"select"};
     helpers = "export function select(state: AppState, action: Select): AppState { return {selected:action.value}; }";

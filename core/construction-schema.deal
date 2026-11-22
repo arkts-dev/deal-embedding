@@ -27,6 +27,5 @@ export function oneOf(value: unknown, allowed: string[]): string { let name: str
 export function records(owner: Record<string, unknown>, name: string): Record<string, unknown>[] { if (!Object.hasOwn(owner,name)) { return []; } return decoded.records(owner[name]); }
 export function stringArray(value: unknown): string[] { return decoded.strings(value); }
 export function optionalText(owner: Record<string, unknown>, name: string): string { if (!Object.hasOwn(owner,name)) { return ""; } return owner[name] as string; }
-export function optionalBoolean(owner: Record<string, unknown>, name: string, fallback: boolean): boolean { if (!Object.hasOwn(owner,name)) { return fallback; } return owner[name] as boolean; }
 export function encode(value: unknown): string { return JSON.stringify(value) as string; }
 export function main(): void { return; }

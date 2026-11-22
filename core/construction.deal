@@ -112,7 +112,14 @@ export async function run(input: writing.Input, context: selecting.Context, plan
       } }
     } }
     if (!ownershipChecked) { entry.accepted = false; entry.reason = "Content ownership unchecked"; }
-    if (entry.accepted && !catalogue.disclosed(entry,context.original,context.facts,userOwned)) { entry.accepted = false; entry.reason = "Undisclosed personal or factual content"; }
+    if (entry.accepted) { let undecided: string = catalogue.disclosed(entry,context.original,context.facts,userOwned); if (undecided !== "") {
+      entry.accepted = false; entry.reason = undecided;
+      // The refused instance leaves its need missing with the located reason, so the diagnostic names
+      // the instance and offending row instead of a generic coverage gap. A filled slot is never
+      // demoted: one selected alternative per need makes that unreachable today, and the guard keeps
+      // a future second implementation from silently losing its coverage.
+      for (let slot of composition.screen.slots) { if (slot.need === entry.need && slot.status !== "filled") { slot.status = "missing"; slot.reason = undecided; } }
+    } }
   }
   // Publishers first; typed reader resolution is deterministic and never model-issued.
   let pending: screens.Instance[] = [];

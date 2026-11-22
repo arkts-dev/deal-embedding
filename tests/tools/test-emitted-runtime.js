@@ -158,20 +158,87 @@ const {providerContract,declaration}=require('./fixtures/provider-contract.js');
   assert.deepEqual(texts(tree).filter(entry=>entry.style==='danger'),[]);
 }
 
-// --- catalogue-sections: disclosed rows and a highlighted message render as spec text.
+// --- catalogue-sections: disclosed facts keep their label/value roles and a highlight renders as text.
 {
   const runtime=open('catalogue-sections');
   const source=runtime.source();
-  assert(source.includes('ui.Text(text: "first: items")'),'the facts rows render as spec text');
+  assert(source.includes('ui.MetricGroup() {'),source);
+  assert(source.includes('ui.Stat(label: "first", value: "items")'),source);
+  assert(source.includes('ui.Stat(label: "second", value: "done")'),source);
   assert(source.includes('ui.Text(text: "Highlighted message")'),'the highlighted message renders as spec text');
   const tree=runtime.tree();
-  for (const message of ['Facts','Disclosed','first: items','Highlighted message','second: done']) {
+  for (const message of ['Facts','Disclosed','Highlighted message']) {
     assert.deepEqual(withText(tree,message).length,1,'the emitted section text renders once: '+message);
   }
+  let facts=[];
+  nodes(tree,'Stat',node=>facts.push({label:props(node).label.stringValue,value:props(node).value.stringValue}));
+  assert.deepEqual(facts,[{label:'first',value:'items'},{label:'second',value:'done'}],'each fact keeps its label and value roles');
   assert.deepEqual(texts(tree).filter(entry=>entry.style!==''),[],'the section texts carry no style');
-  // Declaration order is preserved: the facts section, then the highlight, then the details.
-  const order=texts(tree).map(entry=>entry.text);
-  assert(order.indexOf('first: items')<order.indexOf('Highlighted message')&&order.indexOf('Highlighted message')<order.indexOf('second: done'),JSON.stringify(order));
+  // Declaration order is preserved: the metric, then the highlight, then the key fact.
+  const order=[];walk(tree,node=>{const last=node.component.split('.').pop();if(last==='Stat')order.push(props(node).label.stringValue);else if(last==='Text'&&props(node).text.stringValue==='Highlighted message')order.push('Highlighted message');});
+  assert.deepEqual(order,['first','Highlighted message','second'],JSON.stringify(order));
+}
+
+// --- catalogue-readonly: the table, rail, charts and fact containers carry the disclosed values.
+{
+  const runtime=open('catalogue-readonly');
+  const source=runtime.source(),deal=runtime.deal();
+  assert(source.includes('ui.Table(headers: state.f_section_table_headers, columns: 3.0) {'),source);
+  assert(source.includes('ui.TableRow(cells: state.f_section_table_row_0)'),source);
+  assert(source.includes('ui.TableRow(cells: state.f_section_table_row_1)'),source);
+  assert(source.includes('ui.TimelineItem(title: "Standup", subtitle: "daily", trailing: "09:30")'),source);
+  assert(source.includes('ui.TimelineItem(title: "Review", subtitle: "", trailing: "10:00")'),source);
+  assert(source.includes('ui.Sparkline(series: state.f_section_bars_series, maximum: 10.0, categories: state.f_section_bars_categories, bars: true, minimum: 0.0)'),source);
+  assert(source.includes('ui.Sparkline(series: state.f_section_trend_series, maximum: 3.0, categories: state.f_section_trend_categories, minimum: (-3.0))'),source);
+  // Display-only sections own no mutating surface: no action, effect or update is issued for them.
+  assert(!/@ui-effect/.test(deal),'a read-only section issues no effect');
+  assert(!/@ui-update/.test(deal),'a read-only section issues no update');
+  const initial=runtime.state();
+  assert.deepEqual(initial.f_section_table_headers,['Item','Amount','Note']);
+  assert.deepEqual(initial.f_section_table_row_0,['Rent','40','paid']);
+  // The escaped cell round-trips through the compiler: quotes, a backslash, a newline, an astral pair
+  // and a control unit reach the running state exactly as decoded.
+  assert.deepEqual(initial.f_section_table_row_1,['Food','2.5','sh"q\\b\n\u{1F600}\u0001end'],'the compiled literal keeps the escaped text');
+  assert.deepEqual(initial.f_section_trend_series,[-2,0.25,3],'negative and fractional chart values survive initialization');
+  assert.deepEqual(initial.f_section_bars_series,[0,2.5,10]);
+  assert.deepEqual(initial.f_section_bars_categories,['Mon','Tue','Wed'],'chart categories keep the supplied order');
+  const tree=runtime.tree();
+  let table;
+  nodes(tree,'Table',node=>{table=props(node);});
+  assert.deepEqual(JSON.parse(table.headers.stringValue),['Item','Amount','Note'],'the table transports its headers as declared');
+  assert.strictEqual(table.columns.numberValue,3,'the table declares three columns');
+  const rows=[];
+  nodes(tree,'TableRow',node=>rows.push(JSON.parse(props(node).cells.stringValue)));
+  assert.deepEqual(rows,[['Rent','40','paid'],['Food','2.5','sh"q\\b\n\u{1F600}\u0001end']],'table rows keep supplied order and cells');
+  const rail=[];
+  nodes(tree,'TimelineItem',node=>rail.push({title:props(node).title.stringValue,subtitle:props(node).subtitle.stringValue,trailing:props(node).trailing.stringValue}));
+  assert.deepEqual(rail,[{title:'Standup',subtitle:'daily',trailing:'09:30'},{title:'Review',subtitle:'',trailing:'10:00'}],'the rail keeps the supplied order');
+  const charts=[];
+  nodes(tree,'Sparkline',node=>{const values=props(node);charts.push({series:JSON.parse(values.series.stringValue),maximum:values.maximum.numberValue,minimum:values.minimum.numberValue,bars:values.bars!==undefined,categories:JSON.parse(values.categories.stringValue)});assert(values.bars===undefined||values.bars.booleanValue===true,'a declared bars property is a boolean flag');});
+  assert.equal(charts.length,2,'both charts render');
+  assert.deepEqual(charts[0],{series:[0,2.5,10],maximum:10,minimum:0,bars:true,categories:['Mon','Tue','Wed']},'the bar chart declares zero-based bars');
+  assert.deepEqual(charts[1],{series:[-2,0.25,3],maximum:3,minimum:-3,bars:false,categories:['a','b','c']},'the trend chart declares its line scale');
+  assert.deepEqual(withText(tree,'Disclosed table').length,1);
+  assert.deepEqual(withText(tree,'Disclosed rail').length,1);
+  assert.deepEqual(texts(tree).filter(entry=>entry.style==='danger'),[]);
+}
+
+// --- catalogue-readonly-empty: empty sections compile as their explanation alone.
+{
+  const runtime=open('catalogue-readonly-empty');
+  const source=runtime.source(),deal=runtime.deal();
+  for(const notice of ['No disclosed rows','No disclosed entries','No disclosed points']){
+    assert(source.includes('ui.Text(text: "'+notice+'", style: "muted")'),notice+' renders as an unconditional explanation');
+    assert.equal(withText(runtime.tree(),notice,'muted').length,1,notice+' appears once');
+  }
+  // The pack requires children on Table and Timeline: an empty section binds no container and no picture.
+  assert(!source.includes('ui.Table(')&&!source.includes('ui.Timeline(')&&!source.includes('ui.Sparkline('),source);
+  for(const component of ['Table','TableRow','Timeline','TimelineItem','Sparkline']){
+    let seen=0;nodes(runtime.tree(),component,()=>{seen++;});
+    assert.equal(seen,0,'an empty section binds no '+component+' node');
+  }
+  assert(!deal.includes('f_section_table_')&&!deal.includes('f_section_rail_')&&!deal.includes('f_section_bars_'),'an empty section seeds no state');
+  assert.deepEqual(Object.keys(runtime.state()).filter(name=>name.startsWith('f_section_')),[],'the emitted state seeds no section field');
 }
 
 // --- partial: the unresolved-need notice instance shows its message unconditionally.
@@ -222,5 +289,5 @@ const {providerContract,declaration}=require('./fixtures/provider-contract.js');
   assert.strictEqual(stale.f_parts_scalar_0_pending,false);
 }
 
-console.log('emitted runtime: toggle boolean payload, guarded draft reason and reason-free state, the five notice sites and the emitted scalar-read Load payload passed');
+console.log('emitted runtime: toggle boolean payload, guarded draft reason and reason-free state, the five notice sites, the emitted scalar-read Load payload, the pack fact containers and the read-only catalogue sections passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});
