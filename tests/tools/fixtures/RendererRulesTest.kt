@@ -94,7 +94,12 @@ fun main(args: Array<String>) {
     rejected(surface(width = Double.NaN), "PROP_FAULT", "Surface", "width", "nonnegative")
     accepted(node("Layers", listOf(number("width", 0.0), number("height", 1.0))))
     rejected(node("Layers", listOf(number("width", -1.0), number("height", 1.0))), "PROP_FAULT", "Layers", "width", "nonnegative")
-    rejected(node("Timer", listOf(number("millis", -1.0), flag("down", true))), "PROP_FAULT", "Timer", "millis", "nonnegative")
+    accepted(node("Timer", listOf(number("millis", -86_400_000.0), flag("down", false))))
+    accepted(node("Timer", listOf(number("millis", 0.0), flag("down", true))))
+    accepted(node("Timer", listOf(number("millis", 1_700_000_000_000.0), flag("down", true))))
+    rejected(node("Timer", listOf(number("millis", Double.NaN), flag("down", true))), "PROP_FAULT", "Timer", "millis", "finite")
+    rejected(node("Timer", listOf(number("millis", Double.POSITIVE_INFINITY), flag("down", false))),
+        "PROP_FAULT", "Timer", "millis", "finite")
     accepted(node("Ticker", listOf(text("id", "t"), number("intervalMs", 1.0), flag("running", false), action("onTick"))))
     rejected(node("Ticker", listOf(text("id", "t"), number("intervalMs", 0.0), flag("running", false), action("onTick"))),
         "PROP_FAULT", "Ticker", "intervalMs", "positive")
@@ -189,6 +194,12 @@ fun main(args: Array<String>) {
     accepted(node("Text", listOf(text("text", "x"), text("style", "unknown-style"))))
     check(StyleFamilies.resolve("Text", "") == "body")
     check(StyleFamilies.resolve("Text", "nonsense") == "body")
+    // Timer carries the text style family: its painter asks the family whether the value is the
+    // heading, which paints with distinct typography, and paints every other value as body.
+    check(StyleFamilies.heading("Timer", "heading"))
+    check(!StyleFamilies.heading("Timer", ""))
+    check(!StyleFamilies.heading("Timer", "caption"))
+    check(!StyleFamilies.heading("Timer", "nonsense"))
     check(StyleFamilies.resolve("Button", "primary") == "primary")
     accepted(node("Tile", listOf(text("label", "l"), text("value", "v"), number("span", 2.0))))
     rejected(node("Tile", listOf(text("label", "l"), text("value", "v"), number("span", 3.0))), "PROP_FAULT", "Tile", "span")
@@ -246,7 +257,7 @@ fun main(args: Array<String>) {
     fun cardTree(surfaces: Int, shapesPerSurface: Int = 60, motions: Int = 5, timers: Int = 3, extra: List<UiNode> = emptyList()) =
         node("root", children = (0 until surfaces).map { surface(shapes = rectShapes(shapesPerSurface)) } +
             (0 until motions).map { node("Motion", listOf(number("trigger", 1.0))) } +
-            (0 until timers).map { node("Timer", listOf(number("millis", 1.0), flag("down", false))) } + extra)
+            (0 until timers).map { node("Timer", listOf(number("millis", 1_700_000_000_000.0), flag("down", false))) } + extra)
     accepted(cardTree(5), "card")
     accepted(cardTree(5, 60, 5, 3, listOf(node("Path", listOf(text("commands", "M0 0 L1 1"))))), "card")
     rejected(cardTree(6), "CARD_FAULT", "Surface", target = "card")
@@ -337,6 +348,118 @@ fun main(args: Array<String>) {
         "a superseded draft is replaced by the authoritative presentation"
     }
     check(DraftText.reconciled(Draft("typed", "0.5"), "0.5", "1") == Draft("typed", "0.5")) { "a live draft is kept" }
+    // Native Timer presentation: millis is a Unix epoch deadline (down) or origin, compared with
+    // the presentation clock; the distance is displayed, never the epoch itself.
+    val timerEpoch = 1_700_000_000_000.0
+    check(TimerPresentation.text(timerEpoch, down = true, clockMillis = (timerEpoch - 65_000).toLong()) == "1:05 left")
+    check(TimerPresentation.text(timerEpoch, down = false, clockMillis = (timerEpoch + 65_000).toLong()) == "1:05 ago")
+    // A deadline reaches zero at the deadline, never before; an origin counts from zero at the origin.
+    fun deadline(offsetMillis: Long) = TimerPresentation.text(timerEpoch, down = true, clockMillis = (timerEpoch + offsetMillis).toLong())
+    fun origin(offsetMillis: Long) = TimerPresentation.text(timerEpoch, down = false, clockMillis = (timerEpoch + offsetMillis).toLong())
+    check(deadline(-2_000) == "0:02 left")
+    check(deadline(-1_001) == "0:02 left")
+    check(deadline(-1_000) == "0:01 left")
+    check(deadline(-1) == "0:01 left")
+    check(deadline(0) == "0:00 left")
+    check(deadline(1) == "0:00 left")
+    check(origin(-1_000) == "0:00 ago")
+    check(origin(0) == "0:00 ago")
+    check(origin(999) == "0:00 ago")
+    check(origin(1_000) == "0:01 ago")
+    check(origin(1_999) == "0:01 ago")
+    check(origin(2_000) == "0:02 ago")
+    check(origin(3_661_000) == "1:01:01 ago")
+    check(deadline(-3_661_000) == "1:01:01 left")
+    // Visible progress recomputes from the clock and stops ticking once a deadline is reached.
+    check(TimerPresentation.nextTickMillis(timerEpoch, down = true, clockMillis = (timerEpoch - 5_000).toLong()) == 1_000L)
+    check(TimerPresentation.nextTickMillis(timerEpoch, down = true, clockMillis = (timerEpoch - 1_500).toLong()) == 500L)
+    check(TimerPresentation.nextTickMillis(timerEpoch, down = true, clockMillis = (timerEpoch - 1).toLong()) == 1L)
+    check(TimerPresentation.nextTickMillis(timerEpoch, down = true, clockMillis = (timerEpoch).toLong()) == null)
+    check(TimerPresentation.nextTickMillis(timerEpoch, down = true, clockMillis = (timerEpoch + 1).toLong()) == null)
+    check(TimerPresentation.nextTickMillis(timerEpoch, down = false, clockMillis = (timerEpoch + 1_500).toLong()) == 500L)
+    check(TimerPresentation.nextTickMillis(timerEpoch, down = false, clockMillis = (timerEpoch + 2_000).toLong()) == 1_000L)
+    // The visible tick loop advances one second at a time and releases itself at the deadline.
+    var visibleClock = (timerEpoch - 5_000).toLong()
+    val visible = mutableListOf<String>()
+    while (true) {
+        visible.add(TimerPresentation.text(timerEpoch, down = true, clockMillis = visibleClock))
+        val wait = TimerPresentation.nextTickMillis(timerEpoch, down = true, clockMillis = visibleClock) ?: break
+        visibleClock += wait
+    }
+    check(visible == listOf("0:05 left", "0:04 left", "0:03 left", "0:02 left", "0:01 left", "0:00 left")) {
+        "visible progress drifted: $visible"
+    }
+    check(visibleClock == timerEpoch.toLong()) { "the countdown stopped at the deadline, got ${visibleClock - timerEpoch.toLong()}ms" }
+    // An origin later than the clock shows no elapsed time and wakes when the display can change.
+    check(TimerPresentation.text(timerEpoch, down = false, clockMillis = (timerEpoch - 500).toLong()) == "0:00 ago")
+    check(TimerPresentation.nextTickMillis(timerEpoch, down = false, clockMillis = (timerEpoch - 500).toLong()) == 1_500L)
+    check(TimerPresentation.nextTickMillis(timerEpoch, down = false, clockMillis = (timerEpoch - 1).toLong()) == 1_001L)
+    check(TimerPresentation.nextTickMillis(timerEpoch, down = false, clockMillis = timerEpoch.toLong()) == 1_000L)
+    // A sub-millisecond remainder still schedules a positive wait instead of spinning on zero,
+    // and a deadline that close still shows a whole second so it never reaches zero early.
+    check(TimerPresentation.text(timerEpoch + 0.4, down = true, clockMillis = timerEpoch.toLong()) == "0:01 left")
+    check(TimerPresentation.nextTickMillis(timerEpoch + 0.4, down = true, clockMillis = timerEpoch.toLong()) == 1L)
+    // A fractional distance wakes at the boundary its own displayed second uses, and the remainder
+    // is rounded up so the wake never lands a millisecond before the second it announces: 1000.5ms
+    // away still shows "0:02 left" and wakes once, at the second it drops to "0:01".
+    check(TimerPresentation.text(timerEpoch + 1_000.5, down = true, clockMillis = timerEpoch.toLong()) == "0:02 left")
+    check(TimerPresentation.nextTickMillis(timerEpoch + 1_000.5, down = true, clockMillis = timerEpoch.toLong()) == 1L)
+    check(TimerPresentation.text(timerEpoch + 999.5, down = true, clockMillis = timerEpoch.toLong()) == "0:01 left")
+    // A remainder beyond a whole second rounds up too: 2500.7ms away wakes after 501ms on the second
+    // that turns "0:03" into "0:02", instead of a millisecond early on an unchanged reading.
+    check(TimerPresentation.text(timerEpoch + 2_500.7, down = true, clockMillis = timerEpoch.toLong()) == "0:03 left")
+    check(TimerPresentation.nextTickMillis(timerEpoch + 2_500.7, down = true, clockMillis = timerEpoch.toLong()) == 501L)
+    check(TimerPresentation.text(timerEpoch + 2_500.7, down = true, clockMillis = timerEpoch.toLong() + 501L) == "0:02 left")
+    // The same rounding in the origin direction, where truncating the remainder would wake a
+    // millisecond early on the reading it already shows.
+    check(TimerPresentation.text(timerEpoch + 0.5, down = false, clockMillis = timerEpoch.toLong() + 1_500) == "0:01 ago")
+    check(TimerPresentation.nextTickMillis(timerEpoch + 0.5, down = false, clockMillis = timerEpoch.toLong() + 1_500) == 501L)
+    check(TimerPresentation.text(timerEpoch + 0.5, down = false, clockMillis = timerEpoch.toLong() + 2_001) == "0:02 ago")
+    // A distant future origin re-reads the clock within a bounded span instead of waiting unbounded
+    // and instead of spinning on a millisecond: the wait clears the 1ms floor and never overruns the
+    // boundary it waits for.
+    check(TimerPresentation.nextTickMillis(timerEpoch + 172_800_000.0, down = false, clockMillis = timerEpoch.toLong()) in 1_001L..172_800_000L) {
+        "a far-future origin neither spins nor waits past the second its display changes"
+    }
+    // A deadline always waits for its next displayed boundary, so even an epoch thirty-one thousand
+    // years out waits one second: the re-read bound belongs to origins, never to a running countdown.
+    check(TimerPresentation.nextTickMillis(1e15, down = true, clockMillis = 0L) == 1_000L)
+    check(TimerPresentation.nextTickMillis(1e300, down = false, clockMillis = 0L) == null)
+    // Signed finite epochs are valid: a pre-1970 origin is a real distance from the clock.
+    check(TimerPresentation.text(-86_400_000.0, down = false, clockMillis = 0L) == "24:00:00 ago")
+    check(TimerPresentation.text(-86_400_000.0, down = true, clockMillis = 0L) == "0:00 left")
+    check(TimerPresentation.nextTickMillis(-86_400_000.0, down = true, clockMillis = 0L) == null)
+    // A finite but extreme epoch still paints a whole unsigned duration instead of overflowing or
+    // printing exponent notation; how long that duration is remains the presentation's own choice.
+    fun durationText(text: String, suffix: String): Boolean {
+        if (!text.endsWith(" $suffix")) return false
+        val parts = text.removeSuffix(" $suffix").split(":")
+        if (parts.any { part -> part.isEmpty() || part.any { it !in '0'..'9' } }) return false
+        return parts.size == 2 || (parts.size == 3 && parts[1].length == 2 && parts[2].length == 2)
+    }
+    check(durationText(TimerPresentation.text(1e300, down = true, clockMillis = 0L), "left")) {
+        "an extreme deadline epoch is not painted as a duration: '${TimerPresentation.text(1e300, down = true, clockMillis = 0L)}'"
+    }
+    check(durationText(TimerPresentation.text(-1e300, down = false, clockMillis = 0L), "ago")) {
+        "an extreme origin epoch is not painted as a duration: '${TimerPresentation.text(-1e300, down = false, clockMillis = 0L)}'"
+    }
+    check(TimerPresentation.nextTickMillis(1e300, down = true, clockMillis = 0L) == null)
+    check(TimerPresentation.nextTickMillis(-1e300, down = false, clockMillis = 0L) == null)
+    // Ingress rejects a nonfinite epoch first; an unvalidated one still reads as no distance in
+    // either direction and ticks not at all, rather than crashing, printing a sentinel duration or
+    // spinning the tick loop on a zero wait.
+    check(TimerPresentation.text(Double.NaN, down = true, clockMillis = 0L) == "0:00 left")
+    check(TimerPresentation.text(Double.NaN, down = false, clockMillis = 0L) == "0:00 ago")
+    check(TimerPresentation.text(Double.POSITIVE_INFINITY, down = true, clockMillis = 0L) == "0:00 left")
+    check(TimerPresentation.text(Double.POSITIVE_INFINITY, down = false, clockMillis = 0L) == "0:00 ago")
+    check(TimerPresentation.text(Double.NEGATIVE_INFINITY, down = true, clockMillis = 0L) == "0:00 left")
+    check(TimerPresentation.text(Double.NEGATIVE_INFINITY, down = false, clockMillis = 0L) == "0:00 ago")
+    check(TimerPresentation.nextTickMillis(Double.NaN, down = true, clockMillis = 0L) == null)
+    check(TimerPresentation.nextTickMillis(Double.NaN, down = false, clockMillis = 0L) == null)
+    check(TimerPresentation.nextTickMillis(Double.POSITIVE_INFINITY, down = true, clockMillis = 0L) == null)
+    check(TimerPresentation.nextTickMillis(Double.POSITIVE_INFINITY, down = false, clockMillis = 0L) == null)
+    check(TimerPresentation.nextTickMillis(Double.NEGATIVE_INFINITY, down = true, clockMillis = 0L) == null)
+    check(TimerPresentation.nextTickMillis(Double.NEGATIVE_INFINITY, down = false, clockMillis = 0L) == null)
 
     // Dispatch completeness and the root wrapper mapping.
     accepted(node("root", children = listOf(node("Text", listOf(text("text", "x"))))))

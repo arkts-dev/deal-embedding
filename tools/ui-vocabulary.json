@@ -2088,7 +2088,7 @@
       "prop": "Ticker.intervalMs"
     },
     {
-      "class": "nonnegative",
+      "class": "finite",
       "prop": "Timer.millis"
     },
     {

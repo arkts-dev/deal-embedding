@@ -215,6 +215,29 @@ private val DraftSaver = listSaver<Draft, String>(
     }
 }
 
+/**
+ * Native Timer: the epoch deadline or origin compared with the presentation clock while visible.
+ * Ticking owns only this node's presentation: it changes no AppState, dispatches no action and
+ * performs no business completion. Hiding or leaving the composition cancels the tick loop, and
+ * the next visible tick recomputes from the current clock instead of replaying hidden time.
+ */
+@Composable private fun NativeTimer(epochMillis: Double, down: Boolean, heading: Boolean) {
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    var clockMillis by remember(epochMillis, down) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(epochMillis, down, lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                clockMillis = now
+                val wait = TimerPresentation.nextTickMillis(epochMillis, down, now) ?: break
+                delay(wait)
+            }
+        }
+    }
+    Text(TimerPresentation.text(epochMillis, down, clockMillis),
+        style = if (heading) PackTheme.heading else PackTheme.body)
+}
+
 /** Frame and pointer delivery for a Surface; the frame-target rule decides whether frames subscribe. */
 @Composable private fun FramedGraphicsSurface(width: Double, height: Double, shapes: JsonValue?, pointerSlot: Int?, frameSlot: Int?,
                                              dispatch: (Int, String?) -> Unit) {
@@ -373,7 +396,7 @@ private val DraftSaver = listSaver<Draft, String>(
             if (values.text("supporting").isNotEmpty()) Text(values.text("supporting"), style = PackTheme.body, color = PackTheme.muted)
             children()
         }
-        RenderComponent.Text -> Text(values.text("text"), style = if (StyleFamilies.resolve("Text", styleName) == "heading") PackTheme.heading else PackTheme.body)
+        RenderComponent.Text -> Text(values.text("text"), style = if (StyleFamilies.heading("Text", styleName)) PackTheme.heading else PackTheme.body)
         RenderComponent.NumberText -> Text(NumericPresentation.display(values.number("value"), values.all), style = PackTheme.value)
         RenderComponent.ClockText -> Text(NumericPresentation.format(values.number("minutes"), values.text("prefix"), values.text("suffix"), 2, 0))
         RenderComponent.Image -> ImageContent(values.text("src"), values.text("alt"))
@@ -560,10 +583,7 @@ private val DraftSaver = listSaver<Draft, String>(
             .background(PackTheme.muted.copy(alpha = .2f), RoundedCornerShape(if (values.flag("rounded")) 12.dp else 0.dp)))
         RenderComponent.Divider -> Box(Modifier.fillMaxWidth().height(1.dp).background(PackTheme.muted.copy(alpha = .3f)))
         RenderComponent.Spacer -> Spacer(Modifier.height(when (StyleFamilies.resolve("Spacer", styleName)) { "small" -> 4.dp; "large" -> 24.dp; "none" -> 0.dp; else -> 12.dp }))
-        RenderComponent.Timer -> {
-            val millis = values.number("millis")
-            Text(NumericPresentation.format(kotlin.math.floor(millis / 1000), "", "s", 1, 0) + if (values.flag("down")) " left" else " ago", style = PackTheme.body)
-        }
+        RenderComponent.Timer -> NativeTimer(values.number("millis"), values.flag("down"), StyleFamilies.heading("Timer", styleName))
         RenderComponent.Ticker -> {
             val running = values.flag("running")
             val interval = values.number("intervalMs").toLong().coerceAtLeast(1)

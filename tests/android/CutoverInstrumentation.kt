@@ -13,10 +13,12 @@ class CutoverInstrumentation : Instrumentation() {
     private var targetsOnly=false
     private var imagesOnly=false
     private var tabsOnly=false
-    override fun onCreate(arguments: Bundle?) { targetsOnly=arguments?.getString("targets")=="true";providersOnly=arguments?.getString("providers")=="true";tabsOnly=arguments?.getString("tabs")=="true";scenarioInput=arguments?.getString("scenarios");replaySource=arguments?.getString("replay")=="true";imagesOnly=arguments?.getString("images")=="true";super.onCreate(arguments); start() }
+    private var timerOnly=false
+    override fun onCreate(arguments: Bundle?) { timerOnly=arguments?.getString("timer")=="true";targetsOnly=arguments?.getString("targets")=="true";providersOnly=arguments?.getString("providers")=="true";tabsOnly=arguments?.getString("tabs")=="true";scenarioInput=arguments?.getString("scenarios");replaySource=arguments?.getString("replay")=="true";imagesOnly=arguments?.getString("images")=="true";super.onCreate(arguments); start() }
     override fun onStart() {
         val result=Bundle()
         try {
+            if(timerOnly){result.putString("result",checkTimerPainter(this));finish(-1,result);return}
             if(targetsOnly){result.putString("result",checkTargetTransport(targetContext));finish(-1,result);return}
             if(imagesOnly){result.putString("result",checkImageRendering(this,targetContext));finish(-1,result);return}
             if(tabsOnly){result.putString("result",checkTabsRendering(this));finish(-1,result);return}

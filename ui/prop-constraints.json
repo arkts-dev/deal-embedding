@@ -24,7 +24,7 @@
     {"prop": "Table.columns", "class": "integral-index"},
     {"prop": "Tabs.selected", "class": "integral-index"},
     {"prop": "Ticker.intervalMs", "class": "positive"},
-    {"prop": "Timer.millis", "class": "nonnegative"},
+    {"prop": "Timer.millis", "class": "finite"},
     {"prop": "Transform.durationMs", "class": "nonnegative"},
     {"prop": "Transform.pose", "class": "pose"},
     {"prop": "Transform.size", "class": "nonnegative"}

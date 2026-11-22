@@ -136,5 +136,9 @@ internal object StyleFamilies {
         return if (style in allowed) style else fallback
     }
 
+    /** Painters that give the heading family value its own typography (Text and Timer); their other
+     *  family values paint as body. */
+    fun heading(component: String, style: String): Boolean = resolve(component, style) == "heading"
+
     fun icon(name: String): Boolean = name.isEmpty() || name in icons
 }
