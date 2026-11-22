@@ -65,7 +65,7 @@ internal class SuggestionSurface(context: Context, title: String, private val op
     }
 }
 
-@Composable internal fun SuggestionCard(context: Context, suggestion: DiscoverySuggestion, open: () -> Unit, dismiss: () -> Unit, failed: (Throwable) -> Unit) {
+@Composable internal fun SuggestionCard(context: Context, suggestion: DiscoverySuggestion, open: () -> Unit, dismiss: () -> Unit, failed: (Throwable) -> Unit, limits: ExecutionLimits) {
     var surface by remember(suggestion) { mutableStateOf<SuggestionSurface?>(null) }
     DisposableEffect(suggestion) {
         val worker = Executors.newSingleThreadExecutor(); val main = Handler(Looper.getMainLooper())
@@ -79,6 +79,9 @@ internal class SuggestionSurface(context: Context, title: String, private val op
         onDispose { synchronized(lock) { closed=true; owner?.let { worker.execute { it.close() } } }; worker.shutdown() }
     }
     // The fixed trusted suggestion view is not a candidate and carries no issued target; it is
-    // framework UI authored for the host default surface target, so no card profile applies.
-    surface?.let { owner -> owner.tree?.let { DealRenderer(it,"screen",owner::dispatch) } }
+    // framework UI authored for the host default surface target, so no card profile applies. Its
+    // resources still use the host's configured bounds rather than library defaults.
+    surface?.let { owner -> owner.tree?.let { tree ->
+        CompositionLocalProvider(LocalExecutionLimits provides limits) { DealRenderer(tree, "screen", owner::dispatch) }
+    } }
 }

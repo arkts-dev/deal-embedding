@@ -41,7 +41,12 @@ python3 demos/tools/generation-gateway.py --backend cerebras --enable-cerebras
 adb reverse tcp:8787 tcp:8787
 adb shell am instrument --user 0 -w dev.deal.cutover.tests/.CutoverInstrumentation
 adb shell am instrument --user 0 -w -e providers true dev.deal.cutover.tests/.CutoverInstrumentation
+adb shell am instrument --user 0 -w -e images true dev.deal.cutover.tests/.CutoverInstrumentation
 ```
+
+The `providers` lane executes the provider fixtures; the `images` lane renders the Image painter over controlled loopback pictures (content, failure with alt text, source replacement and removal) against the production renderer and transport. A device lane is evidence only for the states it observed, never for human visual acceptance.
+
+Generated `Image` content is fetched over the same rule as the gateway (HTTPS, or loopback HTTP), and no dependency, permission or manifest entry is added to the packaged AAR: an application that shows images declares `android.permission.INTERNET` in its own manifest, and a loopback `http` source also follows the platform's cleartext policy for that host. Without the permission a resource reports `IMAGE_UNAVAILABLE`; a host that denies cleartext to loopback through its network security configuration gets `IMAGE_TRANSPORT` before any request. The renderer never switches transport.
 
 Generation selects `cerebras` (APK default), `cortex` or `deepseek-flash`; discovery selects independently `nano`/`deepseek-flash`. The gateway uses Jev by default for DEAL-issued bounded questions and requires its host-side key; it never falls back to the general model. Remote discovery needs separate explicit opt-in. Credentials stay host-side in the gateway, never copied into the repository or APKs. No automatic retries or backend switches. `tools/embedding-log.py` and the opt-in `review-demo-screen.py` are copied demo utilities; neither runs during builds/tests.
 

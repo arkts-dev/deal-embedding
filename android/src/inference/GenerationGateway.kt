@@ -17,9 +17,8 @@ class GenerationGatewayConfig(
     val responseBytes: Int = 16 * 1024 * 1024
 ) {
     init {
-        val uri = URI(endpoint)
-        require(uri.isAbsolute && !uri.host.isNullOrEmpty() && uri.rawUserInfo == null && uri.rawFragment == null) { "Invalid generation gateway endpoint" }
-        require(uri.scheme == "https" || uri.scheme == "http" && uri.host in setOf("127.0.0.1", "localhost", "[::1]")) { "Generation gateway requires HTTPS or loopback HTTP" }
+        // The shared transport rule: HTTPS, or loopback HTTP, without embedded credentials.
+        TransportPolicy.endpoint(endpoint)
         require(backend.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}"))) { "Invalid generation backend" }
         require(connectTimeoutMs > 0 && readTimeoutMs > 0 && deadlineMs > 0 && requestBytes > 0 && responseBytes > 0) { "Gateway limits must be positive" }
     }

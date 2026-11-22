@@ -8,6 +8,8 @@ import dev.deal.embedding.*
 import java.util.concurrent.Executors
 
 internal class AssistanceController(private val context: Context, private val facts: () -> List<DiscoveryFact>, private val protocolFactory: (Context) -> ApplicationProtocol, private val hooks: AssistanceHooks) : AutoCloseable {
+    /** The host-configured bounds this controller's protocol carries to rendered resources. */
+    internal val resourceLimits get() = api?.resourceLimits ?: ExecutionLimits()
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var foreground = false

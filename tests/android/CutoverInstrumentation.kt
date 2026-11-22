@@ -11,11 +11,13 @@ class CutoverInstrumentation : Instrumentation() {
     private var replaySource=false
     private var providersOnly=false
     private var targetsOnly=false
-    override fun onCreate(arguments: Bundle?) { targetsOnly=arguments?.getString("targets")=="true";providersOnly=arguments?.getString("providers")=="true";scenarioInput=arguments?.getString("scenarios");replaySource=arguments?.getString("replay")=="true";super.onCreate(arguments); start() }
+    override fun onCreate(arguments: Bundle?) { targetsOnly=arguments?.getString("targets")=="true";providersOnly=arguments?.getString("providers")=="true";scenarioInput=arguments?.getString("scenarios");replaySource=arguments?.getString("replay")=="true";imagesOnly=arguments?.getString("images")=="true";super.onCreate(arguments); start() }
+    private var imagesOnly=false
     override fun onStart() {
         val result=Bundle()
         try {
             if(targetsOnly){result.putString("result",checkTargetTransport(targetContext));finish(-1,result);return}
+            if(imagesOnly){result.putString("result",checkImageRendering(this,targetContext));finish(-1,result);return}
             checkBudgetAssertions()
             scenarioInput?.let { runScenarios(it,result);return }
             fun answer(id:String,selected:String,options:List<String>)=JSONObject().put("id",id).put("selected",selected).put("probabilities",JSONArray(options.map { JSONObject().put("id",it).put("p",if(it==selected)1 else 0) }))

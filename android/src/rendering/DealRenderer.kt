@@ -3,6 +3,7 @@ package dev.deal.embedding
 import androidx.compose.animation.core.Animatable
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -24,6 +26,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -54,6 +57,53 @@ private class Values(private val map: Map<String, UiValue>) {
 
 private val LocalFramed = compositionLocalOf { false }
 private val LocalCardTarget = compositionLocalOf { false }
+
+/** Host-configured containment bounds for renderer resources; the defaults apply outside a host surface. */
+internal val LocalExecutionLimits = staticCompositionLocalOf { ExecutionLimits() }
+
+/**
+ * A rendered Image: the committed `src` is resolved through the one transport rule and its content
+ * drawn, with `alt` kept as the accessible description in every state. Loading and failure are
+ * explicit states, and the owned request is replaced by a new src, cancelled when the node leaves
+ * the composition and disposed with its composition, so an obsolete completion never replaces the
+ * current picture.
+ */
+@Composable private fun ImageContent(src: String, alt: String) {
+    val limits = LocalExecutionLimits.current
+    var revision by remember { mutableStateOf(0) }
+    val load = remember(limits) { imageLoad(limits) { revision++ } }
+    LaunchedEffect(load, src, alt) { load.show(src, alt) }
+    DisposableEffect(load) { onDispose { load.dispose() } }
+    // Reading the revision subscribes this painter to owned state changes on the delivery lane.
+    @Suppress("UNUSED_VARIABLE") val applied = revision
+    val painting = load.painting
+    // A classified failure is reported once, so a host misconfiguration is diagnosable, and the node
+    // still shows its explicit failure state with the alt text.
+    LaunchedEffect(painting) {
+        if (painting is ImagePainting.Failed) android.util.Log.w("DealRenderer", "Image unavailable: ${painting.code}")
+    }
+    when (painting) {
+        is ImagePainting.Content<*> -> {
+            val picture = painting.resource as android.graphics.Bitmap
+            Image(
+                bitmap = picture.asImageBitmap(),
+                contentDescription = alt.ifEmpty { null },
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().aspectRatio(picture.width.toFloat() / picture.height.coerceAtLeast(1)),
+            )
+        }
+        is ImagePainting.Failed -> Column(Modifier.fillMaxWidth()) {
+            if (alt.isNotEmpty()) Text(alt, style = PackTheme.caption)
+            Text("Image unavailable", style = PackTheme.caption, color = PackTheme.muted)
+        }
+        is ImagePainting.Loading -> Box(
+            Modifier.fillMaxWidth().heightIn(min = 72.dp)
+                .background(PackTheme.muted.copy(alpha = .15f), RoundedCornerShape(12.dp))
+                .semantics { contentDescription = alt }
+        ) { CircularProgressIndicator(Modifier.align(Alignment.Center).size(20.dp), strokeWidth = 2.dp) }
+        is ImagePainting.Blank -> if (alt.isNotEmpty()) Box(Modifier.semantics { contentDescription = alt })
+    }
+}
 
 @Composable private fun PackIcon(name: String, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current) {
     if (name == "minus") { Text("\u2212", modifier = modifier, color = tint); return }
@@ -299,7 +349,7 @@ private val LocalCardTarget = compositionLocalOf { false }
         RenderComponent.Text -> Text(values.text("text"), style = if (StyleFamilies.resolve("Text", styleName) == "heading") PackTheme.heading else PackTheme.body)
         RenderComponent.NumberText -> Text(NumericPresentation.display(values.number("value"), values.all), style = PackTheme.value)
         RenderComponent.ClockText -> Text(NumericPresentation.format(values.number("minutes"), values.text("prefix"), values.text("suffix"), 2, 0))
-        RenderComponent.Image -> Text(values.text("alt"), style = PackTheme.caption, color = PackTheme.muted)
+        RenderComponent.Image -> ImageContent(values.text("src"), values.text("alt"))
         RenderComponent.Icon -> PackIcon(values.text("name"))
         RenderComponent.Badge -> Surface(shape = RoundedCornerShape(999.dp), color = PackTheme.accent) {
             Row(Modifier.padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {

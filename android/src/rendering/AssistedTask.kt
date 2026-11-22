@@ -62,7 +62,7 @@ import dev.deal.embedding.discovery.*
             } else if (!help.failed && help.status.isNotEmpty()) Text(help.status, Modifier.padding(horizontal = 16.dp))
             help.suggestion?.let { tip ->
                 Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth()) {
-                    SuggestionCard(context, tip, { help.open(tip) }, help::dismiss, help::presentationFailure)
+                    SuggestionCard(context, tip, { help.open(tip) }, help::dismiss, help::presentationFailure, help.resourceLimits)
                 }
             }
             Box(Modifier.weight(1f)) { content() }

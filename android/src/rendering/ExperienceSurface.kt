@@ -11,6 +11,8 @@ import java.util.concurrent.Executors
 /** Explicit session owner. Composition attaches observation, never execution ownership. */
 class ExperienceSurface(private val protocol:ApplicationProtocol, val experience:Experience, val target:String=protocol.presentationTarget) : AutoCloseable {
     init { require(target == protocol.presentationTarget) { "Surface target differs from host configuration" } }
+    /** Host-configured containment bounds this surface carries to renderer resources. */
+    internal val limits get() = protocol.resourceLimits
     private val main=Handler(Looper.getMainLooper())
     private val actions=Executors.newSingleThreadExecutor()
     @Volatile private var session:Session?=null
@@ -123,7 +125,9 @@ class ExperienceSurface(private val protocol:ApplicationProtocol, val experience
     LaunchedEffect(surface,lifecycle){lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED){surface.frameVisibility(true);try{kotlinx.coroutines.awaitCancellation()}finally{surface.frameVisibility(false)}}}
     val snapshot=surface.snapshot
     if(snapshot==null){loading();return}
-    DealRenderer(transformTree(snapshot.tree),surface.target){slot,payload->surface.event(snapshot,slot,payload,onAction)}
+    CompositionLocalProvider(LocalExecutionLimits provides surface.limits) {
+        DealRenderer(transformTree(snapshot.tree),surface.target){slot,payload->surface.event(snapshot,slot,payload,onAction)}
+    }
     SideEffect {surface.accepted(snapshot)}
     LaunchedEffect(surface,snapshot.version,snapshot.fault){
         try{onSnapshot(snapshot)}catch(error:Exception){android.util.Log.w("DealDiagnostics","Snapshot hook failed",error)}
