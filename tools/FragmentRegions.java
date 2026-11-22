@@ -11,6 +11,26 @@ public final class FragmentRegions {
     private static String slice(String source, int start, int end) {
         return source.substring(start,end);
     }
+    /** Insert nodes in the parsed root view, preserving every original UTF-16 source unit. */
+    public static String appendViewNodes(String source, String nodes) {
+        var module = UiParser.parseViews(Path.of("experience.dealui"),source);
+        var roots = module.views().stream().filter(UiModel.View::root).toList();
+        if (roots.size()!=1) throw new IllegalArgumentException("Expected one root view");
+        var root=roots.getFirst();
+        if (root.nodes().size()!=1 || !(root.nodes().getFirst() instanceof UiModel.Call call) || call.childBlock()==null) throw new IllegalArgumentException("Expected root container child block");
+        var span = call.childBlock();
+        int offset=0;
+        for (int line=1;line<span.endLine();line++) {
+            int next=source.indexOf('\n',offset);
+            if (next<0) throw new IllegalArgumentException("Invalid root view range");
+            offset=next+1;
+        }
+        offset+=span.endColumn()-1;
+        if (offset>=source.length() || source.charAt(offset)!='}') throw new IllegalArgumentException("Invalid root view terminator");
+        String result=source.substring(0,offset)+"\n"+nodes+source.substring(offset);
+        UiParser.parseViews(Path.of("experience.dealui"),result);
+        return result;
+    }
     public static Map<String,Object> describe(String classes, String fields, String functions, String view) {
         List<Object> declared = new ArrayList<>(), imports = new ArrayList<>(), callable = new ArrayList<>(), state = new ArrayList<>();
         for (String region : List.of(classes,functions)) {

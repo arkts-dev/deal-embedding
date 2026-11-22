@@ -18,6 +18,11 @@ public final class FragmentMechanismsTest {
         if(!output.contains(quote(direct)) || !output.contains("FRAGMENT_SYNTAX") || !output.contains("\\\"reads\\\""))throw new AssertionError("Missing success/failure/continuation results: "+output);
         for(int i=0;i<2;i++)try { session.invoke("expression",invalid);throw new AssertionError("Invalid syntax admitted"); }catch(IllegalArgumentException expected) { }
         try { session.invoke("batch","{\"requests\":["+request("batch","{}")+"]}");throw new AssertionError("Recursive batch admitted"); }catch(IllegalArgumentException expected) { }
+        String view="// 😀 preserved\r\nimport * as ui from \"./platform.dealui-pack\";\r\n// @ui-root\r\nexport view Main(): View { ui.Column() {ui.Text(text: \"} 😀\")} }\r\n// trailing comment }";
+        String nodes="ui.Text(text: \"Missing generic need\")\n";
+        String appended=FragmentMechanisms.invoke("appendViewNodes","{\"source\":"+quote(view)+",\"nodes\":"+quote(nodes)+"}");
+        if(!appended.replace("\n"+nodes,"").equals(view) || !appended.contains(nodes+"} }\r\n// trailing"))throw new AssertionError("Root insertion changed original bytes: "+appended);
+        try {FragmentRegions.appendViewNodes("export view Main(): View {}",nodes);throw new AssertionError("Unrooted view accepted");}catch(IllegalArgumentException expected) { }
         System.out.println("syntax transport: batch equals individual results, per-item failure ordering, binding-sensitive memo and invalid syntax passed");
     }
 }

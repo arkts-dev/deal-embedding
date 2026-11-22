@@ -37,6 +37,7 @@ public final class FragmentMechanisms {
             }
             return encode(results);
         }
+        if (function.equals("appendViewNodes")) return FragmentRegions.appendViewNodes(text(value,"source"),text(value,"nodes"));
         if (function.equals("expression")) return FragmentQualifier.expression(text(value,"source"),strings(value,"names"),strings(value,"fields"),strings(value,"types"),text(value,"expected"),strings(value,"variables"));
         return encode(switch(function) {
             case "imports" -> FragmentSyntax.parse(text(value,"source")).statements().stream().filter(statement -> statement instanceof deal.ast.ImportDeclaration).map(statement -> ((deal.ast.ImportDeclaration)statement).modulePath()).toList();

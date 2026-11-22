@@ -45,6 +45,15 @@ async function run(mode){
     const writes=asks.filter(r=>r.stage.startsWith('custom-'));assert.equal(writes.length,5);assert.equal(new Set(writes.map(r=>r.operation)).size,1);assert.deepEqual(writes.map(r=>r.ask),[1,2,3,4,5]);
     assert.equal(writes.filter(r=>r.thinking).length,1);assert.equal(writes.at(-1).stage,'custom-whole');assert.equal(writes.at(-1).maxTokens,24000);assert.equal(writes.filter(r=>r.stage==='custom-edit').length,3);
    }
+   else if(['retained','repeated','retained-operation-failure'].includes(mode)) {
+    if(mode==='retained-operation-failure'){assert.equal(snapshot.error.code,'PROVIDER_HTTP');assert.equal(checks,1);assert.equal(discarded,1);return {checks};}
+    assert.equal(snapshot.error,null);assert(snapshot.result.candidateId);assert(snapshot.result.diagnostics.includes('calculate'));
+    assert(acceptedSource.dealui.includes('Missing or unchecked behavior: calculate'));assert(acceptedSource.dealui.includes('Retained authored text 😀'));
+    assert(!acceptedSource.dealui.includes('Missing or unchecked behavior: requirement_preserve'));
+    assert.equal(checks,mode==='repeated'?3:2);assert.equal(discarded,mode==='repeated'?2:1);
+    assert.equal(asks.filter(r=>r.stage==='coverage').length,mode==='repeated'?2:1);
+    assert.equal(asks.filter(r=>r.stage==='custom-edit').length,1);
+   }
    else if(['ordinary','repair','catalogue','catalogue-empty','catalogue-sections','scalar-read','mixed','partial','units-rejected'].includes(mode)) {
     assert.equal(snapshot.error,null,JSON.stringify(snapshot.error));assert(snapshot.result.candidateId);assert(checks>=1);
     assert(!asks.some(r=>r.stage==='custom-whole'),'Runnable ordinary result must never enter whole writing');
@@ -90,6 +99,17 @@ async function run(mode){
       assert.deepEqual(JSON.parse(r.questions),JSON.parse(r.input.split('\nISSUED QUESTIONS\n')[1].split('\nReturn ')[0]),'Typed questions match the unchanged prompt');
      } else assert.equal(r.questions,'');
      if(mode==='failure'||mode==='construction-failure'&&r.stage==='selection-first'){error={code:'PROVIDER_HTTP',message:'Original provider failure'};break;}
+     if(['retained','retained-operation-failure'].includes(mode)&&r.stage==='custom-edit') {
+      if(mode==='retained-operation-failure')error={code:'PROVIDER_HTTP',message:'No partial fallback on infrastructure failure'};
+      else value={content:'',finish:'stop',refusal:''};break;
+     }
+     if(mode==='repeated'&&r.stage==='custom-edit') {
+      const revision=JSON.parse(r.input.split('\nCURRENT ISSUED SOURCE REVISION\n')[1].split('\nReturn only ')[0]);
+      value={content:JSON.stringify({revision:revision.revision,digest:revision.digest,edits:[{file:'dealui',search:'Retained authored text 😀',replace:'Worse replacement'}]}),finish:'stop',refusal:''};break;
+     }
+     if(['retained','repeated','retained-operation-failure'].includes(mode)&&r.stage==='coverage') {
+      const questions=JSON.parse(r.questions);value={content:JSON.stringify({answers:questions.map(q=>({id:q.id,selected:q.id==='calculate'?'missing':'covered',probabilities:[{id:'covered',p:q.id==='calculate'?0:1},{id:'missing',p:q.id==='calculate'?1:0}]}))}),finish:'stop',refusal:''};break;
+     }
      if(mode==='budget' && r.stage==='custom-edit'){value={content:'invalid exact edit',finish:'stop',refusal:''};break;}
      if(mode==='budget' && r.stage==='custom-whole' && r.ask>1){value={content:'invalid fragment',finish:'stop',refusal:''};break;}
      if(mode==='budget' && r.stage==='coverage'){value={content:JSON.stringify({answers:[{id:'calculate',selected:'missing',probabilities:[{id:'covered',p:0},{id:'missing',p:1}]}]}),finish:'stop',refusal:''};break;}
@@ -140,7 +160,7 @@ async function run(mode){
      if(['ordinary','catalogue','catalogue-empty','catalogue-sections','partial','scalar-read'].includes(mode)){const kept=path.join(root,'build/v08-cutover/emitted',mode);fs.rmSync(kept,{recursive:true,force:true});fs.cpSync(path.join(root,'build/v08-cutover/composed-executable'),kept,{recursive:true});
       // Record the generation sources the pair was emitted from; the runtime item refuses a stale pair.
       fs.writeFileSync(path.join(kept,'generation.sha256'),generationDigest());}
-     value=mode==='repair'?{accepted:checks===2,candidateId:checks===2?'repaired':'',diagnostics:'FIXTURE_CHECK: source repair required'}:['ordinary','catalogue','catalogue-empty','catalogue-sections','scalar-read','mixed','partial','units-rejected'].includes(mode)?{accepted:true,candidateId:'checked-'+checks,diagnostics:''}:mode==='budget'?{accepted:true,candidateId:'discard-me',diagnostics:''}:{accepted:checks===2,candidateId:checks===2?'checked-2':'',diagnostics:checks===1?'FIXTURE_CHECK: retain exact pair and revise label':''};
+     value=['retained','repeated','retained-operation-failure'].includes(mode)?{accepted:true,candidateId:'retained-'+checks,diagnostics:''}:mode==='repair'?{accepted:checks===2,candidateId:checks===2?'repaired':'',diagnostics:'FIXTURE_CHECK: source repair required'}:['ordinary','catalogue','catalogue-empty','catalogue-sections','scalar-read','mixed','partial','units-rejected'].includes(mode)?{accepted:true,candidateId:'checked-'+checks,diagnostics:''}:mode==='budget'?{accepted:true,candidateId:'discard-me',diagnostics:''}:{accepted:checks===2,candidateId:checks===2?'checked-2':'',diagnostics:checks===1?'FIXTURE_CHECK: retain exact pair and revise label':''};
      value.manifest=JSON.parse(fs.readFileSync(path.join(stage,'../composed-executable/js/admission.json'),'utf8'));break;
     }
     default:throw Error('Legacy or unissued mechanism reached: '+request.module);
@@ -150,4 +170,4 @@ async function run(mode){
  }
  throw Error('Production generation did not settle');
 }
-(async()=>{const receipt={unitsRejected:await run('units-rejected'),ordinary:await run('ordinary'),repair:await run('repair'),catalogue:await run('catalogue'),catalogueEmpty:await run('catalogue-empty'),catalogueSections:await run('catalogue-sections'),scalarRead:await run('scalar-read'),mixed:await run('mixed'),partial:await run('partial'),success:await run('success'),failure:await run('failure'),constructionFailure:await run('construction-failure'),budget:await run('budget')};fs.writeFileSync(path.join(stage,'receipt.json'),JSON.stringify(receipt,null,2));console.log('packaged generation entry: compiled construction, exact repair, actual check accounting and operational failure propagation passed');})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{const receipt={retained:await run('retained'),repeated:await run('repeated'),retainedOperationFailure:await run('retained-operation-failure'),unitsRejected:await run('units-rejected'),ordinary:await run('ordinary'),repair:await run('repair'),catalogue:await run('catalogue'),catalogueEmpty:await run('catalogue-empty'),catalogueSections:await run('catalogue-sections'),scalarRead:await run('scalar-read'),mixed:await run('mixed'),partial:await run('partial'),success:await run('success'),failure:await run('failure'),constructionFailure:await run('construction-failure'),budget:await run('budget')};fs.writeFileSync(path.join(stage,'receipt.json'),JSON.stringify(receipt,null,2));console.log('packaged generation entry: compiled construction, exact repair, actual check accounting and operational failure propagation passed');})().catch(error=>{console.error(error);process.exitCode=1;});

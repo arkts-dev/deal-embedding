@@ -1,6 +1,7 @@
 // Parsed syntax mechanisms only. Returns syntax/field/declaration facts, not behavioral choices.
 export function batch(requestsJson: string): Promise<string>;
 export function describe(regionsJson: string): Promise<string>;
+export function appendViewNodes(sourceAndNodesJson: string): Promise<string>;
 export function qualify(fragmentJson: string): Promise<string>;
 export function expression(expressionJson: string): Promise<string>;
 export function analyzeFunctions(sourceJson: string): Promise<string>;
