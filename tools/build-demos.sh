@@ -86,7 +86,9 @@ DEAL_UI=$(cd "${DEAL_UI_ROOT:-$ROOT/dependencies/deal-ui}" && pwd)
 export DEAL_ROOT="$DEAL" DEAL_UI_ROOT="$DEAL_UI"
 python3 "$ROOT/tools/dependencies.py" check
 mkdir -p build/toolchain
-if [[ "${DEAL_BUILD_LOCK_HELD:-}" != "$PWD" ]] || ! flock -n 9 2>/dev/null; then
+# The serial host runner holds the lock across Python children too; subprocess.run closes inherited
+# descriptors, so its descendant builds use this marker rather than reacquiring their parent's lock.
+if [[ "${DEAL_BUILD_LOCK_HELD:-}" != "$PWD" ]]; then
     exec 9> build/.demos-build.lock
     flock 9
 fi

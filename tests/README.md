@@ -2,12 +2,38 @@
 
 White-box construction, composition, checkpoint/runtime and packaged controller fixtures belong to the framework, not illustrative application sources. They are hard copies of the current integration tests, with paths changed for framework ownership. Inference/provider boundaries remain explicitly mocked; no paid inference, data reset, new scenario acceptance or visual review is implied.
 
-Build once from the framework root, then execute sequentially:
+## Local commands (no device or inference)
+
+From the framework root:
+
+```sh
+# During host/discovery/assistance development: packaged library + seven focused checks.
+# Does not dex, build an APK, install anything or contact an inference backend.
+bash tests/host.sh
+
+# Final deterministic gate: build the test APK once, then all existing regression,
+# standalone-boundary and negative-control checks, sequentially.
+bash tests/host.sh gate
+```
+
+Both commands fail immediately with exit 75 if another build/check owns the output lock. They print
+stage, elapsed seconds and exit status; a stage timeout fails rather than counting as a negative-control
+pass. The runner holds the build lock across its tests so no cooperating build replaces their inputs.
+`DEAL_BUILD_LOCK_HELD` is an internal child-build marker; do not set it manually. Individual focused
+checks have a 120-second limit, packaging 30 minutes and the broad gate 90 minutes. These are local
+compiler/CPU limits, not device waits. Cold builds are minutes; unchanged focused checks are seconds.
+Use `set -o pipefail` when piping either command into `tee`.
+
+The original final-gate commands remain supported, but do not protect the interval between build and
+tests from another build:
 
 ```sh
 JAVA_OPTS=-Xmx768m bash demos/build.sh tests
 bash tests/run.sh
 ```
+
+`bash demos/build.sh library` builds/extracts only the public AAR for direct local policy checks. It
+skips dex and test APK packaging; it does not replace the final deterministic gate.
 
 `DEAL_ROOT` and `DEAL_UI_ROOT` accept absolute override paths and default to the framework's `dependencies/deal` and `dependencies/deal-ui` independent ignored checkouts. Run `python3 tools/dependencies.py setup` first; the test runner verifies exact lock pins and rejects tracked dependency edits. Tests use the compiler classes built by the framework library build; upstream compiler build outputs are not required. `tests/run.sh` changes to the framework root and works from any caller directory. Individual test tools assume that root as working directory.
 
