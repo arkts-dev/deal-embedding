@@ -109,8 +109,8 @@ SEAMS = [
     # The compiled lifecycle's DISABLED decision: reporting BUSY for a disabled generation makes the
     # owning policy control fail, so the decision is seam-proven rather than only read by the view.
     {'id': 'assistance-disabled', 'family': 'assistance-lifecycle', 'path': 'build/embedding-library/aar/assets/assistance-policy/assistance-policy.js',
-     'old': '$s1214 = "DISABLED";',
-     'new': '$s1214 = "BUSY";',
+     'old': '$s1246 = "DISABLED";',
+     'new': '$s1246 = "BUSY";',
      'expect': 'disabled generation refuses Open',
      'command': ['node', 'tests/tools/test-assistance-lifecycle.js']},
 ]
