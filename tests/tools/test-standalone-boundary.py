@@ -16,8 +16,13 @@ DIGEST = re.compile(r'classes ([0-9a-f]{16}) assets ([0-9a-f]{16})')
 
 
 def prove():
-    return subprocess.run([sys.executable, 'tools/boundary-proof.py'], cwd=ROOT,
-                          capture_output=True, text=True, timeout=1800)
+    result = subprocess.run([sys.executable, 'tools/boundary-proof.py'], cwd=ROOT,
+                            capture_output=True, text=True, timeout=1800)
+    # unittest otherwise hides successful child diagnostics, including where the time went.
+    for line in result.stderr.splitlines():
+        if line.startswith('[boundary]'):
+            print(line, flush=True)
+    return result
 
 
 class StandaloneBoundaryTest(unittest.TestCase):

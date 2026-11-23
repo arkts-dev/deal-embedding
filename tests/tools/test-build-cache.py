@@ -115,6 +115,79 @@ rm -rf "build/$app/rjava"
             self.assertNotIn('cache hit', run())
             self.assertEqual(len((work / 'calls').read_text().splitlines()), 20)
 
+    def test_renderer_variants_reuse_compilation_but_always_run_assertions(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        script = root / 'tests/tools/test-renderer-rules.sh'
+        import re
+        sources = re.findall(r'^  (\S+\.kt)', script.read_text(), re.MULTILINE)
+        self.assertEqual(len(sources), 20)
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            for folder in ('tools', 'tests/tools', 'bin', 'kotlin/bin', 'kotlin/lib', 'jdk', 'build/embedding-library/classes'):
+                (work / folder).mkdir(parents=True, exist_ok=True)
+            shutil.copy(root / 'tools/build-cache.py', work / 'tools/build-cache.py')
+            shutil.copy(script, work / 'tests/tools/test-renderer-rules.sh')
+            for name in sources + ['jdk/release', 'kotlin/lib/kotlin-compiler.jar', 'kotlin/lib/kotlin-stdlib.jar',
+                                   'build/embedding-library/classes/Api.class']:
+                path = work / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(name)
+            compiler = work / 'kotlin/bin/kotlinc'
+            compiler.write_text('''#!/usr/bin/env bash
+set -eu
+echo compile >> calls
+while [[ "$1" != -d ]]; do shift; done
+out=$2
+mkdir -p "$out/dev/deal/embedding"
+echo class > "$out/dev/deal/embedding/RendererRulesTestKt.class"
+''')
+            compiler.chmod(0o755)
+            java = work / 'bin/java'
+            java.write_text('#!/bin/sh\necho assertion >> assertions\nexit "${FAKE_ASSERTION_STATUS:-0}"\n')
+            java.chmod(0o755)
+            env = dict(os.environ, KOTLIN_HOME=str(work / 'kotlin'), JAVA_HOME=str(work / 'jdk'),
+                       PATH=str(work / 'bin') + ':' + os.environ['PATH'])
+            def run(status=0):
+                result = subprocess.run(['bash', 'tests/tools/test-renderer-rules.sh'], cwd=work,
+                                        env=dict(env, FAKE_ASSERTION_STATUS=str(status)),
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, status, result.stderr)
+                return result.stdout
+            run()
+            self.assertIn('cache hit', run())
+            source = work / sources[0]; original = source.read_text()
+            source.write_text('mutation')
+            run()
+            source.write_text(original)
+            self.assertIn('cache hit', run())
+            source.write_text('mutation')
+            self.assertIn('cache hit', run())
+            self.assertEqual(len((work / 'calls').read_text().splitlines()), 2)
+            # Cached bytecode must still expose an assertion failure, not cache the result.
+            self.assertIn('cache hit', run(7))
+            self.assertEqual(len((work / 'assertions').read_text().splitlines()), 16)
+            for path in work.glob('build/renderer-rules-cache/*/classes/**/*.class'):
+                path.write_text('corrupt')
+            self.assertNotIn('cache hit', run())
+            (work / 'build/embedding-library/classes/Api.class').write_text('changed API')
+            self.assertNotIn('cache hit', run())
+            self.assertEqual(len((work / 'calls').read_text().splitlines()), 4)
+
+    def test_gate_timing_preserves_failure_and_stops_the_lane(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        script = (root / 'tests/run.sh').read_text()
+        functions = script.split('timed() {', 1)[1].split('python3 tools/dependencies.py check', 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            stub = work / 'node'
+            stub.write_text('#!/bin/sh\nexit 23\n'); stub.chmod(0o755)
+            result = subprocess.run(['bash', '-c', 'set -e\ntimed() {' + functions +
+                                     '\nnode fixture.js\necho UNREACHABLE\n'],
+                                    env=dict(os.environ, PATH=str(work) + ':' + os.environ['PATH']),
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 23, result.stderr)
+            self.assertIn('[gate] start node fixture.js', result.stdout)
+            self.assertIn('[gate] exit=23 elapsed=', result.stdout)
+            self.assertNotIn('UNREACHABLE', result.stdout)
+
     def test_upstream_and_toolchain_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             paths = [pathlib.Path(directory) / name for name in ('embedding.kt', 'compiler.java', 'ui.deal', 'tool.jar')]

@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[2]
 TIMEOUT = 300
@@ -191,8 +192,13 @@ def observe(seam):
         environment = os.environ.copy()
         environment.setdefault('DEAL_ROOT', str(ROOT / 'dependencies/deal'))
         environment.setdefault('DEAL_UI_ROOT', str(ROOT / 'dependencies/deal-ui'))
-        result = subprocess.run(seam['command'], cwd=ROOT, capture_output=True, text=True,
-                                timeout=TIMEOUT, env=environment)
+        print(f'[seam] start {seam["id"]}: {" ".join(seam["command"])}', flush=True)
+        started = time.monotonic()
+        try:
+            result = subprocess.run(seam['command'], cwd=ROOT, capture_output=True, text=True,
+                                    timeout=TIMEOUT, env=environment)
+        finally:
+            print(f'[seam] {seam["id"]} elapsed={time.monotonic()-started:.2f}s', flush=True)
         if result.returncode == 0:
             raise AssertionError(f'{seam["id"]}: owning test stayed green after breaking {seam["path"]}')
         output = result.stdout + result.stderr

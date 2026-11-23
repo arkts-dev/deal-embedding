@@ -39,7 +39,13 @@ Demo packaging caches Kotlin/D8 outputs separately from APK resources/assets. A 
 repackage still links resources, assembles and signs the APK, but unchanged sources, generated R/config,
 classpath entries and compiler tools reuse bytecode. Missing or modified cached outputs force compilation.
 JAR entry content, not ZIP timestamps, determines bytecode-input identity. Cold builds still compile every
-required demo. The cheap cache-control lane is `python3 tests/tools/test-build-cache.py` (fake compiler
+required demo.
+
+The renderer rule lane also caches compilation by exact source, classpath and toolchain content, with
+separate outputs for each negative-control mutation. It always runs all three assertion executables;
+assertion failures are never cached as successes. A first-seen mutation still requires compilation.
+`tests/run.sh` prints start, exit status and elapsed seconds for every item; seam controls report each
+mutation's elapsed time, and boundary proofs report isolated-library and demo-packaging time. The cheap cache-control lane is `python3 tests/tools/test-build-cache.py` (fake compiler
 mechanisms only); it checks reuse, source/classpath invalidation and damaged/deleted outputs without a JVM.
 
 `DEAL_ROOT` and `DEAL_UI_ROOT` accept absolute override paths and default to the framework's `dependencies/deal` and `dependencies/deal-ui` independent ignored checkouts. Run `python3 tools/dependencies.py setup` first; the test runner verifies exact lock pins and rejects tracked dependency edits. Tests use the compiler classes built by the framework library build; upstream compiler build outputs are not required. `tests/run.sh` changes to the framework root and works from any caller directory. Individual test tools assume that root as working directory.

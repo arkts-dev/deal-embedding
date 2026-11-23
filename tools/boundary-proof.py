@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -190,8 +191,14 @@ def isolated_digests(android, aidl):
                            f'exec "{path}" "$@"\n')
         wrapper.chmod(0o755)
     environment['PATH'] = f'{tools}:{environment["PATH"]}'
-    subprocess.run(['bash', 'build.sh'], cwd=stage, env=environment, check=True,
-                   stdout=subprocess.DEVNULL)
+    print('[boundary] isolated library build starting', file=sys.stderr, flush=True)
+    started = time.monotonic()
+    try:
+        subprocess.run(['bash', 'build.sh'], cwd=stage, env=environment, check=True,
+                       stdout=subprocess.DEVNULL)
+    finally:
+        print(f'[boundary] isolated library build elapsed={time.monotonic()-started:.2f}s',
+              file=sys.stderr, flush=True)
     aar = output / 'deal-embedding.aar'
     if not aar.is_file():
         raise SystemExit(f'standalone boundary: isolated build produced no AAR at {aar}')
@@ -382,7 +389,13 @@ def compile_demos(declarations):
             continue
         pending.append(target)
     if pending:
-        subprocess.run(['bash', 'demos/build.sh', *pending], cwd=ROOT, check=True)
+        print(f'[boundary] packaging targets: {", ".join(pending)}', file=sys.stderr, flush=True)
+        started = time.monotonic()
+        try:
+            subprocess.run(['bash', 'demos/build.sh', *pending], cwd=ROOT, check=True)
+        finally:
+            print(f'[boundary] demo packaging elapsed={time.monotonic()-started:.2f}s',
+                  file=sys.stderr, flush=True)
         for declaration in declarations:
             if declaration['target'] in pending:
                 (COMPILE_CACHE / f'{declaration["target"]}.sha256').write_text(compile_key(declaration) + '\n')

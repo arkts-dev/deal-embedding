@@ -15,6 +15,18 @@ preservation_end() {
     exit "$status"
 }
 trap preservation_end EXIT
+# Bash functions resolve these commands in this script only; child test processes keep their real
+# executables. Report every gate item immediately, including failures, without changing its status.
+timed() {
+    local started=$SECONDS status=0
+    printf '[gate] start %s\n' "$*"
+    command "$@" || status=$?
+    printf '[gate] exit=%s elapsed=%ss %s\n' "$status" "$((SECONDS-started))" "$*"
+    return "$status"
+}
+python3() { timed python3 "$@"; }
+node() { timed node "$@"; }
+bash() { timed bash "$@"; }
 python3 tools/dependencies.py check
 python3 tests/tools/test-generation-guidance.py
 python3 tests/tools/test-compiler-diagnostics.py
