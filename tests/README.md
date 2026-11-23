@@ -41,6 +41,19 @@ classpath entries and compiler tools reuse bytecode. Missing or modified cached 
 JAR entry content, not ZIP timestamps, determines bytecode-input identity. Cold builds still compile every
 required demo.
 
+The boundary proof repackages its pending demo targets in one lock-holding build with
+`DEAL_BUILD_JOBS` targets at a time (`DEAL_DEMO_JOBS`, default 2, bounded by the pending count and the CPU
+count). The job count and the target list are validated before any batch job starts, and a repeated
+target is refused. The shared runtime and embedding dex are prepared once on the serial lane before the
+batch, so no job rebuilds a directory another job reads; every target keeps its own build tree and its
+own R argfile, so every target is still compiled, dexed, packaged and signed from the AAR extraction and
+only the order is concurrent. A failed target fails the batch and every target's log is printed in target
+order. A pending target's previous package is removed first, so the package the proof accepts is one this
+build produced. The `tests` target shares the composed executable with the cutover items, so a batch that
+names it keeps the serial path; every demo target is the host profile, so the batch's profile check is a
+tripwire for a future provider-profile target rather than a live branch. Every other caller keeps
+`DEAL_BUILD_JOBS=1` and runs the targets one at a time as before.
+
 The renderer rule lane also caches compilation by exact source, classpath and toolchain content, with
 separate outputs for each negative-control mutation. It always runs all three assertion executables;
 assertion failures are never cached as successes. A first-seen mutation still requires compilation.
@@ -68,8 +81,10 @@ Do not overlap rebuilds with tests. Generation/composer tests share `build/v08-c
   The isolated proof is cached by validated input fingerprint and is invalidated by any input change.
 - `test-verification-seams.py`: a production seam per family that has a controllable seam is
   broken, the owning deterministic test must fail, and the bytes are restored byte-identically (an
-  interrupted run is journalled and recovered at lane start). Each owning test supplies only its
-  declared external boundary; the control does not re-assert that design. Families whose production
+  interrupted run is journalled and recovered at lane start). A control whose owning item runs a long
+  matrix names the mode or half that asserts the broken rule, so the control does not spend its
+  budget re-proving rules that the break does not touch. Each owning test supplies only its declared
+  external boundary; the control does not re-assert that design. Families whose production
   seam is absent are named by the matrix as partial or missing and are never reported as seam-proven.
 - `test-matrix.py`: every owning page's requirement families and all 36 catalogue kinds are rows in
   `tests/matrix.json`. A covered row must name a test this lane executed; a partial, missing, device,

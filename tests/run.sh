@@ -41,6 +41,10 @@ node tests/tools/test-discovery.js
 node tests/tools/test-discovery-handoff.js
 node tests/tools/test-syntax-cache.js
 python3 tests/tools/test-construction-contracts.py
+# Session execution policy: dependency revisions, currentness, expiry trust, authority and text admission.
+python3 tests/tools/test-execution-contracts.py
+# Host-configured containment: provider, discovery, evaluation, heap, input and transfer bounds.
+python3 tests/tools/test-resource-bounds.py
 python3 tests/tools/test-source-edits.py
 python3 tests/tools/test-catalogue.py
 python3 tests/tools/test-composer.py

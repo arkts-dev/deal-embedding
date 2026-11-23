@@ -2,6 +2,12 @@
 """Verification-of-verification: break a production seam and observe the owning deterministic
 test fail, then restore the exact bytes.
 
+A control names the command that observes the rule it breaks: the whole owning item where that is
+cheap, or the subset of it the broken rule is asserted by (a named generation mode, a source-level
+call-site half) where the item's full matrix would spend the lane's budget re-proving unaffected
+rules. The subset is still the owning item's own production path and assertion; no control asserts
+anything the owning item would not.
+
 Each control mutates a real produced or compiled artifact, not a fixture: a prop-constraint
 projection, the generated card profile, a compiled policy bundle, a shipped run-time rule.
 A mutation that the owning test tolerates means that family is not actually covered, so the
@@ -48,14 +54,18 @@ SEAMS = [
      'new': 'const val nativeTimers = 4',
      'command': ['bash', 'tests/tools/test-renderer-rules.sh']},
     # AC-06's "attempts": the packaged generation entry charges one attempt per candidate check. The
-    # anchor below is the compiler's own statement numbering inside the build artifact, so a rebuild
-    # that renumbers core/custom-writing.deal has to re-pin it; a shifted anchor fails loudly, and
-    # `expect` keeps a rebound anchor from passing on an unrelated assertion.
+    # anchor below is the compiler's global statement numbering inside the build artifact, so compiling a
+    # module the compiler numbers before core/custom-writing.deal (core/execution.deal included) renumbers
+    # it and the anchor has to be re-pinned; a shifted anchor fails loudly, and `expect` keeps a rebound
+    # anchor from passing on an unrelated assertion. The anchored statement is
+    # `custom-writing.deal:176 attempts = attempts+1`, the increment the counted-check mode executes.
+    # The command names that one mode: the unbounded matrix of the packaged entry would otherwise make
+    # the control's own timeout, not the broken rule, decide the outcome.
     {'id': 'attempts', 'family': 'checking-admission', 'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'old': '$s56115 = ($rt.numOf($s56109) + $rt.numOf($s56112));',
-     'new': '$s56115 = ($rt.numOf($s56109) * $rt.numOf($s56112));',
+     'old': '$s71297 = ($rt.numOf($s71291) + $rt.numOf($s71294));',
+     'new': '$s71297 = ($rt.numOf($s71291) * $rt.numOf($s71294));',
      'expect': 'candidate checks are counted as attempts',
-     'command': ['node', 'tests/tools/test-generation-cutover.js']},
+     'command': ['node', 'tests/tools/test-generation-cutover.js', '--mode=success']},
     {'id': 'vocabulary-inventory', 'family': 'prop-predicates', 'path': 'ui/platform.dealui-pack',
      'old': 'pack version "2";',
      'new': 'pack version "2";\n\nexport component IntField { value: number; }',
@@ -114,6 +124,86 @@ SEAMS = [
      'new': '$s1246 = "BUSY";',
      'expect': 'disabled generation refuses Open',
      'command': ['node', 'tests/tools/test-assistance-lifecycle.js']},
+    # The Session execution policy: an invalid draft must invalidate its readers, a loaded or
+    # catalogue Experience must never inherit request authority, and the reuse window must not widen.
+    {'id': 'revisions', 'family': 'revisions-expiry', 'path': 'core/execution.deal',
+     'old': 'if (s.contains(change.resources,name) || s.contains(change.readiness,name)) { return true; }',
+     'new': 'if (s.contains(change.resources,name)) { return true; }',
+     'expect': 'Readiness change did not advance a reader revision',
+     'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    {'id': 'mutation-authority', 'family': 'mutation-authority', 'path': 'core/execution.deal',
+     'old': 'if (facts.origin === "generated" && facts.requestAuthorizes && facts.requestTarget === module+"/"+fn) {',
+     'new': 'if (facts.requestAuthorizes) {',
+     'expect': 'A request determination authorized another target',
+     'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    {'id': 'text-admission', 'family': 'text-admission', 'path': 'core/execution.deal',
+     'old': 'function reuseWindow(): number { return 3000; }',
+     'new': 'function reuseWindow(): number { return 300000; }',
+     'expect': 'Matching entry beyond the window was reused',
+     'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    # "The per-owner cache keeps the 30 most recent answers in least-recent use order": one Experience
+    # filling its own cache can never consume another's slots, so a policy that bounds the shared array
+    # is the defect this control observes.
+    {'id': 'cache-owner-capacity', 'family': 'text-admission', 'path': 'core/execution.deal',
+     'old': 'let held: number = 0;\n    for (let entry of result) { if (entry.owner === owner) { held++; } }',
+     'new': 'let held: number = result.length;',
+     'expect': "Another owner's answer consumed a retained capacity slot",
+     'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    # The same clause: the eviction victim is the owning Experience's own least recently used answer, so a
+    # policy that evicts the oldest answer of any owner is the defect this control observes.
+    {'id': 'cache-owner-victim', 'family': 'text-admission', 'path': 'core/execution.deal',
+     'old': 'if (entry.owner === owner && (victim < 0 || entry.used < result[victim].used)) { victim = index; }',
+     'new': 'if (victim < 0 || entry.used < result[victim].used) { victim = index; }',
+     'expect': "Another owner's oldest answer was evicted",
+     'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    # "An invalidated external call authorizes no result and no continuation ... A changed argument or
+    # period requires an explicit retry": the invalidated value is display-only and never blocks that
+    # retry, so refusing a new invocation on a stale record is the defect this control observes.
+    {'id': 'retry-after-invalidation', 'family': 'operation-admission', 'path': 'core/execution.deal',
+     'old': 'if (value.operation.status === "pending") { rejected.code = prerequisites.epoch === value.operation.epoch ? "CONCURRENT" : "REVOKED"; return rejected; }',
+     'new': 'if (value.operation.status === "pending" || value.stale) { rejected.code = prerequisites.epoch === value.operation.epoch ? "CONCURRENT" : "REVOKED"; return rejected; }',
+     'expect': 'An explicit retry after dependency invalidation was refused',
+     'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    # "a call captures the epoch at admission; both call and reply check it": the permission of a new send
+    # is the live grant, so comparing the live epoch with the one an earlier invocation captured would
+    # refuse every later retry of that operation for the Session.
+    {'id': 'retry-live-epoch', 'family': 'operation-admission', 'path': 'core/execution.deal',
+     'old': '  s.finite(admittedAt);\n  if (admittedAt < 1)',
+     'new': '  if (value.operation.sequence !== 0 && prerequisites.epoch !== value.operation.epoch) { rejected.code = "REVOKED"; return rejected; }\n  s.finite(admittedAt);\n  if (admittedAt < 1)',
+     'expect': 'An explicit retry did not capture the live permission epoch',
+     'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    # "a call captures the epoch at admission; both call and reply check it": a reply is admitted under
+    # an active grant as well as the epoch its own call captured, so a hook that ignores the live grant is
+    # the defect this control observes.
+    {'id': 'reply-live-grant', 'family': 'operation-admission', 'path': 'core/execution.deal',
+     'old': '  if (!prerequisites.granted) { return false; }',
+     'new': '  if (false) { return false; }',
+     'expect': 'A reply under a revoked grant established currentness',
+     'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    # "Before every send or reply admission, controller checks the hook against the live store on the
+    # serialized Session lane plus lifetime and permissions": a send by a module the host no longer
+    # grants must not leave, so an admission that ignores the live grant is the defect this observes.
+    {'id': 'admit-live-grant', 'family': 'operation-admission', 'path': 'core/execution.deal',
+     'old': 'if (!prerequisites.granted) { rejected.code = "DENIED"; return rejected; }',
+     'new': 'if (false) { rejected.code = "DENIED"; return rejected; }',
+     'expect': 'An ungranted module dispatched a retry',
+     'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    # "a clock that ... becomes uncertain, and a period change invalidate trust in every relative expiry":
+    # a retry that takes a relative window under an undecidable clock authorizes no reply, so trusting it
+    # unconditionally is the defect this control observes.
+    {'id': 'admit-window-trust', 'family': 'revisions-expiry', 'path': 'core/execution.deal',
+     'old': 'result.trusted = spec.kind !== "relative" || prerequisites.clockTrusted;',
+     'new': 'result.trusted = true;',
+     'expect': 'A relative window was trusted under an undecidable clock',
+     'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    # AC-11: a provider call takes its terminal instant from the host-configured block; an adapter
+    # that decides its own 5000 ms deadline is the defect the owning item rejects. The control runs the
+    # item's call-site half, which is what the broken adapter is observed by.
+    {'id': 'resource-bounds', 'family': 'provider-invocation', 'path': 'android/src/capabilities/CapabilityRegistry.kt',
+     'old': 'limits.providerDeadline(now)',
+     'new': 'now + 5000',
+     'expect': 'the provider deadline must not be an adapter literal',
+     'command': ['python3', 'tests/tools/test-resource-bounds.py', '--call-sites']},
 ]
 
 

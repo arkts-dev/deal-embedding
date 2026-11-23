@@ -42,7 +42,7 @@ internal object HostCleartextPolicy : (String) -> Boolean {
  * pictures being decoded together peak at about half the heap bound, and a picture kept for display is
  * one such share released when its node replaces it or leaves, so a tree retains one bounded picture per
  * Image node. A load that exhausts native memory is a classified failure, never a truncated or oversized
- * picture. The image deadline is the host's evaluation bound, the only time bound ExecutionLimits carries.
+ * picture. The image deadline is the host's evaluation bound.
  */
 internal fun imageLoad(limits: ExecutionLimits, changed: () -> Unit): ImageLoad<Bitmap> {
     val budget = imageBudget(limits, ImageLane.concurrency)

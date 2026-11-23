@@ -70,7 +70,7 @@ class FingerprintTest(unittest.TestCase):
                          'kotlin/lib/kotlin-stdlib.jar', 'build/toolchain/r8.jar', 'build/toolchain/desugar.json'):
                 (work / name).write_text(name)
             commands = {
-                'javac': 'echo javac >> calls; touch build/calendar/classes/R.class',
+                'javac': 'echo javac >> calls; for last in "$@"; do :; done; echo "$last" > argfile; touch build/calendar/classes/R.class',
                 'java': 'echo java >> calls; echo dex > build/calendar/dex/classes.dex',
                 'jar': 'echo jar >> calls; echo classes > build/calendar/app.jar',
             }
@@ -103,6 +103,9 @@ rm -rf "build/$app/rjava"
                                       capture_output=True, text=True, timeout=10).stdout
             run()
             calls = (work / 'calls').read_text()
+            # The generated R sources are compiled through a per-target argfile: a shared one would be
+            # rewritten by a concurrent target in the same batch.
+            self.assertEqual((work / 'argfile').read_text().strip(), '@build/calendar/r-sources.txt')
             self.assertEqual(len(calls.splitlines()), 4)
             self.assertIn('cache hit', run())
             self.assertEqual(calls, (work / 'calls').read_text())
@@ -187,6 +190,89 @@ echo class > "$out/dev/deal/embedding/RendererRulesTestKt.class"
             self.assertIn('[gate] start node fixture.js', result.stdout)
             self.assertIn('[gate] exit=23 elapsed=', result.stdout)
             self.assertNotIn('UNREACHABLE', result.stdout)
+
+    def test_demo_batch_runs_its_targets_concurrently_and_fails_the_batch(self):
+        # The real batch block from the production builder, with a stub target in place of the compile:
+        # concurrency must not skip, reorder the proof of, or swallow the failure of a target.
+        root = pathlib.Path(__file__).resolve().parents[2]
+        script = (root / 'tools/build-demos.sh').read_text()
+        block = script.split('JOBS="${DEAL_BUILD_JOBS:-1}"', 1)[1]
+        # The batch is the last block in the builder; bound the extraction so a later append cannot
+        # silently become harness code.
+        block = block.split('\nfi', 1)[0] + '\nfi\n'
+        harness = '''#!/usr/bin/env bash
+set -euo pipefail
+TARGETS=("$@")
+profile_dex() { echo "dex $1"; }
+embedding_dex() { echo embedding-dex; }
+target_selection() { profile=${TARGET_PROFILE:-host}; }
+build_target() {
+    echo "build $1"
+    [[ "$1" != "${FAIL_TARGET:-}" ]] || { echo "target $1 failed" >&2; return 1; }
+}
+JOBS="${DEAL_BUILD_JOBS:-1}"''' + block
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+
+            def run(jobs, *targets, fail='', profile='host'):
+                staged = pathlib.Path(tempfile.mkdtemp(dir=work))
+                (staged / 'run.sh').write_text(harness)
+                result = subprocess.run(['bash', 'run.sh', *targets], cwd=staged,
+                                        env=dict(os.environ, DEAL_BUILD_JOBS=str(jobs), FAIL_TARGET=fail,
+                                                 TARGET_PROFILE=profile),
+                                        capture_output=True, text=True, timeout=60)
+                return result, staged
+
+            batch, staged = run(2, 'calendar', 'pizza', 'rental')
+            self.assertEqual(batch.returncode, 0, batch.stderr)
+            self.assertIn('Demo packaging: 3 target(s) over 2 job(s)', batch.stdout)
+            # The shared dex profiles are prepared once on the serial lane, never by a racing job.
+            self.assertEqual(batch.stdout.count('dex host-stable'), 1, batch.stdout)
+            self.assertEqual(batch.stdout.count('embedding-dex'), 1, batch.stdout)
+            for target in ('calendar', 'pizza', 'rental'):
+                self.assertIn(f'build {target}', batch.stdout, 'every batch target stays compiled')
+                self.assertEqual((staged / f'build/{target}/build.log').read_text().strip(), f'build {target}')
+            # A target that fails fails the batch, and its own log is what reports the reason. The last
+            # target is the one the drain loop reaps, so it pins that loop as well as the in-loop wait.
+            for failing in ('pizza', 'rental'):
+                failed, _ = run(2, 'calendar', 'pizza', 'rental', fail=failing)
+                self.assertEqual(failed.returncode, 1, failed.stdout)
+                self.assertIn(f'Demo packaging: starting {failing}', failed.stderr)
+                self.assertIn(f'target {failing} failed', failed.stdout)
+            # One job, one target, or a batch that names the test target keeps the serial path.
+            serial, staged = run(1, 'calendar', 'pizza', 'rental')
+            self.assertEqual(serial.returncode, 0, serial.stderr)
+            self.assertNotIn('Demo packaging:', serial.stdout)
+            self.assertEqual(serial.stdout.splitlines(), [f'build {name}' for name in ('calendar', 'pizza', 'rental')])
+            self.assertFalse((staged / 'build').exists(), 'a serial target writes no batch log')
+            single, staged = run(3, 'calendar')
+            self.assertEqual(single.returncode, 0, single.stderr)
+            self.assertNotIn('Demo packaging:', single.stdout)
+            self.assertEqual(single.stdout.splitlines(), ['build calendar'])
+            with_tests, staged = run(3, 'calendar', 'tests')
+            self.assertEqual(with_tests.returncode, 0, with_tests.stderr)
+            self.assertNotIn('Demo packaging:', with_tests.stdout)
+            self.assertFalse((staged / 'build').exists(), 'the test target stays in the serial path')
+            invalid, _ = run(0, 'calendar', 'pizza')
+            self.assertEqual(invalid.returncode, 1)
+            self.assertIn('DEAL_BUILD_JOBS must be a positive integer', invalid.stderr)
+            # The batch shares the host dex, so a target of another profile is refused, not raced. The
+            # harness supplies the profile because production keeps every demo target on the host
+            # profile: the guard is a tripwire for a future profile, and this run observes it firing.
+            foreign, _ = run(2, 'calendar', 'pizza', profile='provider')
+            self.assertEqual(foreign.returncode, 1)
+            self.assertIn('batches support host demo targets only', foreign.stderr)
+            self.assertNotIn('Demo packaging:', foreign.stdout)
+            # Two jobs own one directory per target, so a repeated target is refused before any work
+            # instead of racing its own build tree; the serial path builds it twice as it always did.
+            duplicate, staged = run(2, 'calendar', 'calendar')
+            self.assertEqual(duplicate.returncode, 1)
+            self.assertIn('batches need distinct targets: calendar', duplicate.stderr)
+            self.assertNotIn('Demo packaging:', duplicate.stderr)
+            self.assertFalse((staged / 'build').exists(), 'a refused batch starts no job')
+            repeated, _ = run(1, 'calendar', 'calendar')
+            self.assertEqual(repeated.returncode, 0, repeated.stderr)
+            self.assertEqual(repeated.stdout.splitlines(), ['build calendar', 'build calendar'])
 
     def test_upstream_and_toolchain_inputs(self):
         with tempfile.TemporaryDirectory() as directory:

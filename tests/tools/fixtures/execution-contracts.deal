@@ -1,0 +1,592 @@
+import * as execution from "./execution";
+import * as operations from "./operations";
+
+function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
+function rejects(block: () => void, message: string): void { let refused: boolean = false; try { block(); } catch (error) { refused = true; } insist(refused,message); }
+function issued(): string[] { return ["f_parts_limit","f_parts_quantity","f_parts_price","f_live_value","f_live_status","f_timer_elapsed"]; }
+function operation(id: string, dependencies: string[]): execution.Executed {
+  let names: string = ""; let separator: string = "";
+  for (let name of dependencies) { names = names+separator+"\""+name+"\""; separator = ","; }
+  return execution.issue("{\"id\":\""+id+"\",\"owner\":\"parts\",\"phase\":\"load\",\"dependencies\":["+names+"],\"constructsFromState\":true,\"lifetime\":\"session-1\"}",issued());
+}
+function ready(revisionValue: number): execution.Live {
+  return execution.live("{\"ready\":true,\"unexpired\":true,\"revision\":"+String(revisionValue)+",\"lifetime\":\"session-1\",\"epoch\":7,\"granted\":true,\"clockTrusted\":true}");
+}
+function blocked(): execution.Live {
+  return execution.live("{\"ready\":true,\"unexpired\":false,\"revision\":0,\"lifetime\":\"session-1\",\"epoch\":7,\"granted\":true,\"clockTrusted\":true}");
+}
+function edit(names: string[], readiness: string[], bufferOnly: boolean): string {
+  let resources: string = ""; let separator: string = "";
+  for (let name of names) { resources = resources+separator+"\""+name+"\""; separator = ","; }
+  let readyNames: string = ""; separator = "";
+  for (let name of readiness) { readyNames = readyNames+separator+"\""+name+"\""; separator = ","; }
+  return "{\"resources\":["+resources+"],\"readiness\":["+readyNames+"],\"bufferOnly\":"+(bufferOnly ? "true" : "false")+"}";
+}
+function admitted(value: execution.Executed, at: number, expiry: string): execution.Admission {
+  return execution.admit(value,ready(value.operation.revision),"{\"limit\":120}",["call-1"],at,expiry);
+}
+function correlated(value: execution.Executed): operations.Envelope {
+  return {operationId:value.operation.id,sequence:value.operation.sequence,phase:value.operation.phase,revision:value.operation.revision,lifetime:value.operation.lifetime,epoch:value.operation.epoch,callId:"call-1"};
+}
+function completion(envelope: operations.Envelope, result: unknown): operations.Completion {
+  return {envelope:envelope,accepted:true,status:"ready",message:"",outcome:"success",result:result};
+}
+function prerequisites(value: execution.Executed): operations.Prerequisites {
+  return {ready:true,unexpired:true,revision:value.operation.revision,lifetime:"session-1",epoch:7};
+}
+function classification(): Record<string, unknown> {
+  let value: Record<string, unknown> = {};
+  value["host/probe/read"] = "read";
+  value["host/probe/write"] = "mutating";
+  return value;
+}
+function authorityFacts(granted: string[], epoch: number, currentEpoch: number, origin: string, requestAuthorizes: boolean, confirmation: string, target: string, argumentsValid: boolean): execution.Authority {
+  let facts: Record<string, unknown> = {};
+  facts["disclosed"] = ["host/probe/read","host/probe/write","host/probe/unclassified"];
+  facts["classification"] = classification();
+  facts["granted"] = granted;
+  facts["epoch"] = epoch; facts["currentEpoch"] = currentEpoch;
+  facts["lifetime"] = "session-1"; facts["sessionLifetime"] = "session-1";
+  facts["argumentsValid"] = argumentsValid; facts["origin"] = origin;
+  facts["requestAuthorizes"] = requestAuthorizes; facts["requestTarget"] = requestAuthorizes ? "host/probe/write" : "";
+  facts["confirmation"] = confirmation;
+  facts["confirmationTarget"] = target;
+  return execution.authority(JSON.stringify(facts) as string);
+}
+function generated(): execution.Authority { return authorityFacts(["host/probe"],4,4,"generated",false,"","",true); }
+function generatedWithRequest(target: string): execution.Authority {
+  let facts: Record<string, unknown> = JSON.parse(JSON.stringify(authorityFacts(["host/probe"],4,4,"generated",true,"","",true)) as string) as Record<string, unknown>;
+  facts["requestTarget"] = target;
+  return execution.authority(JSON.stringify(facts) as string);
+}
+function textRequest(owner: string, scope: string, prompt: string, words: number, consent: string, cancelled: boolean, now: number): string {
+  return "{\"owner\":\""+owner+"\",\"capability\":\"host/text/generate\",\"scope\":\""+scope+"\",\"prompt\":\""+prompt+"\",\"words\":"+String(words)+",\"consent\":\""+consent+"\",\"cancelled\":"+(cancelled ? "true" : "false")+",\"now\":"+String(now)+"}";
+}
+function emptyJson(): string { return "[]"; }
+function owned(values: execution.Dispatch[], owner: string): number { let count: number = 0; for (let value of values) { if (value.owner === owner) { count++; } } return count; }
+function answers(values: execution.Answer[]): string {
+  let result: string = ""; let separator: string = "";
+  for (let value of values) {
+    result = result+separator+"{\"owner\":\""+value.owner+"\",\"capability\":\""+value.capability+"\",\"scope\":\""+value.scope+"\",\"prompt\":\""+value.prompt+"\",\"words\":"+String(value.words)+",\"text\":\""+value.text+"\",\"at\":"+String(value.at)+",\"used\":"+String(value.used)+"}";
+    separator = ",";
+  }
+  return "["+result+"]";
+}
+function dispatches(values: execution.Dispatch[]): string {
+  let result: string = ""; let separator: string = "";
+  for (let value of values) { result = result+separator+"{\"owner\":\""+value.owner+"\",\"at\":"+String(value.at)+"}"; separator = ","; }
+  return "["+result+"]";
+}
+function textAt(values: execution.Answer[], prompt: string): string { for (let value of values) { if (value.prompt === prompt) { return value.text; } } return ""; }function cached(values: execution.Answer[], prompt: string): boolean { for (let value of values) { if (value.prompt === prompt) { return true; } } return false; }
+function held(values: execution.Answer[], owner: string): number { let count: number = 0; for (let value of values) { if (value.owner === owner) { count++; } } return count; }
+function notText(): string { const value: Record<string, unknown> = JSON.parse("{\"value\":[\"a\"]}"); return value.value as string; }
+
+export function revisions(): null {
+  // Issued dependency sets: an empty set for an operation that constructs arguments from state, a set
+  // naming a resource no assembly issued and a duplicate each reject before admission.
+  rejects((): void => { execution.issue("{\"id\":\"op\",\"owner\":\"parts\",\"phase\":\"load\",\"dependencies\":[],\"constructsFromState\":true,\"lifetime\":\"session-1\"}",issued()); },"Empty dependency set admitted");
+  rejects((): void => { execution.issue("{\"id\":\"op\",\"owner\":\"parts\",\"phase\":\"load\",\"dependencies\":[\"f_invented\"],\"constructsFromState\":true,\"lifetime\":\"session-1\"}",issued()); },"Unissued dependency resource admitted");
+  rejects((): void => { execution.issue("{\"id\":\"op\",\"owner\":\"parts\",\"phase\":\"load\",\"dependencies\":[\"f_parts_limit\",\"f_parts_limit\"],\"constructsFromState\":true,\"lifetime\":\"session-1\"}",issued()); },"Duplicate dependency resource admitted");
+  let first: execution.Executed = operation("op_first",["f_parts_limit"]);
+  let second: execution.Executed = operation("op_second",["f_parts_quantity"]);
+  let overlap: execution.Executed = operation("op_overlap",["f_parts_limit","f_parts_quantity"]);
+  insist(execution.revision(first) === 0,"Initial revision");
+  // A committed semantic edit bumps exactly the operations whose set contains it.
+  let bumped: execution.Invalidation = execution.edit([first,second,overlap],edit(["f_parts_limit"],[],false),"Inputs changed");
+  insist(bumped.bumped.length === 2,"Downstream-only bump set");
+  insist(execution.revision(bumped.operations[0]) === 1 && execution.revision(bumped.operations[1]) === 0 && execution.revision(bumped.operations[2]) === 1,"Only readers of the edited resource advance");
+  // An edit outside every issued set changes no revision.
+  let unrelated: execution.Invalidation = execution.edit(bumped.operations,edit(["f_timer_elapsed"],[],false),"Unrelated");
+  insist(unrelated.bumped.length === 0,"Unrelated edit bumped a revision");
+  insist(execution.revision(unrelated.operations[0]) === 1,"Unrelated edit changed a revision");
+  // A buffer-only edit recomputes and invalidates nothing, including an admitted pending operation.
+  let draft: execution.Executed = operation("op_draft",["f_parts_price"]);
+  let drafting: execution.Admission = admitted(draft,500,"");
+  insist(drafting.accepted,"Draft operation admission");
+  let buffer: execution.Invalidation = execution.edit([drafting.executed],edit([],[],true),"Draft spelling");
+  insist(buffer.bumped.length === 0,"Buffer-only edit advanced a revision");
+  insist(buffer.operations[0].operation.status === "pending" && !buffer.operations[0].stale,"Buffer-only edit invalidated a pending operation");
+  insist(!buffer.operations[0].operation.calls[0].terminal,"Buffer-only edit retired an admitted call");
+  rejects((): void => { execution.edit([draft],edit(["f_parts_limit"],[],true),"Contradiction"); },"Buffer-only edit naming a validated resource admitted");
+  // A pending operation is invalidated to stale with an unknown outcome and its unterminal call is
+  // retired, so the reply authorizes no result and no continuation; another operation keeps its call.
+  let pending: execution.Admission = admitted(first,1000,"");
+  let bystander: execution.Admission = admitted(second,1000,"");
+  insist(pending.accepted && bystander.accepted,"Admission accepted");
+  let invalidated: execution.Invalidation = execution.edit([pending.executed,bystander.executed],edit(["f_parts_limit"],[],false),"Argument changed");
+  insist(invalidated.discarded === 1,"Invalidated pending operation counted");
+  insist(invalidated.operations[0].operation.status === "stale" && invalidated.operations[0].operation.outcome === "unknown","Invalidated pending outcome");
+  insist(invalidated.operations[0].operation.calls[0].terminal,"Invalidated call retained as terminal");
+  insist(invalidated.operations[1].operation.status === "pending" && !invalidated.operations[1].operation.calls[0].terminal,"An unrelated operation lost its call");
+  let late: operations.Operation = operations.complete(invalidated.operations[0].operation,completion(correlated(pending.executed),42),prerequisites(invalidated.operations[0]));
+  insist(late.outcome === "unknown" && !(Object.hasOwn(late,"result")),"Invalidated reply authorized a result");
+  // A retained stale value withholds its own reply and continuation, never a new invocation: an
+  // explicit retry starts one under a call identity the caller supplies for this invocation and the
+  // live revision, and that invocation is itself current so its own reply is admitted.
+  let replay: execution.Admission = execution.admit(invalidated.operations[0],ready(1),"{\"limit\":240}",["call-9"],3000,"{\"relativeMs\":500}");
+  insist(replay.accepted,"An explicit retry after dependency invalidation was refused");
+  insist(replay.executed.operation.sequence === 2 && replay.executed.operation.revision === 1,"The retry did not start a new invocation at the live revision");
+  insist(replay.executed.operation.calls.length === 1 && replay.executed.operation.calls[0].id === "call-9" && !replay.executed.operation.calls[0].terminal,"The retried invocation carried the retired call instead of the new one");
+  insist(!replay.executed.stale && replay.executed.trusted && replay.executed.operation.status === "pending","The retried invocation inherited staleness");
+  insist(!execution.invocationCurrent(invalidated.operations[0],correlated(invalidated.operations[0]),ready(1)),"The invalidated reply was authorized after the retry");
+  // The retried invocation is current under its own correlation, so its reply produces the new value;
+  // an envelope built from the invalidated record never does.
+  insist(replay.envelope.sequence === replay.executed.operation.sequence && replay.envelope.callId === "call-9","The retry returned a stale correlation envelope");
+  insist(execution.invocationCurrent(replay.executed,replay.envelope,ready(1)),"The retried invocation was not current");
+  let retried: operations.Operation = operations.complete(replay.executed.operation,completion(replay.envelope,7),prerequisites(replay.executed));
+  insist(retried.outcome === "success" && (retried.result as number) === 7,"The retried invocation could not complete");
+  // A completed result keeps its value for display but is marked stale: never a fact again.
+  let completed: operations.Operation = operations.complete(pending.executed.operation,completion(correlated(pending.executed),42),prerequisites(pending.executed));
+  insist(completed.outcome === "success" && (completed.result as number) === 42,"Admitted terminal result");
+  let withResult: execution.Executed = {operation:completed,dependencies:pending.executed.dependencies,expiryKind:"none",period:0,trusted:true,stale:false};
+  let stale: execution.Invalidation = execution.edit([withResult],edit(["f_parts_limit"],[],false),"Argument changed");
+  insist(stale.operations[0].operation.status === "stale" && (stale.operations[0].operation.result as number) === 42,"Stale result lost its displayable value");
+  insist(stale.operations[0].stale,"Stale marker");
+  insist(!execution.invocationCurrent(stale.operations[0],correlated(stale.operations[0]),ready(1)),"The invalidated completed reply was authorized");
+  // The displayable value is retained until an explicit retry begins; the retry is a new invocation
+  // whose result is not the invalidated one.
+  let refreshed: execution.Admission = execution.admit(stale.operations[0],ready(1),"{\"limit\":240}",["call-2"],4000,"");
+  insist(refreshed.accepted && refreshed.executed.operation.status === "pending","An explicit retry after invalidation was refused");
+  insist(!Object.hasOwn(refreshed.executed.operation,"result"),"The retried invocation presented the invalidated value as its admitted result");
+  // An edit that leaves a draft invalid bumps the revisions of the operations that read its validated
+  // value and retires their pending work; the retained value is never a fact again.
+  let drafted: execution.Admission = admitted(second,2000,"");
+  let invalidDraft: execution.Invalidation = execution.edit([drafted.executed],edit([],["f_parts_quantity"],false),"Draft is invalid");
+  insist(invalidDraft.bumped.length === 1 && execution.revision(invalidDraft.operations[0]) === 1,"Readiness change did not advance a reader revision");
+  insist(invalidDraft.operations[0].operation.status === "stale" && invalidDraft.operations[0].operation.outcome === "unknown","Invalid draft left the operation current");
+  // The invariant check rejects a change that edits a dependency without bumping its revision, a
+  // revision that retreats, an unrelated bump and an unissued resource.
+  rejects((): void => { execution.checkEdit({resources:["f_parts_limit"],readiness:[],bufferOnly:false},[first],[first],issued()); },"Unbumped dependency edit admitted");
+  rejects((): void => { execution.checkEdit({resources:[],readiness:[],bufferOnly:false},[bumped.operations[0]],[first],issued()); },"Revision retreat admitted");
+  rejects((): void => { execution.checkEdit({resources:[],readiness:[],bufferOnly:false},[first],[bumped.operations[0]],issued()); },"Unrelated revision bump admitted");
+  rejects((): void => { execution.checkEdit({resources:["f_invented"],readiness:[],bufferOnly:false},[first],[first],issued()); },"Unissued edit resource admitted");
+  rejects((): void => { execution.checkEdit({resources:["f_parts_limit"],readiness:[],bufferOnly:true},[first],[first],issued()); },"A buffer-only check naming a validated resource passed");
+  let consistent: execution.Invalidation = execution.edit([first],edit(["f_parts_limit"],[],false),"Inputs changed");
+  execution.checkEdit({resources:["f_parts_limit"],readiness:[],bufferOnly:false},[first],consistent.operations,issued());
+  return null;
+}
+
+export function admission(): null {
+  let value: execution.Executed = operation("op_load",["f_parts_limit"]);
+  // A duplicate pending tap preserves sequence, phase, revision and eligibility and starts no call.
+  let first: execution.Admission = execution.admit(value,ready(0),"{\"limit\":120}",["call-1"],1000,"");
+  insist(first.accepted,"Initial admission");
+  let duplicate: execution.Admission = execution.admit(first.executed,ready(0),"{\"limit\":120}",["call-2"],1001,"");
+  insist(!duplicate.accepted && duplicate.code === "CONCURRENT","Duplicate pending tap admitted a second invocation");
+  insist(duplicate.executed.operation.sequence === first.executed.operation.sequence && duplicate.executed.operation.phase === "load" && duplicate.executed.operation.revision === 0,"Duplicate pending tap changed correlation");
+  insist(duplicate.executed.operation.calls.length === 1,"Duplicate pending tap issued a second call");
+  // Unready, expired, wrong-lifetime and any revision disagreement admit nothing.
+  let unready: execution.Admission = execution.admit(value,execution.live("{\"ready\":false,\"unexpired\":true,\"revision\":0,\"lifetime\":\"session-1\",\"epoch\":7,\"granted\":true,\"clockTrusted\":true}"),"{}",["call-1"],1000,"");
+  insist(!unready.accepted && unready.code === "UNREADY","Unready admission");
+  let expired: execution.Admission = execution.admit(value,blocked(),"{}",["call-1"],1000,"");
+  insist(!expired.accepted && expired.code === "EXPIRED","Expired prerequisite admission");
+  let lifetime: execution.Admission = execution.admit(value,execution.live("{\"ready\":true,\"unexpired\":true,\"revision\":0,\"lifetime\":\"session-2\",\"epoch\":7,\"granted\":true,\"clockTrusted\":true}"),"{}",["call-1"],1000,"");
+  insist(!lifetime.accepted && lifetime.code === "LIFETIME","Foreign Session lifetime admitted");
+  rejects((): void => { execution.admit(value,ready(0),"{}",["call-1"],-5,""); },"A negative admission instant was admitted");
+  let retreating: execution.Admission = execution.admit(execution.edit([value],edit(["f_parts_limit"],[],false),"changed").operations[0],ready(0),"{}",["call-1"],1000,"");
+  insist(!retreating.accepted && retreating.code === "REVISION","Retreating revision admitted");
+  let ahead: execution.Admission = execution.admit(value,ready(1),"{}",["call-1"],1000,"");
+  insist(!ahead.accepted && ahead.code === "REVISION","A live revision ahead of the issued one dispatched pre-edit arguments");
+  let untrusted: execution.Executed = execution.retrust(admitted(operation("op_trust",["f_parts_limit"]),1000,"{\"relativeMs\":500}").executed,false,false);
+  insist(!untrusted.trusted && untrusted.operation.status === "stale" && untrusted.operation.outcome === "unknown","A lost clock trust left the retained invocation operational");
+  insist(!execution.invocationCurrent(untrusted,correlated(untrusted),ready(0)),"An untrusted record authorized its own reply");
+  // The lost trust withholds that record's reply, not the operation: a new admission decides trust for
+  // its own window from the host's clock fact, and the retired call stays closed.
+  let afterTrust: execution.Admission = execution.admit(untrusted,ready(0),"{}",["call-2"],1200,"{\"relativeMs\":500}");
+  insist(afterTrust.accepted && afterTrust.executed.trusted && !afterTrust.executed.stale,"An explicit retry after a clock trust loss was refused");
+  insist(afterTrust.executed.operation.sequence === 2 && afterTrust.executed.operation.status === "pending" && afterTrust.executed.operation.calls[0].id === "call-2","The retried invocation did not begin a new call");
+  // A retry that takes a relative window while the host reports an undecidable time keeps the send but
+  // authorizes no reply: an expiry that cannot be decided is treated as expired.
+  let undecidedAtAdmission: execution.Live = ready(0); undecidedAtAdmission.clockTrusted = false;
+  let undecidedRetry: execution.Admission = execution.admit(untrusted,undecidedAtAdmission,"{}",["call-3"],1400,"{\"relativeMs\":500}");
+  insist(undecidedRetry.accepted && !undecidedRetry.executed.trusted,"A relative window was trusted under an undecidable clock");
+  insist(!execution.invocationCurrent(undecidedRetry.executed,undecidedRetry.envelope,ready(0)),"An undecidable window authorized its reply");
+  // An invocation without an expiry has no relative window to distrust, so it stays operational.
+  let unwindowed: execution.Admission = execution.admit(untrusted,undecidedAtAdmission,"{}",["call-4"],1600,"");
+  insist(unwindowed.accepted && unwindowed.executed.trusted,"An invocation without an expiry lost trust it never took");
+  // The hook itself, not only the retired status, refuses a stale or untrusted invocation.
+  let stalePending: execution.Executed = {operation:first.executed.operation,dependencies:first.executed.dependencies,expiryKind:"none",period:0,trusted:true,stale:true};
+  insist(!execution.invocationCurrent(stalePending,correlated(stalePending),ready(0)),"A stale pending invocation established currentness");
+  let untrustedPending: execution.Executed = {operation:first.executed.operation,dependencies:first.executed.dependencies,expiryKind:"none",period:0,trusted:false,stale:false};
+  insist(!execution.invocationCurrent(untrustedPending,correlated(untrustedPending),ready(0)),"An untrusted pending invocation established currentness");
+  // A pending invocation is never resent, and a permission epoch that moved under it refuses the
+  // replay with its own code instead of reading as a duplicate tap.
+  let revokedAtSend: execution.Live = ready(0); revokedAtSend.epoch = 8;
+  let revokedAdmission: execution.Admission = execution.admit(first.executed,revokedAtSend,"{}",["call-2"],1200,"");
+  insist(!revokedAdmission.accepted && revokedAdmission.code === "REVOKED","A pending invocation whose permission epoch moved was not refused");
+  let settled: operations.Operation = operations.complete(first.executed.operation,completion(correlated(first.executed),5),prerequisites(first.executed));
+  let recorded: execution.Executed = {operation:settled,dependencies:first.executed.dependencies,expiryKind:"none",period:0,trusted:true,stale:false};
+  // A settled record is a different invocation when it is retried: the permission of that send is the
+  // host's live grant for the module, so a moved epoch is no reason to refuse it forever, while the reply
+  // it admits is still compared with the epoch this invocation captured.
+  let liveEpochResend: execution.Admission = execution.admit(recorded,revokedAtSend,"{}",["call-3"],1200,"");
+  insist(liveEpochResend.accepted && liveEpochResend.executed.operation.epoch === 8,"An explicit retry did not capture the live permission epoch");
+  let previousEnvelope: operations.Envelope = correlated(recorded); previousEnvelope.epoch = 7;
+  insist(!execution.invocationCurrent(liveEpochResend.executed,previousEnvelope,revokedAtSend),"A reply envelope from the previous invocation established currentness");
+  // A module the host no longer grants sends nothing, whatever its epoch or history, and the refusal
+  // changes no record and starts no call.
+  let ungrantedAtSend: execution.Live = ready(0); ungrantedAtSend.granted = false;
+  let refusedResend: execution.Admission = execution.admit(recorded,ungrantedAtSend,"{}",["call-4"],1200,"");
+  insist(!refusedResend.accepted && refusedResend.code === "DENIED","An ungranted module dispatched a retry");
+  insist(refusedResend.executed.operation.status === "ready" && refusedResend.executed.operation.calls.length === 1,"A denied retry changed the record or started a call");
+  // A reply is admitted under an active grant as well as under the epoch its own call captured; the two
+  // live facts differ in nothing else here, so the grant is what decides.
+  let grantedReply: execution.Live = ready(0); grantedReply.epoch = 8;
+  insist(execution.invocationCurrent(liveEpochResend.executed,liveEpochResend.envelope,grantedReply),"A current invocation under a live grant was refused");
+  let revokedReply: execution.Live = ready(0); revokedReply.epoch = 8; revokedReply.granted = false;
+  insist(!execution.invocationCurrent(liveEpochResend.executed,liveEpochResend.envelope,revokedReply),"A reply under a revoked grant established currentness");
+  // The captured epoch is a value, not a sentinel: an operation that captured the host's legal epoch 0
+  // admits no reply once the host moves on, while its retry captures the new epoch.
+  let zeroEpoch: execution.Live = ready(0); zeroEpoch.epoch = 0;
+  let capturedZero: execution.Admission = execution.admit(operation("op_zero",["f_parts_limit"]),zeroEpoch,"{}",["call-1"],1000,"");
+  insist(capturedZero.accepted && capturedZero.executed.operation.epoch === 0,"A host epoch of 0 was not captured");
+  let zeroPrerequisites: operations.Prerequisites = {ready:true,unexpired:true,revision:0,lifetime:"session-1",epoch:0};
+  let zeroSettled: operations.Operation = operations.complete(capturedZero.executed.operation,completion(correlated(capturedZero.executed),5),zeroPrerequisites);
+  let zeroRecorded: execution.Executed = {operation:zeroSettled,dependencies:capturedZero.executed.dependencies,expiryKind:"none",period:0,trusted:true,stale:false};
+  let movedEpoch: execution.Live = ready(0); movedEpoch.epoch = 1;
+  let movedEnvelope: operations.Envelope = correlated(zeroRecorded); movedEnvelope.epoch = 1;
+  insist(!execution.invocationCurrent(zeroRecorded,movedEnvelope,movedEpoch),"A reply under a moved epoch established currentness");
+  let zeroResend: execution.Admission = execution.admit(zeroRecorded,movedEpoch,"{}",["call-2"],1200,"");
+  insist(zeroResend.accepted && zeroResend.executed.operation.epoch === 1,"A retry did not capture the moved epoch");
+  // Admission captures the live revision, the phase, the permission epoch and the call identities.
+  insist(first.executed.operation.revision === 0 && first.executed.operation.epoch === 7 && first.executed.operation.accepted,"Admission captured correlation");
+  // The admitted record holds its own dependency array: a later caller edit cannot rewrite it.
+  let mutable: execution.Executed = operation("op_alias",["f_parts_limit"]);
+  let acceptedAlias: execution.Admission = admitted(mutable,1000,"");
+  insist(acceptedAlias.accepted,"Aliasing admission");
+  mutable.dependencies[0] = "f_parts_quantity";
+  insist(acceptedAlias.executed.dependencies.includes("f_parts_limit"),"The admitted record shared the caller's dependency array");
+  // The currentness hook compares the live revision, not a render version or a global counter.
+  insist(execution.invocationCurrent(first.executed,correlated(first.executed),ready(0)),"Current invocation refused");
+  insist(!execution.invocationCurrent(first.executed,correlated(first.executed),ready(1)),"Stale revision established currentness");
+  let wrongPhase: operations.Envelope = correlated(first.executed); wrongPhase.phase = "other";
+  insist(!execution.invocationCurrent(first.executed,wrongPhase,ready(0)),"Wrong phase established currentness");
+  let wrongSequence: operations.Envelope = correlated(first.executed); wrongSequence.sequence = wrongSequence.sequence+1;
+  insist(!execution.invocationCurrent(first.executed,wrongSequence,ready(0)),"Stale sequence established currentness");
+  let wrongEpoch: execution.Live = ready(0); wrongEpoch.epoch = 8;
+  insist(!execution.invocationCurrent(first.executed,correlated(first.executed),wrongEpoch),"Revoked epoch established currentness");
+  // A reply is admitted only while the operation is current; a bumped revision discards it.
+  let bumpedReply: execution.Invalidation = execution.edit([first.executed],edit(["f_parts_limit"],[],false),"changed");
+  insist(!execution.invocationCurrent(bumpedReply.operations[0],correlated(first.executed),ready(1)),"Invalidated invocation remained current");
+  return null;
+}
+
+export function expiry(): null {
+  // A relative expiry starts at the admission of the request that issued the call.
+  let value: execution.Executed = operation("op_expiry",["f_parts_limit"]);
+  let relative: execution.Admission = admitted(value,1000,"{\"relativeMs\":500}");
+  insist(relative.accepted,"Relative expiry admission");
+  let liveWindow: execution.Expiry = execution.expiry(relative.executed,1200,true,false,false);
+  insist(liveWindow.expiresAt === 1500 && !liveWindow.expired,"Relative expiry window");
+  let past: execution.Expiry = execution.expiry(relative.executed,1500,true,false,false);
+  insist(past.expired,"Expired result stayed operational");
+  let expired: execution.Executed = execution.expire(relative.executed,1500,true,false,false);
+  insist(expired.stale && expired.operation.status === "stale" && expired.operation.calls[0].terminal,"Expired operation was not retired");
+  insist(!execution.invocationCurrent(expired,correlated(relative.executed),blocked()),"Expired result established currentness");
+  // Expiry retires the result, not the operation: an explicit retry is a new invocation with its own
+  // admitted instant and expiry, and the expired call stays closed.
+  let afterExpiry: execution.Admission = execution.admit(expired,ready(0),"{}",["call-2"],2000,"{\"relativeMs\":500}");
+  insist(afterExpiry.accepted && afterExpiry.executed.operation.sequence === 2,"An explicit retry after expiry was refused");
+  insist(afterExpiry.executed.operation.calls.length === 1 && afterExpiry.executed.operation.calls[0].id === "call-2","The retry reused the expired call identity");
+  let retriedWindow: execution.Expiry = execution.expiry(afterExpiry.executed,2400,true,false,false);
+  insist(retriedWindow.expiresAt === 2500 && !retriedWindow.expired,"The retried invocation did not start a fresh expiry window");
+  insist(!execution.invocationCurrent(expired,correlated(relative.executed),ready(0)),"An expired invocation was authorized after the retry");
+  // A completed value that expires stays displayable with its last value and satisfies nothing.
+  let completed: operations.Operation = operations.complete(relative.executed.operation,completion(correlated(relative.executed),7),prerequisites(relative.executed));
+  let withValue: execution.Executed = {operation:completed,dependencies:relative.executed.dependencies,expiryKind:"relative",period:500,trusted:true,stale:false};
+  let stale: execution.Executed = execution.expire(withValue,1500,true,false,false);
+  let staleWindow: execution.Expiry = execution.expiry(stale,1500,true,false,false);
+  insist(staleWindow.expired && staleWindow.displayable && (stale.operation.result as number) === 7,"Expired completed result stopped being displayable");
+  insist(!execution.invocationCurrent(stale,correlated(relative.executed),ready(0)),"Expired completed result satisfied an action");
+  // An absolute expiry supplied by the host is used as given, and one already before admission rejects.
+  let absolute: execution.Admission = admitted(value,1000,"{\"absolute\":1900}");
+  let absoluteExpiry: execution.Expiry = execution.expiry(absolute.executed,1950,true,false,false);
+  insist(absoluteExpiry.expiresAt === 1900 && absoluteExpiry.expired,"Absolute expiry was not used as given");
+  // An absolute expiry retires the same way and a retry takes the host's new absolute instant.
+  let absoluteExpired: execution.Executed = execution.expire(absolute.executed,2000,true,false,false);
+  let afterAbsolute: execution.Admission = execution.admit(absoluteExpired,ready(0),"{}",["call-2"],2100,"{\"absolute\":2900}");
+  insist(afterAbsolute.accepted && afterAbsolute.executed.operation.sequence === 2,"An explicit retry after an absolute expiry was refused");
+  insist(execution.expiry(afterAbsolute.executed,2200,true,false,false).expiresAt === 2900,"The retried invocation ignored the new absolute instant");
+  rejects((): void => { execution.admit(value,ready(0),"{}",["call-1"],1000,"{\"absolute\":900}"); },"Absolute expiry before admission admitted");
+  rejects((): void => { execution.admit(value,ready(0),"{}",["call-1"],1000,"{\"relativeMs\":500,\"absolute\":1900}"); },"Two expiry kinds admitted");
+  rejects((): void => { execution.admit(value,ready(0),"{}",["call-1"],1000,"{}"); },"Expiry without a kind admitted");
+  rejects((): void => { execution.admit(value,ready(0),"{}",["call-1"],1000,"{\"relativeMs\":500,\"bogus\":1}"); },"Unknown expiry field admitted");
+  // A pause with a trusted clock invalidates trust in a relative expiry; an absolute instant survives it.
+  let paused: execution.Expiry = execution.expiry(relative.executed,1200,true,true,false);
+  insist(paused.undecidable && paused.expired,"A pause left a relative expiry operational");
+  insist(execution.expire(relative.executed,1200,true,true,false).operation.status === "stale","A pause did not retire the operation");
+  let pausedAbsolute: execution.Expiry = execution.expiry(absolute.executed,1200,true,true,false);
+  insist(!pausedAbsolute.expired,"A pause expired an absolute instant that had not passed");
+  // A deadline that passes during a pause still expires: the pause suspends nothing at all.
+  let pausedPast: execution.Expiry = execution.expiry(absolute.executed,2000,true,true,false);
+  insist(pausedPast.expired,"A deadline that passed during a pause stayed operational");
+  insist(execution.expire(absolute.executed,2000,true,true,false).operation.status === "stale","A passed absolute deadline was not retired");
+  // An uncertain clock invalidates trust on its own, without a pause or a retreat.
+  let uncertain: execution.Expiry = execution.expiry(relative.executed,1200,false,false,false);
+  insist(uncertain.undecidable && uncertain.expired,"An uncertain clock left a relative expiry operational");
+  // A retreat is detected from the recorded admission instant even when the caller does not say so.
+  let retreatOnly: execution.Expiry = execution.expiry(relative.executed,900,true,false,false);
+  insist(retreatOnly.undecidable && retreatOnly.expired,"An instant before admission was treated as decidable");
+  // The stored deadline is authoritative: a changed period revalidates the issued instant, not a
+  // recomputed one.
+  let reissued: operations.Operation = operations.idle("op_period","parts");
+  reissued.admittedAt = 1000; reissued.expiresAt = 1500;
+  let periodChanged: execution.Executed = {operation:reissued,dependencies:["f_parts_limit"],expiryKind:"relative",period:9000,trusted:true,stale:false};
+  insist(execution.expiry(periodChanged,1600,true,false,false).expired,"A changed period moved the issued deadline");
+  // A retreating clock and a period change invalidate trust the same way.
+  let retreat: execution.Expiry = execution.expiry(relative.executed,900,true,false,true);
+  insist(retreat.undecidable && retreat.expired,"A retreating clock kept a relative expiry operational");
+  let changed: execution.Executed = execution.retrust(relative.executed,true,true);
+  insist(!changed.trusted && changed.operation.status === "stale" && changed.operation.calls[0].terminal,"Period change retained trust");
+  insist(!execution.invocationCurrent(changed,correlated(changed),ready(0)),"Untrusted period established currentness");
+  // A period change invalidates the reply that was in flight, and the next explicit retry is admitted
+  // under the new period rather than being blocked by the invalidated record.
+  let afterPeriod: execution.Admission = execution.admit(changed,ready(0),"{}",["call-2"],1600,"{\"relativeMs\":900}");
+  insist(afterPeriod.accepted && afterPeriod.executed.trusted && afterPeriod.executed.operation.sequence === 2,"An explicit retry after a period change was refused");
+  insist(execution.expiry(afterPeriod.executed,1700,true,false,false).expiresAt === 2500,"The retried invocation ignored the new period");
+  let regain: execution.Executed = execution.retrust(relative.executed,false,false);
+  insist(!regain.trusted && regain.stale,"Clock uncertainty retained trust");
+  // A retry admitted while the clock is still uncertain is not silently operational: the window it took
+  // is undecidable, so the next revalidation retires it as expired.
+  let uncertainRetry: execution.Admission = execution.admit(regain,ready(0),"{}",["call-2"],1700,"{\"relativeMs\":500}");
+  insist(uncertainRetry.accepted,"An explicit retry under an uncertain clock was refused");
+  let revalidated: execution.Executed = execution.expire(uncertainRetry.executed,1800,false,false,false);
+  insist(revalidated.stale && revalidated.operation.status === "stale","A retry admitted under an uncertain clock stayed operational");
+  return null;
+}
+
+export function authority(): null {
+  let facts: execution.Authority = generated();
+  // A read needs disclosure and a grant, never the frozen request.
+  let read: execution.Decision = execution.readAuthority(facts,"host/probe","read");
+  insist(read.admitted && read.kind === "read","Granted read refused without a request");
+  let ungranted: execution.Decision = execution.readAuthority(authorityFacts([],4,4,"generated",false,"","",true),"host/probe","read");
+  insist(!ungranted.admitted && ungranted.code === "DENIED","Ungranted read admitted");
+  let revoked: execution.Decision = execution.readAuthority(authorityFacts(["host/probe"],4,5,"generated",false,"","",true),"host/probe","read");
+  insist(!revoked.admitted && revoked.code === "REVOKED","Changed epoch read admitted");
+  let invalid: execution.Decision = execution.readAuthority(authorityFacts(["host/probe"],4,4,"generated",false,"","",false),"host/probe","read");
+  insist(!invalid.admitted && invalid.code === "INVALID_ARGUMENT","Invalid arguments read admitted");
+  let undisclosed: execution.Decision = execution.readAuthority(facts,"host/probe","absent");
+  insist(!undisclosed.admitted && undisclosed.code === "INVALID_ARGUMENT","Undisclosed function admitted");
+  // An unclassified function is not a read: it needs request authority or confirmation.
+  let unclassified: execution.Decision = execution.readAuthority(facts,"host/probe","unclassified");
+  insist(!unclassified.admitted && unclassified.kind === "mutating","Unclassified function admitted as a read");
+  // A host classification that is not a record is a typed refusal, never a coerced default.
+  rejects((): void => { execution.authority("{\"disclosed\":[\"host/probe/read\"],\"classification\":null,\"granted\":[\"host/probe\"],\"epoch\":4,\"currentEpoch\":4,\"lifetime\":\"session-1\",\"sessionLifetime\":\"session-1\",\"argumentsValid\":true,\"origin\":\"generated\",\"requestAuthorizes\":false,\"requestTarget\":\"\",\"confirmation\":\"\",\"confirmationTarget\":\"\"}"); },"A null host classification was coerced");
+  rejects((): void => { execution.authority("{\"disclosed\":[\"host/probe/read\"],\"classification\":[\"read\"],\"granted\":[\"host/probe\"],\"epoch\":4,\"currentEpoch\":4,\"lifetime\":\"session-1\",\"sessionLifetime\":\"session-1\",\"argumentsValid\":true,\"origin\":\"generated\",\"requestAuthorizes\":false,\"requestTarget\":\"\",\"confirmation\":\"\",\"confirmationTarget\":\"\"}"); },"An array host classification was coerced");
+  let loaded: execution.Authority = authorityFacts(["host/probe"],4,4,"supplied",false,"","",true);
+  let loadedRead: execution.Decision = execution.readAuthority(loaded,"host/probe","read");
+  insist(loadedRead.admitted,"Supplied Experience read refused");
+  // A mutation disclosed by the frozen request runs without a confirmation surface.
+  let disclosedMutation: execution.Decision = execution.mutationAuthority(authorityFacts(["host/probe"],4,4,"generated",true,"","",true),"host/probe","write");
+  insist(disclosedMutation.admitted && disclosedMutation.kind === "mutation","Request-disclosed mutation refused");
+  // The determination binds one operation and target: it never authorizes another disclosed function.
+  let retargeted: execution.Decision = execution.mutationAuthority(generatedWithRequest("host/probe/read"),"host/probe","write");
+  insist(!retargeted.admitted && retargeted.code === "DENIED","A request determination authorized another target");
+  // A loaded Experience has no frozen request, so it needs a correlated confirmation.
+  let loadedMutation: execution.Decision = execution.mutationAuthority(loaded,"host/probe","write");
+  insist(!loadedMutation.admitted && loadedMutation.code === "DENIED","Loaded mutation admitted without confirmation");
+  let approved: execution.Decision = execution.mutationAuthority(authorityFacts(["host/probe"],4,4,"supplied",false,"approved","host/probe/write",true),"host/probe","write");
+  insist(approved.admitted,"Approved mutation refused");
+  let misdirected: execution.Decision = execution.mutationAuthority(authorityFacts(["host/probe"],4,4,"supplied",false,"approved","host/probe/read",true),"host/probe","write");
+  insist(!misdirected.admitted && misdirected.code === "DENIED","An approval for another target authorized a mutation");
+  let denied: execution.Decision = execution.mutationAuthority(authorityFacts(["host/probe"],4,4,"generated",true,"denied","host/probe/write",true),"host/probe","write");
+  insist(!denied.admitted && denied.code === "DENIED","Request authority overrode a denial");
+  // A determination is never authority minted for another Experience: a loaded or catalogue
+  // Experience that claims the request flag still needs confirmation.
+  let inherited: execution.Decision = execution.mutationAuthority(authorityFacts(["host/probe"],4,4,"supplied",true,"absent","",true),"host/probe","write");
+  insist(!inherited.admitted && inherited.code === "DENIED","Loaded Experience inherited request authority");
+  let catalogue: execution.Decision = execution.mutationAuthority(authorityFacts(["host/probe"],4,4,"catalogue",true,"absent","",true),"host/probe","write");
+  insist(!catalogue.admitted && catalogue.code === "DENIED","Catalogue Experience inherited request authority");
+  let staleConfirmation: execution.Decision = execution.mutationAuthority(authorityFacts(["host/probe"],4,4,"supplied",false,"stale","host/probe/write",true),"host/probe","write");
+  insist(!staleConfirmation.admitted && staleConfirmation.code === "DENIED","Stale approval dispatched");
+  let ambiguous: execution.Decision = execution.mutationAuthority(authorityFacts(["host/probe"],4,4,"generated",false,"absent","",true),"host/probe","write");
+  insist(!ambiguous.admitted && ambiguous.code === "DENIED","Ambiguous mutation dispatched without confirmation");
+  let unclassifiedMutation: execution.Decision = execution.mutationAuthority(authorityFacts(["host/probe"],4,4,"supplied",false,"approved","host/probe/unclassified",true),"host/probe","unclassified");
+  insist(unclassifiedMutation.admitted && unclassifiedMutation.kind === "mutation","Unclassified approved mutation refused");
+  // Permission revocation still rejects before authority is considered.
+  let revokedMutation: execution.Decision = execution.mutationAuthority(authorityFacts(["host/probe"],4,5,"generated",true,"approved","host/probe/write",true),"host/probe","write");
+  insist(!revokedMutation.admitted && revokedMutation.code === "REVOKED","Revoked epoch mutation admitted");
+  let readAtMutation: execution.Decision = execution.mutationAuthority(loaded,"host/probe","read");
+  insist(!readAtMutation.admitted && readAtMutation.kind === "read","A read was admitted as a mutation");
+  return null;
+}
+
+export function text(): null {
+  let scope: string = "host/text@1#consent";
+  // An identical success inside the window reuses the cached answer without a call.
+  let answer: execution.TextAdmission = execution.admitText(emptyJson(),emptyJson(),textRequest("experience-1",scope,"Write a note",80,"granted",false,100000));
+  insist(answer.accepted && !answer.reused,"Initial text admission");
+  insist(answer.dispatch.length === 1,"Initial dispatch not counted");
+  let cache: string = answers(execution.resolved(emptyJson(),textRequest("experience-1",scope,"Write a note",80,"granted",false,100000),"first answer"));
+  let reuse: execution.TextAdmission = execution.admitText(cache,dispatches(answer.dispatch),textRequest("experience-1",scope,"Write a note",80,"granted",false,102000));
+  insist(reuse.accepted && reuse.reused && reuse.answer === "first answer","Identical success inside the window dispatched a call");
+  insist(reuse.dispatch.length === 1,"Reuse dispatched a call");
+  // The window is exactly 3000 ms: the boundary reuses and one millisecond later dispatches.
+  let boundary: execution.TextAdmission = execution.admitText(cache,dispatches(answer.dispatch),textRequest("experience-1",scope,"Write a note",80,"granted",false,103000));
+  insist(boundary.reused,"The exact reuse boundary dispatched a call");
+  let beyond: execution.TextAdmission = execution.admitText(cache,dispatches(answer.dispatch),textRequest("experience-1",scope,"Write a note",80,"granted",false,103001));
+  insist(beyond.accepted && !beyond.reused && beyond.dispatch.length === 2,"Matching entry beyond the window was reused");
+  // A changed authority scope, a revoked consent or a cancellation never reuses.
+  let changedScope: execution.TextAdmission = execution.admitText(cache,dispatches(answer.dispatch),textRequest("experience-1","host/text@2#consent","Write a note",80,"granted",false,102000));
+  insist(!changedScope.reused,"Changed scope reused an answer");
+  let withdrawn: execution.TextAdmission = execution.admitText(cache,dispatches(answer.dispatch),textRequest("experience-1",scope,"Write a note",80,"withdrawn",false,102000));
+  insist(!withdrawn.accepted && withdrawn.code === "DENIED" && !withdrawn.reused,"Consent withdrawal still reused an answer");
+  // A call in one Experience never reuses another owner answer.
+  let otherOwner: execution.TextAdmission = execution.admitText(cache,dispatches(answer.dispatch),textRequest("experience-2",scope,"Write a note",80,"granted",false,102000));
+  insist(!otherOwner.reused && owned(otherOwner.dispatch,"experience-2") === 1,"Another owner reused an answer");
+  // Consent denial and cancellation make no call and add no cache entry.
+  let denied: execution.TextAdmission = execution.admitText(emptyJson(),emptyJson(),textRequest("experience-1",scope,"Write a note",80,"denied",false,100000));
+  insist(!denied.accepted && denied.code === "DENIED" && denied.dispatch.length === 0,"Consent denial dispatched a call");
+  let cancelled: execution.TextAdmission = execution.admitText(emptyJson(),emptyJson(),textRequest("experience-1",scope,"Write a note",80,"granted",true,100000));
+  insist(!cancelled.accepted && cancelled.code === "CANCELLED" && cancelled.cache.length === 0,"Cancellation retained work");
+  // Cancellation adds no cache entry, so a late answer to a cancelled request is discarded instead of
+  // making work the user cancelled reusable by a later request.
+  let late: execution.Answer[] = execution.resolved(cache,textRequest("experience-1",scope,"Write a note",80,"granted",true,104000),"an answer that arrived after cancellation");
+  insist(late.length === 1 && textAt(late,"Write a note") === "first answer","A cancelled request cached its late answer");
+  let discardedText: boolean = false;
+  for (let entry of late) { if (entry.text === "an answer that arrived after cancellation") { discardedText = true; } }
+  insist(!discardedText,"Cancellation served a discarded answer");
+  // Six calls dispatch per rolling 60 000 ms per owner and the seventh is rejected without a call.
+  let calls: execution.Dispatch[] = [];
+  let index: number = 0;
+  while (index < 6) { calls[calls.length] = {owner:"experience-1",at:1000+index*1000}; index++; }
+  let seventh: execution.TextAdmission = execution.admitText(cache,dispatches(calls),textRequest("experience-1",scope,"Another note",80,"granted",false,20000));
+  insist(!seventh.accepted && seventh.code === "RATE","Seventh dispatch admitted");
+  insist(seventh.dispatch.length === 6,"Rate rejection added a call");
+  insist(seventh.cache.length === 1 && textAt(seventh.cache,"Write a note") === "first answer","A rate rejection dropped the retained answer");
+  let rolled: execution.TextAdmission = execution.admitText(emptyJson(),dispatches(calls),textRequest("experience-1",scope,"Another note",80,"granted",false,61000));
+  insist(rolled.accepted && owned(rolled.dispatch,"experience-1") === 6,"Rolling window did not release a slot");
+  let otherOwnerRate: execution.TextAdmission = execution.admitText(emptyJson(),dispatches(calls),textRequest("experience-2",scope,"Another note",80,"granted",false,20000));
+  insist(otherOwnerRate.accepted && owned(otherOwnerRate.dispatch,"experience-2") === 1,"Rate counter was shared across owners");
+  // A same-owner entry dated after the request still counts, so a retreating clock cannot widen the cap.
+  let future: execution.Dispatch[] = [{owner:"experience-1",at:90000}];
+  let retreated: execution.TextAdmission = execution.admitText(emptyJson(),dispatches(future),textRequest("experience-1",scope,"Another note",80,"granted",false,20000));
+  insist(retreated.accepted && owned(retreated.dispatch,"experience-1") === 2,"A future-dated dispatch was dropped from the window");
+  // Failures count toward the cap: a dispatch is recorded whatever its outcome.
+  let failures: execution.Dispatch[] = [];
+  index = 0;
+  while (index < 6) { failures[failures.length] = {owner:"experience-1",at:1000+index*1000}; index++; }
+  let afterFailure: execution.TextAdmission = execution.admitText(emptyJson(),dispatches(failures),textRequest("experience-1",scope,"Failing note",80,"granted",false,30000));
+  insist(!afterFailure.accepted && afterFailure.code === "RATE","Failed dispatches did not count toward the cap");
+  // The cache keeps thirty answers in least-recent use order: a reused entry survives and the least
+  // recently used entry is the one evicted, which is not the oldest insertion.
+  let retained: execution.Answer[] = [];
+  index = 0;
+  while (index < 30) {
+    let at: number = 1000+index;
+    retained = execution.resolved(answers(retained),textRequest("experience-1",scope,"Prompt "+String(index),80,"granted",false,at),"answer "+String(index));
+    index++;
+  }
+  insist(retained.length === 30,"Cache capacity");
+  let refresh: execution.TextAdmission = execution.admitText(answers(retained),emptyJson(),textRequest("experience-1",scope,"Prompt 0",80,"granted",false,1500));
+  insist(refresh.reused && refresh.answer === "answer 0","The retained answer was not reusable");
+  let grown: execution.Answer[] = execution.resolved(answers(refresh.cache),textRequest("experience-1",scope,"Prompt 30",80,"granted",false,2000),"answer 30");
+  insist(grown.length === 30,"Cache capacity after eviction");
+  insist(cached(grown,"Prompt 0"),"The most recently used answer was evicted");
+  insist(!cached(grown,"Prompt 1"),"The least recently used answer survived eviction");
+  insist(textAt(grown,"Prompt 30") === "answer 30","Newest answer missing");
+  // The capacity is per owner: another Experience's answer consumes none of this owner's slots and
+  // never becomes the eviction victim, so the answer this owner would have to give up under a shared
+  // bound (its least recently used one) is still retained and still reusable.
+  let shared: execution.Answer[] = execution.resolved(answers(grown),textRequest("experience-2",scope,"Other prompt",80,"granted",false,2000),"other owner answer");
+  insist(held(shared,"experience-1") === 30 && held(shared,"experience-2") === 1,"Another owner's answer consumed a retained capacity slot");
+  insist(cached(shared,"Prompt 2") && cached(shared,"Prompt 30"),"Another owner's answer evicted this owner's retained answers");
+  let sharedLru: execution.TextAdmission = execution.admitText(answers(shared),emptyJson(),textRequest("experience-1",scope,"Prompt 2",80,"granted",false,2000));
+  insist(sharedLru.reused && sharedLru.answer === "answer 2","Another owner's answer evicted the owner's least recently used answer");
+  // The victim is the owner's own least recently used answer: an answer another owner retained earlier
+  // survives while this owner's oldest one is evicted.
+  let mine: execution.Answer[] = execution.resolved(emptyJson(),textRequest("experience-2",scope,"Foreign prompt",80,"granted",false,1),"foreign answer");
+  index = 0;
+  while (index < 31) { mine = execution.resolved(answers(mine),textRequest("experience-1",scope,"Own "+String(index),80,"granted",false,1000+index),"own "+String(index)); index++; }
+  insist(held(mine,"experience-1") === 30 && held(mine,"experience-2") === 1,"Another owner's oldest answer was evicted");
+  insist(textAt(mine,"Foreign prompt") === "foreign answer" && !cached(mine,"Own 0") && cached(mine,"Own 1"),"The wrong answer was evicted at the per-owner bound");
+  // One call can carry several owners over capacity: each is reduced to its own newest thirty and no
+  // owner is trimmed to make room for another.
+  let crowded: execution.Answer[] = [];
+  index = 0;
+  while (index < 35) { crowded[crowded.length] = {owner:"experience-1",capability:"host/text/generate",scope:scope,prompt:"Crowd "+String(index),words:80,text:"crowd",at:1000+index,used:1000+index}; index++; }
+  index = 0;
+  while (index < 35) { crowded[crowded.length] = {owner:"experience-3",capability:"host/text/generate",scope:scope,prompt:"Pair "+String(index),words:80,text:"pair",at:1000+index,used:2000+index}; index++; }
+  let trimmed: execution.Answer[] = execution.resolved(answers(crowded),textRequest("experience-3",scope,"Pair 40",80,"granted",false,3000),"pair 40");
+  insist(held(trimmed,"experience-1") === 30 && held(trimmed,"experience-3") === 30,"One call left an owner outside its own capacity");
+  insist(!cached(trimmed,"Crowd 0") && !cached(trimmed,"Pair 0") && cached(trimmed,"Crowd 34") && cached(trimmed,"Pair 34"),"A several-owner eviction kept the wrong answers");
+  // An oversized cache the host hands in is reduced to each owner's own bound before anything is reused
+  // from it, and the retained set follows use rather than array order.
+  let oversized: execution.Answer[] = [];
+  index = 0;
+  while (index < 40) { oversized[oversized.length] = {owner:"experience-1",capability:"host/text/generate",scope:scope,prompt:"Overflow "+String(index),words:80,text:"overflow",at:1000+index,used:index === 5 ? 9000 : 1000+index}; index++; }
+  index = 0;
+  while (index < 33) { oversized[oversized.length] = {owner:"experience-4",capability:"host/text/generate",scope:scope,prompt:"Second "+String(index),words:80,text:"second",at:1000+index,used:1000+index}; index++; }
+  let bounded: execution.TextAdmission = execution.admitText(answers(oversized),emptyJson(),textRequest("experience-1",scope,"Overflow 40",80,"granted",false,2000));
+  insist(held(bounded.cache,"experience-1") === 30 && held(bounded.cache,"experience-4") === 30,"An oversized host cache was served above its per-owner bound");
+  insist(cached(bounded.cache,"Overflow 5") && !cached(bounded.cache,"Overflow 0") && !cached(bounded.cache,"Second 0"),"The oversized host cache kept the wrong answers");
+  // A cancelled resolution returns the cache it was handed under the same per-owner bound.
+  let cancelledBig: execution.Answer[] = execution.resolved(answers(oversized),textRequest("experience-1",scope,"Overflow 40",80,"granted",true,3000),"late answer");
+  insist(held(cancelledBig,"experience-1") === 30 && held(cancelledBig,"experience-4") === 30,"A cancelled resolution returned an over-capacity cache");
+  insist(cached(cancelledBig,"Overflow 5") && !cached(cancelledBig,"Overflow 0") && !cached(cancelledBig,"Second 0"),"A cancelled resolution kept the wrong answers");
+  // One identity holds one answer: a repeated success replaces it instead of consuming another slot.
+  let once: execution.Answer[] = execution.resolved(emptyJson(),textRequest("experience-1",scope,"Same prompt",80,"granted",false,10),"first");
+  let twice: execution.Answer[] = execution.resolved(answers(once),textRequest("experience-1",scope,"Same prompt",80,"granted",false,20),"second");
+  insist(twice.length === 1 && textAt(twice,"Same prompt") === "second","A repeated identity consumed a second cache entry");
+  // Prompt and word bounds reject before any dispatch.
+  rejects((): void => { execution.textRequest(textRequest("experience-1",scope,"Write a note",301,"granted",false,1000)); },"Word count above 300 admitted");
+  rejects((): void => { execution.textRequest(textRequest("experience-1",scope,"Write a note",0,"granted",false,1000)); },"Word count below 1 admitted");
+  let long: string = ""; index = 0; while (index < 2001) { long = long+"a"; index++; }
+  rejects((): void => { execution.textRequest(textRequest("experience-1",scope,long,80,"granted",false,1000)); },"Over-long prompt admitted");
+  let atLimit: string = ""; index = 0; while (index < 2000) { atLimit = atLimit+"a"; index++; }
+  execution.textRequest(textRequest("experience-1",scope,atLimit,80,"granted",false,1000));
+  // One identity is unambiguous: two different authority scopes whose parts would meet around a bare
+  // separator never share an answer, so a cached success cannot cross a permission or consent scope.
+  let splitCache: string = "[{\"owner\":\"experience-1\",\"capability\":\"host/text/a\",\"scope\":\"b\\u0000c\",\"prompt\":\"Write a note\",\"words\":80,\"text\":\"split answer\",\"at\":100000,\"used\":100000}]";
+  let joinedScope: string = "{\"owner\":\"experience-1\",\"capability\":\"host/text/a\\u0000b\",\"scope\":\"c\",\"prompt\":\"Write a note\",\"words\":80,\"consent\":\"granted\",\"cancelled\":false,\"now\":102000}";
+  let collision: execution.TextAdmission = execution.admitText(splitCache,emptyJson(),joinedScope);
+  insist(!collision.reused,"Two authority scopes shared one cache identity");
+  rejects((): void => { execution.textRequest("{\"owner\":\"experience-1\",\"capability\":\"host/text/generate\",\"scope\":\"s\",\"prompt\":80,\"words\":80,\"consent\":\"granted\",\"cancelled\":false,\"now\":1}"); },"A numeric prompt was admitted");
+  rejects((): void => { execution.textRequest("{\"owner\":\"experience-1\",\"capability\":\"host/text/generate\",\"scope\":\"s\",\"prompt\":[\"a\",\"b\"],\"words\":80,\"consent\":\"granted\",\"cancelled\":false,\"now\":1}"); },"An array prompt was admitted");
+  rejects((): void => { execution.textRequest("{\"owner\":\"experience-1\",\"capability\":\"host/text/generate\",\"scope\":\"s\",\"prompt\":{\"length\":3},\"words\":80,\"consent\":\"granted\",\"cancelled\":false,\"now\":1}"); },"A record prompt was admitted");
+  rejects((): void => { execution.resolved(emptyJson(),textRequest("experience-1",scope,"Write a note",80,"granted",false,1000),""); },"An empty answer was cached");
+  rejects((): void => { execution.resolved(emptyJson(),textRequest("experience-1",scope,"Write a note",80,"granted",false,1000),notText()); },"A non-text answer was cached");
+  rejects((): void => { execution.admitText("[{\"owner\":\"experience-1\",\"capability\":\"host/text/generate\",\"scope\":\"s\",\"prompt\":\"Write a note\",\"words\":80,\"text\":42,\"at\":1000,\"used\":1000}]",emptyJson(),textRequest("experience-1",scope,"Write a note",80,"granted",false,101000)); },"A numeric cached answer was served");
+  rejects((): void => { execution.admitText("[{\"owner\":\"experience-1\",\"capability\":\"host/text/generate\",\"scope\":\"s\",\"prompt\":[\"a\"],\"words\":80,\"text\":\"answer\",\"at\":1000,\"used\":1000}]",emptyJson(),textRequest("experience-1",scope,"Write a note",80,"granted",false,101000)); },"An array cached prompt was typed");
+  // A cache whose entries are dated after the request cannot make the answer just produced the
+  // eviction victim.
+  let futureCache: execution.Answer[] = [];
+  index = 1;
+  while (index <= 30) { futureCache[futureCache.length] = {owner:"experience-1",capability:"host/text/generate",scope:scope,prompt:"Future "+String(index),words:80,text:"future",at:999999,used:999999}; index++; }
+  let fresh: execution.Answer[] = execution.resolved(answers(futureCache),textRequest("experience-1",scope,"Now",80,"granted",false,2000),"now");
+  insist(fresh.length === 30 && textAt(fresh,"Now") === "now","The answer just produced was evicted immediately");
+  // A completed answer is authoritative state: it is persisted with its operation and its revision,
+  // while the reuse cache and the rolling counter are runtime bookkeeping and never in the record.
+  let value: execution.Executed = operation("op_text",["f_parts_limit"]);
+  let admittedText: execution.Admission = admitted(value,1000,"");
+  let terminal: operations.Operation = operations.complete(admittedText.executed.operation,completion(correlated(admittedText.executed),"first answer"),prerequisites(admittedText.executed));
+  let withAnswer: execution.Executed = {operation:terminal,dependencies:admittedText.executed.dependencies,expiryKind:"none",period:0,trusted:true,stale:false};
+  let record: string = execution.persisted([withAnswer]);
+  insist(record.indexOf("\"first answer\"") >= 0,"Completed answer missing from the persisted record");
+  insist(record.indexOf("op_text") >= 0 && record.indexOf("\"revision\":0") >= 0,"Operation revision missing from the persisted record");
+  insist(record.indexOf("call-1") < 0,"Admission markers entered the persisted record");
+  insist(record.indexOf("Write a note") < 0,"A text prompt entered the persisted record");
+  insist(execution.cacheKeys(cache).length === 1 && execution.cacheKeys(cache)[0].indexOf("first answer") < 0,"The reuse cache key retained the answer text");
+  let pendingText: execution.Admission = admitted(value,2000,"");
+  let pendingRecord: string = execution.persisted([pendingText.executed]);
+  insist(pendingRecord === "{}","A pending operation entered the persisted record");
+  // A typed terminal failure is a terminal result as well: it restores with its classification and its
+  // revision, so a cold reopen keeps the failure instead of reporting an idle operation at revision 0.
+  let failing: execution.Admission = admitted(operation("op_failed",["f_parts_limit"]),3000,"{\"relativeMs\":500}");
+  let failure: operations.Completion = {envelope:correlated(failing.executed),accepted:true,status:"error",message:"PROVIDER_TIMEOUT",outcome:"failure"};
+  let failedOperation: operations.Operation = operations.complete(failing.executed.operation,failure,prerequisites(failing.executed));
+  let failed: execution.Executed = {operation:failedOperation,dependencies:failing.executed.dependencies,expiryKind:failing.executed.expiryKind,period:failing.executed.period,trusted:true,stale:false};
+  let failedRecord: string = execution.persisted([failed]);
+  insist(failedRecord.indexOf("op_failed") >= 0,"A terminal failure was dropped from the persisted record");
+  insist(failedRecord.indexOf("\"outcome\":\"failure\"") >= 0 && failedRecord.indexOf("PROVIDER_TIMEOUT") >= 0,"A terminal failure lost its classification");
+  insist(failedRecord.indexOf("\"revision\":0") >= 0,"A terminal failure lost the revision a reopen compares");
+  insist(failedRecord.indexOf("\"expiryKind\":\"relative\"") >= 0 && failedRecord.indexOf("\"admittedAt\":3000") >= 0,"A restored result could not revalidate expiry");
+  insist(failedRecord.indexOf("call-1") < 0,"A terminal failure carried an admission marker");
+  return null;
+}
+
+export function contracts(): null {
+  revisions(); admission(); expiry(); authority(); text(); return null;
+}
+export function main(): void { return; }

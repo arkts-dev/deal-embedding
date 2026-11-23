@@ -11,7 +11,7 @@ class Embedding internal constructor(private val context: Context, internal val 
     companion object {
         fun open(context: Context, config: EmbeddingConfig, capabilities: List<NativeCapabilities> = emptyList(), trustProvider: (Int) -> Boolean = { false }): ApplicationProtocol {
             val application = context.applicationContext
-            val registry = CapabilityRegistry(application, CapabilityDiscovery(application,trustProvider),capabilities)
+            val registry = CapabilityRegistry(application, CapabilityDiscovery(application,trustProvider,config.execution),capabilities,config.execution)
             val model = config.inference?.let { provider -> object : ModelClient {
                 override fun complete(request: InferenceRequest, cancellation: GenerationCancellation, log: EmbeddingLog) =
                     provider.complete(request,cancellation)

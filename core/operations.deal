@@ -52,6 +52,8 @@ export function sendCurrent(operation: Operation, envelope: Envelope, prerequisi
 function sameInvocation(operation: Operation, envelope: Envelope): boolean {
   return operation.id === envelope.operationId && operation.sequence === envelope.sequence && operation.phase === envelope.phase && operation.revision === envelope.revision && operation.lifetime === envelope.lifetime && operation.epoch === envelope.epoch;
 }
+// A reply is admitted only after invocationCurrent accepted it against the live store on the serialized
+// lane; this function then matches the originating correlation and the current prerequisites.
 export function complete(operation: Operation, completion: Completion, prerequisites: Prerequisites): Operation {
   let next: Operation = copy(operation); let origin: Envelope = completion.envelope;
   // Stale completions cannot clear a newer pending invocation.

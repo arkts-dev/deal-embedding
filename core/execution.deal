@@ -1,0 +1,568 @@
+import * as decoded from "./decoded";
+import * as s from "./construction-schema";
+import * as operations from "./operations";
+
+// Runtime execution policy for one Session: the issued dependency set of every operation, the one
+// authoritative revision field that counts edits to that set, expiry trust, read and mutation
+// authority, and runtime text-generation admission. Compiled policy decides; adapters supply the
+// sandbox, clocks, provider transport, the confirmation surface and storage.
+// Permission epochs are integral counters: the host increments one per grant or revoke of that module
+// and maps its own opaque token onto it, so the call and its reply compare the same value. Live.epoch is
+// the epoch of the module the admitted envelope's call targets.
+
+export class Executed {
+  operation: operations.Operation;
+  dependencies: string[];
+  expiryKind: string;
+  period: number;
+  trusted: boolean;
+  stale: boolean;
+}
+
+// The live store facts the admission lane evaluates: what the hook compares, the Session lifetime, the
+// permission epoch this invocation captures, the live grant of the module the admitted envelope's call
+// targets and whether the host's time is decidable now. The grant and the clock are live facts, never a
+// comparison with an earlier invocation.
+export class Live { ready: boolean; unexpired: boolean; revision: number; lifetime: string; epoch: number; granted: boolean; clockTrusted: boolean; }
+
+export class Admission { accepted: boolean; code: string; executed: Executed; envelope: operations.Envelope; }
+
+export class Edit { resources: string[]; readiness: string[]; bufferOnly: boolean; }
+
+export class Invalidation {
+  operations: Executed[];
+  bumped: string[];
+  discarded: number;
+}
+
+export class Expiry {
+  admittedAt: number;
+  expiresAt: number;
+  expired: boolean;
+  undecidable: boolean;
+  displayable: boolean;
+}
+
+export class Window { kind: string; amount: number; }
+
+export class Authority {
+  disclosed: string[];
+  classification: Record<string, unknown>;
+  granted: string[];
+  epoch: number;
+  currentEpoch: number;
+  lifetime: string;
+  sessionLifetime: string;
+  argumentsValid: boolean;
+  origin: string;
+  requestAuthorizes: boolean;
+  requestTarget: string;
+  confirmation: string;
+  confirmationTarget: string;
+}
+
+export class Decision { admitted: boolean; kind: string; code: string; reason: string; }
+
+export class Answer { owner: string; capability: string; scope: string; prompt: string; words: number; text: string; at: number; used: number; }
+
+export class Dispatch { owner: string; at: number; }
+
+export class TextRequest { owner: string; capability: string; scope: string; prompt: string; words: number; consent: string; cancelled: boolean; now: number; }
+
+export class TextAdmission { accepted: boolean; code: string; reused: boolean; answer: string; cache: Answer[]; dispatch: Dispatch[]; }
+
+// Bounds are stated once, here, so a change cannot apply to only one of reuse, eviction or dispatch.
+function reuseWindow(): number { return 3000; }
+function dispatchWindow(): number { return 60000; }
+function dispatchCap(): number { return 6; }
+function cacheCapacity(): number { return 30; }
+
+function executed(operation: operations.Operation, dependencies: string[], expiryKind: string, period: number): Executed {
+  return {operation:operation,dependencies:dependencies,expiryKind:expiryKind,period:period,trusted:true,stale:false};
+}
+
+function copyOperation(source: operations.Operation): operations.Operation {
+  let calls: operations.Call[] = [];
+  for (let call of source.calls) { let copied: operations.Call = {id:call.id,terminal:call.terminal,status:call.status,outcome:call.outcome,message:call.message}; if (Object.hasOwn(call,"result")) { copied.result = call.result; } calls[calls.length] = copied; }
+  let operation: operations.Operation = {id:source.id,owner:source.owner,status:source.status,sequence:source.sequence,phase:source.phase,revision:source.revision,lifetime:source.lifetime,epoch:source.epoch,accepted:source.accepted,continuation:source.continuation,message:source.message,outcome:source.outcome,arguments:source.arguments,calls:calls};
+  if (Object.hasOwn(source,"result")) { operation.result = source.result; }
+  if (Object.hasOwn(source,"admittedAt")) { operation.admittedAt = source.admittedAt as number; }
+  if (Object.hasOwn(source,"expiresAt")) { operation.expiresAt = source.expiresAt as number; }
+  return operation;
+}
+
+function copy(value: Executed): Executed {
+  let dependencies: string[] = [];
+  for (let name of value.dependencies) { dependencies[dependencies.length] = name; }
+  return {operation:copyOperation(value.operation),dependencies:dependencies,expiryKind:value.expiryKind,period:value.period,trusted:value.trusted,stale:value.stale};
+}
+
+// One retire rule for every invalidation cause: a pending operation records an unknown outcome, a
+// terminal value stays displayable but stale, and no unterminal call can still authorize a result. An
+// idle operation has nothing to retract: its advanced revision alone governs the next admission.
+function retire(value: Executed, message: string): Executed {
+  let next: Executed = copy(value);
+  if (next.operation.status === "pending") { next.operation.status = "stale"; next.operation.outcome = "unknown"; next.operation.message = message; next.stale = true; }
+  else if (next.operation.status === "ready" || next.operation.status === "error") { next.operation.status = "stale"; next.operation.message = message; next.stale = true; }
+  else if (next.operation.status === "stale") { next.stale = true; }
+  for (let call of next.operation.calls) { if (!call.terminal) { call.terminal = true; call.status = "stale"; call.outcome = "unknown"; call.message = message; } }
+  return next;
+}
+
+// Assembly issues one operation with the authoritative resources it reads. Plan reads and authored
+// argument lists are intent only and never become this set. Emitters call this before they emit an
+// operation: a dependency naming a resource the composition does not issue, a duplicate, or an empty
+// set for an operation that constructs its arguments from state rejects the candidate.
+export function dependencySet(id: string, dependencies: string[], issued: string[], constructsFromState: boolean): string[] {
+  s.identifier(id);
+  if (constructsFromState !== true && constructsFromState !== false) { s.reject("Operation construction flag"); }
+  let seen: string[] = []; let result: string[] = [];
+  for (let name of dependencies) {
+    s.identifier(name); s.unique(seen,name);
+    if (!s.contains(issued,name)) { s.reject("Dependency set names an unissued resource: "+name); }
+    result[result.length] = name;
+  }
+  // A revised operation that builds its arguments from state must name what it reads.
+  if (constructsFromState && result.length === 0) { s.reject("Operation with an empty dependency set constructs arguments from state"); }
+  return result;
+}
+
+export function issue(raw: string, issued: string[]): Executed {
+  const value: Record<string, unknown> = JSON.parse(raw);
+  s.closed(value,["id","owner","phase","dependencies","constructsFromState","lifetime"],[]);
+  let id: string = s.identifier(value.id); let owner: string = s.identifier(value.owner);
+  let phase: string = s.nonblank(value.phase); let lifetime: string = s.nonblank(value.lifetime);
+  let constructs: boolean = value.constructsFromState as boolean; if (constructs !== true && constructs !== false) { s.reject("Operation construction flag"); }
+  let dependencies: string[] = dependencySet(id,decoded.strings(value.dependencies),issued,constructs);
+  let operation: operations.Operation = operations.idle(id,owner);
+  operation.phase = phase; operation.lifetime = lifetime;
+  return executed(operation,dependencies,"none",0);
+}
+
+// The authoritatively issued revision of this operation's dependency set.
+export function revision(value: Executed): number { return value.operation.revision; }
+
+function window(raw: string): Window {
+  if (raw === "") { return {kind:"none",amount:0}; }
+  const value: Record<string, unknown> = JSON.parse(raw);
+  let relative: boolean = Object.hasOwn(value,"relativeMs"); let absolute: boolean = Object.hasOwn(value,"absolute");
+  if (relative === absolute) { s.reject("Expiry must be exactly one of relative or absolute"); }
+  if (relative) { s.closed(value,["relativeMs"],[]); } else { s.closed(value,["absolute"],[]); }
+  let amount: number = relative ? s.finite(value.relativeMs) : s.finite(value.absolute);
+  if (amount < 0) { s.reject("Expiry before the epoch"); }
+  return {kind:relative ? "relative" : "absolute",amount:amount};
+}
+
+export function live(raw: string): Live {
+  const value: Record<string, unknown> = JSON.parse(raw);
+  s.closed(value,["ready","unexpired","revision","lifetime","epoch","granted","clockTrusted"],[]);
+  let ready: boolean = value.ready as boolean; let unexpired: boolean = value.unexpired as boolean;
+  let granted: boolean = value.granted as boolean; let clockTrusted: boolean = value.clockTrusted as boolean;
+  if ((ready !== true && ready !== false) || (unexpired !== true && unexpired !== false)) { s.reject("Prerequisite flags"); }
+  if ((granted !== true && granted !== false) || (clockTrusted !== true && clockTrusted !== false)) { s.reject("Prerequisite host facts"); }
+  let revisionValue: number = s.integral(value.revision); let epoch: number = s.integral(value.epoch);
+  if (revisionValue < 0 || epoch < 0) { s.reject("Prerequisite domain"); }
+  return {ready:ready,unexpired:unexpired,revision:revisionValue,lifetime:s.nonblank(value.lifetime),epoch:epoch,granted:granted,clockTrusted:clockTrusted};
+}
+
+// Admission runs on the serialized Session lane immediately before the call leaves, against the live
+// record and the live host facts: a duplicate pending tap preserves sequence, phase, revision and
+// eligibility and starts no second invocation, a live revision that differs from the issued one means
+// this record did not observe a committed edit, so its constructed arguments are stale and nothing may
+// be sent, and a module the host no longer grants cannot send at all. A retained stale or untrusted
+// value withholds only the *previous* invocation: it authorizes no reply and no continuation (that is
+// what invocationCurrent refuses), but it never blocks an explicit retry. The retry is a new invocation
+// under a newly supplied call identity, admitted instant and expiry, so the record begin returns carries
+// no staleness and the trust the host reports for the window it took; only an invalidated reply can ever
+// be discarded. A relative window is trusted only when the host's time is decidable at admission, so an
+// undecidable window authorizes no reply; an absolute instant is decided by its own value.
+export function admit(value: Executed, prerequisites: Live, argumentsJson: string, callIds: string[], admittedAt: number, expiry: string): Admission {
+  let rejected: Admission = {accepted:false,code:"",executed:copy(value),envelope:{operationId:value.operation.id,sequence:value.operation.sequence,phase:value.operation.phase,revision:value.operation.revision,lifetime:value.operation.lifetime,epoch:value.operation.epoch,callId:""}};
+  // A pending invocation is never resent. A permission epoch that moved under it is the revoked case
+  // and keeps its own code; otherwise this is a duplicate tap. A settled or invalidated record is not a
+  // pending invocation, so the explicit retry below is a new one rather than a replay.
+  if (value.operation.status === "pending") { rejected.code = prerequisites.epoch === value.operation.epoch ? "CONCURRENT" : "REVOKED"; return rejected; }
+  if (!prerequisites.ready) { rejected.code = "UNREADY"; return rejected; }
+  if (!prerequisites.unexpired) { rejected.code = "EXPIRED"; return rejected; }
+  if (prerequisites.lifetime !== value.operation.lifetime) { rejected.code = "LIFETIME"; return rejected; }
+  if (prerequisites.revision !== value.operation.revision) { rejected.code = "REVISION"; return rejected; }
+  // The host's live grant for this send, not a comparison with an earlier invocation: a revoked module
+  // sends nothing, and a regrant lets the explicit retry proceed. The epoch is captured by begin for
+  // this invocation and checked against it on the reply, together with the live grant, so the permission
+  // decisions of Read authority and Mutation authority are consumed by the caller and never re-minted
+  // here.
+  if (!prerequisites.granted) { rejected.code = "DENIED"; return rejected; }
+  s.finite(admittedAt);
+  if (admittedAt < 1) { s.reject("Admission time must be a positive instant"); }
+  let spec: Window = window(expiry);
+  let at: number = deadline(spec,admittedAt);
+  let args: Record<string, unknown> = JSON.parse(argumentsJson);
+  let prerequisitesForBegin: operations.Prerequisites = {ready:prerequisites.ready,unexpired:prerequisites.unexpired,revision:prerequisites.revision,lifetime:prerequisites.lifetime,epoch:prerequisites.epoch};
+  let next: operations.Operation = operations.begin(copyOperation(value.operation),value.operation.phase,prerequisitesForBegin,args,callIds,admittedAt,at < 0 ? null : at);
+  let result: Executed = executed(next,value.dependencies,spec.kind,spec.amount);
+  // A pause, a retreating clock or an uncertain time invalidates trust in every relative expiry, so a
+  // relative window is trusted here only if the host reports a decidable time; anything else authorizes
+  // no reply. An absolute instant and an invocation without an expiry have no relative window to distrust.
+  result.trusted = spec.kind !== "relative" || prerequisites.clockTrusted;
+  let admittedValue: Executed = copy(result);
+  let envelope: operations.Envelope = operations.envelope(next,callIds[0]);
+  return {accepted:true,code:"",executed:admittedValue,envelope:envelope};
+}
+
+// A relative expiry starts at the admission of the request that issued the call; an absolute expiry
+// supplied by the host or the provider is used as given.
+function deadline(spec: Window, admittedAt: number): number {
+  if (spec.kind === "relative") { return admittedAt+spec.amount; }
+  if (spec.kind === "absolute") { return spec.amount; }
+  return -1;
+}
+
+// invocationCurrent: issued pending operation, matching sequence, phase and revision, ready and
+// unexpired prerequisites, held under an active grant and the epoch this invocation captured, evaluated
+// against the live store. The revision compared is the current revision field of the issued dependency
+// set, never a render version or a global counter. The serialized lane applies expiry() to the record
+// before it admits that record's reply, because this hook takes no instant of its own.
+export function invocationCurrent(value: Executed, envelope: operations.Envelope, prerequisites: Live): boolean {
+  if (!value.trusted || value.stale) { return false; }
+  if (!prerequisites.granted) { return false; }
+  if (prerequisites.revision !== value.operation.revision) { return false; }
+  return operations.sendCurrent(value.operation,envelope,{ready:prerequisites.ready,unexpired:prerequisites.unexpired,revision:prerequisites.revision,lifetime:prerequisites.lifetime,epoch:prerequisites.epoch});
+}
+
+// A committed edit bumps exactly the revisions of the operations whose issued set contains an edited
+// resource. An equivalent buffer spelling changes no validated value and bumps nothing.
+export function edit(values: Executed[], raw: string, message: string): Invalidation {
+  const value: Record<string, unknown> = JSON.parse(raw);
+  s.closed(value,["resources","readiness","bufferOnly"],[]);
+  let bufferOnly: boolean = value.bufferOnly as boolean; if (bufferOnly !== true && bufferOnly !== false) { s.reject("Edit buffer flag"); }
+  let resources: string[] = decoded.strings(value.resources); let readiness: string[] = decoded.strings(value.readiness);
+  let seen: string[] = []; for (let name of resources) { s.unique(seen,s.identifier(name)); }
+  for (let name of readiness) { s.unique(seen,s.identifier(name)); }
+  if (bufferOnly && (resources.length > 0 || readiness.length > 0)) { s.reject("Buffer-only edit changes no validated value"); }
+  let next: Executed[] = []; let bumped: string[] = []; let discarded: number = 0;
+  for (let item of values) {
+    let touched: boolean = touches(item,{resources:resources,readiness:readiness,bufferOnly:bufferOnly});
+    if (bufferOnly || !touched) { next[next.length] = copy(item); continue; }
+    let advanced: Executed = copy(item);
+    let revisionValue: number = advanced.operation.revision+1;
+    if (revisionValue > 9007199254740991) { s.reject("Revision domain exhausted"); }
+    advanced.operation.revision = revisionValue;
+    if (advanced.operation.status === "pending") { discarded++; }
+    // An invalid draft or a changed argument keeps the last value for display only.
+    next[next.length] = retire(advanced,message);
+    bumped[bumped.length] = item.operation.id;
+  }
+  return {operations:next,bumped:bumped,discarded:discarded};
+}
+
+// `edit` and `checkEdit` share one touch rule so the assembly check can never diverge from runtime.
+function touches(item: Executed, change: Edit): boolean {
+  for (let name of item.dependencies) { if (s.contains(change.resources,name) || s.contains(change.readiness,name)) { return true; } }
+  return false;
+}
+
+// An edit that changes a dependency without bumping its revision, a revision that retreats, or a set
+// naming an unissued resource rejects before commit and changes no business result.
+export function checkEdit(change: Edit, before: Executed[], after: Executed[], issued: string[]): null {
+  let seen: string[] = [];
+  for (let name of change.resources) { s.unique(seen,s.identifier(name)); if (!s.contains(issued,name)) { s.reject("Edit names an unissued resource: "+name); } }
+  for (let name of change.readiness) { s.unique(seen,s.identifier(name)); if (!s.contains(issued,name)) { s.reject("Readiness change names an unissued resource: "+name); } }
+  if (change.bufferOnly && (change.resources.length > 0 || change.readiness.length > 0)) { s.reject("Buffer-only edit changes no validated value"); }
+  if (before.length !== after.length) { s.reject("Operation identity changed across an edit"); }
+  let index: number = 0;
+  while (index < before.length) {
+    let prior: Executed = before[index]; let current: Executed = after[index]; index++;
+    if (prior.operation.id !== current.operation.id) { s.reject("Operation identity changed across an edit"); }
+    if (current.operation.revision < prior.operation.revision) { s.reject("Revision retreated"); }
+    if (change.bufferOnly) { if (current.operation.revision !== prior.operation.revision) { s.reject("Buffer-only edit advanced a revision"); } }
+    else if (touches(prior,change)) { if (current.operation.revision <= prior.operation.revision) { s.reject("A semantic dependency change must advance the revision of "+prior.operation.id); } }
+    else if (current.operation.revision !== prior.operation.revision) { s.reject("An unrelated edit advanced a revision: "+prior.operation.id); }
+  }
+  return null;
+}
+
+// Expiry: an expired or untrusted result stays displayable and never satisfies a calculation or an
+// action. A pause and resume, a retreating clock and an uncertain time invalidate trust in every
+// relative expiry; an expiry that cannot be decided is treated as expired. An absolute expiry is an
+// instant, so a pause does not reopen it.
+export function expiry(value: Executed, now: number, clockTrusted: boolean, paused: boolean, retreated: boolean): Expiry {
+  s.finite(now);
+  let admittedAt: number = Object.hasOwn(value.operation,"admittedAt") ? value.operation.admittedAt as number : 0;
+  let at: number = Object.hasOwn(value.operation,"expiresAt") ? value.operation.expiresAt as number : deadline({kind:value.expiryKind,amount:value.period},admittedAt);
+  let relative: boolean = value.expiryKind === "relative";
+  let undecidable: boolean = !clockTrusted || retreated || !value.trusted || (relative && (paused || now < admittedAt));
+  let expired: boolean = false;
+  if (value.expiryKind !== "none") { expired = undecidable || (at >= 0 && now >= at); }
+  return {admittedAt:admittedAt,expiresAt:at,expired:expired,undecidable:undecidable && value.expiryKind !== "none",displayable:Object.hasOwn(value.operation,"result")};
+}
+
+export function expire(value: Executed, now: number, clockTrusted: boolean, paused: boolean, retreated: boolean): Executed {
+  let windowValue: Expiry = expiry(value,now,clockTrusted,paused,retreated);
+  if (!windowValue.expired) { return copy(value); }
+  return retire(value,"Expired");
+}
+
+// A period change or a trust loss revalidates the operation before send, reply and resume.
+export function retrust(value: Executed, clockTrusted: boolean, periodChanged: boolean): Executed {
+  if (clockTrusted && !periodChanged && value.trusted) { return copy(value); }
+  let next: Executed = copy(value); next.trusted = false;
+  return retire(next,"Time trust lost");
+}
+
+export function authority(raw: string): Authority {
+  const value: Record<string, unknown> = JSON.parse(raw);
+  s.closed(value,["disclosed","classification","granted","epoch","currentEpoch","lifetime","sessionLifetime","argumentsValid","origin","requestAuthorizes","requestTarget","confirmation","confirmationTarget"],[]);
+  let disclosed: string[] = []; let seen: string[] = [];
+  for (let name of decoded.strings(value.disclosed)) { s.unique(seen,s.nonblank(name)); disclosed[disclosed.length] = name; }
+  let epoch: number = s.integral(value.epoch); let currentEpoch: number = s.integral(value.currentEpoch);
+  if (epoch < 0 || currentEpoch < 0) { s.reject("Permission epoch domain"); }
+  let argumentsValid: boolean = value.argumentsValid as boolean; if (argumentsValid !== true && argumentsValid !== false) { s.reject("Argument validity flag"); }
+  let requestAuthorizes: boolean = value.requestAuthorizes as boolean; if (requestAuthorizes !== true && requestAuthorizes !== false) { s.reject("Request authority flag"); }
+  let origin: string = s.oneOf(value.origin,["generated","supplied","catalogue"]);
+  let confirmation: string = s.oneOf(value.confirmation,["approved","denied","absent","stale",""]);
+  let granted: string[] = decoded.strings(value.granted);
+  return {disclosed:disclosed,classification:mapOf(value.classification),granted:granted,epoch:epoch,currentEpoch:currentEpoch,lifetime:s.nonblank(value.lifetime),sessionLifetime:s.nonblank(value.sessionLifetime),argumentsValid:argumentsValid,origin:origin,requestAuthorizes:requestAuthorizes,requestTarget:s.text(value.requestTarget),confirmation:confirmation,confirmationTarget:s.text(value.confirmationTarget)};
+}
+
+function classified(facts: Authority, module: string, fn: string): string {
+  // The host classifies each disclosed function. An unclassified function is treated as mutating:
+  // a wrong read classification would silently grant a write.
+  let key: string = module+"/"+fn;
+  if (!s.contains(facts.disclosed,key)) { return "undisclosed"; }
+  if (!Object.hasOwn(facts.classification,key)) { return "mutating"; }
+  let value: string = facts.classification[key] as string;
+  if (value === "read" || value === "mutating") { return value; }
+  s.reject("Unknown host classification: "+value);
+}
+
+// Shared identity, lifetime, grant and epoch checks: a matching epoch alone is not proof of a grant,
+// and the classification precedes the argument check so an unclassified function never reads.
+function admittedIdentity(facts: Authority, module: string, fn: string): Decision {
+  s.nonblank(module); s.nonblank(fn);
+  if (facts.sessionLifetime !== facts.lifetime) { return {admitted:false,kind:"",code:"REVOKED",reason:"Session lifetime changed"}; }
+  if (!s.contains(facts.granted,module)) { return {admitted:false,kind:"",code:"DENIED",reason:"Module is not granted"}; }
+  if (facts.epoch !== facts.currentEpoch) { return {admitted:false,kind:"",code:"REVOKED",reason:"Permission epoch changed"}; }
+  let kind: string = classified(facts,module,fn);
+  if (kind === "undisclosed") { return {admitted:false,kind:"",code:"INVALID_ARGUMENT",reason:"Undisclosed function"}; }
+  if (!facts.argumentsValid) { return {admitted:false,kind:"",code:"INVALID_ARGUMENT",reason:"Invalid arguments"}; }
+  return {admitted:true,kind:kind,code:"",reason:""};
+}
+
+// Read authority: disclosure plus an active grant whose epoch still matches. The frozen request is
+// never consulted, so a supplied Experience reads exactly like a generated one.
+export function readAuthority(facts: Authority, module: string, fn: string): Decision {
+  let identity: Decision = admittedIdentity(facts,module,fn);
+  if (!identity.admitted) { return identity; }
+  if (identity.kind !== "read") { return {admitted:false,kind:"mutating",code:"DENIED",reason:"Not a read"}; }
+  return {admitted:true,kind:"read",code:"",reason:""};
+}
+
+// Mutation authority: only an unambiguous host-issued determination binds the frozen request to this
+// operation, target and argument snapshot, and only a generated Experience holds one. Anything else
+// needs the host confirmation surface bound to the same target. A denial is final for that call.
+export function mutationAuthority(facts: Authority, module: string, fn: string): Decision {
+  let identity: Decision = admittedIdentity(facts,module,fn);
+  if (!identity.admitted) { return identity; }
+  if (identity.kind === "read") { return {admitted:false,kind:"read",code:"DENIED",reason:"A read never reaches mutation authority"}; }
+  if (facts.confirmation === "denied") { return {admitted:false,kind:"mutation",code:"DENIED",reason:"Host denied the mutation"}; }
+  // The determination binds the frozen request to this exact operation and target. The confirmed
+  // argument snapshot is rechecked by the caller before send, because this decision holds no values.
+  if (facts.origin === "generated" && facts.requestAuthorizes && facts.requestTarget === module+"/"+fn) { return {admitted:true,kind:"mutation",code:"",reason:""}; }
+  // Request authority is a necessary determination only for a generated Experience; a supplied or
+  // catalogue Experience has no frozen request, so the flag can never authorize it.
+  if (facts.confirmation === "stale") { return {admitted:false,kind:"mutation",code:"DENIED",reason:"Confirmation no longer correlates"}; }
+  if (facts.confirmation === "approved" && facts.confirmationTarget === module+"/"+fn) { return {admitted:true,kind:"mutation",code:"",reason:""}; }
+  if (facts.confirmation === "approved") { return {admitted:false,kind:"mutation",code:"DENIED",reason:"Approval names another operation or target"}; }
+  return {admitted:false,kind:"mutation",code:"DENIED",reason:"Mutation requires host confirmation"};
+}
+
+export function textRequest(raw: string): TextRequest {
+  const value: Record<string, unknown> = JSON.parse(raw);
+  s.closed(value,["owner","capability","scope","prompt","words","consent","cancelled","now"],[]);
+  let words: number = s.integral(value.words); if (words < 1 || words > 300) { s.reject("Requested word count outside 1-300"); }
+  let prompt: string = s.text(value.prompt);
+  // A non-string prompt would otherwise pass a length bound and reach a provider as data, and every
+  // record would share one cache identity.
+  if (!isText(prompt)) { s.reject("Prompt must be text"); }
+  if (prompt.length > 2000) { s.reject("Prompt exceeds 2000 UTF-16 units"); }
+  let cancelled: boolean = value.cancelled as boolean; if (cancelled !== true && cancelled !== false) { s.reject("Cancellation flag"); }
+  return {owner:s.nonblank(value.owner),capability:s.nonblank(value.capability),scope:s.nonblank(value.scope),prompt:prompt,words:words,consent:s.oneOf(value.consent,["granted","denied","withdrawn"]),cancelled:cancelled,now:s.finite(value.now)};
+}
+
+function answerOf(raw: Record<string, unknown>): Answer {
+  s.closed(raw,["owner","capability","scope","prompt","words","text","at","used"],[]);
+  // A host-supplied cache entry crosses the same boundary as a request: a prompt or an answer that is
+  // not text is refused instead of being served as an admitted answer or a shared cache identity.
+  let prompt: string = s.text(raw.prompt); if (!isText(prompt)) { s.reject("Cached prompt must be text"); }
+  let text: string = s.text(raw.text); if (!isText(text)) { s.reject("Cached answer must be text"); }
+  return {owner:s.nonblank(raw.owner),capability:s.nonblank(raw.capability),scope:s.nonblank(raw.scope),prompt:prompt,words:s.integral(raw.words),text:text,at:s.finite(raw.at),used:s.finite(raw.used)};
+}
+
+function dispatchOf(raw: Record<string, unknown>): Dispatch {
+  s.closed(raw,["owner","at"],[]);
+  return {owner:s.nonblank(raw.owner),at:s.finite(raw.at)};
+}
+
+function answersOf(json: string): Answer[] {
+  let result: Answer[] = [];
+  for (let raw of decoded.records(JSON.parse(json))) { result[result.length] = answerOf(raw); }
+  return result;
+}
+
+function dispatchesOf(json: string): Dispatch[] {
+  let result: Dispatch[] = [];
+  for (let raw of decoded.records(JSON.parse(json))) { result[result.length] = dispatchOf(raw); }
+  return result;
+}
+
+// The cache identity of one answer: owner, capability/contract identity, permission and consent
+// scope, prompt and word bound. Presentation never enters it and no other owner can reuse it.
+function identity(owner: string, capability: string, scope: string, prompt: string, words: number): string {
+  // One unambiguous value: the parts are encoded as one JSON array, so a part that contains the
+  // encoder's own punctuation can never make two different owners or authority scopes share an answer.
+  let parts: string[] = [owner,capability,scope,prompt,String(words)];
+  return JSON.stringify(parts) as string;
+}
+
+// Only a string encodes as a quoted JSON scalar; an array, a record or a number never does.
+function isText(value: unknown): boolean {
+  let encoded: string | undefined = JSON.stringify(value);
+  if (encoded === undefined) { return false; }
+  return (encoded as string).substring(0,1) === "\"";
+}
+
+// Only a record encodes with a leading brace; a null or array host map is refused, not coerced.
+function mapOf(value: unknown): Record<string, unknown> {
+  let encoded: string | undefined = JSON.stringify(value);
+  if (encoded === undefined || (encoded as string).substring(0,1) !== "{") { s.reject("Host classification must be a record"); }
+  return value as Record<string, unknown>;
+}
+
+function answerIdentity(entry: Answer): string { return identity(entry.owner,entry.capability,entry.scope,entry.prompt,entry.words); }
+
+function requestIdentity(request: TextRequest): string { return identity(request.owner,request.capability,request.scope,request.prompt,request.words); }
+
+// The capacity is per owner: an owner holding more than its capacity loses its own least recently used
+// answer, and one owner's dispatch pressure never evicts another owner's reusable answer.
+function capped(values: Answer[]): Answer[] {
+  let result: Answer[] = []; for (let entry of values) { result[result.length] = entry; }
+  let owners: string[] = [];
+  for (let entry of result) { if (!s.contains(owners,entry.owner)) { owners[owners.length] = entry.owner; } }
+  for (let owner of owners) {
+    let held: number = 0;
+    for (let entry of result) { if (entry.owner === owner) { held++; } }
+    while (held > cacheCapacity()) {
+      let victim: number = -1; let index: number = 0;
+      for (let entry of result) {
+        if (entry.owner === owner && (victim < 0 || entry.used < result[victim].used)) { victim = index; }
+        index++;
+      }
+      let compacted: Answer[] = []; index = 0;
+      for (let entry of result) { if (index !== victim) { compacted[compacted.length] = entry; } index++; }
+      result = compacted; held--;
+    }
+  }
+  return result;
+}
+
+// Text-generation admission: consent, cancellation and authority-scope identity are enforced before
+// both reuse and dispatch, together with the 3000 ms identical-success window and at most six
+// dispatches per owner in a rolling 60 000 ms. This decision holds no grant or contract of its own:
+// the caller admits the button only under an active grant, the captured permission epoch and the
+// disclosed capability, and passes that authority scope in the request. A refusal makes no call and
+// retains every answer, apart from enforcing the per-owner capacity bound on the cache it was handed.
+export function admitText(cacheJson: string, dispatchJson: string, requestJson: string): TextAdmission {
+  let request: TextRequest = textRequest(requestJson);
+  // The per-owner bound holds at the boundary too: an oversized cache the host hands in is reduced to
+  // each owner's 30 most recently used answers before anything is reused from it.
+  let cache: Answer[] = capped(answersOf(cacheJson));
+  let dispatches: Dispatch[] = dispatchesOf(dispatchJson);
+  if (request.cancelled) { return {accepted:false,code:"CANCELLED",reused:false,answer:"",cache:cache,dispatch:dispatches}; }
+  if (request.consent !== "granted") { return {accepted:false,code:"DENIED",reused:false,answer:"",cache:cache,dispatch:dispatches}; }
+  let wanted: string = requestIdentity(request);
+  let retained: Answer[] = []; for (let entry of cache) { retained[retained.length] = answerOf({owner:entry.owner,capability:entry.capability,scope:entry.scope,prompt:entry.prompt,words:entry.words,text:entry.text,at:entry.at,used:entry.used}); }
+  let hit: Answer | null = null; let index: number = 0;
+  while (index < retained.length) {
+    let entry: Answer = retained[index]; index++;
+    if (answerIdentity(entry) !== wanted) { continue; }
+    if (request.now < entry.at || request.now-entry.at > reuseWindow()) { continue; }
+    if (hit === null || entry.at > (hit as Answer).at) { hit = entry; }
+  }
+  if (hit !== null) {
+    let answer: Answer = hit as Answer;
+    answer.used = request.now;
+    return {accepted:true,code:"",reused:true,answer:answer.text,cache:retained,dispatch:dispatches};
+  }
+  // One owner's rolling window: an entry exactly 60 000 ms old is outside it (a rolling count is
+  // strictly newer than the window), while the reuse window below includes its 3000 ms edge because
+  // the contract says "within 3000 ms". Entries outside the window are dropped, and a future-dated
+  // entry still counts so a retreating clock cannot widen the cap.
+  let rolling: Dispatch[] = []; let count: number = 0;
+  for (let entry of dispatches) {
+    if (entry.at <= request.now && request.now-entry.at >= dispatchWindow()) { continue; }
+    rolling[rolling.length] = entry;
+    if (entry.owner === request.owner) { count++; }
+  }
+  if (count >= dispatchCap()) { return {accepted:false,code:"RATE",reused:false,answer:"",cache:retained,dispatch:rolling}; }
+  rolling[rolling.length] = {owner:request.owner,at:request.now};
+  return {accepted:true,code:"",reused:false,answer:"",cache:retained,dispatch:rolling};
+}
+
+// A successful answer becomes the authoritative result of the operation, so it persists with the
+// record and restores with it. The reuse cache and the rolling counter are runtime bookkeeping.
+export function resolved(cacheJson: string, requestJson: string, text: string): Answer[] {
+  let request: TextRequest = textRequest(requestJson);
+  let answer: string = s.text(text);
+  // An empty or non-text answer is a typed failure, never a cached entry.
+  if (!isText(answer)) { s.reject("Answer must be text"); }
+  if (answer === "") { s.reject("Empty answer"); }
+  // Cancellation and close discard the pending wait, so a late answer adds no cache entry: otherwise
+  // work the user cancelled could still be served to a later request from this cache.
+  if (request.cancelled) { return capped(answersOf(cacheJson)); }
+  let wanted: string = requestIdentity(request);
+  let retained: Answer[] = [];
+  // A future-dated entry is clamped so a retreating clock cannot make the answer just produced the
+  // eviction victim.
+  for (let entry of answersOf(cacheJson)) {
+    let copy: Answer = answerOf({owner:entry.owner,capability:entry.capability,scope:entry.scope,prompt:entry.prompt,words:entry.words,text:entry.text,at:entry.at,used:entry.used});
+    if (copy.used > request.now) { copy.used = request.now; }
+    if (answerIdentity(copy) === wanted) { continue; }
+    retained[retained.length] = copy;
+  }
+  retained[retained.length] = {owner:request.owner,capability:request.capability,scope:request.scope,prompt:request.prompt,words:request.words,text:answer,at:request.now,used:request.now};
+  return capped(retained);
+}
+
+// The persisted record keeps authoritative state only: the revision and the terminal classification
+// of every operation that reached a decision, with its result and its expiry window. Admission
+// markers, captured work, the reuse cache and the rolling dispatch counter never enter it.
+export function persisted(values: Executed[]): string {
+  let record: Record<string, unknown> = {};
+  for (let value of values) {
+    let operation: operations.Operation = value.operation;
+    // An idle or pending operation is captured work: the restore path normalizes it to stale under
+    // its revision, so it is never projected here as a terminal result.
+    if (operation.outcome === "none") { continue; }
+    let entry: Record<string, unknown> = {};
+    entry["revision"] = operation.revision; entry["sequence"] = operation.sequence; entry["phase"] = operation.phase;
+    entry["outcome"] = operation.outcome; entry["status"] = operation.status; entry["message"] = operation.message;
+    // A typed failure is a terminal result too: a cold reopen restores its classification instead of
+    // dropping the operation and with it the revision the reopened Session must compare.
+    if (Object.hasOwn(operation,"result")) { entry["result"] = operation.result; }
+    // The issued instant and kind let a restore revalidate expiry before the first visible tree.
+    if (Object.hasOwn(operation,"admittedAt")) { entry["admittedAt"] = operation.admittedAt as number; }
+    if (Object.hasOwn(operation,"expiresAt")) { entry["expiresAt"] = operation.expiresAt as number; }
+    if (value.expiryKind !== "none") { entry["expiryKind"] = value.expiryKind; entry["period"] = value.period; }
+    record[operation.id] = entry;
+  }
+  return s.encode(record);
+}
+
+// The runtime cache projection, used to prove the cache stays outside the record above.
+export function cacheKeys(cacheJson: string): string[] {
+  let result: string[] = [];
+  for (let entry of answersOf(cacheJson)) { result[result.length] = answerIdentity(entry); }
+  return result;
+}
+
+export function main(): void { return; }

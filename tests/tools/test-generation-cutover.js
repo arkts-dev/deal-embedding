@@ -5,6 +5,10 @@ const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('ass
 const root=process.cwd(),assets=path.join(root,'build/embedding-consumer/assets'),stage=path.join(root,'build/v08-cutover/generation-entry');
 // The experience's frozen target: the harness forwards it to the composer unchanged.
 const frozenTarget='screen';fs.mkdirSync(stage,{recursive:true});
+// Modes whose accepted pair the runtime items consume: their recorded digest belongs to the unfiltered
+// run, because a broken artifact must never record the digest of the sources it emitted. One table for
+// the retention below and for the refusal of a filtered run that would emit a pair without a digest.
+const RETAINED=new Set(['ordinary','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','partial','scalar-read']);
 const classes=path.join(root,'build/embedding-library/classes'),testClasses=path.join(stage,'classes');fs.mkdirSync(testClasses,{recursive:true});
 cp.execFileSync('javac',['--release','21','-cp',classes,'-d',testClasses,'tests/tools/fixtures/CompileComposer.java','tests/tools/fixtures/ProviderDeclaration.java']);
 const classpath=testClasses+':'+classes;
@@ -217,7 +221,7 @@ async function run(mode){
      cp.execFileSync('java',['-Ddeal.home='+path.resolve(process.env.DEAL_ROOT||path.join(root,'dependencies/deal')),'-cp',classpath,'CompileComposer',root,stage,frozenTarget]);
      acceptedSource={deal:request.args[0],dealui:request.args[1]};
      // Keep the composed pair the emitters produced so the runtime items drive real emitted source.
-     if(['ordinary','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','partial','scalar-read'].includes(mode)){const kept=path.join(root,'build/v08-cutover/emitted',mode);fs.rmSync(kept,{recursive:true,force:true});fs.cpSync(path.join(root,'build/v08-cutover/composed-executable'),kept,{recursive:true});
+     if(RETAINED.has(mode)){const kept=path.join(root,'build/v08-cutover/emitted',mode);fs.rmSync(kept,{recursive:true,force:true});fs.cpSync(path.join(root,'build/v08-cutover/composed-executable'),kept,{recursive:true});
       // The runtime item refuses a stale pair; its recorded digest is written once every mode passed.
       emitted.push(kept);}
      value=['retained','repeated','retained-operation-failure'].includes(mode)?{accepted:true,candidateId:'retained-'+checks,diagnostics:''}:mode==='repair'?{accepted:checks===2,candidateId:checks===2?'repaired':'',diagnostics:'FIXTURE_CHECK: source repair required'}:['ordinary','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','scalar-read','mixed','partial','units-rejected'].includes(mode)?{accepted:true,candidateId:'checked-'+checks,diagnostics:''}:mode==='budget'?{accepted:true,candidateId:'discard-me',diagnostics:''}:{accepted:checks===2,candidateId:checks===2?'checked-2':'',diagnostics:checks===1?'FIXTURE_CHECK: retain exact pair and revise label':''};
@@ -244,4 +248,23 @@ async function run(mode){
  }
  throw Error('Production generation did not settle');
 }
-(async()=>{const receipt={retained:await run('retained'),repeated:await run('repeated'),retainedOperationFailure:await run('retained-operation-failure'),unitsRejected:await run('units-rejected'),ordinary:await run('ordinary'),repair:await run('repair'),admissionImports:await run('admission-imports'),admissionDigest:await run('admission-digest'),admissionVersion:await run('admission-version'),admissionPermitted:await run('admission-permitted'),catalogue:await run('catalogue'),catalogueEmpty:await run('catalogue-empty'),catalogueSections:await run('catalogue-sections'),catalogueReadonly:await run('catalogue-readonly'),catalogueReadonlyEmpty:await run('catalogue-readonly-empty'),catalogueUndisclosed:await run('catalogue-undisclosed'),scalarRead:await run('scalar-read'),mixed:await run('mixed'),partial:await run('partial'),success:await run('success'),failure:await run('failure'),constructionFailure:await run('construction-failure'),budget:await run('budget')};for(const kept of emitted)fs.writeFileSync(path.join(kept,'generation.sha256'),bundleDigest);fs.writeFileSync(path.join(stage,'receipt.json'),JSON.stringify(receipt,null,2));console.log('packaged generation entry: compiled construction, exact repair, actual check accounting and operational failure propagation passed');})().catch(error=>{console.error(error);process.exitCode=1;});
+const MODES=[['retained','retained'],['repeated','repeated'],['retainedOperationFailure','retained-operation-failure'],['unitsRejected','units-rejected'],['ordinary','ordinary'],['repair','repair'],['admissionImports','admission-imports'],['admissionDigest','admission-digest'],['admissionVersion','admission-version'],['admissionPermitted','admission-permitted'],['catalogue','catalogue'],['catalogueEmpty','catalogue-empty'],['catalogueSections','catalogue-sections'],['catalogueReadonly','catalogue-readonly'],['catalogueReadonlyEmpty','catalogue-readonly-empty'],['catalogueUndisclosed','catalogue-undisclosed'],['scalarRead','scalar-read'],['mixed','mixed'],['partial','partial'],['success','success'],['failure','failure'],['constructionFailure','construction-failure'],['budget','budget']];
+// A seam control breaks one production rule and reruns this item to observe that rule's assertion.
+// `--mode=<name>` runs only the named modes, so a control pays for the rule it breaks instead of the
+// whole matrix; an unfiltered run stays the gate item and is the only one that records pair digests.
+const supplied=process.argv.slice(2);
+const requested=supplied.filter(argument=>argument.startsWith('--mode=')).map(argument=>argument.slice('--mode='.length));
+(async()=>{
+ const unknownArguments=supplied.filter(argument=>!argument.startsWith('--mode='));
+ if(unknownArguments.length)throw Error('Unknown argument: '+unknownArguments.join(','));
+ const unknown=requested.filter(name=>!MODES.some(([,mode])=>mode===name));
+ if(unknown.length)throw Error('Unknown generation mode: '+unknown.join(','));
+ const retained=requested.filter(name=>RETAINED.has(name));
+ if(retained.length)throw Error('Generation mode(s) '+retained.join(',')+' retain a source pair; only the unfiltered matrix may record its digest');
+ const chosen=requested.length?MODES.filter(([,mode])=>requested.includes(mode)):MODES;
+ const receipt={};for(const [key,mode] of chosen)receipt[key]=await run(mode);
+ if(requested.length){console.log('packaged generation entry: modes '+chosen.map(([,mode])=>mode).join(',')+' passed');return;}
+ for(const kept of emitted)fs.writeFileSync(path.join(kept,'generation.sha256'),bundleDigest);
+ fs.writeFileSync(path.join(stage,'receipt.json'),JSON.stringify(receipt,null,2));
+ console.log('packaged generation entry: compiled construction, exact repair, actual check accounting and operational failure propagation passed');
+})().catch(error=>{console.error(error);process.exitCode=1;});

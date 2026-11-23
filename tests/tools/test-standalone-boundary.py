@@ -64,6 +64,44 @@ class StandaloneBoundaryTest(unittest.TestCase):
         self.assertEqual(record['isolated'], record['canonical'],
                          'the isolated build without demos/ or tests/ must reproduce the packaged AAR digests')
 
+    def test_a_package_this_build_did_not_produce_is_never_recorded_as_proven(self):
+        # The proof records a target's compile key only for a package this build produced. A batch that
+        # drops or skips a target would leave the previous package in place, so the previous package is
+        # removed before the build and a run that produced nothing refuses the target and records no key.
+        import importlib.util
+        import tempfile
+        import types
+        spec = importlib.util.spec_from_file_location('boundary_proof', ROOT / 'tools/boundary-proof.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            module.ROOT = work
+            module.COMPILE_CACHE = work / 'build/verification/demo-compile'
+            module.compile_gate = lambda declarations: []
+            module.compile_key = lambda declaration: 'validated-input-key'
+            (work / 'build').mkdir()
+            declaration = {'target': 'calendar', 'sources': [], 'app_apis': [], 'profile_jars': []}
+            stale = work / 'build/calendar.apk'
+            stale.write_text('a package built from an earlier AAR')
+            # The production batch returns 0 but this target produced nothing, as a dropped target does.
+            module.subprocess = types.SimpleNamespace(run=lambda *arguments, **keywords: None)
+            violations, pending = module.compile_demos([declaration])
+            self.assertEqual(pending, ['calendar'])
+            self.assertTrue(violations, 'a target this build did not package was accepted')
+            self.assertIn('produced no packaged APK', violations[0])
+            self.assertFalse((module.COMPILE_CACHE / 'calendar.sha256').exists(),
+                             'an unfinished build recorded a compile key')
+            # The same target is proven once the build really writes its package.
+            def produce(*arguments, **keywords):
+                stale.write_text('a package built from the current AAR')
+            module.subprocess = types.SimpleNamespace(run=produce)
+            violations, pending = module.compile_demos([declaration])
+            self.assertEqual(violations, [])
+            self.assertEqual(pending, ['calendar'])
+            self.assertEqual(stale.read_text(), 'a package built from the current AAR')
+            self.assertTrue((module.COMPILE_CACHE / 'calendar.sha256').is_file())
+
     def test_library_input_declaration_contains_no_application_source(self):
         sys.path.insert(0, str(ROOT / 'tools'))
         import importlib.util

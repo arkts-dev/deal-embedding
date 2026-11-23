@@ -18,7 +18,7 @@ internal interface CapabilityHost {
 }
 
 /** Discovery and grants are shared; each isolate owns an independent request/reply session. */
-internal class CapabilityRegistry(private val context: Context, private val discovery: CapabilityDiscovery, local: List<NativeCapabilities>) : CapabilityHost, AutoCloseable {
+internal class CapabilityRegistry(private val context: Context, private val discovery: CapabilityDiscovery, local: List<NativeCapabilities>, private val limits: ExecutionLimits) : CapabilityHost, AutoCloseable {
     private val log = dev.deal.embedding.EmbeddingLog(context)
     private data class Provider(val contract: CapabilityContract, val local: NativeCapabilities? = null, val endpoint: CapabilityDiscovery.Endpoint? = null)
     private val locals = local.toList()
@@ -118,7 +118,7 @@ internal class CapabilityRegistry(private val context: Context, private val disc
                 return@synchronized
             }
             val endpoint = provider.endpoint!!
-            val item = Pending(id, "$identity:$id", provider, now + 5000, epoch(provider.contract.module) ?: run{fail(id,"REVOKED","Capability access revoked");return@synchronized},16*1024)
+            val item = Pending(id, "$identity:$id", provider, limits.providerDeadline(now), epoch(provider.contract.module) ?: run{fail(id,"REVOKED","Capability access revoked");return@synchronized},16*1024)
             pending[id] = item
             val callback = object : ICapabilityResult.Stub() {
                 private fun authenticate() { require(Binder.getCallingUid() == endpoint.uid && context.packageManager.getPackagesForUid(endpoint.uid)?.contains(endpoint.component.packageName) == true) { "Unauthenticated provider callback" } }

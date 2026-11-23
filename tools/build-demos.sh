@@ -242,13 +242,16 @@ embedding_dex() {
     printf '%s\n' "$key" > "$out/.inputs.sha256"
     printf 'Embedding dex: %s s\n' "$((SECONDS - started))"
 }
-for app in "${TARGETS[@]}"; do
+# One target's compile, dex and package. Its build tree is its own, so this function is the unit a
+# multi-job batch (DEAL_BUILD_JOBS) may run concurrently under the one lock-holding process.
+build_target() {
+    local app="$1" profile sources app_apis profile_jars dex_roots app_started next
     if [[ "$app" == tests ]]; then
         profile_dex host-stable "${RUNTIME_JARS[@]}"
         embedding_dex
         bash tests/tools/build-cutover-test.sh
         printf 'Tests: v0.8 production construction only; legacy test application deleted\n'
-        continue
+        return
     fi
     target_selection "$app"
     if [[ "$profile" == host ]]; then
@@ -306,8 +309,8 @@ for app in "${TARGETS[@]}"; do
         rm -f "$bytecode_stamp" "$bytecode_outputs"
         rm -rf "build/$app/classes" "build/$app/dex"
         mkdir -p "build/$app/classes" "build/$app/dex"
-        find "build/$app/rjava" -name '*.java' > build/r-sources.txt
-        javac --release 21 -d "build/$app/classes" @build/r-sources.txt
+        find "build/$app/rjava" -name '*.java' > "build/$app/r-sources.txt"
+        javac --release 21 -d "build/$app/classes" @"build/$app/r-sources.txt"
         app_cp=$(IFS=:; echo "${app_apis[*]}")
         app_classpath_args=()
         for jar in "${profile_jars[@]}" "$KOTLIN_HOME/lib/kotlin-stdlib.jar"; do app_classpath_args+=(--classpath "$jar"); done
@@ -334,4 +337,51 @@ for app in "${TARGETS[@]}"; do
     if [[ "$profile" == host ]]; then python3 tools/package-java-resources.py "build/$app/unsigned.apk" "${RUNTIME_JARS[@]}"; fi
     sign "$app"
     printf 'App (%s), compile/dex/package: %s s\n' "$app" "$((SECONDS - app_started))"
-done
+}
+# Targets are compiled one at a time unless a batch asks for jobs. The batches that ask are demo
+# repackages whose targets are independent build trees; the test target shares the composed executable
+# with the cutover items, so it always stays in the serial path. A failed target fails the batch and
+# every target's log is printed in target order, so a concurrent failure is as readable as a serial one.
+JOBS="${DEAL_BUILD_JOBS:-1}"
+[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo 'DEAL_BUILD_JOBS must be a positive integer' >&2; exit 1; }
+if (( JOBS > 1 )) && (( ${#TARGETS[@]} > 1 )) && [[ " ${TARGETS[*]} " != *' tests '* ]]; then
+    # Each job owns one target's build tree and log, so a repeated target would be raced by two jobs
+    # on one directory. The serial path merely builds it twice; a batch refuses it before any work.
+    seen=' '
+    for app in "${TARGETS[@]}"; do
+        [[ "$seen" != *" $app "* ]] || { echo "DEAL_BUILD_JOBS batches need distinct targets: $app" >&2; exit 1; }
+        seen="$seen$app "
+    done
+    # The batch shares the prepared dex directories, so every target in it must be the host profile
+    # that prepared them. `target_selection` is the one place that decides the profile; today every
+    # demo target is the host profile, so this check is a tripwire for a future provider-profile
+    # target rather than a live branch, and refusing here keeps it from racing a second profile.
+    for app in "${TARGETS[@]}"; do
+        target_selection "$app"
+        [[ "$profile" == host ]] || { echo "DEAL_BUILD_JOBS batches support host demo targets only: $app" >&2; exit 1; }
+    done
+    # The dex profiles are shared by every job, so they are prepared once here, on the serial lane,
+    # before any job can want them. A job then only reads the prepared dex.
+    profile_dex host-stable "${RUNTIME_JARS[@]}"
+    embedding_dex
+    printf 'Demo packaging: %s target(s) over %s job(s)\n' "${#TARGETS[@]}" "$JOBS"
+    pending=0 status=0
+    for app in "${TARGETS[@]}"; do
+        mkdir -p "build/$app"
+        printf 'Demo packaging: starting %s\n' "$app" >&2
+        ( build_target "$app" ) > "build/$app/build.log" 2>&1 &
+        pending=$((pending + 1))
+        if (( pending >= JOBS )); then
+            wait -n || status=1
+            pending=$((pending - 1))
+        fi
+    done
+    while (( pending > 0 )); do
+        wait -n || status=1
+        pending=$((pending - 1))
+    done
+    for app in "${TARGETS[@]}"; do cat "build/$app/build.log"; done
+    (( status == 0 )) || exit 1
+else
+    for app in "${TARGETS[@]}"; do build_target "$app"; done
+fi

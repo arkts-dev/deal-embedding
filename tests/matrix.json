@@ -745,16 +745,49 @@
       "id": "operation-admission",
       "family": "operation-admission",
       "owner": "execution-provider-workflows-and-persistence",
-      "requirement": "Duplicate pending taps preserve sequence, phase and revision; a stale sequence, wrong phase, expired revision or revoked epoch admits nothing; a rejected effect returns accepted:false; completions are admitted in arrival order and a continuation chains only from an admitted result.",
+      "requirement": "Duplicate pending taps preserve sequence, phase and revision; a stale sequence, wrong phase, an expired prerequisite, a pending invocation whose captured permission epoch moved or a send the host no longer grants admits nothing; a settled or invalidated record is re-admitted as a new invocation under the live grant that captures the live epoch; a rejected effect returns accepted:false; completions are admitted in arrival order and a continuation chains only from an admitted result.",
       "status": "partial",
-      "test": "python3 tests/tools/test-construction-contracts.py",
+      "test": "python3 tests/tools/test-execution-contracts.py python3 tests/tools/test-construction-contracts.py",
       "sources": [
-        "tests/tools/fixtures/construction-contracts.deal"
+        "tests/tools/fixtures/execution-contracts.deal"
       ],
-      "blocker": "The compiled operation model is exercised directly by the construction-contract fixture (duplicate taps, sendCurrent, completion ordering, a stale reply, a revoked epoch), but no production module imports core/operations.deal: core/composer.deal only reserves the invocationCurrent name and no emitted operation carries a revision, so effect rejection, continuation chaining and admission on the serialized Session lane have no production path.",
+      "seam": "admit-live-grant",
+      "blocker": "The compiled policy implements and proves admission on the serialized lane against the live record and the host's live facts: duplicate pending taps, unready, an expired prerequisite, foreign-lifetime, a revision disagreement (retreat or a live revision this record did not observe), a pending invocation whose captured permission epoch moved and a module the host no longer grants reject with their own codes and start no call, correlation is captured, invocationCurrent compares the live revision, the live grant and the epoch this invocation captured, and an invalidated pending operation is retired to stale/unknown with its call closed while another operation keeps its call. A retained stale or untrusted record withholds only its own reply and its own continuation: an explicit retry is a new invocation under the caller's new call identity, admitted instant and expiry, which leaves the invalidated reply unauthorized and is itself current, so its own reply completes. The grant is a live fact rather than a comparison with the earlier invocation's capture, so a regrant lets the retry proceed instead of refusing it for the rest of the Session. It is reachable from production generation only for dependency-set issuance: core/scalar-read.deal issues the emitted operation dependency set through execution.dependencySet, while admission itself has no Session adapter caller yet. Still missing: no Session adapter or emitted operation consults this decision, so effect rejection with accepted:false, continuation chaining and arrival-ordered completion remain on the operations.deal model exercised by test-construction-contracts.py, and no emitted operation transports an admitted record to the lane.",
       "asserts": [
-        "Pending duplicate mutated invocation",
-        "Regrant revived old invocation"
+        "Duplicate pending tap admitted a second invocation",
+        "A pending invocation whose permission epoch moved was not refused",
+        "An explicit retry did not capture the live permission epoch",
+        "An ungranted module dispatched a retry",
+        "A denied retry changed the record or started a call",
+        "A reply under a revoked grant established currentness",
+        "A reply under a moved epoch established currentness",
+        "A stale pending invocation established currentness",
+        "Revoked epoch established currentness",
+        "Invalidated pending outcome",
+        "An unrelated operation lost its call",
+        "An explicit retry after dependency invalidation was refused",
+        "The retried invocation inherited staleness",
+        "The retried invocation could not complete",
+        "An explicit retry after a clock trust loss was refused"
+      ]
+    },
+    {
+      "id": "resource-bounds",
+      "family": "provider-invocation",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "ExecutionLimits is the one host-configured containment block: every bound is validated finite and positive before any work, a sandbox constructed from it takes its evaluation timeout and heap, input and transfer bounds, the provider call and the disclosure refresh take their terminal instant from it rather than an adapter literal, and an unconfigured host keeps the 5000 ms provider and discovery deadline the adapters used to hard-code.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-resource-bounds.py",
+      "sources": [
+        "tests/tools/fixtures/ResourceBoundsTest.kt"
+      ],
+      "seam": "resource-bounds",
+      "evidence": "The production ExecutionLimits is compiled with its fixture on a JDK: the defaults are exactly the previous 5000 ms deadline, a host-supplied provider or discovery bound moves the admitted terminal instant, and a zero or negative provider, discovery, evaluation, heap, input or transfer bound rejects. The adapter call sites need Android, so they are asserted from production source: the provider call takes limits.providerDeadline(now), the disclosure refresh takes limits.discoveryDeadline(SystemClock.elapsedRealtime()) and its wait consumes that deadline, the embedding threads config.execution into both adapters so neither can fall back to its own block, no 5000 ms numeral survives in either adapter outside a comment, and the block has one declaration. A sandbox constructed with the block takes its bounds, because SandboxProgram reads every one of them from it. The four sandbox call sites that still construct a sandbox without the block are recorded in the provider-invocation blocker, so this row claims only that the host can configure the contained paths named here.",
+      "asserts": [
+        "a provider call must take its terminal instant from the configured bound",
+        "the provider deadline must not be an adapter literal",
+        "an unconfigured host must keep the 5000 ms provider and discovery deadline",
+        "the bounds must be declared once, in ExecutionLimits.kt"
       ]
     },
     {
@@ -763,7 +796,7 @@
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "A provider call validates its positional arguments and its reply against the disclosed contract, enforces the host-configured deadline, invalidates bindings on a contract change and returns the provider error code unchanged.",
       "status": "partial",
-      "blocker": "Argument and reply validation, deadline enforcement and binding invalidation run in android/src/capabilities/CapabilityRegistry.kt over an Android binder and a live grant epoch; the deterministic lane proves the contract boundary (disclosure-bounds) only, and the provider deadline is still the adapter literal 5000 ms rather than host configuration."
+      "blocker": "Argument and reply validation, deadline enforcement and binding invalidation run in android/src/capabilities/CapabilityRegistry.kt over an Android binder and a live grant epoch; the deterministic lane proves the contract boundary (disclosure-bounds) and the configured block (resource-bounds) only. Remaining AC-11 obligations: the capability request and reply buffers still carry adapter literals (128 KiB buffered, 16 KiB per message) rather than a host-configured transport bound; on-device inference awaits still take adapter literals (android/src/discovery/NanoDiscovery.kt) and two host waits are unbounded (ApplicationProtocol.kt:53, ProtocolController.kt:131); four sandbox call sites take no host configuration and keep the block's defaults - android/src/rendering/SuggestionSurface.kt:16, android/src/discovery/DiscoveryPolicy.kt:20, android/src/discovery/AssistancePolicy.kt:35 and android/src/bindings/EmbeddingLog.kt:110 - so a host bound on evaluation, heap, input or transfer does not reach them; storage performs no wait, so it has no bound to configure; and native exhaustion of an evaluation, heap or provider bound is classified as an execution failure by android/src/ExperienceRuntime.kt only, with no deterministic or device item observing it."
     },
     {
       "id": "persistence-codec",
@@ -792,32 +825,93 @@
       "family": "read-authority",
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "A granted module reads by disclosed contract and epoch with no frozen request and no confirmation; ungranted DENIED, changed epoch REVOKED, invalid argument INVALID_ARGUMENT, all with no call.",
-      "status": "missing",
-      "blocker": "Provider admission is grant-only; the wire contract carries no read classification and no compiled read-authority decision exists."
+      "status": "partial",
+      "blocker": "core/execution.deal decides read authority in contract order (Session lifetime, active grant, captured epoch, host read classification, validated arguments) and never consults the frozen request, and an unclassified function is not a read. The production boundary is unchanged: android/src/capabilities/CapabilityRegistry.kt:108-166 still admits a call by the module grant alone and the wire contract carries no read/mutating classification, so no authorization record is captured on an operation and no adapter consults this decision.",
+      "test": "python3 tests/tools/test-execution-contracts.py python3 tests/tools/test-construction-contracts.py",
+      "sources": [
+        "tests/tools/fixtures/execution-contracts.deal"
+      ],
+      "asserts": [
+        "Granted read refused without a request",
+        "Ungranted read admitted",
+        "Changed epoch read admitted",
+        "Supplied Experience read refused"
+      ]
     },
     {
       "id": "mutation-authority",
       "family": "mutation-authority",
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "A mutation is authorized only by an unambiguous frozen-request determination or a correlated host confirmation; unclassified functions are mutating; denial sends nothing and is final.",
-      "status": "missing",
-      "blocker": "No host confirmation surface, mutation classification or request-authority determination exists."
+      "status": "partial",
+      "blocker": "The compiled decision implements the precedence: Session lifetime, active grant and epoch, disclosure, host classification, validated arguments first; an unclassified function is mutating; only a generated Experience can hold a host-issued determination, and the determination names the exact function it authorizes so a different disclosed mutation is denied; an ambiguous, supplied or catalogue mutation needs an approval naming the same function; a denial is final and a stale approval dispatches nothing. Missing: the host confirmation surface, the host mutating classification on the disclosed contract, the host-issued determination itself, the confirmed-argument snapshot recheck immediately before send (this decision holds no values), and the Session-lane call site (android/src/capabilities/CapabilityRegistry.kt admits grant-only). Holding a confirmation open across edit, revoke and close is therefore unproven.",
+      "test": "python3 tests/tools/test-execution-contracts.py python3 tests/tools/test-construction-contracts.py",
+      "sources": [
+        "tests/tools/fixtures/execution-contracts.deal"
+      ],
+      "seam": "mutation-authority",
+      "asserts": [
+        "Request-disclosed mutation refused",
+        "A request determination authorized another target",
+        "Loaded Experience inherited request authority",
+        "Catalogue Experience inherited request authority",
+        "Approved mutation refused",
+        "An approval for another target authorized a mutation",
+        "Request authority overrode a denial",
+        "Stale approval dispatched",
+        "Revoked epoch mutation admitted",
+        "A read was admitted as a mutation"
+      ]
     },
     {
       "id": "revisions",
       "family": "revisions-expiry",
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "Issued dependency sets and one authoritative revision_<operationId> field per operation; only downstream operations invalidate; invocationCurrent compares the live revision.",
-      "status": "missing",
-      "blocker": "No operation dependency set or revision field is produced; core/operations.deal is unreachable from any module."
+      "status": "partial",
+      "blocker": "core/execution.deal issues the dependency set of an operation, advances exactly the revisions whose set contains a committed semantic change (resources or readiness), retires a pending operation to stale/unknown and keeps a completed value displayable only; an invalidated record authorizes no reply while an explicit retry is admitted at the live revision under the call identity the caller supplies for the new invocation, so an edited part reloads instead of staying stale forever. core/scalar-read.deal issues and consumes that set when it emits a live part, so the emitted part declares the resources it reads; that call site derives the set from the same field list it validates, so it guards a future caller rather than exercising a caller that could name an unissued field. The emitted runtime still carries one sequence counter rather than an emitted revision_<operationId> field, and no composer emits invocationCurrent: assembly-side issuance of operation dependency sets and the emitted revision field belongs to the ownership/slots assembly contract and is not delivered here.",
+      "test": "python3 tests/tools/test-execution-contracts.py python3 tests/tools/test-construction-contracts.py",
+      "sources": [
+        "tests/tools/fixtures/execution-contracts.deal"
+      ],
+      "seam": "revisions",
+      "asserts": [
+        "Empty dependency set admitted",
+        "Downstream-only bump set",
+        "Unrelated edit bumped a revision",
+        "Buffer-only edit advanced a revision",
+        "Readiness change did not advance a reader revision",
+        "Stale result lost its displayable value",
+        "The retried invocation presented the invalidated value as its admitted result",
+        "The retried invocation was not current"
+      ]
     },
     {
       "id": "expiry",
       "family": "revisions-expiry",
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "Relative expiry from request admission, absolute expiry as given, expiry displayable stale but never satisfying a calculation or action, and pause/resume or uncertain time invalidating trust.",
-      "status": "missing",
-      "blocker": "No relative/absolute expiry classification or uncertain-time trust rule is implemented."
+      "status": "partial",
+      "blocker": "Relative expiry from admission, absolute expiry as given (and surviving a pause as an instant), the double-supplied, unknown-field and already-expired rejections, retirement to stale on expiry, and trust loss by pause, by a retreating clock and by a period change are implemented and proven in core/execution.deal; an expiry that cannot be decided is treated as expired. An expired or untrusted result stays display-only and never blocks the next invocation: an explicit retry is admitted with its own admitted instant and expiry, so a part whose evidence expired can be refreshed. No adapter supplies the clock-trust facts or schedules the expiry transition, and no emitted operation carries admittedAt/expiresAt, so the Session driver obligation (an expiry transition independent of next/published polling) stays open.",
+      "test": "python3 tests/tools/test-execution-contracts.py python3 tests/tools/test-construction-contracts.py",
+      "sources": [
+        "tests/tools/fixtures/execution-contracts.deal"
+      ],
+      "seam": "admit-window-trust",
+      "asserts": [
+        "Relative expiry window",
+        "Absolute expiry was not used as given",
+        "A pause left a relative expiry operational",
+        "A retreating clock kept a relative expiry operational",
+        "Untrusted period established currentness",
+        "An explicit retry after expiry was refused",
+        "An explicit retry after an absolute expiry was refused",
+        "An explicit retry after a period change was refused",
+        "A retry admitted under an uncertain clock stayed operational",
+        "A relative window was trusted under an undecidable clock",
+        "An undecidable window authorized its reply",
+        "An invocation without an expiry lost trust it never took"
+      ]
     },
     {
       "id": "triggers",
@@ -839,9 +933,37 @@
       "id": "text-admission",
       "family": "text-admission",
       "owner": "execution-provider-workflows-and-persistence",
-      "requirement": "3000 ms identical-success reuse, 30-entry LRU answer cache, six calls per rolling 60 000 ms per owner, consent and cancellation, the answer persisted while cache and counters stay runtime-only.",
-      "status": "missing",
-      "blocker": "No reuse window, rolling cap, answer cache or owner isolation is implemented."
+      "requirement": "3000 ms identical-success reuse, a per-owner 30-entry LRU answer cache, six calls per rolling 60 000 ms per owner, consent and cancellation, the answer persisted while cache and counters stay runtime-only.",
+      "status": "partial",
+      "blocker": "Runtime text-generation admission is implemented and proven as compiled policy: consent, consent withdrawal and cancellation before both reuse and dispatch, the exact 3000 ms identical-success window, a per-owner 30-entry least-recent-use cache enforced both when an answer is resolved and when a host-supplied cache is admitted, where a reused entry survives, a repeated identity replaces its slot, one owner's answers never consume another owner's slots and the eviction victim is always the owning Experience's own least recently used answer, six dispatches per rolling 60 000 ms per owner (failures counted, a future-dated dispatch still counted, old entries pruned), owner isolation, a changed authority scope preventing reuse, and an authoritative answer in the persisted projection with the cache and counter excluded. Missing: the text-generation capability binding and emitted operation (generation side), the disclosed-capability check on the request, the rolling dispatch counter on the Session lane and the adapter that dispatches the admitted call.",
+      "test": "python3 tests/tools/test-execution-contracts.py python3 tests/tools/test-construction-contracts.py",
+      "sources": [
+        "tests/tools/fixtures/execution-contracts.deal"
+      ],
+      "seam": "text-admission",
+      "asserts": [
+        "Identical success inside the window dispatched a call",
+        "The exact reuse boundary dispatched a call",
+        "Matching entry beyond the window was reused",
+        "Consent withdrawal still reused an answer",
+        "Another owner reused an answer",
+        "Seventh dispatch admitted",
+        "A future-dated dispatch was dropped from the window",
+        "A numeric cached answer was served",
+        "A text prompt entered the persisted record",
+        "Failed dispatches did not count toward the cap",
+        "The most recently used answer was evicted",
+        "A repeated identity consumed a second cache entry",
+        "Another owner's answer consumed a retained capacity slot",
+        "Another owner's oldest answer was evicted",
+        "Another owner's answer evicted the owner's least recently used answer",
+        "One call left an owner outside its own capacity",
+        "An oversized host cache was served above its per-owner bound",
+        "The oversized host cache kept the wrong answers",
+        "A cancelled resolution returned an over-capacity cache",
+        "Completed answer missing from the persisted record",
+        "A pending operation entered the persisted record"
+      ]
     },
     {
       "id": "preservation",

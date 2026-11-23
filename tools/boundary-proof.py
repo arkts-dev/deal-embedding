@@ -362,6 +362,16 @@ def missing_compile_inputs(declaration):
             for entry in declared if not (ROOT / entry).exists()]
 
 
+def packaging_jobs(pending):
+    """The demo compile batch runs several independent targets at once. Each target keeps its own build
+    tree and the whole batch is still one lock-holding build, so concurrency here shortens the proven
+    repackage without changing what is compiled or proving anything in parallel with the tests."""
+    requested = os.environ.get('DEAL_DEMO_JOBS', '2')
+    if not requested.isdigit() or int(requested) < 1:
+        raise SystemExit('standalone boundary: DEAL_DEMO_JOBS must be a positive integer')
+    return max(1, min(int(requested), len(pending), os.cpu_count() or 1))
+
+
 def compile_demos(declarations):
     """Compile and package every demo target from the packaged AAR extraction only.
 
@@ -390,14 +400,27 @@ def compile_demos(declarations):
         pending.append(target)
     if pending:
         print(f'[boundary] packaging targets: {", ".join(pending)}', file=sys.stderr, flush=True)
+        # The batch size is validated before anything is removed, so a bad DEAL_DEMO_JOBS leaves the
+        # previous packages in place instead of deleting them and then aborting.
+        environment = os.environ.copy()
+        environment['DEAL_BUILD_JOBS'] = str(packaging_jobs(pending))
+        # A pending target's previous package is removed first, so the file's existence after the
+        # build means this build produced it from the current AAR. A batch that drops, skips or
+        # races a target would otherwise leave the stale package in place while the proof recorded
+        # the new compile key, and every later run would trust a package it never repackaged.
+        for target in pending:
+            for produced in (ROOT / f'build/{target}.apk', ROOT / f'build/{target}.apk.idsig'):
+                produced.unlink(missing_ok=True)
         started = time.monotonic()
         try:
-            subprocess.run(['bash', 'demos/build.sh', *pending], cwd=ROOT, check=True)
+            subprocess.run(['bash', 'demos/build.sh', *pending], cwd=ROOT, check=True, env=environment)
         finally:
             print(f'[boundary] demo packaging elapsed={time.monotonic()-started:.2f}s',
                   file=sys.stderr, flush=True)
         for declaration in declarations:
-            if declaration['target'] in pending:
+            # A key is recorded only for a target whose package this build produced: a dropped or
+            # skipped target is refused below instead of leaving a stamp that claims a compile.
+            if declaration['target'] in pending and (ROOT / f'build/{declaration["target"]}.apk').is_file():
                 (COMPILE_CACHE / f'{declaration["target"]}.sha256').write_text(compile_key(declaration) + '\n')
     violations = []
     for declaration in declarations:
