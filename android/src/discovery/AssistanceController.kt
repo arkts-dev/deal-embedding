@@ -88,6 +88,7 @@ internal class AssistanceController(private val context: Context, private val fa
         if (!failed) status = "Looking ahead…"
         busy = true
         worker.execute {
+            var token = ""
             try {
                 val current = DiscoveryFacts(facts())
                 factsInput = current
@@ -96,6 +97,7 @@ internal class AssistanceController(private val context: Context, private val fa
                 check(foreground && version == epoch)
                 val saved = protocol.saved()
                 val decision = lifecycle().resume(assistanceInput(current.identity, saved.map { it.id }, hooks.saved(current.identity) ?: ""))
+                token = decision.token
                 // A displayed Experience belongs to the fact identity it was prepared for.
                 if (owner != null && ownerInput != current.identity) { owner?.close(); owner = null; ownerInput = null }
                 when (decision.action) {
@@ -121,7 +123,7 @@ internal class AssistanceController(private val context: Context, private val fa
                             // The compiled lifecycle decides whether a superseded or abstained result is issuable.
                             if (error == null) runCatching { lifecycle().suggested(decision.token, if (tip == null) "" else suggestionJson(tip, current.identity).toString()) }
                             // Cancellation invalidates the attempt; it is never this suggestion's failure.
-                            if (error is java.util.concurrent.CancellationException) runCatching { lifecycle().abandon() }
+                            if (error is java.util.concurrent.CancellationException) runCatching { lifecycle().abandon(decision.token) }
                             else if (error != null) runCatching { lifecycle().failed(decision.token, "FAILED", current.identity) }
                             post(version) {
                                 busy = false; suggestion = tip; failed = error != null
@@ -132,7 +134,7 @@ internal class AssistanceController(private val context: Context, private val fa
                 }
             } catch (error: Throwable) {
                 // Never strand the compiled lane: a throw before its completion leaves the attempt open.
-                runCatching { compiled?.abandon() }
+                if (token.isNotEmpty()) runCatching { compiled?.abandon(token) }
                 post(version) { busy = false; failed = true; status = "Help unavailable" }
             }
         }
@@ -211,9 +213,12 @@ internal class AssistanceController(private val context: Context, private val fa
                 post(version) { busy = false; status = "" }
             } catch (error: Throwable) {
                 val code = (error as? ProtocolFailure)?.code ?: "FAILED"
+                // A completion for a superseded attempt is ignored: cancel it, never classify it.
+                val superseded = !foreground || version != epoch
+                if (superseded && token.isNotEmpty()) runCatching { compiled?.abandon(token) }
                 // A refusal that started no attempt changes no lifecycle state: STALE invalidates the
                 // suggestion, while INVALID rejects this attempt's evidence.
-                val outcome = if (token.isEmpty()) null else runCatching { lifecycle().failed(token, code, captured.identity) }.getOrNull()?.outcome
+                val outcome = if (superseded || token.isEmpty()) null else runCatching { lifecycle().failed(token, code, captured.identity) }.getOrNull()?.outcome
                 // The located reason is evidence for Inspect, never user copy.
                 if (code == "STALE" || code == "INVALID") runCatching { EmbeddingLog.traced(context, trace).event("host", "rejected", target = "Assistance", code = code, detail = error.message ?: "") }
                 if (token.isEmpty() && code == "STALE") runCatching { finder?.cancel() }

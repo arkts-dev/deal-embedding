@@ -7,7 +7,7 @@ export class Input { identity: string; discovery: boolean; generation: boolean; 
 export class Decision { action: string; experience: string; token: string; identity: string; outcome: string; }
 export class Assistance {
   reset: () => string;
-  abandon: () => string;
+  abandon: (token: string) => string;
   resume: (input: string) => string;
   suggested: (token: string, input: string) => string;
   open: (input: string) => string;
@@ -60,9 +60,10 @@ export function create(): Assistance {
     };
     return {
         reset:function(): string { issued = null; failedIdentity = ""; finish(); return ""; },
-        abandon:function(): string {
-            // A foreground, fact or permission change invalidates outstanding work without recording it
-            // as this suggestion's failure; the next resume starts a fresh attempt.
+        abandon:function(started: string): string {
+            // Foreground invalidation passes an empty token. Asynchronous cancellation must name its
+            // attempt: an old completion must never abandon a newer discovery or Open.
+            if (started !== "" && started !== attempt) { return ""; }
             issued = null; finish();
             return "";
         },
@@ -127,7 +128,7 @@ export function create(): Assistance {
         },
         failed:function(started: string, code: string, identity: string): string {
             // A completion for a superseded attempt changes nothing.
-            if (started !== "" && started !== attempt) { return decision("","","",identity,"ignored"); }
+            if (started === "" || started !== attempt) { return decision("","","",identity,"ignored"); }
             // A superseded suggestion is an invalidation, not this attempt's failure; rejected evidence
             // and operational faults fail the attempt and suppress a silent resume retry.
             let superseded: boolean = code === "STALE";

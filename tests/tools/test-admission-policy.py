@@ -135,15 +135,23 @@ class AssistanceLifecycleTest(unittest.TestCase):
 
     def test_adapter_carries_no_lifecycle_decision(self):
         text = (ROOT / 'android/src/discovery/AssistanceController.kt').read_text()
-        # The adapter must not re-implement the compiled decisions it consumes.
-        for duplicated in ['code == "STALE" &&', 'failedIdentity', 'rejection.code']:
+        # The adapter must not re-implement the compiled lifecycle decisions it consumes. Only a
+        # pre-attempt located refusal is presented here; a started attempt's failure is classified by
+        # the compiled policy through this single call.
+        for duplicated in ['failedIdentity', 'rejection.code']:
             self.assertNotIn(duplicated, text)
+        self.assertIn('if (superseded || token.isEmpty()) null else runCatching { lifecycle().failed(', text)
         self.assertIn('lifecycle().open(assistanceInput(', text)
         self.assertIn('lifecycle().generated(token, assistanceInput(', text)
         self.assertIn('val link = lifecycle().activated(activation.token, experience.id)', text)
         self.assertIn('lifecycle().reused(', text)
         self.assertIn('hooks.dismiss(identity)', text)
         self.assertIn('lifecycle().suggested(decision.token, if (tip == null) ""', text)
+        # A superseded completion is cancelled, never classified; pre-attempt refusals present a
+        # located status without touching the compiled lane.
+        self.assertIn('val superseded = !foreground || version != epoch', text)
+        self.assertIn('token.isEmpty() && code == "INVALID" -> { suggestion = null; failed = true;', text)
+        self.assertIn('if (token.isEmpty() && code == "STALE") runCatching { finder?.cancel() }', text)
         # Rule 1 runs through the canonical compiled admission before reuse or generation is decided.
         self.assertLess(text.index('discovery.admit(tip, current)'),
                         text.index('lifecycle().open(assistanceInput('),
@@ -156,7 +164,9 @@ class AssistanceLifecycleTest(unittest.TestCase):
         pause = body(text, text.index('fun pause()'), 'fun pause()')
         self.assertLess(pause.index('abandon()'), pause.index('finder?.cancel()'),
                         'pause must abandon the compiled attempt before cancelling discovery')
-        self.assertIn('is java.util.concurrent.CancellationException) runCatching { lifecycle().abandon() }', text)
+        self.assertIn('is java.util.concurrent.CancellationException) runCatching { lifecycle().abandon(decision.token) }', text)
+        self.assertIn('if (token.isNotEmpty()) runCatching { compiled?.abandon(token) }', text)
+        self.assertIn('if (superseded && token.isNotEmpty()) runCatching { compiled?.abandon(token) }', text)
         self.assertNotIn('CancellationException) runCatching { lifecycle().failed', text)
 
     def test_bridge_contract_matches_every_compiled_entry(self):

@@ -86,8 +86,10 @@ DEAL_UI=$(cd "${DEAL_UI_ROOT:-$ROOT/dependencies/deal-ui}" && pwd)
 export DEAL_ROOT="$DEAL" DEAL_UI_ROOT="$DEAL_UI"
 python3 "$ROOT/tools/dependencies.py" check
 mkdir -p build/toolchain
-exec 9> build/.demos-build.lock
-flock 9
+if [[ "${DEAL_BUILD_LOCK_HELD:-}" != "$PWD" ]] || ! flock -n 9 2>/dev/null; then
+    exec 9> build/.demos-build.lock
+    flock 9
+fi
 if [[ ! -f build/debug.keystore ]]; then
     keytool -genkeypair -keystore build/debug.keystore -storepass android -keypass android \
         -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 3650 -dname 'CN=Android Debug'
@@ -183,6 +185,10 @@ if [[ ! -f build/capability-api.jar || ! -f build/embedding-consumer/classes.jar
     printf 'Embedding library: %s s\n' "$((SECONDS - started))"
 else
     printf 'Embedding library: cache hit\n'
+fi
+# Local policy/bridge checks consume the packaged AAR but need neither dex nor an APK.
+if [[ ${#TARGETS[@]} -eq 1 && "${TARGETS[0]}" == library ]]; then
+    exit 0
 fi
 EMBEDDING_JAR=build/embedding-consumer/classes.jar
 # Stable third-party runtime dex never includes the changing embedding/compiler JAR.

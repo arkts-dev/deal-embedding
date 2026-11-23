@@ -117,7 +117,7 @@ const tip=identity=>JSON.stringify({title:'Split expense',brief:'Editable amount
  const policy=lifecycle();
  policy.decide('resume',input());
  assert.equal(policy.invoke('suggested','assistance-99',tip('facts-1')),'','a superseded discovery result is dropped');
- assert.equal(policy.invoke('abandon'),'','a foreground or fact change invalidates the attempt');
+ assert.equal(policy.invoke('abandon',''),'','a foreground or fact change invalidates the attempt');
  assert.equal(refused(()=>policy.invoke('open',input())),'STALE','a dropped result issues no suggestion');
  const next=policy.decide('resume',input());
  assert.equal(next.action,'discover','the next resume starts a fresh attempt');
@@ -137,7 +137,21 @@ const tip=identity=>JSON.stringify({title:'Split expense',brief:'Editable amount
  policy.decide('resume',input());
  policy.invoke('suggested','assistance-1',tip('facts-1'));
  const opened=policy.decide('open',input());
+ assert.equal(policy.decide('failed','','FAILED','facts-1').outcome,'ignored','an unstarted failure changes no attempt');
  assert.equal(policy.decide('failed','assistance-404','STALE','facts-1').outcome,'ignored');
  assert.equal(policy.decide('generated',opened.token,input()).action,'activate','the live attempt is untouched');
+}
+// Cancellation is correlated too: a delayed callback from the previous discovery must not cancel
+// the new foreground attempt or withdraw the suggestion it just issued.
+{
+ const policy=lifecycle();
+ const previous=policy.decide('resume',input());
+ policy.invoke('abandon','');
+ const current=policy.decide('resume',input());
+ policy.invoke('abandon',previous.token);
+ assert.equal(policy.decide('resume',input()).action,'busy','old cancellation keeps the current discovery running');
+ policy.invoke('suggested',current.token,tip('facts-1'));
+ policy.invoke('abandon',previous.token);
+ assert.equal(policy.decide('open',input()).action,'generate','old cancellation preserves the newly issued suggestion');
 }
 console.log('assistance lifecycle: compiled Open/reuse/revalidate/activate/Dismiss decisions with BUSY, DISABLED, STALE and no silent retry');

@@ -53,7 +53,7 @@ internal class AssistancePolicy(context: Context) : AutoCloseable {
         return AssistanceDecision(JSONObject(result.getString("value")))
     }
     fun reset(): String = call("reset")
-    fun abandon(): String = call("abandon")
+    fun abandon(token: String = ""): String = call("abandon", token)
     fun resume(input: AssistanceInput) = decide("resume", input.json().toString())
     fun suggested(token: String, suggestion: String) = call("suggested", token, suggestion)
     fun open(input: AssistanceInput) = decide("open", input.json().toString())
