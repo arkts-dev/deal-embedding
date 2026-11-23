@@ -149,7 +149,7 @@
       "requirement": "The compiled intent is nonblank, at most 4096 UTF-16 units and is never the brief or its text; the prompt carries the disclosed facts and catalogue as data; re-admission returns for an issued suggestion with unchanged facts and catalogue and rejects with STALE for a superseded suggestion, changed facts or a changed catalogue.",
       "status": "covered",
       "test": "node tests/tools/test-discovery.js",
-      "evidence": "test-discovery.js asserts the compiled intent bounds, that the intent is neither the brief nor its text, the disclosed facts and catalogue in the prompt, and the STALE re-admission of a superseded suggestion, changed facts and changed catalogue. The request that handoff becomes is not asserted by this file; `discovery-handoff-request` records that clause as missing.",
+      "evidence": "test-discovery.js asserts the compiled intent bounds, that the intent is neither the brief nor its text, the disclosed facts and catalogue in the prompt, and the STALE re-admission of a superseded suggestion, changed facts and changed catalogue. The request that handoff becomes is asserted by tests/tools/test-discovery-handoff.js.",
       "asserts": [
         "assert.notEqual(intent,suggestion.brief)",
         "assert(!intent.includes('Provide editable amount initialized to 84 EUR'))",
@@ -162,8 +162,19 @@
       "family": "discovery-handoff",
       "owner": "host-protocol-discovery-observation",
       "requirement": "Acceptance of an issued suggestion issues exactly one Request whose title is the suggestion title and whose context carries the captured facts with the supporting fact and capability ids, granting no permission and invoking no provider.",
-      "status": "missing",
-      "blocker": "The handoff is assembled in Kotlin and no executed check drives it. android/src/discovery/Discovery.kt:147-176 declares the two request overloads: :157-161 builds the three-field WireType schema, :164 the context JSON, :168 api.snapshot validates it, and :171 api.request(suggestion.title, policy.intent(), handoff) issues the Request. tests/tools/test-discovery.js drives only the compiled validate/intent/prompt/admit entry points, and admit returns an empty string, so it exposes no request title, intent or context. tests/tools/test-protocol.js asserts the host request path's title and intent bounds and the context its generate call receives, but it issues Requests directly and never through discovery; tests/tools/test-admission-policy.py asserts the fact and catalogue initializer source text; the compiled controller issues Requests in core/controller.deal:115-121 and no test counts how many a discovery acceptance produces; tests/android/CutoverInstrumentation.kt calls api.request for its own scenarios and asserts no suggestion or handoff. The four clauses - exactly one Request, the suggestion title, the captured-facts context and no grant or provider call - are therefore unproven."
+      "status": "covered",
+      "test": "node tests/tools/test-discovery-handoff.js",
+      "evidence": "The handoff is compiled policy: core/discovery-policy.deal `handoff` returns the request title, the compiled intent, the three-field WireType schema and the captured-facts context bound to the suggestion's issued references, and android/src/discovery/Discovery.kt transports that plan through the one context validator and issues one Request. test-discovery-handoff.js drives the production compiled discovery bundle and the production compiled application consumer with only the native transport mocked: it asserts the plan's title/intent/schema/context, that an unissued fact or capability reference is refused, that the accepted context keeps its exact bytes and is consumed by exactly one `generate`, that no grant is issued and no provider or catalogue operation crosses the native boundary, and that the one context validator refuses a handoff context past the byte bound. It also reads android/src/discovery/Discovery.kt and pins the adapter to the compiled plan, one context validation and exactly one `api.request` call, because the adapter itself is Android-only.",
+      "asserts": [
+        "'the request title is the suggestion title'",
+        "'the request intent is the compiled intent'",
+        "native_request.args[1].context.json,plan.context",
+        "assert.equal(generateRequests,1,",
+        "'acceptance grants no permission'",
+        "assert.deepEqual(native,['generate'],",
+        "'the adapter issues exactly one Request'",
+        "'an unissued fact reference is rejected'"
+      ]
     },
     {
       "id": "assistance-view",
@@ -184,9 +195,18 @@
       "family": "assistance-lifecycle",
       "owner": "host-protocol-discovery-observation",
       "requirement": "Compiled Open/Dismiss lifecycle: revalidate facts and catalogue, reuse a saved link before inference, one request, activation before saved link, retained dismissal, BUSY/DISABLED/STALE and no silent retry.",
-      "status": "partial",
-      "test": "node tests/tools/test-assistance.js",
-      "blocker": "The Open/Dismiss lifecycle decisions still execute in android/src/discovery/AssistanceController.kt; the compiled bundle holds only the suggestion view, so reuse-or-generate, retained dismissal and activation ordering have no deterministic proof yet."
+      "status": "covered",
+      "test": "node tests/tools/test-assistance-lifecycle.js node tests/tools/test-discovery.js",
+      "evidence": "core/assistance-policy.deal compiles the Open, saved-reuse, revalidation, activation-ordering, Dismiss-retention and failure decisions; android/src/discovery/AssistanceController.kt supplies the approved facts, enablement, retained dismissal and saved links and executes the transport. test-assistance-lifecycle.js drives the production compiled bundle with only the mechanism stubbed and asserts the decision for each case: one generate action per Open, BUSY for a duplicate, saved reuse with zero discovery and zero generation, STALE for changed facts and for activation after a fact change (no link recorded), mechanism-retained dismissal suppression, DISABLED without a failed attempt, no silent resume retry after a failure, and an explicit retry starting one new attempt. The refreshed catalogue is revalidated by the compiled handoff admission the Open path consumes, and test-discovery.js proves a changed catalogue rejects with STALE. The adapter that executes these decisions (single request/generate per Open, activation before the saved link, dismissal persistence) is pinned structurally by tests/tools/test-admission-policy.py, which is wiring evidence rather than a behavioural proof.",
+      "asserts": [
+        "'the saved link is recorded after activation'",
+        "'Open reuses the saved link without a request'",
+        "'a second Open while an attempt is outstanding is BUSY'",
+        "'activation after a fact change is refused'",
+        "'a mechanism-retained dismissal suppresses discovery'",
+        "'a failed attempt is not rerun on resume'",
+        "assert.throws(()=>invoke('admit'"
+      ]
     },
     {
       "id": "disclosure-bounds",

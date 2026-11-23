@@ -21,6 +21,12 @@ export function validate(reply: string, captureJson: string): string {
     }
 }
 export function intent(): string { return policy.intent(); }
+export function handoff(suggestionJson: string, captureJson: string): string {
+    const suggestion: policy.Suggestion = JSON.parse(suggestionJson);
+    const capture: policy.Capture = JSON.parse(captureJson);
+    const plan: policy.Handoff = policy.handoff(suggestion,capture);
+    return JSON.stringify(plan) as string;
+}
 export function admit(captured: string, current: string, catalogue: string, freshCatalogue: string, issued: string): string {
     policy.admit(captured,current,catalogue,freshCatalogue,issued === "true");
     return "";

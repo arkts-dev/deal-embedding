@@ -11,7 +11,7 @@ python3 "$ROOT/tools/dependencies.py" check
 : "${OUTPUT_DIR:?Set OUTPUT_DIR to an absolute output directory}"
 KOTLIN_HOME=${KOTLIN_HOME:-/snap/kotlin/current}
 mkdir -p "$OUTPUT_DIR"
-rm -rf "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar" "$OUTPUT_DIR/generation" "$OUTPUT_DIR/logging"
+rm -rf "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar" "$OUTPUT_DIR/generation" "$OUTPUT_DIR/logging" "$OUTPUT_DIR/assistance-policy"
 mkdir -p "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar/assets/distribution/deal" "$OUTPUT_DIR/aar/assets/distribution/std" "$OUTPUT_DIR/native-tools"
 find "$DEAL_ROOT/deal" -name '*.java' | sort > "$OUTPUT_DIR/sources.txt"
 for source in UiModel UiParser UiDiagnostic UiChecker UiBorrowedValueChecker UiDealGenerator UiSourceGenerator DealUiDealSource UiCheckpointCompiler; do
@@ -58,6 +58,10 @@ for p in stage.glob('*.d.deal'):
 PY
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/generation/src/generation.deal" --backend js --output "$OUTPUT_DIR/aar/assets/generation"
 java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/generation/src/discovery.deal" --backend js --output "$OUTPUT_DIR/aar/assets/discovery"
+mkdir -p "$OUTPUT_DIR/assistance-policy/src"
+cp "$ROOT/core/assistance-policy.deal" "$OUTPUT_DIR/assistance-policy/src/"
+printf '%s' '{"languageVersion":"1.6","backend":"js","moduleRoots":["src"]}' > "$OUTPUT_DIR/assistance-policy/deal.json"
+java -Ddeal.home="$DEAL_ROOT" -cp "$OUTPUT_DIR/classes" deal.Main compile "$OUTPUT_DIR/assistance-policy/src/assistance-policy.deal" --backend js --output "$OUTPUT_DIR/aar/assets/assistance-policy"
 mkdir -p "$OUTPUT_DIR/logging/src"
 cp "$ROOT/core/logging.deal" "$OUTPUT_DIR/logging/src/"
 printf '%s' '{"languageVersion":"1.6","backend":"js","moduleRoots":["src"]}' > "$OUTPUT_DIR/logging/deal.json"

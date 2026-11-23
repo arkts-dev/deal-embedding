@@ -1,0 +1,153 @@
+// Compiled assistance lifecycle over one issued suggestion.
+// The mechanism supplies the approved facts, the enablement flags, the retained dismissal, the saved
+// Experience links and the transport calls; every Open, reuse, revalidation, activation and Dismiss
+// decision below compiles. The suggestion view in assistance.deal renders and dispatches only.
+export class Suggestion { title: string; brief: string; supportingFactIds: string[]; capabilityIds: string[]; identity: string; }
+export class Input { identity: string; discovery: boolean; generation: boolean; saved: string[]; link: string; dismissed: boolean; }
+export class Decision { action: string; experience: string; token: string; identity: string; outcome: string; }
+export class Assistance {
+  reset: () => string;
+  abandon: () => string;
+  resume: (input: string) => string;
+  suggested: (token: string, input: string) => string;
+  open: (input: string) => string;
+  generated: (token: string, input: string) => string;
+  activated: (token: string, experience: string) => string;
+  reused: (token: string) => string;
+  failed: (token: string, code: string, identity: string) => string;
+  dismiss: (identity: string) => string;
+  retry: () => string;
+}
+function require(condition: boolean, code: string, message: string): null {
+    if (!condition) { throw {name:code,message:message}; }
+    return null;
+}
+function contains(values: string[], value: string): boolean {
+    for (let item of values) { if (item === value) { return true; } }
+    return false;
+}
+// A decision travels as data across the isolate boundary; a refusal is a classified Error.
+function decision(action: string, experience: string, token: string, identity: string, outcome: string): string {
+    return JSON.stringify({action:action,experience:experience,token:token,identity:identity,outcome:outcome}) as string;
+}
+export function create(): Assistance {
+    // idle | discovery | generation | activation | reuse. One outstanding attempt per controller.
+    let phase: string = "idle";
+    let attempt: string = "";
+    let attemptIdentity: string = "";
+    let issued: Suggestion | null = null;
+    let failedIdentity: string = "";
+    let sequence: number = 0;
+    let token: () => string = function(): string {
+        sequence = sequence + 1;
+        return "assistance-" + String(sequence);
+    };
+    // Starting an attempt takes the single lane: a second Open or Dismiss is BUSY.
+    let begin: (kind: string, identity: string) => string = function(kind: string, identity: string): string {
+        require(phase === "idle","BUSY","Assistance is busy");
+        attempt = token(); attemptIdentity = identity; phase = kind;
+        return attempt;
+    };
+    let finish: () => null = function(): null {
+        phase = "idle"; attempt = ""; attemptIdentity = "";
+        return null;
+    };
+    let link: (input: Input) => string = function(input: Input): string {
+        // Reuse needs the retained link and its resolution in the current saved set; no request or
+        // inference is authorized by a saved link.
+        if (input.link !== "" && contains(input.saved,input.link)) { return input.link; }
+        return "";
+    };
+    return {
+        reset:function(): string { issued = null; failedIdentity = ""; finish(); return ""; },
+        abandon:function(): string {
+            // A foreground, fact or permission change invalidates outstanding work without recording it
+            // as this suggestion's failure; the next resume starts a fresh attempt.
+            issued = null; finish();
+            return "";
+        },
+        resume:function(inputJson: string): string {
+            const input: Input = JSON.parse(inputJson);
+            if (phase !== "idle") { return decision("busy","","","",""); }
+            // A failed attempt is never silently rerun on resume; only an explicit Open or retry is.
+            if (failedIdentity === input.identity) { return decision("keep","","","",""); }
+            let saved: string = link(input);
+            if (saved !== "") { let started: string = begin("reuse",input.identity); return decision("reuse",saved,started,input.identity,""); }
+            if (!input.discovery || input.dismissed) { return decision("idle","","","",""); }
+            let started: string = begin("discovery",input.identity);
+            return decision("discover","",started,input.identity,"");
+        },
+        suggested:function(started: string, inputJson: string): string {
+            // A superseded or cancelled discovery result is dropped, never issued.
+            if (phase !== "discovery" || started !== attempt) { return ""; }
+            // An abstention is a decision too: it finishes the attempt without issuing a suggestion.
+            if (inputJson === "") { finish(); return ""; }
+            const value: Suggestion = JSON.parse(inputJson);
+            if (value.identity !== attemptIdentity) { finish(); return ""; }
+            issued = value; finish();
+            return "";
+        },
+        open:function(inputJson: string): string {
+            const input: Input = JSON.parse(inputJson);
+            require(phase === "idle","BUSY","Assistance is busy");
+            require(issued !== null,"STALE","Stale or unissued suggestion");
+            const suggestion: Suggestion = issued as Suggestion;
+            // Facts are revalidated here; the refreshed catalogue is revalidated by the compiled
+            // handoff admission before any request exists.
+            require(suggestion.identity === input.identity,"STALE","Stale suggestion: the approved facts changed");
+            require(input.generation,"DISABLED","Tailored tools are disabled");
+            let saved: string = link(input);
+            if (saved !== "") { let started: string = begin("reuse",input.identity); return decision("reuse",saved,started,input.identity,""); }
+            let started: string = begin("generation",input.identity);
+            return decision("generate","",started,input.identity,"");
+        },
+        generated:function(started: string, inputJson: string): string {
+            const input: Input = JSON.parse(inputJson);
+            require(phase === "generation" && started === attempt,"STALE","Assistance attempt was invalidated");
+            const suggestion: Suggestion = issued as Suggestion;
+            // Activation revalidates the approved facts and enablement; a candidate that outlived them
+            // is cancelled and records no link.
+            if (issued === null || suggestion.identity !== input.identity) { finish(); require(false,"STALE","Suggestion invalidated during generation"); }
+            if (!input.generation) { finish(); require(false,"DISABLED","Tailored tools were disabled"); }
+            phase = "activation";
+            return decision("activate","",attempt,input.identity,"");
+        },
+        activated:function(started: string, experience: string): string {
+            // The link is recorded only after activation, and only for the attempt that activated.
+            require(phase === "activation" && started === attempt,"STALE","Suggestion invalidated before the saved link");
+            let identity: string = attemptIdentity;
+            issued = null; failedIdentity = ""; finish();
+            return decision("save",experience,"",identity,"");
+        },
+        reused:function(started: string): string {
+            require(phase === "reuse" && started === attempt,"STALE","Reuse invalidated");
+            let identity: string = attemptIdentity;
+            issued = null; finish();
+            return decision("resumed","","",identity,"");
+        },
+        failed:function(started: string, code: string, identity: string): string {
+            // A completion for a superseded attempt changes nothing.
+            if (started !== "" && started !== attempt) { return decision("","","",identity,"ignored"); }
+            // A superseded suggestion is an invalidation, not this attempt's failure; rejected evidence
+            // and operational faults fail the attempt and suppress a silent resume retry.
+            let superseded: boolean = code === "STALE";
+            // Only a superseded suggestion is withdrawn; a rejected candidate leaves it issued.
+            if (superseded) { issued = null; }
+            if (!superseded) { failedIdentity = identity; }
+            finish();
+            return decision("","","",identity,superseded ? "invalidate" : "failed");
+        },
+        dismiss:function(identity: string): string {
+            require(phase === "idle","BUSY","Assistance is busy");
+            issued = null;
+            // Retention belongs to the mechanism; this decision only names the identity to retain.
+            return decision("persist","","",identity,"");
+        },
+        retry:function(): string {
+            if (phase !== "idle" || failedIdentity === "") { return "false"; }
+            failedIdentity = "";
+            return "true";
+        }
+    };
+}
+export function main(): void { return; }

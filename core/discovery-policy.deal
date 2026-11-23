@@ -3,6 +3,12 @@ import * as tables from "std/table";
 
 export class Suggestion { title: string; brief: string; supportingFactIds: string[]; capabilityIds: string[]; }
 export class Capture { facts: Record<string, unknown>[]; capabilityIds: string[]; catalogue: string; }
+export class HandoffValue { facts: Record<string, unknown>[]; supportingFactIds: string[]; capabilityIds: string[]; }
+// The handoff schema is wire data assembled by policy; the adapter transports it into the one
+// context validator without re-deriving any bound.
+export class SchemaField { name: string; type: Schema; optional: boolean; }
+export class Schema { kind: string; fields: SchemaField[]; element: Schema | null; maximum: number; minimumNumber: number; maximumNumber: number; }
+export class Handoff { title: string; intent: string; schema: Schema; context: string; }
 
 function require(condition: boolean, message: string): void {
     if (!condition) { throw {name:"INVALID_REPLY",message:message}; }
@@ -39,4 +45,37 @@ export function admit(capturedIdentity: string, currentIdentity: string, capture
     if (!issued || capturedIdentity !== currentIdentity) { throw {name:"STALE",message:"Stale or unissued suggestion"}; }
     if (capturedCatalogue !== currentCatalogue) { throw {name:"STALE",message:"Stale suggestion: the capability catalogue changed"}; }
     return null;
+}
+function wire(kind: string, maximum: number, fields: SchemaField[], element: Schema | null): Schema {
+    return {kind:kind,fields:fields,element:element,maximum:maximum,minimumNumber:0,maximumNumber:0};
+}
+function issuedTitle(suggestion: Suggestion): string {
+    if (suggestion.title.trim().length === 0 || suggestion.title.length > 120) { throw {name:"INVALID",message:"Discovery handoff title"}; }
+    return suggestion.title;
+}
+function issuedReferences(values: string[], allowed: string[], minimum: number): string[] {
+    // The handoff reuses the suggestion reference validator; a forged reference is an invalid
+    // handoff, never a stale one.
+    try { return references(values,allowed,minimum); }
+    catch (errorUnknown) { let error: Error = errorUnknown as Error; throw {name:"INVALID",message:error.message}; }
+}
+// The handoff is policy, not adapter assembly: one title, the compiled intent and the captured facts
+// with their issuing references, under the schema the context mechanism validates once.
+export function handoff(suggestion: Suggestion, capture: Capture): Handoff {
+    let title: string = issuedTitle(suggestion);
+    let allowedFacts: string[] = [];
+    for (let fact of capture.facts) { let id: string = (fact.id as string); allowedFacts[allowedFacts.length] = id; }
+    let supporting: string[] = issuedReferences(suggestion.supportingFactIds,allowedFacts,1);
+    let capabilities: string[] = issuedReferences(suggestion.capabilityIds,capture.capabilityIds,0);
+    let factFields: SchemaField[] = [
+        {name:"id",type:wire("string",64,[],null),optional:false},
+        {name:"text",type:wire("string",2048,[],null),optional:false}
+    ];
+    let value: HandoffValue = {facts:capture.facts,supportingFactIds:supporting,capabilityIds:capabilities};
+    let schema: Schema = wire("record",0,[
+        {name:"facts",type:wire("array",16,[],wire("record",0,factFields,null)),optional:false},
+        {name:"supportingFactIds",type:wire("array",16,[],wire("string",512,[],null)),optional:false},
+        {name:"capabilityIds",type:wire("array",16,[],wire("string",512,[],null)),optional:false}
+    ],null);
+    return {title:title,intent:intent(),schema:schema,context:JSON.stringify(value) as string};
 }

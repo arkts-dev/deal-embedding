@@ -34,7 +34,7 @@ assert.deepEqual(decide(answer({...suggestion,capabilityIds:['host/sensor.read']
  {accepted:true,suggestion:{...suggestion,capabilityIds:['host/sensor.read']}});
 // Inclusive boundary values are accepted; one past them is rejected below.
 assert.equal(decide(answer({...suggestion,title:'t'.repeat(120)}),capture).accepted,true);
-assert.equal(decide(answer({...suggestion,brief:'b'.repeat(4096)}),capture).accepted,true);
+assert.equal(decide(answer({...suggestion,brief:'b'.repeat(4096)}),capture).accepted,true,'the brief bound is inclusive at 4096');
 // The model answer is exactly the four declared fields with declared types and issued references.
 const rejected=[
  ['unknown field',answer({...suggestion,extra:1})],
@@ -84,9 +84,14 @@ for(const [label,args] of [
 ]){
  assert.throws(()=>invoke('admit',...args),error=>error.name==='STALE',label);
 }
-// The Kotlin bridge (DiscoveryPolicy.decision) reads exactly this envelope; if the reified error shape
-// drifts, every invalidation downgrades to a generic host fault instead of a located STALE/INVALID.
-const bridge=JSON.parse(vm.runInContext(`(() => { try { policy.admit.$f('identity','changed',${JSON.stringify(catalogue)},${JSON.stringify(catalogue)},'true'); return ''; } catch (error) { if (!(error && error.\$classname === 'Error')) { throw error; } return JSON.stringify({code: error.name || 'FAILED', message: error.message || 'Rejected by compiled discovery policy'}); } })()`,context));
-assert.equal(bridge.code,'STALE');
-assert(bridge.message.trim().length>0);
+// The Kotlin bridge (DiscoveryPolicy.envelope) reads exactly this envelope; if the reified error shape
+// or the ok flag drifts, every invalidation downgrades to a generic host fault instead of a located
+// STALE/INVALID.
+const bridge=JSON.parse(vm.runInContext(`(() => { try { return JSON.stringify({ok:true,value: policy.admit.$f('identity','identity',${JSON.stringify(catalogue)},${JSON.stringify(catalogue)},'true')}); } catch (error) { if (!(error && error.\$classname === 'Error')) { throw error; } return JSON.stringify({ok:false,code: error.name || 'FAILED', message: error.message || 'Rejected by compiled discovery policy'}); } })()`,context));
+assert.equal(bridge.ok,true);
+assert.equal(bridge.value,'');
+const refusedEnvelope=JSON.parse(vm.runInContext(`(() => { try { policy.admit.$f('identity','changed',${JSON.stringify(catalogue)},${JSON.stringify(catalogue)},'true'); return ''; } catch (error) { if (!(error && error.\$classname === 'Error')) { throw error; } return JSON.stringify({ok:false,code: error.name || 'FAILED', message: error.message || 'Rejected by compiled discovery policy'}); } })()`,context));
+assert.equal(refusedEnvelope.ok,false);
+assert.equal(refusedEnvelope.code,'STALE');
+assert(refusedEnvelope.message.trim().length>0);
 console.log('PASS compiled discovery policy: closed answer shape, reference bounds, compiled intent, prompt data and STALE admission');

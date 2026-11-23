@@ -92,13 +92,27 @@ SEAMS = [
      'expect': 'a tampered signature is refused',
      'command': ['python3', 'tests/tools/test-cursor.py']},
     {'id': 'discovery', 'family': 'discovery-handoff', 'path': 'build/embedding-library/aar/assets/discovery/discovery-policy.js',
-     'old': '$s989 = 4096.0;',
-     'new': '$s989 = 4095.0;',
+     'old': '$s1038 = 4096.0;',
+     'new': '$s1038 = 4095.0;',
+     'expect': 'the brief bound is inclusive at 4096',
      'command': ['node', 'tests/tools/test-discovery.js']},
+    # The compiled handoff's fact-id bound: the unit that replaces the Kotlin schema assembly.
+    {'id': 'discovery-handoff', 'family': 'discovery-handoff', 'path': 'build/embedding-library/aar/assets/discovery/discovery-policy.js',
+     'old': '$s1719 = 64.0;',
+     'new': '$s1719 = 63.0;',
+     'expect': 'the handoff fact id bound is 64',
+     'command': ['node', 'tests/tools/test-discovery-handoff.js']},
     {'id': 'assistance', 'family': 'assistance-lifecycle', 'path': 'build/embedding-consumer/assets/assistance/experience.js',
      'old': '$rt.setProp($s90, "title", $s84);',
      'new': '$rt.setProp($s90, "heading", $s84);',
      'command': ['node', 'tests/tools/test-assistance.js']},
+    # The compiled lifecycle's DISABLED decision: reporting BUSY for a disabled generation makes the
+    # owning policy control fail, so the decision is seam-proven rather than only read by the view.
+    {'id': 'assistance-disabled', 'family': 'assistance-lifecycle', 'path': 'build/embedding-library/aar/assets/assistance-policy/assistance-policy.js',
+     'old': '$s1214 = "DISABLED";',
+     'new': '$s1214 = "BUSY";',
+     'expect': 'disabled generation refuses Open',
+     'command': ['node', 'tests/tools/test-assistance-lifecycle.js']},
 ]
 
 

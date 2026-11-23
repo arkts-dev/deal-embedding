@@ -26,6 +26,7 @@ python3 tests/tools/test-cursor.py
 # assertions, so a wrapped instant or a lone window end is refused deterministically too.
 python3 tests/tools/test-journey-rules.py
 node tests/tools/test-discovery.js
+node tests/tools/test-discovery-handoff.js
 node tests/tools/test-syntax-cache.js
 python3 tests/tools/test-construction-contracts.py
 python3 tests/tools/test-source-edits.py
@@ -37,6 +38,7 @@ node tests/tools/test-generation-cutover.js
 node tests/tools/test-persistence-provider.js build/v08-cutover/emitted/scalar-read/js
 node tests/tools/test-emitted-runtime.js
 node tests/tools/test-assistance.js
+node tests/tools/test-assistance-lifecycle.js
 python3 tests/tools/test-generation-gateway.py
 python3 tools/vocabulary-inventory.py
 python3 tests/tools/test-vocabulary.py

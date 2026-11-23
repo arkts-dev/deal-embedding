@@ -39,6 +39,12 @@ def member(name):
     return body(text, start, name + ':function')
 
 
+def entry_body(text, name):
+    """Balanced body of the compiled assistance entry `name:function(...)`."""
+    start = text.index(name + ':function')
+    return body(text, start, name + ':function')
+
+
 class ControllerWaitPolicyTest(unittest.TestCase):
     def test_wait_records_are_created_only_by_admission(self):
         # A wait that settles after close, forget or a replaced Session must release its slot only;
@@ -101,23 +107,76 @@ class DiscoveryAdmissionTest(unittest.TestCase):
         # Decision errors cross the isolate as a DEAL Error record; the Kotlin bridge must keep the
         # compiled code and refuse to turn a genuine sandbox fault into a classified rejection.
         bridge = BRIDGE.read_text()
-        self.assertIn('error.\\$classname === \'Error\'', bridge)
-        self.assertIn('JSON.stringify({code: error.name || \'FAILED\'', bridge)
-        self.assertIn('throw ProtocolFailure(rejected.getString("code"), rejected.getString("message"))', bridge)
+        self.assertIn("error.\\$classname === 'Error'", bridge)
+        self.assertIn("JSON.stringify({ok:false,code:error.name || 'FAILED'", bridge)
+        self.assertIn('throw ProtocolFailure(result.getString("code"), result.getString("message"))', bridge)
         # Admission is a decision, not a bare call: a decision error must keep its code.
         self.assertIn('decision("admit"', bridge)
         self.assertNotIn('call("admit"', bridge)
 
 
-class AssistanceRejectionTest(unittest.TestCase):
-    def test_invalidation_and_rejected_evidence_stay_distinct(self):
+class AssistanceLifecycleTest(unittest.TestCase):
+    """The Open/Dismiss lifecycle is compiled; the adapter only supplies mechanism inputs."""
+
+    def test_lifecycle_decisions_compile(self):
+        policy = (ROOT / 'core/assistance-policy.deal').read_text()
+        for rule in ['require(phase === "idle","BUSY"',
+                     'require(input.generation,"DISABLED"',
+                     'require(suggestion.identity === input.identity,"STALE"',
+                     'if (input.link !== "" && contains(input.saved,input.link))',
+                     'require(phase === "activation" && started === attempt,"STALE"',
+                     'if (failedIdentity === input.identity) { return decision("keep"',
+                     'if (!input.discovery || input.dismissed)']:
+            self.assertIn(rule, policy)
+        # The saved link can only be recorded through the attempt that activated.
+        self.assertIn('require(phase === "activation" && started === attempt,"STALE","Suggestion invalidated before the saved link")', policy)
+        # Only a superseded suggestion is withdrawn; a failure keeps it issued.
+        self.assertIn('if (superseded) { issued = null; }', policy)
+
+    def test_adapter_carries_no_lifecycle_decision(self):
         text = (ROOT / 'android/src/discovery/AssistanceController.kt').read_text()
-        # A superseded suggestion is an invalidation: the suggestion is dropped, nothing failed, so a
-        # later resume may discover again. Rejected evidence fails this attempt, which resume() skips.
-        self.assertIn('if (rejection != null && rejection.code == "STALE") status = "This suggestion is no longer current"', text)
-        self.assertIn('else { failed = true; status = "Couldn’t create this tool" }', text)
-        # The located reason is evidence for Inspect, never user copy.
-        self.assertIn('event("host", "rejected", target = "Assistance", code = rejection.code', text)
+        # The adapter must not re-implement the compiled decisions it consumes.
+        for duplicated in ['code == "STALE" &&', 'failedIdentity', 'rejection.code']:
+            self.assertNotIn(duplicated, text)
+        self.assertIn('lifecycle().open(assistanceInput(', text)
+        self.assertIn('lifecycle().generated(token, assistanceInput(', text)
+        self.assertIn('val link = lifecycle().activated(activation.token, experience.id)', text)
+        self.assertIn('lifecycle().reused(', text)
+        self.assertIn('hooks.dismiss(identity)', text)
+        self.assertIn('lifecycle().suggested(decision.token, if (tip == null) ""', text)
+        # Rule 1 runs through the canonical compiled admission before reuse or generation is decided.
+        self.assertLess(text.index('discovery.admit(tip, current)'),
+                        text.index('lifecycle().open(assistanceInput('),
+                        'the compiled admission must revalidate before the lifecycle decision')
+
+    def test_pause_invalidates_before_cancelling(self):
+        # A cancelled attempt that is still current would record a failure the user can never clear:
+        # the compiled attempt must be invalidated before the discovery or generation is cancelled.
+        text = (ROOT / 'android/src/discovery/AssistanceController.kt').read_text()
+        pause = body(text, text.index('fun pause()'), 'fun pause()')
+        self.assertLess(pause.index('abandon()'), pause.index('finder?.cancel()'),
+                        'pause must abandon the compiled attempt before cancelling discovery')
+        self.assertIn('is java.util.concurrent.CancellationException) runCatching { lifecycle().abandon() }', text)
+        self.assertNotIn('CancellationException) runCatching { lifecycle().failed', text)
+
+    def test_bridge_contract_matches_every_compiled_entry(self):
+        # Every compiled entry's return kind decides its bridge: a decision envelope goes through
+        # decide(), a bare scalar through call(). A mismatch is invisible to the policy test because
+        # that test loads the compiled bundle directly, never the Kotlin bridge.
+        bridge = (ROOT / 'android/src/discovery/AssistancePolicy.kt').read_text()
+        policy = (ROOT / 'core/assistance-policy.deal').read_text()
+        declaration = body(policy, policy.index('export class Assistance'), 'export class Assistance')
+        names = re.findall(r'(\w+):\s*\([^)]*\)\s*=>', declaration)
+        self.assertEqual(sorted(names), sorted(['reset', 'abandon', 'resume', 'suggested', 'open',
+                                                'generated', 'activated', 'reused', 'failed',
+                                                'dismiss', 'retry']))
+        for name in names:
+            implementation = entry_body(policy, name)
+            if 'return decision(' in implementation:
+                self.assertIn('decide("%s"' % name, bridge, name)
+            else:
+                self.assertIn('call("%s"' % name, bridge, name)
+                self.assertNotIn('return decision(', implementation, name)
 
 
 if __name__ == '__main__':

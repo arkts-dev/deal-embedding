@@ -23,6 +23,8 @@ class ApplicationProtocol internal constructor(private val context:Context, mech
     private fun call(name:String,vararg values:Any?)=controller.call(name,args(*values))
     private fun experience(v:Any)= (v as JSONObject).let{Experience(it.getString("id"),it.getString("title"),it.getString("origin"),it.getInt("attempts"))}
     fun snapshot(schema:WireType,json:String)=GenerationContext((sync("snapshot",schema.json(),json) as JSONObject).getString("id"))
+    /** Compiled wire data goes to the one context validator without a second schema validation. */
+    internal fun snapshot(schema:JSONObject,json:String)=GenerationContext((sync("snapshot",schema,json) as JSONObject).getString("id"))
     fun request(title:String,intent:String,context:GenerationContext)=GenerationRequest((sync("request",title,intent,context.id) as JSONObject).getString("id"))
     fun generate(request:GenerationRequest)=experience(call("generate",request.id))
     fun cancel(request:GenerationRequest){sync("cancel",request.id)}

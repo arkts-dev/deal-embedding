@@ -143,6 +143,13 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
         val old = pending; pending = null
         inference.cancel(); old?.completeExceptionally(CancellationException("Discovery superseded"))
     }
+    /** Canonical revalidation of an issued suggestion against the current facts and refreshed catalogue. */
+    internal fun admit(suggestion: DiscoverySuggestion, current: DiscoveryFacts): CapturedDiscoveryFacts {
+        val fresh = CapturedDiscoveryFacts(current, catalogue())
+        val owned = synchronized(this) { !closed && issued === suggestion }
+        policy.admit(suggestion.input, fresh, owned)
+        return fresh
+    }
     /** Admission uses the exact brief/evidence and verifies the executable catalogue again. */
     fun request(suggestion: DiscoverySuggestion, currentFacts: List<DiscoveryFact>): GenerationRequest = request(suggestion,DiscoveryFacts(currentFacts))
     internal fun request(suggestion: DiscoverySuggestion, current: DiscoveryFacts): GenerationRequest {
@@ -154,21 +161,16 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
         return log.stage("opportunity-admission", detail = proposalJson(suggestion)) {
         // Catalogue discovery can block: cancellation must remain callable while it runs.
         policy.admit(suggestion.input, CapturedDiscoveryFacts(current, catalogue()), owned)
-        val references = WireType("array", maximum = 16, element = WireType("string", maximum = 512))
-        val schema = WireType("record", fields = listOf(
-            WireField("facts", WireType("array", maximum = 16, element = WireType("record", fields = listOf(
-                WireField("id", WireType("string", maximum = 64)), WireField("text", WireType("string", maximum = 2048)))))),
-            WireField("supportingFactIds", references), WireField("capabilityIds", references)))
-        // Preserve the proposal in discovery observation/Inspect, not in source-model context.
-        // Opportunity recognition must not inject its own implementation plan into synthesis.
-        val context = JSONObject(suggestion.input.evidence.contextJson()).put("supportingFactIds", JSONArray(suggestion.supportingFactIds)).put("capabilityIds", JSONArray(suggestion.capabilityIds)).toString()
+        // The Request's title, compiled intent and captured-facts context are assembled in compiled
+        // policy; this adapter only transports them through the one context validator and issues once.
+        val plan = policy.handoff(proposalJson(suggestion), suggestion.input)
         synchronized(this) {
             if (closed || revision != epoch || issued !== suggestion) throw ProtocolFailure("STALE", "Suggestion invalidated during admission")
             // The context mechanism is the one validator of this handoff context; every rejection is located.
-            val handoff = try { api.snapshot(schema, context) } catch (error: ProtocolFailure) {
+            val handoff = try { api.snapshot(plan.schema, plan.context) } catch (error: ProtocolFailure) {
                 if (error.code == "INVALID_ARGUMENT") throw ProtocolFailure("INVALID", "Discovery context: " + (error.message ?: "rejected")) else throw error
             }
-            api.request(suggestion.title, policy.intent(), handoff).also { request ->
+            api.request(plan.title, plan.intent, handoff).also { request ->
                 issued = null; issuedLog = null
                 log.event("opportunity-handoff", "admitted", target = runCatching { api.requestTrace(request) }.getOrDefault(""))
             }
