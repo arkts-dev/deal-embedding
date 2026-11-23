@@ -6,7 +6,8 @@ A control names the command that observes the rule it breaks: the whole owning i
 cheap, or the subset of it the broken rule is asserted by (a named generation mode, a source-level
 call-site half) where the item's full matrix would spend the lane's budget re-proving unaffected
 rules. The subset is still the owning item's own production path and assertion; no control asserts
-anything the owning item would not.
+anything the owning item would not. A narrowed run keeps no retained pair, no receipt and no source
+digest, so it can never stand in for the lane's full pass or replace another run's pair.
 
 Each control mutates a real produced or compiled artifact, not a fixture: a prop-constraint
 projection, the generated card profile, a compiled policy bundle, a shipped run-time rule.

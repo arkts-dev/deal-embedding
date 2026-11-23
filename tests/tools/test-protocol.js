@@ -60,6 +60,21 @@ async function call(name,args,handler){
  assert((await call('snapshot',[recordOf(32),'{}'])).id,'32 record fields are inside the schema field bound');
  for(const [schema,label] of [[nested(9),'depth 9'],[recordOf(33),'33 fields'],[{...scalar,kind:'date'},'unknown wire kind'],[{...scalar,kind:'string',maximum:9000},'maximum above 8192']])
   await assert.rejects(call('snapshot',[schema,'[]']),error=>error.code==='INVALID_ARGUMENT','schema rejection: '+label);
+ // Duplicate schema field names, an inverted numeric bound and a value outside its declared
+ // numeric bounds each reject at the one validator; the schema accessor returns the frozen schema.
+ await assert.rejects(call('snapshot',[{...recordOf(2),fields:[{name:'f0',type:scalar,optional:true},{name:'f0',type:scalar,optional:true}]},'{}']),error=>error.code==='INVALID_ARGUMENT','duplicate schema field names');
+ await assert.rejects(call('snapshot',[{...textSchema,minimumNumber:5,maximumNumber:1},'""']),error=>error.code==='INVALID_ARGUMENT','inverted numeric bounds');
+ const boundedSchema={...scalar,minimumNumber:0,maximumNumber:10};
+ await assert.rejects(call('snapshot',[boundedSchema,'11']),error=>error.code==='INVALID_ARGUMENT','value above maximumNumber');
+ await assert.rejects(call('snapshot',[boundedSchema,'-1']),error=>error.code==='INVALID_ARGUMENT','value below minimumNumber');
+ const bounded=await call('snapshot',[boundedSchema,'5']);
+ assert.deepEqual(await call('contextSchema',[bounded.id]),boundedSchema,'contextSchema returns the frozen wire schema');
+ boundedSchema.minimumNumber=-5;
+ assert.equal((await call('contextSchema',[bounded.id])).minimumNumber,0,"the caller's schema object is copied before it is stored");
+ // An accessor copies the data, not the whitespace: the stored value JSON comes back canonical.
+ const spaced=await call('snapshot',[{...scalar,kind:'array',element:scalar,maximum:4},'[ 1 , 2 ]']);
+ assert.equal(await call('contextJson',[spaced.id]),'[1,2]','an accessor copies the data, not the whitespace');
+ assert.equal(await call('contextJson',[bounded.id]),'5','an accessor returns the stored value JSON');
  for(const [title,intent] of [['t'.repeat(121),'intent'],['Title','i'.repeat(4097)]])
   await assert.rejects(call('request',[title,intent,facts.id]),error=>error.code==='INVALID_ARGUMENT');
  await call('grant',[contract.module]);
@@ -112,6 +127,16 @@ async function call(name,args,handler){
  const publishedControl=JSON.parse(vm.runInContext('dealCapabilities.take()',context));
  assert.equal(publishedControl.length,1);assert.equal(publishedControl[0].function,'published');assert.equal(publishedControl[0].args[1],1);
  await assert.rejects(call('published',[sessionId,2]),error=>error.code==='INVALID_ARGUMENT');
+ // A later business revision raises the Session version; a later snapshot that reports an earlier
+ // version never lowers it, so the produced revision stays acknowledged.
+ const revised=await call('next',[sessionId,''],request=>{assert.equal(request.function,'next');return {snapshot:{tree,version:3,fault:''},cursor:'cursor-3'};});
+ assert.equal(revised.snapshot.version,3);
+ vm.runInContext(`protocolInvoke('published',[${JSON.stringify(sessionId)},3])`,context);
+ assert.equal(JSON.parse(vm.runInContext('dealCapabilities.take()',context)).length,1,'a produced version is acknowledged');
+ await call('next',[sessionId,''],request=>{assert.equal(request.function,'next');return {snapshot:{tree,version:1,fault:''},cursor:'cursor-old'};});
+ vm.runInContext(`protocolInvoke('published',[${JSON.stringify(sessionId)},3])`,context);
+ assert.equal(JSON.parse(vm.runInContext('dealCapabilities.take()',context)).length,1,'an earlier reported version never lowers the Session version');
+ await assert.rejects(call('published',[sessionId,4]),error=>error.code==='INVALID_ARGUMENT','a version beyond the produced one is refused');
  // Issued trace identities: opaque, stable for their lifetime and equal to the trace the compiled
  // controller handed the generation and store mechanisms.
  assert.equal(await call('requestTrace',[pending.id]),generationTrace,'requestTrace is the trace generation received');

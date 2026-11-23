@@ -63,6 +63,25 @@ for(const [label,text] of rejected){
  assert.equal(result.code,'INVALID_REPLY',label);
  assert.equal(typeof result.message,'string',label);
 }
+// The reference-count bound is isolated from the duplicate and unissued rules through capability
+// references: one contract may declare more than sixteen functions, so sixteen distinct issued
+// references are accepted whole and seventeen distinct ones overflow. The disclosed fact list is
+// itself bounded to sixteen, so seventeen distinct issued fact references cannot be supplied; all
+// sixteen disclosed facts are referenced here without truncation.
+const manyFunctions=Array.from({length:17},(_,index)=>({...contract.functions[0],name:'read'+index}));
+const manyCapabilities=manyFunctions.map(item=>'host/sensor.'+item.name);
+const manyCapture=JSON.stringify({facts,capabilityIds:manyCapabilities,catalogue:JSON.stringify([{...contract,functions:manyFunctions}])});
+const sixteenCapabilities=decide(answer({...suggestion,capabilityIds:manyCapabilities.slice(0,16)}),manyCapture);
+assert.equal(sixteenCapabilities.accepted,true);
+assert.deepEqual(sixteenCapabilities.suggestion.capabilityIds,manyCapabilities.slice(0,16),'sixteen distinct capability references survive whole');
+assert.equal(decide(answer({...suggestion,capabilityIds:manyCapabilities}),manyCapture).accepted,false,'seventeen distinct capability references overflow');
+assert.equal(decide(answer({...suggestion,capabilityIds:manyCapabilities}),manyCapture).code,'INVALID_REPLY');
+const sixteenFacts=Array.from({length:16},(_,index)=>({id:'f'+index,text:'Disclosed fact '+index}));
+const factIds=sixteenFacts.map(fact=>fact.id);
+const factCapture=JSON.stringify({facts:sixteenFacts,capabilityIds:['host/sensor.read'],catalogue});
+const referenced=decide(answer({...suggestion,supportingFactIds:factIds}),factCapture);
+assert.equal(referenced.accepted,true);
+assert.deepEqual(referenced.suggestion.supportingFactIds,factIds,'sixteen distinct fact references survive whole');
 // The compiled intent bounds request intent and never becomes the brief.
 const intent=invoke('intent');
 assert(intent.trim().length>0);

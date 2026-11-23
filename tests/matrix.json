@@ -26,7 +26,12 @@
       "asserts": [
         "call('contextJson',['forged'])",
         "call('snapshot',[schema,text])",
-        "depth 8 is inside the schema depth bound"
+        "depth 8 is inside the schema depth bound",
+        "duplicate schema field names",
+        "inverted numeric bounds",
+        "value above maximumNumber",
+        "the caller's schema object is copied before it is stored",
+        "an accessor copies the data, not the whitespace"
       ]
     },
     {
@@ -54,7 +59,8 @@
       "asserts": [
         "the configured bound admits both waits",
         "a rejected wait releases its slot",
-        "a closed Session rejects a registered wait"
+        "a closed Session rejects a registered wait",
+        "an earlier reported version never lowers the Session version"
       ]
     },
     {
@@ -139,7 +145,10 @@
       "asserts": [
         "decide('  null  ',capture)",
         "result.code,'INVALID_REPLY'",
-        "brief:'b'.repeat(4096)"
+        "brief:'b'.repeat(4096)",
+        "sixteen distinct fact references survive whole",
+        "sixteen distinct capability references survive whole",
+        "seventeen distinct capability references overflow"
       ]
     },
     {
@@ -230,11 +239,17 @@
       "owner": "host-protocol-discovery-observation",
       "requirement": "A frozen screen/chat/card compile-input target is required and out-of-set or absent targets reject with ADMISSION_TARGET before activation.",
       "status": "covered",
-      "test": "python3 tests/tools/test-composer.py",
-      "evidence": "The deterministic composer path admits a target and rejects absent/out-of-set values.",
+      "test": "bash tests/tools/test-renderer-rules.sh python3 tests/tools/test-composer.py",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The compiled CompileInput target validator accepts exactly screen/chat/card and resolves an absent or out-of-set value to null; ingress admission rejects an out-of-set or absent target with ADMISSION_TARGET, and the composer path refuses an absent target with ADMISSION_TARGET before writing a manifest and records each issued target when it composes.",
       "asserts": [
         "ADMISSION_TARGET",
-        "a rejected compile input writes no manifest"
+        "a rejected compile input writes no manifest",
+        "manifest['target']==target",
+        "CompileInput.target(\"print\") == null",
+        "CompileInput.target(null) == null"
       ]
     },
     {
@@ -243,7 +258,7 @@
       "owner": "host-protocol-discovery-observation",
       "requirement": "The public generate/load/check/mount/edit/save/cold-restore path carries the private target and no promotion or legacy record mounts.",
       "status": "device",
-      "blocker": "Production target transport is exercised only by tests/android/TargetTransportChecks.kt on a serialized device; the deterministic lane proves the compile-input field only."
+      "blocker": "Production generate/load/check/mount/edit/save/cold-restore target transport is exercised only by tests/android/TargetTransportChecks.kt on a serialized device. The deterministic lane proves the frozen compile-input target, accepts screen/chat/card through the composer fixture, and rejects print and absent targets with ADMISSION_TARGET in ingress admission (tests/tools/fixtures/RendererRulesTest.kt:284-285); the production manifest writer and the mounted transport remain device-only."
     },
     {
       "id": "typed-values",
@@ -305,9 +320,8 @@
       "family": "durations-parts",
       "owner": "plan-schemas-values-and-parts",
       "requirement": "countdown.length resolves seconds inputs and minutes constants with checked millisecond conversion; unissued, money, percent, count and nonfinite sources reject.",
-      "status": "partial",
-      "test": "python3 tests/tools/test-construction-contracts.py",
-      "blocker": "Duration resolution is exercised in compiled construction contracts, but the clock/entry part behaviours (start/pause boundaries, completion once, entry keys, timestamps, totals) have no deterministic vector."
+      "status": "missing",
+      "blocker": "Duration resolution does not exist: core/plan.deal:52 accepts countdown.length as an identifier only, with no unit lookup, checked millisecond conversion or rejection of unissued, money, percent, count and nonfinite sources, and no construction contract drives a duration. The clock/entry part behaviours (start/pause boundaries, completion once, entry keys, timestamps, totals) also have no deterministic vector; owner plan-schemas-values-and-parts (ISSUE-0003)."
     },
     {
       "id": "clock-entries-parts",
@@ -321,7 +335,7 @@
       "id": "formula",
       "family": "figure-formula",
       "owner": "plan-schemas-values-and-parts",
-      "requirement": "Well-typed formula and written formula evaluate with DEAL precedence, lazy choose, short-circuit booleans, zero ties and the stated functions; unknown identifiers, assignment, indexing, unavailable calls and mismatched branches reject.",
+      "requirement": "Well-typed formula and written formula evaluate with DEAL precedence, unary minus and not, comparison and lazy choose, zero ties and the floor/ceil/sqrt/abs/round/min/max calls; unknown identifiers, assignment, indexing, unavailable calls and mismatched branches reject.",
       "status": "covered",
       "test": "python3 tests/tools/test-construction-contracts.py",
       "seam": "formula",
@@ -331,8 +345,33 @@
       ],
       "asserts": [
         "Lazy choose lowering/value",
-        "Unsafe formula admitted: "
+        "Unsafe formula admitted: ",
+        "Unsafe formula admitted: choose(true, 1, true)",
+        "Formula precedence",
+        "Unary numeric formula",
+        "Unary boolean formula",
+        "Boolean formula precedence",
+        "Comparison formula",
+        "floor formula",
+        "sqrt formula",
+        "min/max formula lowering",
+        "round lost negative zero",
+        "Round tie toward positive infinity",
+        "Round tie at a negative half",
+        "round below a tie is not a ceiling",
+        "(ceiled.number as number) === 2",
+        "(absolute.number as number) === 2",
+        "Exclusion formula"
       ]
+    },
+    {
+      "id": "formula-short-circuit-pow",
+      "family": "figure-formula",
+      "owner": "plan-schemas-values-and-parts",
+      "requirement": "Boolean operands short-circuit and the written-formula call set includes pow.",
+      "status": "missing",
+      "test": "python3 tests/tools/test-construction-contracts.py",
+      "blocker": "core/formula.deal parses and evaluates both boolean operands eagerly and its call set omits pow, so neither short-circuit evaluation nor the pow call exists in the compiled formula policy; owner plan-schemas-values-and-parts (ISSUE-0003)."
     },
     {
       "id": "figure-display",
@@ -356,17 +395,22 @@
       ],
       "asserts": [
         "Descriptor issuance",
-        "Foreign descriptor draft admitted"
+        "Foreign descriptor draft admitted",
+        "Binding parameter order",
+        "Wrong-typed binding argument admitted",
+        "Unissued binding argument source admitted",
+        "Duplicate binding identity admitted",
+        "Duplicate descriptor identity admitted"
       ]
     },
     {
       "id": "slots-connections",
       "family": "slots-connections-publication",
       "owner": "ownership-slots-operations-and-assembly",
-      "requirement": "One Slot per need with reads, writes, trigger, provider flag and allowed kinds; connections resolve on exact nominal type with required-optional rules and no cycles.",
+      "requirement": "One Slot per need with reads, writes, trigger, provider flag and allowed kinds; connections resolve on exact nominal type with required-optional rules, alignment takes the first other exact-name and type publisher in screen order with required-missing publishers failing and empty optional fallbacks, and Layout stack or unique integral positions resolve instances, capacity and unknown references with no cycles.",
       "status": "partial",
       "test": "python3 tests/tools/test-catalogue.py",
-      "blocker": "Assembly currently issues empty slots and connections for the exercised fixtures, so slot tampering, reader/writer resolution, layout and cycle rejection are not proven by a production seam."
+      "blocker": "The exercised fixtures assemble empty slots and connections (tests/tools/fixtures/catalogue-contracts.deal:274), so slot tampering, layout position resolution, capacity and cycle rejection have no production-seam proof. One aligned publisher pair is proven: the catalogue mode binds the checklist's done/total fields to the list_summary reader through construction.connect (core/construction.deal:33-51,129) and tests/tools/test-emitted-runtime.js asserts the bound summary. Unproven or absent: choice among several screen-order candidates and the plan-reads filter (core/construction.deal:39-41 skips a matching publisher whose covers name nothing the covering need reads), the required-reader rejection itself (core/construction.deal:47 drops the instance and leaves its slot open instead of failing the run, and core/screen.deal:136 is unreachable in production because screens.decode has no production caller), and any consumer of a declared optional fallback (core/screen.deal:63-65 only decodes and validates it, and core/composer.deal:85-102 binds a reader getter only from composition.connections, so an unconnected optional reader takes no fallback); owner ownership-slots-operations-and-assembly (ISSUE-0003)."
     },
     {
       "id": "publication",
@@ -399,7 +443,7 @@
       "owner": "generation-recovery-and-source-editing",
       "requirement": "A chat target retains the first five visible needs with their hidden dependencies, removes orphan dependents to a fixpoint, discloses every omission as missing, rejects a header or three-section custom draft, and wraps multiple fragments in labelled Tabs with a retained selection.",
       "status": "missing",
-      "blocker": "Screen.target is decoded (core/generation.deal forwards screen|chat|card) but every host path issues the default \"screen\" (android/src/EmbeddingConfig.kt, android/src/ExperienceRuntime.kt) and core/screen.deal rejects a promotion, so no chat projection, five-need cut, omission disclosure, compact draft bound or Tabs wrapper exists to exercise; tests/tools/fixtures/construction-contracts.deal only reserves an explicitly issued chat target."
+      "blocker": "Screen.target is decoded and carried as a host-frozen compile input (core/generation.deal; android/src/EmbeddingConfig.kt:12-19; android/src/bindings/ExperienceGenerator.kt:44), but core/screen.deal rejects a promotion and no chat projection, five-need cut, omission disclosure, compact draft bound, header/three-section rejection or Tabs wrapper exists to exercise; tests/tools/fixtures/construction-contracts.deal only reserves an explicitly issued chat target. Owner generation-recovery-and-source-editing (ISSUE-0005)."
     },
     {
       "id": "scenes",
@@ -561,7 +605,7 @@
       "id": "prop-predicates",
       "family": "prop-predicates",
       "owner": "ui-vocabulary-pack-and-rendering",
-      "requirement": "Every prop-value constraint class is exercised at the shared validator: finite, nonnegative, positive, integral-index, chart and pose each accept an in-range value and reject an out-of-range one, and display-clamp is acceptance-only because the clamp changes display and never faults.",
+      "requirement": "Every prop-value constraint class is exercised at the shared validator: finite, nonnegative, positive, integral-index, chart and pose each accept an in-range value and reject an out-of-range one, and display-clamp accepts an over-range value without faulting, while the clamped display itself is painter evidence owned by renderer-painters.",
       "status": "covered",
       "test": "bash tests/tools/test-renderer-rules.sh",
       "seam": "prop-ingress",
@@ -699,6 +743,7 @@
       ],
       "asserts": [
         "\"CARD_FAULT\", \"Surface\"",
+        "\"CARD_FAULT\", \"Surface\", \"onFrame\"",
         "cardTree(5, 61)"
       ]
     },
@@ -706,7 +751,7 @@
       "id": "graphics",
       "family": "graphics",
       "owner": "ui-vocabulary-pack-and-rendering",
-      "requirement": "Nominal shapes, pointer phases, variant fields, finite numbers, lineWidth, alpha, paired points, commands, 4000 shapes, depth 12 and 1000 points fault without truncation.",
+      "requirement": "Nominal shapes, pointer phases, variant fields, finite numbers, lineWidth, alpha, paired points and commands; the 4000-shape, depth-12 and 1000-point bounds are accepted and one past each faults without truncation.",
       "status": "covered",
       "test": "bash tests/tools/test-renderer-rules.sh",
       "evidence": "The shared graphics validator accepts the declared variants and faults each limit boundary.",
@@ -715,7 +760,10 @@
       ],
       "asserts": [
         "GraphicsValidation.pointer(NeutralJson.parse",
-        "GraphicsValidation.shapes(NeutralJson.parse"
+        "GraphicsValidation.shapes(NeutralJson.parse",
+        "4000 shapes must be accepted",
+        "12 nested groups must be accepted",
+        "a nonfinite shape field must be refused"
       ]
     },
     {
@@ -725,7 +773,7 @@
       "requirement": "Actual Compose painting and resource lifetime for every declared component, prop, child, style and event, including Tabs child content, Timer ticks, images, transforms, chart modes, feedback and the card profile.",
       "status": "device",
       "test": "bash tests/tools/build-cutover-test.sh",
-      "blocker": "Deterministic items prove rules, metadata and inventory; actual painter behaviour is exercised only by the opt-in device APK (ImageChecks, TabChecks, TimerPainterChecks, TargetTransportChecks) and human visual acceptance remains separate."
+      "blocker": "Deterministic items prove rules, metadata and inventory; actual painter behaviour is exercised only by the opt-in device APK (ImageChecks, TabChecks, TimerPainterChecks, TargetTransportChecks) and human visual acceptance remains separate. The Progress and ProgressRing display clamp (android/src/rendering/DealRenderer.kt:558,561,566,568) needs an actual painter review in that lane."
     },
     {
       "id": "renderer-metadata",
@@ -733,12 +781,18 @@
       "owner": "ui-vocabulary-pack-and-rendering",
       "requirement": "One renderer entry per pack component, unique capabilities, projection integrity, and the pack digest and version recorded in the admission manifest; a changed digest or version is rejected with ADMISSION_PACK.",
       "status": "covered",
-      "test": "python3 tests/tools/test-vocabulary.py node tests/tools/test-generation-cutover.js",
-      "evidence": "Pack conformance, capability agreement, the projections and the manifest identity are asserted over the packaged pack; the production admission rejects a changed digest and a changed version with ADMISSION_PACK before any isolated step.",
+      "test": "bash tests/tools/test-renderer-rules.sh python3 tests/tools/test-vocabulary.py node tests/tools/test-generation-cutover.js",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The renderer entry set, unique derived capabilities and the declaration projections are asserted against the packaged pack by RendererRulesTest; pack conformance and the manifest identity are asserted by test-vocabulary and the admission rejects a changed digest and a changed version with ADMISSION_PACK before any isolated step.",
       "asserts": [
         "assert inventory[\"version\"] == 2 and len(inventory[\"components\"]) == 64",
         "ADMISSION_PACK: compiler pack digest mismatch",
-        "ADMISSION_PACK: compiler pack version mismatch"
+        "ADMISSION_PACK: compiler pack version mismatch",
+        "RenderComponent.entries.map { it.capability }.toSet().size == RenderComponent.entries.size",
+        "RenderComponent.entries.map { it.component }.toSet() == pack.components().keys",
+        "changed declaration kind"
       ]
     },
     {
@@ -802,14 +856,23 @@
       "id": "persistence-codec",
       "family": "persistence-graph",
       "owner": "execution-provider-workflows-and-persistence",
-      "requirement": "Persistence envelope {schemaDigest, value} with the spec tag set, aliases and cycles by refs, ordered fields, digest mismatch rejection and atomic failure.",
+      "requirement": "Persistence envelope {schemaDigest, value} with nominal tags, aliases and cycles by refs, ordered fields, digest mismatch rejection and atomic failure.",
       "status": "covered",
-      "test": "node tests/tools/test-persistence.js",
+      "test": "node tests/tools/test-persistence.js build/v08-cutover/composed-executable/js",
       "evidence": "Aliases, cycles, nominal tags, ordering and poisoned-record rejection run through the pinned codec path.",
       "asserts": [
         "assert.equal(envelope.value[0],'record'",
         "malformed saved bytes are refused as data"
       ]
+    },
+    {
+      "id": "persistence-tag-set",
+      "family": "persistence-graph",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "The persistence envelope encodes and restores the full spec tag set: number, string, boolean, null, undefined, array with its element descriptor, record, class, ref, nan, positiveInfinity, negativeInfinity and negativeZero.",
+      "status": "partial",
+      "test": "node tests/tools/test-persistence.js build/v08-cutover/composed-executable/js",
+      "blocker": "The record named here carries number, boolean, class and ref values only; the provider-bearing record of the sibling persistence item adds string (core/scalar-read.deal:84-85, tests/tools/test-persistence-provider.js). No restored production record therefore carries null, undefined, array, nan, positiveInfinity, negativeInfinity or negativeZero. The pinned codec implements every tag (dependencies/deal-ui/runtime-js/checkpoint.js:22-31,38); the missing proof is an emitted field of each kind, owned by the execution persistence producer."
     },
     {
       "id": "persistence-restore",
@@ -1075,10 +1138,10 @@
       "id": "journey-edits-reopen",
       "family": "acceptance-journeys",
       "owner": "verification-gates-and-acceptance",
-      "requirement": "Every journey proves fresh generation, a recomputing edit with no provider read, an invalid draft that withdraws dependent results and recovery, typed cold-reopen equality, pending-as-stale, explicit stale refresh and no replay.",
+      "requirement": "Every journey proves fresh generation, a recomputing edit with no provider read, an invalid draft that withdraws dependent results and recovery, typed cold-reopen equality and no replay; Departure, Food and Equipment also prove pending-as-stale and explicit stale refresh, while Budget performs no external read so those clauses are inapplicable to it.",
       "status": "live",
       "test": "bash tests/tools/build-cutover-test.sh",
-      "blocker": "The typed assertions are implemented in tests/android/CutoverInstrumentation.kt: Budget withdraws and recovers the typed difference, Departure preserves and edits the start and the unloading and inspection buffers, proves the disclosed 16:00-17:00 collection window and proves that a 00:10 start keeps departure and inspection on the previous day instead of wrapping them onto the task day, Food proves a typed arrival before 18:30, Equipment proves the required items, shared stock by a typed availability/stock value on the value's own availability label and that an invalid hire budget withdraws the computed feasibility, and every journey counts provider calls. Every journey's invalid draft is a well-formed number the control has to refuse (a fractional or unsafe amount, a negative distance, a negative or fractional quantity, a negative budget), because a malformed payload refused before commit records no Session fault and no revision and is reported as an unproven expectation instead: a control that refuses every candidate that way blocks the expectation, and a candidate accepted as valid that leaves the dependent evidence current fails it. A changed argument or period may display its invalidated reply staled by the value's own labels or by a stale disclosure in the value's own section, while an invalid draft must leave no current dependent value at all. A required expectation the view publishes no typed evidence for (the collection window, the previous-day instant, the delivery arrival, the shared-stock value, the interpreted cable length, a pending-as-stale transition not observed in flight after four bounded attempts) reports the journey blocked instead of checked. The lane that runs them needs an installed provider set, explicit inference opt-in and a serialized device, so it is not part of tests/run.sh."
+      "blocker": "The typed assertions are implemented in tests/android/CutoverInstrumentation.kt: Budget withdraws and recovers the typed difference, Departure preserves and edits the start and the unloading and inspection buffers, proves the disclosed 16:00-17:00 collection window and proves that a 00:10 start keeps departure and inspection on the previous day instead of wrapping them onto the task day, Food proves a typed arrival before 18:30, Equipment proves the required items, shared stock by a typed availability/stock value on the value's own availability label and that an invalid hire budget withdraws the computed feasibility, and every journey counts provider calls. Every journey's invalid draft is a well-formed number the control has to refuse (a fractional or unsafe amount, a negative distance, a negative or fractional quantity, a negative budget), because a malformed payload refused before commit records no Session fault and no revision and is reported as an unproven expectation instead: a control that refuses every candidate that way blocks the expectation, and a candidate accepted as valid that leaves the dependent evidence current fails it. A changed argument or period may display its invalidated reply staled by the value's own labels or by a stale disclosure in the value's own section, while an invalid draft must leave no current dependent value at all. A required expectation the view publishes no typed evidence for (the collection window, the previous-day instant, the delivery arrival, the shared-stock value, the interpreted cable length, a pending-as-stale transition not observed in flight after four bounded attempts) reports the journey blocked instead of checked. Budget performs no external read, so it proves the zero-read clause instead of pending-as-stale; the other three journeys prove the stale transition and its explicit refresh. The lane that runs them needs an installed provider set, explicit inference opt-in and a serialized device, so it is not part of tests/run.sh."
     },
     {
       "id": "human-visual",
@@ -1103,7 +1166,7 @@
       "requirement": "All 36 catalogue kinds are declared once with their parameter schema, row schema, initialization, transitions, published and read ports and holes; coverage is measured against the spec, never against fixtures.",
       "status": "partial",
       "test": "python3 tests/tools/test-catalogue.py",
-      "blocker": "9 of 36 kinds have executable definitions and deterministic vectors, 3 have definitions without a deterministic vector and 24 have no definition; every kind is listed as its own row instead of being substituted. No vector drives a kind transition, a published port or a hole: the lane initializes only data_table, timeline, bar_chart, trend_chart, metrics and key_facts and asserts no mutable update, no effect, no port and no hole for those six (tests/tools/test-catalogue.js:113-117), while the mutable kinds that do issue them in production - note core/catalogue.deal:237, actions :288, checklist :294 and :308, filter_box :239, list_summary :311 - have no initialization, transition, port or assembly vector. Row-bound matrices exist only for data_table, timeline, bar_chart and metrics."
+      "blocker": "9 of 36 kinds have executable definitions and deterministic vectors, 3 have definitions without a deterministic vector and 24 have no definition; every kind is listed as its own row instead of being substituted. No vector drives a kind transition, a published port or a hole: the lane initializes only data_table, timeline, bar_chart, trend_chart, metrics and key_facts and asserts no mutable update, no effect, no port and no hole for those six (tests/tools/test-catalogue.js:115-118), while the mutable kinds that do issue them in production - note core/catalogue.deal:237, actions :288, checklist :294 and :308, filter_box :239, list_summary :311 - have no initialization, transition, port or assembly vector. Row-bound matrices exist only for data_table, timeline, bar_chart and metrics."
     },
     {
       "id": "catalogue-instance-count",
@@ -1137,7 +1200,7 @@
       "requirement": "Catalogue kind actions: an accepted parameter decode with its one-to-twelve label bound, the shared disclosure predicate, the Select transition and the assembled section.",
       "status": "partial",
       "test": "python3 tests/tools/test-catalogue.py",
-      "blocker": "actions has an executable definition and two decode refusals only (tests/tools/fixtures/catalogue-contracts.deal:139-140, nonarray and numeric labels): no accepted decode, no labels-bound vector, no disclosure case and no initialization, transition, port or assembly vector exercises it, so its Select transition in core/catalogue.deal:288 stays unproven.",
+      "blocker": "actions has an executable definition and two decode refusals only (tests/tools/fixtures/catalogue-contracts.deal:144-145, nonarray and numeric labels): no accepted decode, no labels-bound vector, no disclosure case and no initialization, transition, port or assembly vector exercises it, so its Select transition in core/catalogue.deal:288 stays unproven.",
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
         "tests/tools/test-catalogue.js"
@@ -1153,6 +1216,7 @@
       "evidence": "The executable definition of metrics refuses a thirteenth row, refuses an invented fact value and label, initializes an immutable MetricGroup and joins the assembled root.",
       "asserts": [
         "thirteen metric rows",
+        "twelve metric rows decode",
         "metrics.fragment.view.includes('ui.MetricGroup()",
         "every section view joins the root",
         "Disclosed metric refused",
@@ -1233,6 +1297,7 @@
       "asserts": [
         "timelineInstance.fragment.view.includes('ui.Timeline()",
         "thirteen rail rows",
+        "equal rail minutes are nondecreasing",
         "minute past the shared domain",
         "decreasing timeline minutes",
         "Disclosed rail refused",

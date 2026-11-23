@@ -248,9 +248,16 @@ fun main(args: Array<String>) {
     val polyline2002 = "[" + (0 until 2002).joinToString(",") { "0" } + "]"
     check(GraphicsValidation.shapes(NeutralJson.parse("""[{"tag":"polyline","points":$polyline2002,"lineWidth":1,"color":"#112233"}]""")) != null)
     check(GraphicsValidation.shapes(NeutralJson.parse(rectShapes(4001))) != null)
-    val deep = (0 until 13).joinToString("", "", "") { """{"tag":"group","x":0,"y":0,"rotation":0,"scale":1,"alpha":1,"shapes":[""" } +
-        """{"tag":"rect","x":0,"y":0,"width":1,"height":1,"color":"#112233"}""" + "]}".repeat(13)
-    check(GraphicsValidation.shapes(NeutralJson.parse(deep)) != null)
+    check(GraphicsValidation.shapes(NeutralJson.parse(rectShapes(4000))) == null) { "4000 shapes must be accepted" }
+    fun deepShapes(levels: Int): String = "[" +
+        (0 until levels).joinToString("") { """{"tag":"group","x":0,"y":0,"rotation":0,"scale":1,"alpha":1,"shapes":[""" } +
+        """{"tag":"rect","x":0,"y":0,"width":1,"height":1,"color":"#112233"}""" + "]}".repeat(levels) + "]"
+    check(GraphicsValidation.shapes(NeutralJson.parse(deepShapes(13))) != null) { "13 nested groups must be refused" }
+    check(GraphicsValidation.shapes(NeutralJson.parse(deepShapes(12))) == null) { "12 nested groups must be accepted: " + GraphicsValidation.shapes(NeutralJson.parse(deepShapes(12))) }
+    val nonfiniteShape = JsonValue.Arr(listOf(JsonValue.Obj(linkedMapOf(
+        "tag" to JsonValue.Str("rect"), "x" to JsonValue.Num(Double.POSITIVE_INFINITY), "y" to JsonValue.Num(0.0),
+        "width" to JsonValue.Num(1.0), "height" to JsonValue.Num(1.0), "color" to JsonValue.Str("#112233")))))
+    check(GraphicsValidation.shapes(nonfiniteShape) != null) { "a nonfinite shape field must be refused" }
 
     // Card profile: membership, events, limits and unsupported props selected by the issued target.
     fun cardTree(surfaces: Int, shapesPerSurface: Int = 60, motions: Int = 5, timers: Int = 3, extra: List<UiNode> = emptyList()) =
@@ -259,6 +266,8 @@ fun main(args: Array<String>) {
             (0 until timers).map { node("Timer", listOf(number("millis", 1_700_000_000_000.0), flag("down", false))) } + extra)
     accepted(cardTree(5), "card")
     accepted(cardTree(5, 60, 5, 3, listOf(node("Path", listOf(text("commands", "M0 0 L1 1"))))), "card")
+    // A declared pack event that the card profile does not list faults; a card frame is not a card event.
+    rejected(cardTree(0, extra = listOf(surface(events = listOf(action("onFrame"))))), "CARD_FAULT", "Surface", "onFrame", target = "card")
     rejected(cardTree(6), "CARD_FAULT", "Surface", target = "card")
     val sparkline = node("Sparkline", listOf(structured("series", "[1]"), number("maximum", 2.0)))
     rejected(cardTree(5, extra = listOf(sparkline)), "CARD_FAULT", "Sparkline", target = "card")

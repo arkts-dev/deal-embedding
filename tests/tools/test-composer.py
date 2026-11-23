@@ -23,6 +23,14 @@ for name in ['FragmentRegionsTest','FragmentQualifierTest','FragmentMechanismsTe
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',cp,'deal.Main','compile',str(source/'checks.deal'),'--backend','js','--output',str(stage/'js')],check=True)
 subprocess.run(['node',str(root/'tests/tools/test-composer.js'),str(stage),str(classes)+':'+cp],check=True)
 subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(classes)+':'+cp,'CompileComposer',str(root),str(stage),'screen'],check=True)
+# The frozen target is a compile input for every issued value: the same production composer path
+# accepts chat and card as well as screen and writes the admission manifest beside the emitted pair.
+for target in ('chat','card'):
+    target_stage=pathlib.Path(tempfile.mkdtemp(prefix=f'composer-{target}-'))/'stage';target_stage.mkdir()
+    for name in ('experience.deal','experience.dealui'):shutil.copy(stage/name,target_stage/name)
+    subprocess.run(['java','-Ddeal.home='+str(deal),'-cp',str(classes)+':'+cp,'CompileComposer',str(root),str(target_stage),target],check=True)
+    manifest=json.loads((target_stage.parent/'composed-executable/js/admission.json').read_text())
+    assert manifest['target']==target,target
 # The frozen target is a compile input: without one the composer rejects with ADMISSION_TARGET
 # before any manifest exists, and never supplies a default of its own.
 absent=pathlib.Path(tempfile.mkdtemp(prefix='composer-absent-'))/'stage';absent.mkdir()

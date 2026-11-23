@@ -89,6 +89,8 @@ assert.deepEqual(decoded.empty_chart.points,[]);
 assert.strictEqual(decoded.twelve_rows.rows.length,12,'twelve table rows decode');
 assert.strictEqual(decoded.twelve_rail.rows.length,12,'twelve rail rows decode');
 assert.strictEqual(decoded.twelve_points.points.length,12,'twelve chart points decode');
+assert.strictEqual(decoded.twelve_metrics.values.length,12,'twelve metric rows decode');
+assert.deepEqual(decoded.equal_minutes.rows.map(row=>row.minute),[30,30],'equal rail minutes are nondecreasing');
 assert.deepEqual(decoded.twelve_rail.rows.map(row=>row.minute),[0,15,30,45,60,75,90,105,120,135,150,165]);
 assert.deepEqual(decoded.twelve_points.points.map(point=>point.value),[0,15,30,45,60,75,90,105,120,135,150,165]);
 assert.equal(decoded.bounds.headers[0].length,32,'32 UTF-16 units fit a label');

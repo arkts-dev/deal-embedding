@@ -138,11 +138,25 @@ export function schemas(): null {
   let expression: formula.Expression = formula.compile("value * 2 + 1",operands);
   insist(expression.dependencies.length === 1 && expression.type === "number","Formula did not retain issued typed dependencies");
   const lazy = formula.compile("choose(true, 7, 1 / 0)",[]); insist((lazy.number as number) === 7 && lazy.source.includes(" ? "),"Lazy choose lowering/value");
-  const rounded = formula.compile("round(-0.5)",[]); insist(1 / (rounded.number as number) < 0,"round lost negative zero");
+  const rounded = formula.compile("round(-0.5)",[]); insist((rounded.number as number) === 0 && 1 / (rounded.number as number) < 0,"round lost negative zero");
+  const tied = formula.compile("round(2.5)",[]); insist((tied.number as number) === 3,"Round tie toward positive infinity");
+  const negativeTie = formula.compile("round(-1.5)",[]); insist((negativeTie.number as number) === -1,"Round tie at a negative half");
+  const belowTie = formula.compile("round(2.4)",[]); insist((belowTie.number as number) === 2,"round below a tie is not a ceiling");
   const extrema = formula.compile("max(min(8, 3), 2)",[]); insist((extrema.number as number) === 3,"min/max formula lowering");
+  const precedence: formula.Expression = formula.compile("2 + 3 * 4",[]); insist((precedence.number as number) === 14,"Formula precedence");
+  const unaryNumber: formula.Expression = formula.compile("-(2) + 3",[]); insist((unaryNumber.number as number) === 1,"Unary numeric formula");
+  const unaryBoolean: formula.Expression = formula.compile("!false",[]); insist((unaryBoolean.boolean as boolean) === true,"Unary boolean formula");
+  const booleanPrecedence: formula.Expression = formula.compile("false && true || true",[]); insist((booleanPrecedence.boolean as boolean) === true,"Boolean formula precedence");
+  const comparison: formula.Expression = formula.compile("2 <= 2",[]); insist((comparison.boolean as boolean) === true,"Comparison formula");
+  const floored: formula.Expression = formula.compile("floor(1.9)",[]); insist((floored.number as number) === 1,"floor formula");
+  const ceiled: formula.Expression = formula.compile("ceil(1.1)",[]); insist((ceiled.number as number) === 2,"ceil formula");
+  const absolute: formula.Expression = formula.compile("abs(-2)",[]); insist((absolute.number as number) === 2,"abs formula");
+  const squareRoot: formula.Expression = formula.compile("sqrt(9)",[]); insist((squareRoot.number as number) === 3,"sqrt formula");
+  const exclusion: formula.Expression = formula.compile("3 !== 3",[]); insist((exclusion.boolean as boolean) === false,"Exclusion formula");
   for (let source of ["value = 4","value[0]","clock.nowMillis()","missing + 1","value && true","1e999"]) {
     let refused: boolean = false; try { formula.compile(source,operands); } catch(error) { refused = true; } insist(refused,"Unsafe formula admitted: "+source);
   }
+  let mismatchedBranches: boolean = false; try { formula.compile("choose(true, 1, true)",operands); } catch(error) { mismatchedBranches = true; } insist(mismatchedBranches,"Unsafe formula admitted: choose(true, 1, true)");
   return null;
 }
 class WireEdit { file:string; search:string; replace:string; }
@@ -152,7 +166,8 @@ export async function edits(): Promise<null> {
   let fields: embedding.WireField[] = [];
   let textSchema: embedding.WireType = {kind:"string",fields:fields,element:null,maximum:8192,minimumNumber:-1.7976931348623157e308,maximumNumber:1.7976931348623157e308};
   let parameters: embedding.Parameter[] = [{name:"description",type:textSchema}];
-  let functions: embedding.CapabilityFunction[] = [{name:"prepare",description:"Prepare a review, not a purchase",parameters:parameters,result:textSchema}];
+  let numberSchema: embedding.WireType = {kind:"number",fields:[],element:null,maximum:128,minimumNumber:-1.7976931348623157e308,maximumNumber:1.7976931348623157e308};
+  let functions: embedding.CapabilityFunction[] = [{name:"prepare",description:"Prepare a review, not a purchase",parameters:parameters,result:textSchema},{name:"plan",description:"Plan a review",parameters:[{name:"title",type:textSchema},{name:"count",type:numberSchema}],result:textSchema}];
   let contracts: embedding.CapabilityContract[] = [{module:"host/test",description:"Test review",version:1,functions:functions}];
   let registry: bindings.Registry = bindings.create(contracts);
   let args: Record<string, unknown> = {description:"draft"};
@@ -160,11 +175,39 @@ export async function edits(): Promise<null> {
   await bindings.issueDescriptor(registry,JSON.parse("{\"id\":\"review\",\"label\":\"Prepare\",\"input\":{\"sourceId\":\"draft\",\"label\":\"Description\",\"initial\":\"Specific requirement\"}}"),"prepareReview",rawBinding);
   insist(registry.sources.length === 1 && registry.bindings.length === 1 && registry.actions.length === 1,"Descriptor issuance");
   let rejectedBinding: boolean = false;
-  try { bindings.issueBinding(registry,"steal",rawBinding,"anotherDescriptor"); } catch (error) { rejectedBinding = true; }
-  insist(rejectedBinding && registry.bindings.length === 1,"Foreign descriptor draft admitted");
+  try { bindings.issueBinding(registry,"steal",rawBinding,"anotherDescriptor"); } catch (error) { let failure: Error = error as Error; rejectedBinding = failure.name === "CONSTRUCTION_SCHEMA"; }
+  insist(rejectedBinding && registry.sources.length === 1 && registry.bindings.length === 1 && registry.actions.length === 1,"Foreign descriptor draft admitted");
   rejectedBinding = false;
-  try { await bindings.issueDescriptor(registry,JSON.parse("{\"id\":\"broken\",\"label\":\"Prepare\",\"input\":{\"sourceId\":\"newDraft\",\"label\":\"Description\",\"initial\":\"\"}}"),"brokenBinding",JSON.parse("{\"module\":\"host/test\",\"function\":\"missing\",\"arguments\":{\"description\":\"newDraft\"}}")); } catch (error) { rejectedBinding = true; }
+  try { await bindings.issueDescriptor(registry,JSON.parse("{\"id\":\"broken\",\"label\":\"Prepare\",\"input\":{\"sourceId\":\"newDraft\",\"label\":\"Description\",\"initial\":\"\"}}"),"brokenBinding",JSON.parse("{\"module\":\"host/test\",\"function\":\"missing\",\"arguments\":{\"description\":\"newDraft\"}}")); } catch (error) { let failure: Error = error as Error; rejectedBinding = failure.name === "CONSTRUCTION_SCHEMA"; }
   insist(rejectedBinding && registry.sources.length === 1 && registry.bindings.length === 1 && registry.actions.length === 1,"Failed descriptor partially published");
+  // Parameter order follows the frozen contract; a wrong-typed or unissued argument and a duplicate
+  // binding or descriptor identity reject before anything is published.
+  let countSource: bindings.Source = {id:"count",type:"number",schema:numberSchema,dependencies:[],owner:"review",payloadOwner:"review",getter:"count",ready:"ready_count"};
+  bindings.reserve(registry,countSource);
+  let orderedArguments: Record<string, unknown> = {count:"count",title:"draft"};
+  let orderedBinding: Record<string, unknown> = {module:"host/test",function:"plan",arguments:orderedArguments};
+  bindings.issueBinding(registry,"planReview",orderedBinding,"review");
+  insist(bindings.binding(registry,"planReview").parameterOrder.join(",") === "title,count","Binding parameter order");
+  let duplicateBinding: boolean = false;
+  try { bindings.issueBinding(registry,"planReview",orderedBinding,"review"); } catch (error) { let failure: Error = error as Error; duplicateBinding = failure.name === "CONSTRUCTION_SCHEMA"; }
+  insist(duplicateBinding,"Duplicate binding identity admitted");
+  insist(registry.sources.length === 2 && registry.bindings.length === 2 && registry.actions.length === 1,"Duplicate binding rejection published partial state");
+  let wrongArguments: Record<string, unknown> = {description:"count"};
+  let wrongBinding: Record<string, unknown> = {module:"host/test",function:"prepare",arguments:wrongArguments};
+  let wrongArgument: boolean = false;
+  try { bindings.issueBinding(registry,"wrongArgument",wrongBinding,"review"); } catch (error) { let failure: Error = error as Error; wrongArgument = failure.name === "CONSTRUCTION_SCHEMA"; }
+  insist(wrongArgument,"Wrong-typed binding argument admitted");
+  insist(registry.sources.length === 2 && registry.bindings.length === 2 && registry.actions.length === 1,"Wrong-typed binding rejection published partial state");
+  let unissuedArguments: Record<string, unknown> = {description:"absent"};
+  let unissuedBinding: Record<string, unknown> = {module:"host/test",function:"prepare",arguments:unissuedArguments};
+  let unissuedArgument: boolean = false;
+  try { bindings.issueBinding(registry,"unissuedArgument",unissuedBinding,"review"); } catch (error) { let failure: Error = error as Error; unissuedArgument = failure.name === "CONSTRUCTION_SCHEMA"; }
+  insist(unissuedArgument,"Unissued binding argument source admitted");
+  insist(registry.sources.length === 2 && registry.bindings.length === 2 && registry.actions.length === 1,"Unissued binding rejection published partial state");
+  let duplicateDescriptor: boolean = false;
+  try { await bindings.issueDescriptor(registry,JSON.parse("{\"id\":\"review\",\"label\":\"Again\",\"input\":{\"sourceId\":\"otherDraft\",\"label\":\"Description\",\"initial\":\"\"}}"),"anotherBinding",JSON.parse("{\"module\":\"host/test\",\"function\":\"prepare\",\"arguments\":{\"description\":\"otherDraft\"}}")); } catch (error) { let failure: Error = error as Error; duplicateDescriptor = failure.name === "CONSTRUCTION_SCHEMA"; }
+  insist(duplicateDescriptor,"Duplicate descriptor identity admitted");
+  insist(registry.sources.length === 2 && registry.bindings.length === 2 && registry.actions.length === 1,"Duplicate descriptor rejection published partial state");
   let base: revisions.Revision = await revisions.issue({deal:"alpha alphaEnd β",dealui:"view Ω"});
   let rejected: revisions.Applied = await revisions.apply(base,editRequest(base.revision,base.digest,[{file:"deal",search:"alpha",replace:"x"}]));
   insist(!rejected.accepted && rejected.current.revision === base.revision,"Ambiguous edit modified revision");

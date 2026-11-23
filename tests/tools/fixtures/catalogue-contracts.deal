@@ -57,6 +57,11 @@ export async function decoding(): Promise<string> {
   result.twelve_rows = await accepts("data_table","{\"headers\":[\"a\",\"b\",\"c\"],\"rows\":["+table+"]}");
   result.twelve_rail = await accepts("timeline","{\"rows\":["+rails+"]}");
   result.twelve_points = await accepts("bar_chart","{\"points\":["+points+"],\"maximum\":165}");
+  // The fact sections accept their full twelve-row bound, and a nondecreasing rail admits equal minutes.
+  let metricRows: string = ""; let metricIndex: number = 0;
+  while (metricIndex < 12) { if (metricIndex > 0) { metricRows = metricRows+","; } metricRows = metricRows+"{\"label\":\"m"+String(metricIndex)+"\",\"value\":\"v"+String(metricIndex)+"\"}"; metricIndex = metricIndex+1; }
+  result.twelve_metrics = await accepts("metrics","{\"values\":["+metricRows+"]}");
+  result.equal_minutes = await accepts("timeline","{\"rows\":[{\"minute\":30,\"title\":\"a\"},{\"minute\":30,\"title\":\"b\"}]}");
   // The shared text domains: 32 UTF-16 units fit a label, 512 fit a cell, and an astral pair counts
   // as two units rather than one scalar.
   result.bounds = await accepts("data_table","{\"headers\":[\""+label(32)+"\",\"b\",\"c\"],\"rows\":[[\""+label(512)+"\",\"b\",\"c\"],[\"\ud83d\ude00\ud83d\ude00\",\"\",\"\"]]}");
