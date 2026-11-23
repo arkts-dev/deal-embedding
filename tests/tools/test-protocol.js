@@ -52,6 +52,14 @@ async function call(name,args,handler){
   [scalar,'1 trailing','INVALID_JSON'],
   [textSchema,'"\\ud800"','INVALID_ARGUMENT']
  ])await assert.rejects(call('snapshot',[schema,text]),error=>error.code===code);
+ // The schema boundary: depth 8 and 32 record fields are inclusive, while a ninth array level, a
+ // 33rd field, an unknown wire kind and an out-of-domain maximum reject.
+ const nested=depth=>{let schema=scalar;for(let level=0;level<depth;level++)schema={...scalar,kind:'array',element:schema,maximum:4};return schema;};
+ const recordOf=count=>({kind:'record',fields:Array.from({length:count},(_,index)=>({name:'f'+index,type:scalar,optional:true})),element:null,maximum:128,minimumNumber:0,maximumNumber:0});
+ assert((await call('snapshot',[nested(8),'[]'])).id,'depth 8 is inside the schema depth bound');
+ assert((await call('snapshot',[recordOf(32),'{}'])).id,'32 record fields are inside the schema field bound');
+ for(const [schema,label] of [[nested(9),'depth 9'],[recordOf(33),'33 fields'],[{...scalar,kind:'date'},'unknown wire kind'],[{...scalar,kind:'string',maximum:9000},'maximum above 8192']])
+  await assert.rejects(call('snapshot',[schema,'[]']),error=>error.code==='INVALID_ARGUMENT','schema rejection: '+label);
  for(const [title,intent] of [['t'.repeat(121),'intent'],['Title','i'.repeat(4097)]])
   await assert.rejects(call('request',[title,intent,facts.id]),error=>error.code==='INVALID_ARGUMENT');
  await call('grant',[contract.module]);
@@ -69,10 +77,11 @@ async function call(name,args,handler){
  await assert.rejects(call('generate',[cancelled.id]),error=>error.code==='INVALID_ARGUMENT');
  const pending=await call('request',['Frozen','Preserve original context and catalogue',facts.id]);
  await call('refresh',[],()=>[]);
- let generateRequests=0;
+ let generateRequests=0,generationTrace;
  const generated=await call('generate',[pending.id],request=>{
   generateRequests++;assert.equal(request.function,'generate');
   assert.equal(request.args[1].context.json,'1.5');assert.deepEqual(request.args[1].contracts,[contract]);
+  assert(request.args[1].trace,'generation carries the issued request trace');generationTrace=request.args[1].trace;
   return {experience:{id:'generated',title:'Frozen',origin:'generated',attempts:1},source:{deal:'source',dealui:'view'}};
  });
  assert.equal(generated.id,'generated');assert.equal(generateRequests,1);
@@ -81,11 +90,11 @@ async function call(name,args,handler){
  const experience=await call('load',['Fixture',source.deal,source.dealui],request=>{assert.equal(request.function,'load');assert.deepEqual(request.args,['Fixture',source]);return {experience:{id:'e',title:'Fixture',origin:'supplied',attempts:0},source};});
  assert.equal(experience.id,'e');
  await assert.rejects(call('load',['t'.repeat(121),source.deal,source.dealui]),error=>error.code==='INVALID_ARGUMENT');
- let starts=0,sessionId;
+ let starts=0,sessionId,startTrace;
  const startSteps=[];
  const runHandler=request=>{
   startSteps.push(request.function);
-  if(request.function==='prepareStart'){starts++;sessionId=request.args[1];return {id:'prepared',session:sessionId,trace:'trace'};}
+  if(request.function==='prepareStart'){starts++;sessionId=request.args[1];startTrace='trace-'+sessionId;return {id:'prepared',session:sessionId,trace:startTrace};}
   assert(['persistStart','activateStart'].includes(request.function));return null;
  };
  const running=await Promise.all([call('run',['e'],runHandler),call('run',['e'],runHandler)]);
@@ -97,6 +106,30 @@ async function call(name,args,handler){
  const tree={component:'Text',structural:'root',keyKind:'number',keyNumber:1.25,keyString:'',props:[prop],children:[]};
  const update=await call('next',[sessionId,''],request=>{assert.equal(request.function,'next');return {snapshot:{tree,version:1,fault:''},cursor:'cursor'};});
  assert.equal(update.snapshot.tree.keyNumber,1.25);assert.equal(update.snapshot.tree.props[0].numberValue,1.5);
+ // Versions are monotone Session-local business revisions and `published` acknowledges only a
+ // produced one; a later version is refused.
+ vm.runInContext(`protocolInvoke('published',[${JSON.stringify(sessionId)},1])`,context);
+ const publishedControl=JSON.parse(vm.runInContext('dealCapabilities.take()',context));
+ assert.equal(publishedControl.length,1);assert.equal(publishedControl[0].function,'published');assert.equal(publishedControl[0].args[1],1);
+ await assert.rejects(call('published',[sessionId,2]),error=>error.code==='INVALID_ARGUMENT');
+ // Issued trace identities: opaque, stable for their lifetime and equal to the trace the compiled
+ // controller handed the generation and store mechanisms.
+ assert.equal(await call('requestTrace',[pending.id]),generationTrace,'requestTrace is the trace generation received');
+ assert.equal(await call('requestTrace',[cancelled.id]),await call('requestTrace',[cancelled.id]),'a cancelled request trace is stable');
+ const rawSessionTrace=await call('sessionTrace',[sessionId]);assert.equal(rawSessionTrace,startTrace,'sessionTrace is the trace the store issued');
+ await assert.rejects(call('requestTrace',['forged']),error=>error.code==='INVALID_HANDLE');
+ // Dispatch validates the issued slot and the string-or-null transport crosses to the mechanism
+ // unchanged; the shipped session decodes it by the issued action signature
+ // (tests/tools/test-emitted-runtime.js drives that decode).
+ const delivered=[];
+ const payloads=['literal text','1.5','-2e3','true','false','',null,'{"row":7}'];
+ for(const payload of payloads)
+  await call('dispatch',[sessionId,0,payload],request=>{assert.equal(request.function,'dispatch');assert.equal(request.args[0].id,sessionId);assert.equal(request.args[1],0);delivered.push(request.args[2]);return null;});
+ assert.deepEqual(delivered,payloads,'every payload kind crosses the transport unchanged');
+ // Observation transport: the configured health snapshot and a classified artifact status.
+ assert.deepEqual(await call('health',[]),{incomplete:false,active:false,code:'',lost:0},'health reports the recorded observation snapshot');
+ const artifactId='00000000-0000-0000-0000-000000000000';
+ assert.deepEqual(await call('artifact',[artifactId],request=>{assert.equal(request.function,'artifact');assert.equal(request.args[0],artifactId);return {status:'unavailable',text:''};}),{status:'unavailable',text:''},'an unavailable artifact keeps its status and empty text');
  // The configured wait bound (two, not the former adapter literal) is compiled controller policy.
  function startInvocation(name,args){const key=String(++sequence);context.args=args;context.key=key;context.name=name;vm.runInContext('protocolCall(key,name,args)',context);return key;}
  const settleTurn=()=>new Promise(resolve=>setImmediate(resolve));
@@ -163,10 +196,23 @@ async function call(name,args,handler){
  const event={trace:'t',span:'s',parent:'',stage:'snapshot',outcome:'produced',code:'',experience:'e',session:'s',operation:'',target:'',durationMs:1.5,version:1,sequence:1,time:'0',elapsed:'0',artifact:'',content:'omitted',bytes:0,sha256:''};
  const page=await call('events',['','',20],request=>{assert.equal(request.function,'events');return {events:[event],cursor:'',incomplete:false};});
  assert.equal(page.events[0].sha256,'');assert.equal(page.events[0].durationMs,1.5);
+ // The page protocol: the configured 1-200 limit domain, a continuation cursor handed back to the
+ // mechanism, and the recording-loss flag the observation store reports on its own.
+ for(const limit of [0,-1,201])await assert.rejects(call('events',['','',limit]),error=>error.code==='INVALID_ARGUMENT','event limit '+limit+' is outside 1-200');
+ const firstPage=await call('events',['','',1],request=>{assert.deepEqual(request.args,['','',1]);return {events:[event],cursor:'continuation',incomplete:false};});
+ assert.equal(firstPage.cursor,'continuation');
+ const nextPage=await call('events',['','continuation',200],request=>{assert.deepEqual(request.args,['','continuation',200]);return {events:[],cursor:'',incomplete:true};});
+ // A supplied trace identity reaches the observation store unchanged; selecting by it is store
+ // behaviour and is recorded by the observation-store row.
+ const tracedPage=await call('events',[generationTrace,'',20],request=>{assert.equal(request.args[0],generationTrace);return {events:[event],cursor:'',incomplete:false};});
+ assert.equal(tracedPage.events.length,1,'a trace-selected page is returned to the host');
+ assert.equal(nextPage.incomplete,true,'the observation store reports its own recording loss');
  context.bad={...event};delete context.bad.sha256;
  assert.throws(()=>vm.runInContext("protocolRecord('@$external/embedding/Event',bad)",context),error=>error.code==='E8001'&&error.message.includes('Invalid Event transport'));
  await call('close',[sessionId],request=>{assert.equal(request.function,'close');return null;});
  await assert.rejects(call('next',[sessionId,'']),error=>error.code==='INVALID_HANDLE');
+ // An issued cursor is no way back into a closed Session: the wait it would register is refused too.
+ await assert.rejects(call('next',[sessionId,update.cursor]),error=>error.code==='INVALID_HANDLE','a closed Session rejects a registered wait');
  await assert.rejects(call('release',['e']),error=>error.code==='INVALID_ARGUMENT');
  assert.equal((await call('saved',[])).find(e=>e.id==='e').title,'Fixture');
  // Save failure must abort the unactivated store and retain preparation for retry.
@@ -195,7 +241,14 @@ async function call(name,args,handler){
  await settleTurn();
  const finalRequests=take();
  assert.equal(finalRequests.length,1);
+ const liveTrace=await call('sessionTrace',[finalSession.id]);
+ assert.equal(liveTrace,'final-trace','sessionTrace returns the trace the store issued');
+ await call('close',[finalSession.id],request=>{assert.equal(request.function,'close');return null;});
+ // A closed Session handle is rejected while the trace it returned stays usable as an events filter.
+ await assert.rejects(call('sessionTrace',[finalSession.id]),error=>error.code==='INVALID_HANDLE');
+ assert.equal(liveTrace,'final-trace','the returned trace is unchanged by close');
  await call('shutdown',[],request=>{assert.equal(request.function,'shutdown');return null;});
+ await assert.rejects(call('requestTrace',[pending.id]),error=>error.code==='STOPPED');
  context.reply={id:finalRequests[0].id,ok:false,error:{code:'CLOSED',message:'Session closed'}};
  vm.runInContext('dealCapabilities.deliver([reply])',context);
  await settleTurn();
@@ -222,4 +275,4 @@ async function call(name,args,handler){
   assert.throws(()=>vm.runInContext(`(function(){const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));protocolInitialize(factories,'application.js',{seed:'invalid',saved:[],contracts:[],health:{incomplete:false,active:false,code:'',lost:0},waits:${waits}});})()`,invalid),error=>error.code==='INVALID_ARGUMENT','waits='+waits);
  }
  console.log('PASS packaged compiled controller: frozen requests, context bounds, cancellation, grant epochs, single-flight/live Session reuse, saved-release rejection, closure/forget and public transport');
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().catch(error=>{console.error(error.stack||error);process.exitCode=1;});

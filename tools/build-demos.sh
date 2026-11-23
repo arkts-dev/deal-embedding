@@ -16,7 +16,66 @@ DISCOVERY_BACKEND="${DEAL_DISCOVERY_BACKEND:-nano}"
 case "$DISCOVERY_BACKEND" in nano|deepseek-flash) ;; *) echo 'DEAL_DISCOVERY_BACKEND must be nano or deepseek-flash' >&2; exit 1 ;; esac
 if [[ -v DEAL_REPAIR_STRATEGY ]]; then echo 'DEAL_REPAIR_STRATEGY was removed: repairs are always exact targeted patches' >&2; exit 1; fi
 TARGETS=("$@")
+PRINT_INPUTS=""
+if [[ "${TARGETS[0]:-}" == "print-inputs" ]]; then
+    PRINT_INPUTS=1
+    TARGETS=("${TARGETS[@]:1}")
+fi
 [[ ${#TARGETS[@]} -eq 0 ]] && TARGETS=(calendar vehicle todo organizer rental pizza tests)
+# One selection function feeds both the build loop and the standalone boundary audit.
+EMBEDDING_JAR=build/embedding-consumer/classes.jar
+EMBEDDING_ASSETS=build/embedding-consumer/assets
+RUNTIME_JARS=()
+# One runtime classpath for the compile, the dex profiles and the standalone-boundary declaration.
+runtime_jars() {
+    local jars=(build/toolchain/jsengine.jar build/toolchain/guava.jar build/toolchain/failureaccess.jar)
+    if [[ -f build/compose/classpath.txt ]]; then
+        local compose
+        IFS=: read -ra compose <<< "$(<build/compose/classpath.txt)"
+        jars+=("${compose[@]}")
+    fi
+    printf '%s\n' "${jars[@]}"
+}
+target_selection() {
+    profile="host"
+    sources=(demos/android/apps/shared-ui/*.kt "demos/android/apps/$1/src/"*.kt)
+    app_apis=("$EMBEDDING_JAR")
+    profile_jars=("$EMBEDDING_JAR" "${RUNTIME_JARS[@]}")
+}
+if [[ -n "$PRINT_INPUTS" ]]; then
+    # Emit the complete compile inputs the real target loop consumes: the application sources, the
+    # generated build configuration, the embedding classpath, the runtime classpath and the assets.
+    # The toolchain must already be prepared, because an incomplete declaration would be audited as
+    # if it were the compile's classpath.
+    [[ -f build/compose/classpath.txt ]] || { echo 'print-inputs needs a prepared toolchain: build/compose/classpath.txt is absent' >&2; exit 1; }
+    PRINT_ANDROID="${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}/platforms/android-37.0/android.jar"
+    PRINT_KOTLIN="${KOTLIN_HOME:-/snap/kotlin/current}"
+    mapfile -t RUNTIME_JARS < <(runtime_jars)
+    for app in "${TARGETS[@]}"; do
+        if [[ "$app" == tests ]]; then
+            profile=host
+            sources=(tests/android/*.kt)
+            app_apis=("$EMBEDDING_JAR")
+            profile_jars=("$EMBEDDING_JAR" "${RUNTIME_JARS[@]}")
+            manifest=''
+        else
+            # The one selection function the compile loop also consumes: nothing is re-derived here.
+            target_selection "$app"
+            # The target loop appends its generated build configuration to the same source set.
+            sources+=("build/$app/${app}-GenerationBuild.kt" "build/$app/AssistanceBuild.kt")
+            manifest="demos/android/apps/$app/AndroidManifest.xml"
+        fi
+        python3 - "$app" "$profile" "$EMBEDDING_JAR" "$EMBEDDING_ASSETS" "$PRINT_ANDROID" "$PRINT_KOTLIN" "$manifest" "${RUNTIME_JARS[*]}" "${app_apis[*]}" "${profile_jars[*]}" "${sources[*]}" <<'PY'
+import json, sys
+target, profile, jar, assets, android, kotlin, manifest, runtime, app_apis, profile_jars, sources = sys.argv[1:12]
+print(json.dumps({'target': target, 'profile': profile, 'sources': sources.split(), 'embedding': [jar],
+                  'app_apis': app_apis.split(), 'profile_jars': profile_jars.split(),
+                  'runtime_cp': runtime.split(), 'android_jar': android, 'kotlin_home': kotlin,
+                  'manifest': manifest, 'assets': assets}))
+PY
+    done
+    exit 0
+fi
 SDK="${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}"
 TOOLS="$SDK/build-tools/36.0.0"
 ANDROID="$SDK/platforms/android-37.0/android.jar"
@@ -78,9 +137,7 @@ if [[ ! -f "$COMPOSE_STAMP" || tools/compose/dependencies.sha256 -nt "$COMPOSE_S
     python3 tools/compose/prepare.py
     touch "$COMPOSE_STAMP"
 fi
-COMPOSE_CP=$(<build/compose/classpath.txt)
-IFS=: read -ra COMPOSE_JARS <<< "$COMPOSE_CP"
-RUNTIME_JARS=(build/toolchain/{jsengine,guava,failureaccess}.jar "${COMPOSE_JARS[@]}")
+mapfile -t RUNTIME_JARS < <(runtime_jars)
 RUNTIME_CP=$(IFS=:; echo "${RUNTIME_JARS[*]}")
 resource_link() {
     local app="$1" output="$2"
@@ -100,18 +157,9 @@ sign() {
     printf 'Built build/%s.apk\n' "$app"
 }
 # Fingerprint consumed inputs, not checkout metadata or generated guidance.
-ui_sources=()
-for source in UiModel UiParser UiDiagnostic UiChecker UiBorrowedValueChecker UiDealGenerator UiSourceGenerator DealUiDealSource UiCheckpointCompiler; do
-    ui_sources+=("$DEAL_UI/src/main/java/deal/ui/$source.java")
-done
-library_key=$(python3 tools/build-cache.py \
-    build.sh android core api ui \
-    tools/CapabilityApi.java tools/AssistanceUi.java tools/Fragment*.java \
-    tools/GenerationBindings.java tools/GenerationGuidance.java \
-    tools/pack-conformance.py tools/ui-vocabulary.json tools/vocabulary-inventory.py tools/PayloadConsumption.java tools/protocol-build.py tools/protocol-consumer.deal tools/application-consumer.deal \
-    tools/controller-mechanisms.d.deal tools/theme-build.py \
-    "$DEAL/deal" "$DEAL/std" "$DEAL/skills/write-deal/references" \
-    "$DEAL_UI/ui" "$DEAL_UI/runtime-js" "${ui_sources[@]}" "$ANDROID" \
+library_inputs_text=$(python3 tools/library-inputs.py --lines) || exit 1
+mapfile -t library_inputs <<< "$library_inputs_text"
+library_key=$(python3 tools/build-cache.py "${library_inputs[@]}" "$ANDROID" \
     "$KOTLIN_HOME/lib/kotlin-compiler.jar" "$KOTLIN_HOME/lib/compose-compiler-plugin.jar" \
     "$KOTLIN_HOME/lib/kotlin-stdlib.jar" "$TOOLS/aidl" "${RUNTIME_JARS[@]}")
 library_stamp=build/embedding-consumer/.inputs.sha256
@@ -194,11 +242,7 @@ for app in "${TARGETS[@]}"; do
         printf 'Tests: v0.8 production construction only; legacy test application deleted\n'
         continue
     fi
-    case "$app" in
-        calendar) profile="host";   sources=(demos/android/apps/shared-ui/*.kt demos/android/apps/calendar/src/*.kt); app_apis=("$EMBEDDING_JAR"); profile_jars=("$EMBEDDING_JAR" "${RUNTIME_JARS[@]}") ;;
-        organizer) profile="host";  sources=(demos/android/apps/shared-ui/*.kt demos/android/apps/organizer/src/*.kt); app_apis=("$EMBEDDING_JAR"); profile_jars=("$EMBEDDING_JAR" "${RUNTIME_JARS[@]}") ;;
-        *) profile="host";          sources=(demos/android/apps/shared-ui/*.kt "demos/android/apps/$app/src/"*.kt); app_apis=("$EMBEDDING_JAR"); profile_jars=("$EMBEDDING_JAR" "${RUNTIME_JARS[@]}") ;;
-    esac
+    target_selection "$app"
     if [[ "$profile" == host ]]; then
         profile_dex host-stable "${RUNTIME_JARS[@]}"
         embedding_dex
@@ -228,7 +272,7 @@ for app in "${TARGETS[@]}"; do
         sources+=("build/$app/AssistanceBuild.kt")
         printf 'Generation backend (%s): %s\n' "$app" "$GENERATION_BACKEND"
         rm -rf "build/assets/$app"; mkdir -p "build/assets/$app"
-        cp -r build/embedding-consumer/assets/* "build/assets/$app/"
+        cp -r "$EMBEDDING_ASSETS"/* "build/assets/$app/"
     fi
     resource_link "$app" "build/$app/unsigned.apk"
     find "build/$app/rjava" -name '*.java' > build/r-sources.txt

@@ -15,6 +15,33 @@ Android instrumentation sources are in `tests/android/`; the APK is `build/v08-c
 
 Do not overlap rebuilds with tests. Generation/composer tests share `build/v08-cutover/composed-executable/`; the cutover harness clears it at the start of every mode, so only the last mode's compile remains. Rebuild the composer fixture before probes that depend on it.
 
+## Verification items
+
+`tests/run.sh` is the deterministic gate. Besides the domain regressions it now runs:
+
+- `tools/preservation.py begin|end` around the whole lane: original request bytes, saved sources,
+  grants and failed evidence are snapshotted and verified as retained. `test-preservation.py` proves
+  deletion, rewriting, revocation and identity loss fail, then restores them.
+- `test-standalone-boundary.py`: the declared library input set (tools/library-inputs.txt) is
+  audited, an isolated library build with access-failing `demos`/`tests` sentinels must reproduce
+  the packaged class and asset content digests, demo and test targets must declare application
+  sources plus the AAR extraction, and both negative controls must fail naming the offending path.
+  The isolated proof is cached by validated input fingerprint and is invalidated by any input change.
+- `test-verification-seams.py`: a production seam per family that has a controllable seam is
+  broken, the owning deterministic test must fail, and the bytes are restored byte-identically (an
+  interrupted run is journalled and recovered at lane start). Each owning test supplies only its
+  declared external boundary; the control does not re-assert that design. Families whose production
+  seam is absent are named by the matrix as partial or missing and are never reported as seam-proven.
+- `test-matrix.py`: every owning page's requirement families and all 36 catalogue kinds are rows in
+  `tests/matrix.json`. A covered row must name a test this lane executed; a partial, missing, device,
+  live, human or explicit row must name its located blocker. Absence and fabricated-claim mutations
+  are observed failing.
+
+Evidence stays classified: deterministic results prove wiring, contracts, budgets, admission and
+persistence logic; device, live-provider/inference and human visual gates are separate opt-in runs.
+The scenario runner's typed journey assertions are in `tests/android/CutoverInstrumentation.kt`
+(`scenarios=<file>`); their results are not implied by this lane.
+
 ## Original acceptance scenarios
 
 The tracked [scenario inputs and acceptance criteria](scenarios/README.md) are in

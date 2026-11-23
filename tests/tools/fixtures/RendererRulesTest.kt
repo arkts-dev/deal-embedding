@@ -114,8 +114,7 @@ fun main(args: Array<String>) {
     rejected(node("Table", listOf(structured("headers", """["a","b"]"""), number("columns", 2.0)),
         listOf(node("TableRow", listOf(structured("cells", """["1"]"""))))),
         "PROP_FAULT", "Table", "columns", "integral-index")
-    rejected(node("NumberField", listOf(text("label", "n"), number("value", 1.0), number("minimum", 0.0),
-        number("maximum", 9.0), number("step", 0.0))), "PROP_FAULT", "NumberField", "step", "integral-index")
+    rejected(node("NumberField", listOf(text("label", "n"), number("value", 1.0), number("minimum", 0.0), number("maximum", 9.0), number("step", 0.0))), "PROP_FAULT", "NumberField", "step", "integral-index")
     accepted(node("Select", listOf(structured("labels", "[]"), number("selected", -1.0))))
     rejected(node("Select", listOf(structured("labels", """["a"]"""), number("selected", 3.0))),
         "PROP_FAULT", "Select", "selected", "integral-index")
@@ -152,8 +151,7 @@ fun main(args: Array<String>) {
     val nonfiniteSeries = UiProp("series", UiValue.Json(JsonValue.Arr(listOf(JsonValue.Num(1.0), JsonValue.Num(Double.POSITIVE_INFINITY)))))
     rejected(node("Sparkline", listOf(nonfiniteSeries, number("maximum", 5.0))), "PROP_FAULT", "Sparkline", "series", "finite")
     rejected(node("Sparkline", listOf(structured("series", "5"), number("maximum", 5.0))), "PROP_FAULT", "Sparkline", "series", "finite")
-    rejected(node("Sparkline", listOf(structured("series", "[1,2]"), number("maximum", 0.0))),
-        "PROP_FAULT", "Sparkline", "maximum", "chart")
+    rejected(node("Sparkline", listOf(structured("series", "[1,2]"), number("maximum", 0.0))), "PROP_FAULT", "Sparkline", "maximum", "chart")
     val identity = "[0,0,0,0,0,0,1,1]"
     accepted(node("Transform", listOf(structured("pose", identity), number("durationMs", 10.0))))
     rejected(node("Transform", listOf(structured("pose", "[0,0,0,0,0]"), number("durationMs", 10.0))),
@@ -201,6 +199,7 @@ fun main(args: Array<String>) {
     check(!StyleFamilies.heading("Timer", "caption"))
     check(!StyleFamilies.heading("Timer", "nonsense"))
     check(StyleFamilies.resolve("Button", "primary") == "primary")
+    check(StyleFamilies.resolve("Motion", "") == "pop") { "an empty Motion style takes its declared pop default" }
     accepted(node("Tile", listOf(text("label", "l"), text("value", "v"), number("span", 2.0))))
     rejected(node("Tile", listOf(text("label", "l"), text("value", "v"), number("span", 3.0))), "PROP_FAULT", "Tile", "span")
     rejected(node("Icon", listOf(text("name", "sparkle"))), "PROP_FAULT", "Icon", "name")

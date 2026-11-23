@@ -10,8 +10,12 @@ cp.execFileSync('javac',['--release','21','-cp',classes,'-d',testClasses,'tests/
 const classpath=testClasses+':'+classes;
 const javaWithKotlin=classpath+':'+path.join(process.env.KOTLIN_HOME||'/snap/kotlin/current','lib/kotlin-stdlib.jar');
 const sources={};function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(path.join(assets,'generation'),file)]=fs.readFileSync(file,'utf8');}}walk(path.join(assets,'generation'));
+// Pairs kept for the runtime items. Their recorded digest is written only after every mode passed, so a
+// failed run (including a deliberately broken seam artifact) never records a digest of broken sources.
+const emitted=[];
 const vocabularyDigest=require('./fixtures/generation-digest.js').digest;
-const generationDigest=()=>vocabularyDigest(assets);
+// The digest of the generation sources the emitters are fed, sampled once with the module snapshot.
+const bundleDigest=vocabularyDigest(assets);
 const ordinaryPlan={title:'Editable calculation',inputs:[{id:'value',label:'Value',kind:'count',measure:'count',value:3,min:0,max:99},{id:'active',label:'Active',kind:'toggle',measure:'count',value:false}],requirements:[{id:'preserve',text:'Double the edited value',sources:['request'],needs:['calculate']}],needs:[{id:'calculate',type:'figure',words:'Double the edited value',reads:['value'],spec:{label:'Double',format:'count',unit:'',formula:'value * 2',example:{inputs:{value:3},result:6}}}],questions:[]};
 const cataloguePlan={title:'Checklist',requirements:[{id:'preserve',text:'Toggle items and summarize completion',sources:['request'],needs:['items','summary','choice']}],needs:[{id:'items',type:'content',words:'Toggle the disclosed checklist',quote:'',reads:[],spec:{}},{id:'summary',type:'content',words:'Show completion and remaining counts',reads:['items'],spec:{}},{id:'choice',type:'content',words:'Choose one disclosed label',reads:[],spec:{}}]};
 const mixedPlan={...ordinaryPlan,needs:[...ordinaryPlan.needs,{id:'extra',type:'other',words:'An additional custom editable value',reads:[],spec:{}}]};
@@ -45,11 +49,11 @@ async function run(mode){
  fs.rmSync(path.join(root,'build/v08-cutover/composed-executable'),{recursive:true,force:true});
  // The production host's capabilityDeclarations text for the one contract this mode declares.
  const productionPrompt=mode==='scalar-read'?cp.execFileSync('java',['-cp',javaWithKotlin,'ProviderDeclaration','prompt'],{encoding:'utf8'}).trim():'';
- const chosenPlan=mode==='units-rejected'?wrongUnitPlan:['ordinary','repair','construction-failure'].includes(mode)?ordinaryPlan:mode==='catalogue'?cataloguePlan:mode==='catalogue-empty'?catalogueEmptyPlan:mode==='catalogue-sections'?catalogueSectionsPlan:mode==='catalogue-readonly'?catalogueReadonlyPlan:mode==='catalogue-readonly-empty'?catalogueReadonlyEmptyPlan:mode==='catalogue-undisclosed'?catalogueUndisclosedPlan:mode==='scalar-read'?scalarPlan:['mixed','partial'].includes(mode)?mixedPlan:fixturePlan;
+ const chosenPlan=mode==='units-rejected'?wrongUnitPlan:['ordinary','repair','construction-failure'].includes(mode)||mode.startsWith('admission-')?ordinaryPlan:mode==='catalogue'?cataloguePlan:mode==='catalogue-empty'?catalogueEmptyPlan:mode==='catalogue-sections'?catalogueSectionsPlan:mode==='catalogue-readonly'?catalogueReadonlyPlan:mode==='catalogue-readonly-empty'?catalogueReadonlyEmptyPlan:mode==='catalogue-undisclosed'?catalogueUndisclosedPlan:mode==='scalar-read'?scalarPlan:['mixed','partial'].includes(mode)?mixedPlan:fixturePlan;
  const context=vm.createContext({sources,frozenTarget});
  for(const name of ['sandbox.js','generation-contracts.js','protocol-contracts.js','protocol-host.js','generation-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),context);
  vm.runInContext(`protocolContexts.fixture={value:${JSON.stringify(mode==='catalogue-readonly'?JSON.stringify(catalogueReadonlyFacts):mode==='catalogue-undisclosed'?JSON.stringify(catalogueUndisclosedFacts):fixtureFacts)},schema:{kind:'record',fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0}};const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));runGeneration(factories,{intent:${JSON.stringify(mode==='catalogue-readonly'?'Double the edited value '+escapedCell:'Double the edited value')},context:{id:'fixture'},target:frozenTarget,capabilities:${mode==='scalar-read'?JSON.stringify([providerContract]):'[]'}});`,context);
- let asks=[],checks=0,issued=0,editSeen=false,discarded=0,acceptedSource=null,checkingContext=null;
+ let asks=[],checks=0,issued=0,editSeen=false,discarded=0,isolatedStarts=0,acceptedSource=null,checkingContext=null;
  for(let turn=0;turn<2000;turn++){
   await new Promise(resolve=>setImmediate(resolve));
   const snapshot=JSON.parse(vm.runInContext('generationSnapshot()',context));
@@ -60,6 +64,20 @@ async function run(mode){
     assert.equal(snapshot.error,null);assert.equal(snapshot.result.candidateId,'');assert.equal(checks,1);assert.equal(discarded,1);
     const writes=asks.filter(r=>r.stage.startsWith('custom-'));assert.equal(writes.length,5);assert.equal(new Set(writes.map(r=>r.operation)).size,1);assert.deepEqual(writes.map(r=>r.ask),[1,2,3,4,5]);
     assert.equal(writes.filter(r=>r.thinking).length,1);assert.equal(writes.at(-1).stage,'custom-whole');assert.equal(writes.at(-1).maxTokens,24000);assert.equal(writes.filter(r=>r.stage==='custom-edit').length,3);
+   }
+   else if(mode.startsWith('admission-')) {
+    assert.equal(snapshot.error,null,mode+' '+JSON.stringify(snapshot.error));assert(snapshot.result.candidateId);
+    const edits=asks.filter(r=>r.stage==='assembled-edit');
+    if(mode==='admission-permitted') {
+     // The permit list is a membership test, not a blanket rejection: replacing the compiled imports
+     // with the checked standard and graphics modules must still be admitted.
+     assert.equal(checks,1);assert.equal(discarded,0);assert.equal(edits.length,0);assert.equal(isolatedStarts,1);
+    } else {
+     // Import and pack identity admission precede isolated startup: the rejected attempt starts no
+     // checker step, and its located diagnostic is what the repair ask carries.
+     assert.equal(checks,2);assert.equal(discarded,1);assert.equal(isolatedStarts,1,'admission rejects before any isolated step');
+     assert.equal(edits.length,1);assert.equal(edits[0].diagnostics,mode==='admission-imports'?'ADMISSION_IMPORT: unissued module':mode==='admission-digest'?'ADMISSION_PACK: compiler pack digest mismatch':'ADMISSION_PACK: compiler pack version mismatch');
+    }
    }
    else if(['retained','repeated','retained-operation-failure'].includes(mode)) {
     if(mode==='retained-operation-failure'){assert.equal(snapshot.error.code,'PROVIDER_HTTP');assert.equal(checks,1);assert.equal(discarded,1);return {checks};}
@@ -122,8 +140,8 @@ async function run(mode){
     if(mode==='units-rejected'){assert(acceptedSource.dealui.includes('notice_wrong_scale'));assert(!acceptedSource.deal.includes('f_parts_wrong_scale:'));assert(acceptedSource.deal.includes('f_parts_calculate:'));}
     if(mode==='partial'){assert(acceptedSource.dealui.includes('notice_extra'));assert(acceptedSource.deal.includes('f_parts_value'));}
    }
-   else{assert.equal(snapshot.error,null);assert.equal(snapshot.result.candidateId,'checked-2');assert.equal(snapshot.result.attempts,2);assert.equal(checks,2);assert(editSeen);assert.deepEqual(asks.map(r=>r.stage),['planning','selection-first','selection-second','custom-whole','custom-edit','coverage']);}
-   return {asks:asks.map(({operation,stage,ask,maxTokens,thinking})=>({operation,stage,ask,maxTokens,thinking})),checks};
+   else{assert.equal(snapshot.error,null);assert.equal(snapshot.result.candidateId,'checked-2');assert.equal(snapshot.result.attempts,2,'candidate checks are counted as attempts');assert.equal(checks,2);assert(editSeen);assert.deepEqual(asks.map(r=>r.stage),['planning','selection-first','selection-second','custom-whole','custom-edit','coverage']);}
+   return {asks:asks.map(({operation,stage,ask,maxTokens,thinking,diagnostics})=>({operation,stage,ask,maxTokens,thinking,diagnostics})),checks};
   }
   for(const request of JSON.parse(vm.runInContext('dealCapabilities.take()',context))){
    let value,error;
@@ -157,7 +175,7 @@ async function run(mode){
      if(r.stage==='planning'){assert(r.input.includes('\nFROZEN TARGET\n'+frozenTarget+'\n'));value={content:JSON.stringify(chosenPlan),finish:'stop',refusal:''};}
      else if(['selection-first','selection-second'].includes(r.stage)) {
       const questions=JSON.parse(r.input.split('\nISSUED QUESTIONS\n')[1]);
-      const answers=questions.map(q=>{let selected='unavailable';if(mode==='scalar-read'&&q.id.startsWith('real_'))selected='read';else if(mode==='scalar-read'&&q.id==='read')selected='scalar_0';else if(q.id.startsWith('ownership_'))selected='authored';else if(q.id.startsWith('formula_'))selected='formula';else if(q.id.startsWith('units_'))selected=mode==='units-rejected'&&q.id==='units_wrong_scale'?'unavailable':'preserved';else if(mode==='units-rejected')selected='part_'+q.id;else if(mode==='catalogue-readonly')selected={table:'cat_table_data_table',rail:'cat_rail_timeline',bars:'cat_bars_bar_chart',trend:'cat_trend_trend_chart',facts:'cat_facts_metrics',details:'cat_details_key_facts'}[q.id]||'unavailable';else if(mode==='catalogue-readonly-empty')selected={table:'cat_table_data_table',rail:'cat_rail_timeline',bars:'cat_bars_bar_chart'}[q.id]||'unavailable';else if(mode==='catalogue-undisclosed')selected={table:'cat_table_data_table',watch:'cat_watch_spotlight'}[q.id]||'unavailable';else if(['ordinary','repair'].includes(mode)||['mixed','partial'].includes(mode)&&q.id==='calculate')selected='part_calculate';else if(mode==='catalogue'&&q.id==='items')selected='cat_items_checklist';else if(mode==='catalogue'&&q.id==='choice')selected='cat_choice_actions';else if(mode==='catalogue-empty'&&q.id==='items')selected='cat_items_checklist';else if(mode==='catalogue-empty'&&q.id==='facts')selected='cat_facts_metrics';else if(mode==='catalogue-sections'&&q.id==='facts')selected='cat_facts_metrics';else if(mode==='catalogue-sections'&&q.id==='watch')selected='cat_watch_spotlight';else if(mode==='catalogue-sections'&&q.id==='details')selected='cat_details_key_facts';return {id:q.id,selected,probabilities:q.options.map(o=>({id:o.id,p:o.id===selected?1:0}))};});
+      const answers=questions.map(q=>{let selected='unavailable';if(mode==='scalar-read'&&q.id.startsWith('real_'))selected='read';else if(mode==='scalar-read'&&q.id==='read')selected='scalar_0';else if(q.id.startsWith('ownership_'))selected='authored';else if(q.id.startsWith('formula_'))selected='formula';else if(q.id.startsWith('units_'))selected=mode==='units-rejected'&&q.id==='units_wrong_scale'?'unavailable':'preserved';else if(mode==='units-rejected')selected='part_'+q.id;else if(mode==='catalogue-readonly')selected={table:'cat_table_data_table',rail:'cat_rail_timeline',bars:'cat_bars_bar_chart',trend:'cat_trend_trend_chart',facts:'cat_facts_metrics',details:'cat_details_key_facts'}[q.id]||'unavailable';else if(mode==='catalogue-readonly-empty')selected={table:'cat_table_data_table',rail:'cat_rail_timeline',bars:'cat_bars_bar_chart'}[q.id]||'unavailable';else if(mode==='catalogue-undisclosed')selected={table:'cat_table_data_table',watch:'cat_watch_spotlight'}[q.id]||'unavailable';else if(['ordinary','repair'].includes(mode)||mode.startsWith('admission-')||['mixed','partial'].includes(mode)&&q.id==='calculate')selected='part_calculate';else if(mode==='catalogue'&&q.id==='items')selected='cat_items_checklist';else if(mode==='catalogue'&&q.id==='choice')selected='cat_choice_actions';else if(mode==='catalogue-empty'&&q.id==='items')selected='cat_items_checklist';else if(mode==='catalogue-empty'&&q.id==='facts')selected='cat_facts_metrics';else if(mode==='catalogue-sections'&&q.id==='facts')selected='cat_facts_metrics';else if(mode==='catalogue-sections'&&q.id==='watch')selected='cat_watch_spotlight';else if(mode==='catalogue-sections'&&q.id==='details')selected='cat_details_key_facts';return {id:q.id,selected,probabilities:q.options.map(o=>({id:o.id,p:o.id===selected?1:0}))};});
       value={content:JSON.stringify({answers}),finish:'stop',refusal:''};
      }
      else if(r.stage==='alignment') { const questions=JSON.parse(r.input.split('\nISSUED QUESTIONS\n')[1]);value={content:JSON.stringify({answers:questions.map(q=>({id:q.id,selected:'summary',probabilities:q.options.map(o=>({id:o.id,p:o.id==='summary'?1:0}))}))}),finish:'stop',refusal:''}; }
@@ -181,6 +199,7 @@ async function run(mode){
      if(request.function==='discard'){discarded++;checkingContext=null;value=null;break;}
      if(request.function==='step') {
       if(request.args[1]==='start') {
+       isolatedStarts++;
        checkingContext=vm.createContext({});
        for(const name of ['sandbox.js','checking-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),checkingContext);
        if(mode==='scalar-read')vm.runInContext('configureDealCapabilities('+JSON.stringify([providerContract])+')',checkingContext);
@@ -199,10 +218,24 @@ async function run(mode){
      acceptedSource={deal:request.args[0],dealui:request.args[1]};
      // Keep the composed pair the emitters produced so the runtime items drive real emitted source.
      if(['ordinary','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','partial','scalar-read'].includes(mode)){const kept=path.join(root,'build/v08-cutover/emitted',mode);fs.rmSync(kept,{recursive:true,force:true});fs.cpSync(path.join(root,'build/v08-cutover/composed-executable'),kept,{recursive:true});
-      // Record the generation sources the pair was emitted from; the runtime item refuses a stale pair.
-      fs.writeFileSync(path.join(kept,'generation.sha256'),generationDigest());}
+      // The runtime item refuses a stale pair; its recorded digest is written once every mode passed.
+      emitted.push(kept);}
      value=['retained','repeated','retained-operation-failure'].includes(mode)?{accepted:true,candidateId:'retained-'+checks,diagnostics:''}:mode==='repair'?{accepted:checks===2,candidateId:checks===2?'repaired':'',diagnostics:'FIXTURE_CHECK: source repair required'}:['ordinary','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','scalar-read','mixed','partial','units-rejected'].includes(mode)?{accepted:true,candidateId:'checked-'+checks,diagnostics:''}:mode==='budget'?{accepted:true,candidateId:'discard-me',diagnostics:''}:{accepted:checks===2,candidateId:checks===2?'checked-2':'',diagnostics:checks===1?'FIXTURE_CHECK: retain exact pair and revise label':''};
-     value.manifest=JSON.parse(fs.readFileSync(path.join(stage,'../composed-executable/js/admission.json'),'utf8'));break;
+     value.manifest=JSON.parse(fs.readFileSync(path.join(stage,'../composed-executable/js/admission.json'),'utf8'));
+     // A declared frozen provider module is part of the permitted import surface: the composed
+     // manifest of the provider mode imports it and lists it among its providers, and that candidate
+     // is admitted.
+     if(mode==='scalar-read'){assert(value.manifest.imports.includes('host/probe'),'the composed manifest imports the declared provider module');assert.deepEqual(value.manifest.providers,['host/probe'],'the composed manifest declares the provider module');}
+     // Admission controls mutate only the compiled manifest the production checker path consumes; the
+     // first attempt carries the injected defect and the repaired attempt carries the real one.
+     if(mode.startsWith('admission-')&&checks===1){
+      if(mode==='admission-imports')value.manifest.imports=[...value.manifest.imports,'std/console'];
+      else if(mode==='admission-digest')value.manifest.packDigests=[value.manifest.issuedPackDigest.replace(/^./,'0')];
+      else if(mode==='admission-version')value.manifest.packVersions=[String(Number(value.manifest.issuedPackVersion)+1)];
+      else if(mode==='admission-permitted')value.manifest.imports=['std/math','std/table','embedding/graphics'];
+      value={accepted:true,candidateId:'admit-1',diagnostics:'',manifest:value.manifest};
+     }
+     break;
     }
     default:throw Error('Legacy or unissued mechanism reached: '+request.module);
    }
@@ -211,4 +244,4 @@ async function run(mode){
  }
  throw Error('Production generation did not settle');
 }
-(async()=>{const receipt={retained:await run('retained'),repeated:await run('repeated'),retainedOperationFailure:await run('retained-operation-failure'),unitsRejected:await run('units-rejected'),ordinary:await run('ordinary'),repair:await run('repair'),catalogue:await run('catalogue'),catalogueEmpty:await run('catalogue-empty'),catalogueSections:await run('catalogue-sections'),catalogueReadonly:await run('catalogue-readonly'),catalogueReadonlyEmpty:await run('catalogue-readonly-empty'),catalogueUndisclosed:await run('catalogue-undisclosed'),scalarRead:await run('scalar-read'),mixed:await run('mixed'),partial:await run('partial'),success:await run('success'),failure:await run('failure'),constructionFailure:await run('construction-failure'),budget:await run('budget')};fs.writeFileSync(path.join(stage,'receipt.json'),JSON.stringify(receipt,null,2));console.log('packaged generation entry: compiled construction, exact repair, actual check accounting and operational failure propagation passed');})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{const receipt={retained:await run('retained'),repeated:await run('repeated'),retainedOperationFailure:await run('retained-operation-failure'),unitsRejected:await run('units-rejected'),ordinary:await run('ordinary'),repair:await run('repair'),admissionImports:await run('admission-imports'),admissionDigest:await run('admission-digest'),admissionVersion:await run('admission-version'),admissionPermitted:await run('admission-permitted'),catalogue:await run('catalogue'),catalogueEmpty:await run('catalogue-empty'),catalogueSections:await run('catalogue-sections'),catalogueReadonly:await run('catalogue-readonly'),catalogueReadonlyEmpty:await run('catalogue-readonly-empty'),catalogueUndisclosed:await run('catalogue-undisclosed'),scalarRead:await run('scalar-read'),mixed:await run('mixed'),partial:await run('partial'),success:await run('success'),failure:await run('failure'),constructionFailure:await run('construction-failure'),budget:await run('budget')};for(const kept of emitted)fs.writeFileSync(path.join(kept,'generation.sha256'),bundleDigest);fs.writeFileSync(path.join(stage,'receipt.json'),JSON.stringify(receipt,null,2));console.log('packaged generation entry: compiled construction, exact repair, actual check accounting and operational failure propagation passed');})().catch(error=>{console.error(error);process.exitCode=1;});

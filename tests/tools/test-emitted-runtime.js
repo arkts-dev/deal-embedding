@@ -11,7 +11,9 @@ const {digest}=require('./fixtures/generation-digest.js');
 const fresh=digest(path.resolve('build/embedding-consumer/assets'));
 
 function open(mode,options={}){
-  const recorded=fs.readFileSync(path.join(emitted,mode,'generation.sha256'),'utf8').trim();
+  const stamp=path.join(emitted,mode,'generation.sha256');
+  assert.ok(fs.existsSync(stamp),'the emitted pair for '+mode+' carries no source record; run the generation cutover first');
+  const recorded=fs.readFileSync(stamp,'utf8').trim();
   assert.equal(recorded,fresh,'the emitted pair for '+mode+' was produced by the packaged vocabulary and generation sources');
   const base=path.join(emitted,mode,'js'),sources={};
   function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(base,file)]=fs.readFileSync(file,'utf8');}}

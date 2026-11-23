@@ -19,14 +19,23 @@ import * as graphics from "./graphics";
 
 function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
 function rejectsPlan(raw: string): void { let rejected: boolean = false; try { plans.decode(raw,[],[]); } catch (error) { rejected = true; } insist(rejected,"Invalid plan admitted"); }
+// The shared decimals field is one domain at every site that issues it. The figure and entry-field
+// decoders apply it themselves, so these vectors drive core/plan.deal's decimals() directly.
+function figurePlan(value: string): string { return "{\"title\":\"x\",\"needs\":[{\"id\":\"total\",\"type\":\"figure\",\"words\":\"Total\",\"spec\":{\"label\":\"Total\",\"format\":\"plain\",\"unit\":\"\",\"formula\":\"1\",\"example\":{\"inputs\":{},\"result\":1},\"decimals\":"+value+"}}]}"; }
+function entriesPlan(value: string): string { return "{\"title\":\"x\",\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"spec\":{\"label\":\"Log\",\"fields\":[{\"id\":\"amount\",\"label\":\"Amount\",\"kind\":\"number\",\"initial\":0,\"measure\":\"number\",\"decimals\":"+value+"}]}}]}"; }
+// Typed plan values: one input with the declared kind and one with a wrong kind, a fractional count,
+// an out-of-range choice index or a value outside its declared bounds.
+function inputPlan(kind: string, value: string): string { return "{\"title\":\"x\",\"inputs\":[{\"id\":\"v\",\"label\":\"Value\",\"kind\":\""+kind+"\",\"measure\":\"number\",\"value\":"+value+"}]}"; }
+function choicePlan(value: string): string { return "{\"title\":\"x\",\"inputs\":[{\"id\":\"v\",\"label\":\"Value\",\"kind\":\"choice\",\"measure\":\"number\",\"value\":"+value+",\"options\":[{\"id\":\"a\",\"label\":\"A\",\"value\":1},{\"id\":\"b\",\"label\":\"B\",\"value\":2}]}]}"; }
+function boundedPlan(value: string): string { return "{\"title\":\"x\",\"inputs\":[{\"id\":\"v\",\"label\":\"Value\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":"+value+",\"min\":10,\"max\":20}]}"; }
 export function schemas(): null {
   for (const path of ["M +.5 -.5 L 1. 2.","M 001 000.5 L 1.e2 .5E+1","M -0 +0 A 01 02 0 0 1 3 4 Z"]) { graphics.path(path); }
   for (const path of ["M 1e 0","M 1e+ 0","M . 0","M 1e999 0","M 0 0 A 1 1 0 2 0 3 4"]) {
     let rejected: boolean = false; try { graphics.path(path); } catch(error) { rejected = true; } insist(rejected,"Malformed SVG number admitted: "+path);
   }
-  const typed: string[] = ["😀","\ud800","\u0001"];
+  const typed: string[] = ["😀","\ud800","\u0001","\"","\\","\n"];
   insist(decoded.strings(typed) === typed,"Typed invariant array identity lost");
-  const dynamic: unknown[] = JSON.parse("[\"😀\",\"\\ud800\",\"\\u0001\"]");
+  const dynamic: unknown[] = JSON.parse("[\"😀\",\"\\ud800\",\"\\u0001\",\"\\\"\",\"\\\\\",\"\\n\"]");
   const fresh: string[] = decoded.strings(dynamic); insist(fresh.join("") === typed.join(""),"Dynamic array conversion lost UTF-16 units");
   const controls: string = JSON.parse(literals.quote(typed.join(""))); insist(controls === typed.join(""),"Source literal escape round-trip");
   const projection = screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[],\"instances\":[]},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",[]);
@@ -41,6 +50,52 @@ export function schemas(): null {
   rejectsPlan("{\"title\":\"x\",\"inputs\":null}");
   rejectsPlan("{\"title\":\"x\",\"needs\":[{\"id\":\"n\",\"type\":\"other\",\"words\":\"x\",\"reads\":[\"invented\"],\"spec\":{}}]}");
   rejectsPlan("{\"title\":\"x\",\"needs\":[{\"id\":\"n\",\"type\":\"other\",\"words\":\"x\",\"reads\":[\"n\"],\"spec\":{}}]}");
+  // The shared decimals field is one domain at every site that issues it; the figure and entry-field
+  // decoders apply -1/0-6 and reject every other value themselves.
+  let figureAuto: plans.Plan = plans.decode(figurePlan("-1"),[],[]);
+  let figureFixed: plans.Plan = plans.decode(figurePlan("6"),[],[]);
+  let entriesFixed: boolean = true;
+  try { plans.decode(entriesPlan("6"),[],[]); } catch (error) { entriesFixed = false; }
+  let entriesAuto: boolean = true;
+  try { plans.decode(entriesPlan("-1"),[],[]); } catch (error) { entriesAuto = false; }
+  insist((figureAuto.needs[0].spec.decimals as number) === -1,"Figure decimals -1 accepted");
+  insist((figureFixed.needs[0].spec.decimals as number) === 6,"Figure decimals 6 accepted");
+  insist(entriesFixed,"Entry-field decimals 6 accepted");
+  insist(entriesAuto,"Entry-field decimals -1 accepted");
+  for (const value of ["7","-2","1.5"]) {
+    let refusedFigure: boolean = false;
+    try { plans.decode(figurePlan(value),[],[]); } catch (error) { refusedFigure = true; }
+    insist(refusedFigure,"Invalid figure decimals admitted: "+value);
+    let refusedEntry: boolean = false;
+    try { plans.decode(entriesPlan(value),[],[]); } catch (error) { refusedEntry = true; }
+    insist(refusedEntry,"Invalid entry-field decimals admitted: "+value);
+  }
+  // The decode boundary checks the declared kind and the declared bounds; a wrong-kind value is never
+  // cast silently.
+  let typedAccepted: boolean = true;
+  try { plans.decode(inputPlan("amount","12"),[],[]); plans.decode(inputPlan("percent","0.5"),[],[]); plans.decode(inputPlan("text","\"hello\""),[],[]); plans.decode(inputPlan("toggle","true"),[],[]); plans.decode(inputPlan("count","2"),[],[]); plans.decode(choicePlan("1"),[],[]); plans.decode(boundedPlan("15"),[],[]); } catch (error) { typedAccepted = false; }
+  insist(typedAccepted,"Typed inputs decode with their declared kinds");
+  let wrongAmount: boolean = false;
+  try { plans.decode(inputPlan("amount","\"12\""),[],[]); } catch (error) { wrongAmount = true; }
+  insist(wrongAmount,"Wrong-typed amount input admitted");
+  let wrongText: boolean = false;
+  try { plans.decode(inputPlan("text","5"),[],[]); } catch (error) { wrongText = true; }
+  insist(wrongText,"Wrong-typed text input admitted");
+  let wrongToggle: boolean = false;
+  try { plans.decode(inputPlan("toggle","\"true\""),[],[]); } catch (error) { wrongToggle = true; }
+  insist(wrongToggle,"Wrong-typed toggle input admitted");
+  let wrongCount: boolean = false;
+  try { plans.decode(inputPlan("count","1.5"),[],[]); } catch (error) { wrongCount = true; }
+  insist(wrongCount,"Fractional count input admitted");
+  let outOfRangeChoice: boolean = false;
+  try { plans.decode(choicePlan("2"),[],[]); } catch (error) { outOfRangeChoice = true; }
+  insist(outOfRangeChoice,"Choice index outside its options admitted");
+  let aboveMaximum: boolean = false;
+  try { plans.decode(boundedPlan("25"),[],[]); } catch (error) { aboveMaximum = true; }
+  insist(aboveMaximum,"Input above its declared maximum admitted");
+  let belowMinimum: boolean = false;
+  try { plans.decode(boundedPlan("5"),[],[]); } catch (error) { belowMinimum = true; }
+  insist(belowMinimum,"Input below its declared minimum admitted");
   let options: selection.Option[] = [{id:"first",criteria:"First"},{id:"second",criteria:"Second"}];
   let issued: selection.Question[] = [selection.question("choice","remaining","coverage","Select",options)];
   let answers: selection.Answer[] = selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"first\",\"probabilities\":[{\"id\":\"second\",\"p\":0.5},{\"id\":\"first\",\"p\":0.5}]}]}",issued);

@@ -1,0 +1,31 @@
+# Single declared input set of the standalone library build.
+# Consumed by tools/build-demos.sh (cache key) and tools/boundary-proof.py (boundary audit).
+# Repo-relative paths, `*` globs and `dep:<deal|deal-ui>:<path>` dependency paths.
+# Nothing under demos/ or tests/ may ever appear here: the library builds without application source.
+build.sh
+android
+core
+api
+ui
+tools/CapabilityApi.java
+tools/AssistanceUi.java
+tools/Fragment*.java
+tools/GenerationBindings.java
+tools/GenerationGuidance.java
+tools/pack-conformance.py
+tools/ui-vocabulary.json
+tools/vocabulary-inventory.py
+tools/PayloadConsumption.java
+tools/protocol-build.py
+tools/protocol-consumer.deal
+tools/application-consumer.deal
+tools/controller-mechanisms.d.deal
+tools/theme-build.py
+tools/library-inputs.py
+dep:deal:deal
+dep:deal:std
+dep:deal:skills/write-deal/references
+dep:deal-ui:ui
+dep:deal-ui:runtime-js
+dep-ui-sources
+tools/dependencies.py

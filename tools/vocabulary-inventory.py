@@ -54,9 +54,10 @@ def scope():
     files = [PACK]
     for pattern, base in (("ui/**/*", ROOT / "ui"), ("core/**/*.deal", ROOT / "core"),
                           ("tools/**/*", ROOT / "tools"), ("tests/tools/**/*", ROOT / "tests/tools"),
-                          ("android/src/rendering/**/*", ROOT / "android/src/rendering")):
+                          ("tests/android/**/*", ROOT / "tests/android"),
+                          ("android/src/**/*", ROOT / "android/src")):
         for path in ROOT.glob(pattern):
-            if path.is_file() and path not in files:
+            if path.is_file() and path not in files and "__pycache__" not in path.parts:
                 files.append(path)
     return sorted(files)
 
@@ -142,6 +143,13 @@ def main():
                 return 1
     finally:
         shutil.rmtree(control_dir, ignore_errors=True)
+    # Scope controls: the migrated Android assertion sites and the renderer implementation
+    # roots are inside the inventory. A tree silently dropped from the scope would pass.
+    scoped = set(scope())
+    for relative in ("tests/android/CutoverInstrumentation.kt", "android/src/rendering/NumericPresentation.kt"):
+        if ROOT / relative not in scoped:
+            print(f"vocabulary inventory: scope is missing {relative}", file=sys.stderr)
+            return 1
     print("vocabulary inventory: zero hits; negative controls observed failing naming path, line and spelling")
     return 0
 

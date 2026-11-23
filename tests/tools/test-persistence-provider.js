@@ -9,6 +9,7 @@ const {providerContract}=require('./fixtures/provider-contract.js');
 assert.ok(fs.existsSync(path.join(base,'experience_entry.js')),'the emitted scalar-read pair is missing; run the generation cutover first');
 // Refuse a pair emitted from sources other than the packaged vocabulary and generation inputs.
 const {digest}=require('./fixtures/generation-digest.js');
+assert.ok(fs.existsSync(path.join(base,'..','generation.sha256')),'the emitted scalar-read pair carries no source record; run the generation cutover first');
 assert.equal(fs.readFileSync(path.join(base,'..','generation.sha256'),'utf8').trim(),digest(path.resolve('build/embedding-consumer/assets')),'the emitted scalar-read pair matches the packaged sources');
 const sources={};
 (function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(base,file)]=fs.readFileSync(file,'utf8');}})(base);

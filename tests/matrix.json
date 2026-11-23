@@ -1,0 +1,1419 @@
+{
+  "note": "Requirement-to-production-test matrix for the v0.8 deterministic gate. Rows are owned by the canonical wiki pages named in ISSUE-0008. A covered row names a test that executes in tests/run.sh before this matrix plus the assertion tokens and any assertion source that test drives; tests/tools/test-matrix.py requires every named script to run before the matrix, every named source to be driven by that script, and every token to be a distinctive expression on an asserting line. A partial, missing, device, live, human or explicit row names a located blocker and is never counted as a pass.",
+  "pages": [
+    "verification-gates-and-acceptance",
+    "embedding-architecture-boundaries",
+    "host-protocol-discovery-observation",
+    "plan-schemas-values-and-parts",
+    "ownership-slots-operations-and-assembly",
+    "catalogue-sections",
+    "generation-recovery-and-source-editing",
+    "execution-provider-workflows-and-persistence",
+    "ui-vocabulary-pack-and-rendering",
+    "ui-vocabulary-renderer-metadata-and-mechanism",
+    "plan-schemas-and-assembly",
+    "ui-vocabulary-pack-constraints-and-conformance"
+  ],
+  "rows": [
+    {
+      "id": "host-context",
+      "family": "host-protocol",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "GenerationContext bounds: the 8192 UTF-8 byte bound, the wire-kind set, inclusive schema depth 8 and 32 record fields, wire bounds, duplicate fields or keys and trailing JSON are rejected; accessors preserve frozen data.",
+      "status": "covered",
+      "test": "node tests/tools/test-protocol.js",
+      "evidence": "The packaged consumer rejects each bound and accepts depth 8 and 32 fields; test-admission-policy.py rechecks the single validator.",
+      "asserts": [
+        "call('contextJson',['forged'])",
+        "call('snapshot',[schema,text])",
+        "depth 8 is inside the schema depth bound"
+      ]
+    },
+    {
+      "id": "host-requests",
+      "family": "host-protocol",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "Request single use and cancellation, run admission persist-before-activate, repeated and concurrent run, close/release/forget/saved/shutdown ordering.",
+      "status": "covered",
+      "test": "node tests/tools/test-protocol.js",
+      "evidence": "Frozen requests, cancellation, single-flight and live Session reuse, saved release rejection and closure/forget are asserted on the packaged controller.",
+      "asserts": [
+        "prepareStart','persistStart','activateStart",
+        "error.code==='CANCELLED'"
+      ]
+    },
+    {
+      "id": "host-cursors-waits",
+      "family": "host-protocol",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "next with an issued cursor reads the current state and registers a wait for a later state or fault; waits coalesce under the configured per-Session bound, release their slot when answered or rejected, are counted per Session, are absent from the transport containment pool, and a closed Session rejects a plain read and a registered wait; published acknowledges only a produced version and refuses a later one; versions are monotone business revisions.",
+      "status": "covered",
+      "test": "node tests/tools/test-protocol.js",
+      "seam": "waits",
+      "evidence": "The compiled controller admits two coalesced waits under its configured bound, refuses the third with LIMIT, counts waits per Session, frees a slot on a rejected or answered native next, refuses a later version, keeps waits out of the transport pool and rejects both a plain read and a registered wait after close; a broken controller wait policy fails this test. The cursor those waits are keyed by is validated by the adapter, which the `host-cursor-identity` row proves.",
+      "asserts": [
+        "the configured bound admits both waits",
+        "a rejected wait releases its slot",
+        "a closed Session rejects a registered wait"
+      ]
+    },
+    {
+      "id": "host-cursor-identity",
+      "family": "host-protocol",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "A Session cursor is accepted only by the Session that issued it and only at or below that Session's current revision: a tampered signature, a truncated or empty signature, another Session's cursor, a revision ahead of the current one, a negative or leading-zero revision, a missing or extra part and a cursor longer than any issued one each raise INVALID_CURSOR, while an issued cursor reads its own revision and stays valid while it is still current.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-cursor.py",
+      "seam": "cursor",
+      "sources": [
+        "tests/tools/fixtures/CursorValidatorTest.kt"
+      ],
+      "evidence": "The production validator android/src/UpdateCursor.kt that Embedding.nextAsync hands every nonempty cursor to - and the only code that parses a cursor - is compiled unchanged with the public failure type; it accepts an issued cursor at and below its revision and refuses every tampered, foreign, malformed, advanced and over-long value. No issued cursor is 85 characters or longer, so an over-long value is refused by its signature or by the declared length bound; the case pins that it is refused. The `cursor` seam probe removes the signature comparison and this test fails on the tampered-signature case.",
+      "asserts": [
+        "check(session.revision(issued, 9) == 7L)",
+        "check(refused { session.revision(\"$value.$flipped\", 7) })",
+        "check(refused { UpdateCursor().revision(issued, 7) })",
+        "check(refused { session.revision(issued, 6) })",
+        "check(refused { session.revision(issued + \"0\".repeat(20), 7) })"
+      ]
+    },
+    {
+      "id": "host-dispatch",
+      "family": "host-protocol",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "dispatch validates the issued slot and carries the string-or-null transport - a literal string, a JSON-number string, true/false, the empty string, null and a structured payload - to the mechanism unchanged; the shipped session decodes it by the issued action signature (booleans from true/false, numbers from JSON numbers, literal strings) and a rejected spelling dispatches nothing.",
+      "status": "covered",
+      "test": "node tests/tools/test-protocol.js node tests/tools/test-emitted-runtime.js",
+      "evidence": "The compiled controller admits a valid slot and transmits every payload kind unchanged; the shipped Deal UI session at tests/tools/test-emitted-runtime.js decodes the declared boolean and number payloads and refuses a bad boolean spelling. The decode itself runs in the pinned Deal UI session, not a second implementation here.",
+      "asserts": [
+        "every payload kind crosses the transport unchanged",
+        "a string spelling of a boolean dispatches nothing"
+      ]
+    },
+    {
+      "id": "host-traces",
+      "family": "host-protocol",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "requestTrace and sessionTrace are issued, opaque identities that equal the trace the controller handed the generation and store mechanisms, stay stable for their lifetime, reject an unissued or closed handle and a stopped embedding, and the returned value survives close.",
+      "status": "covered",
+      "test": "node tests/tools/test-protocol.js",
+      "evidence": "The trace handed to generate and the trace returned when the store started are the values the accessors return; unissued, closed and stopped handles are rejected while a returned trace is unchanged by close. Filtering retained events by that trace is store behaviour and is recorded by the observation-store row.",
+      "asserts": [
+        "requestTrace is the trace generation received",
+        "sessionTrace is the trace the store issued",
+        "call('sessionTrace',[finalSession.id])",
+        "error.code==='STOPPED'"
+      ]
+    },
+    {
+      "id": "host-observation",
+      "family": "host-protocol",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "events enforces the configured 1-200 limit domain, hands an issued continuation cursor and a supplied trace identity to the observation store, and reports the store incomplete flag; the recorded health snapshot and an artifact status with its text cross the compiled consumer.",
+      "status": "covered",
+      "test": "node tests/tools/test-protocol.js",
+      "evidence": "The limit domain, the continuation cursor, the trace identity, the health snapshot and the classified artifact status cross the compiled consumer; selecting by trace, appending and clearing the retained store, the stored artifact hash and the lost-event accounting are device concerns recorded by the observation-store row.",
+      "asserts": [
+        "health reports the recorded observation snapshot",
+        "an unavailable artifact keeps its status and empty text",
+        "a trace-selected page is returned to the host"
+      ]
+    },
+    {
+      "id": "observation-store",
+      "family": "host-protocol",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "The retained observation store selects events by trace (an empty trace selects all), appends without invalidating an issued continuation, keeps at most 16 single-use continuations and invalidates them on clear, reports the sha256 of the stored artifact bytes, a truncated artifact as truncated, and recording loss or an unusable logger as incomplete health.",
+      "status": "partial",
+      "blocker": "Trace selection, continuation lifetime, the hash, the truncation marker and health loss are written by android/src/Observation.kt and android/src/bindings/EmbeddingLog.kt, both of which require an android.content.Context (and a JavaScriptSandbox engine for the logger sink); no deterministic vector can construct either without an installed device, so this item is proven only by the opting-in device lane."
+    },
+    {
+      "id": "discovery-answer",
+      "family": "discovery-handoff",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "The closed discovery answer shape {title, brief, supportingFactIds, capabilityIds} with its title, brief and reference bounds; abstention is null, overflow rejects and never truncates.",
+      "status": "covered",
+      "test": "node tests/tools/test-discovery.js",
+      "seam": "discovery",
+      "evidence": "The compiled discovery policy rejects every closed-shape violation and accepts the inclusive title 120 and brief 4096 bounds; the `discovery` seam probe lowers the brief bound to 4095 and this test fails.",
+      "asserts": [
+        "decide('  null  ',capture)",
+        "result.code,'INVALID_REPLY'",
+        "brief:'b'.repeat(4096)"
+      ]
+    },
+    {
+      "id": "discovery-handoff",
+      "family": "discovery-handoff",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "The compiled intent is nonblank, at most 4096 UTF-16 units and is never the brief or its text; the prompt carries the disclosed facts and catalogue as data; re-admission returns for an issued suggestion with unchanged facts and catalogue and rejects with STALE for a superseded suggestion, changed facts or a changed catalogue.",
+      "status": "covered",
+      "test": "node tests/tools/test-discovery.js",
+      "evidence": "test-discovery.js asserts the compiled intent bounds, that the intent is neither the brief nor its text, the disclosed facts and catalogue in the prompt, and the STALE re-admission of a superseded suggestion, changed facts and changed catalogue. The request that handoff becomes is not asserted by this file; `discovery-handoff-request` records that clause as missing.",
+      "asserts": [
+        "assert.notEqual(intent,suggestion.brief)",
+        "assert(!intent.includes('Provide editable amount initialized to 84 EUR'))",
+        "intent.length<=4096",
+        "error=>error.name==='STALE'"
+      ]
+    },
+    {
+      "id": "discovery-handoff-request",
+      "family": "discovery-handoff",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "Acceptance of an issued suggestion issues exactly one Request whose title is the suggestion title and whose context carries the captured facts with the supporting fact and capability ids, granting no permission and invoking no provider.",
+      "status": "missing",
+      "blocker": "The handoff is assembled in Kotlin and no executed check drives it. android/src/discovery/Discovery.kt:147-176 declares the two request overloads: :157-161 builds the three-field WireType schema, :164 the context JSON, :168 api.snapshot validates it, and :171 api.request(suggestion.title, policy.intent(), handoff) issues the Request. tests/tools/test-discovery.js drives only the compiled validate/intent/prompt/admit entry points, and admit returns an empty string, so it exposes no request title, intent or context. tests/tools/test-protocol.js asserts the host request path's title and intent bounds and the context its generate call receives, but it issues Requests directly and never through discovery; tests/tools/test-admission-policy.py asserts the fact and catalogue initializer source text; the compiled controller issues Requests in core/controller.deal:115-121 and no test counts how many a discovery acceptance produces; tests/android/CutoverInstrumentation.kt calls api.request for its own scenarios and asserts no suggestion or handoff. The four clauses - exactly one Request, the suggestion title, the captured-facts context and no grant or provider call - are therefore unproven."
+    },
+    {
+      "id": "assistance-view",
+      "family": "assistance-lifecycle",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "The migrated assistance view dispatches Open/Dismiss reducers and runs both host effects through the shipped session runtime.",
+      "status": "covered",
+      "test": "node tests/tools/test-assistance.js",
+      "seam": "assistance",
+      "evidence": "The compiled assistance bundle drives its real reducers and effects with only the transport stubbed; the seam probe renames the title state and this test fails.",
+      "asserts": [
+        "Open sets busy through its reducer",
+        "a rejected payload dispatches nothing"
+      ]
+    },
+    {
+      "id": "assistance-lifecycle",
+      "family": "assistance-lifecycle",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "Compiled Open/Dismiss lifecycle: revalidate facts and catalogue, reuse a saved link before inference, one request, activation before saved link, retained dismissal, BUSY/DISABLED/STALE and no silent retry.",
+      "status": "partial",
+      "test": "node tests/tools/test-assistance.js",
+      "blocker": "The Open/Dismiss lifecycle decisions still execute in android/src/discovery/AssistanceController.kt; the compiled bundle holds only the suggestion view, so reuse-or-generate, retained dismissal and activation ordering have no deterministic proof yet."
+    },
+    {
+      "id": "disclosure-bounds",
+      "family": "disclosure-bounds",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "Every capability-contract bound of the spec table is rejected with a located INVALID_ARGUMENT and disclosure is atomic over the accepted set.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-capability-boundary.py",
+      "evidence": "Version, byte, function, parameter, module and description bounds are exercised; a rejected contract changes no accepted set or provider.",
+      "sources": [
+        "tests/tools/fixtures/CapabilityBoundaryTest.kt"
+      ],
+      "asserts": [
+        "boundary rejection must be INVALID_ARGUMENT",
+        "Admission must not invoke a provider"
+      ]
+    },
+    {
+      "id": "target-deterministic",
+      "family": "target-transport",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "A frozen screen/chat/card compile-input target is required and out-of-set or absent targets reject with ADMISSION_TARGET before activation.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-composer.py",
+      "evidence": "The deterministic composer path admits a target and rejects absent/out-of-set values.",
+      "asserts": [
+        "ADMISSION_TARGET",
+        "a rejected compile input writes no manifest"
+      ]
+    },
+    {
+      "id": "target-production",
+      "family": "target-transport",
+      "owner": "host-protocol-discovery-observation",
+      "requirement": "The public generate/load/check/mount/edit/save/cold-restore path carries the private target and no promotion or legacy record mounts.",
+      "status": "device",
+      "blocker": "Production target transport is exercised only by tests/android/TargetTransportChecks.kt on a serialized device; the deterministic lane proves the compile-input field only."
+    },
+    {
+      "id": "typed-values",
+      "family": "typed-values",
+      "owner": "plan-schemas-values-and-parts",
+      "requirement": "Typed plan values: a number for amount, percent and count inputs, a string for text, a boolean for toggle, an integral count, an in-range choice index, and a value inside its declared min and max all decode; a wrong-typed value, a fractional count, an out-of-range choice index and a value outside its declared bounds each reject at the decode boundary.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-construction-contracts.py",
+      "evidence": "The real plan decoder is compiled and executed: it accepts an amount, a percent, a text, a toggle, a count, a choice index and a bounded amount declaring their own kinds and rejects the same inputs with a wrong kind, a fractional count, an out-of-range choice index and a value above its maximum or below its minimum.",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal"
+      ],
+      "asserts": [
+        "Typed inputs decode with their declared kinds",
+        "Wrong-typed amount input admitted",
+        "Wrong-typed text input admitted",
+        "Wrong-typed toggle input admitted",
+        "Fractional count input admitted",
+        "Choice index outside its options admitted",
+        "Input above its declared maximum admitted",
+        "Input below its declared minimum admitted"
+      ]
+    },
+    {
+      "id": "typed-collections-utf16",
+      "family": "typed-values",
+      "owner": "plan-schemas-values-and-parts",
+      "requirement": "DEAL v1.6 typed collections keep their invariant element types and array identity, dynamic JSON arrays convert into the same UTF-16 units including an unpaired surrogate and astral pairs, and emitted source literals round-trip the tested astral, unpaired-surrogate, control, quote, backslash and newline spellings.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-construction-contracts.py",
+      "evidence": "The compiled decoder and source-literal helpers are exercised directly: a typed string array keeps its identity, a dynamic array converts to the same UTF-16 units and the emitted literal parses back to the original text.",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal"
+      ],
+      "asserts": [
+        "Typed invariant array identity lost",
+        "Dynamic array conversion lost UTF-16 units",
+        "Source literal escape round-trip"
+      ]
+    },
+    {
+      "id": "seed-disclosure",
+      "family": "typed-values",
+      "owner": "plan-schemas-values-and-parts",
+      "requirement": "Shared disclosure predicate: a row, seed or note is admitted only when its content occurs in the frozen request or a disclosed fact; a rejected row never yields a trimmed record list.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "evidence": "Disclosure acceptance and invention rejection run through the production construction call site; rejection leaves the instance unfilled.",
+      "sources": [
+        "tests/tools/test-catalogue.js"
+      ],
+      "asserts": [
+        "the one predicate refuses the fabricated cell with its location",
+        "the decoded row list reaches construction unchanged"
+      ]
+    },
+    {
+      "id": "durations",
+      "family": "durations-parts",
+      "owner": "plan-schemas-values-and-parts",
+      "requirement": "countdown.length resolves seconds inputs and minutes constants with checked millisecond conversion; unissued, money, percent, count and nonfinite sources reject.",
+      "status": "partial",
+      "test": "python3 tests/tools/test-construction-contracts.py",
+      "blocker": "Duration resolution is exercised in compiled construction contracts, but the clock/entry part behaviours (start/pause boundaries, completion once, entry keys, timestamps, totals) have no deterministic vector."
+    },
+    {
+      "id": "clock-entries-parts",
+      "family": "durations-parts",
+      "owner": "plan-schemas-values-and-parts",
+      "requirement": "Clock parts start/pause/complete once and restore paused; entry parts add typed values with stable keys, timestamps, undo and totals.",
+      "status": "missing",
+      "blocker": "No emitted clock or entries part is exercised end to end; construction contracts assert the part alternative only, and no test drives add/remove/undo, timestamps or totals."
+    },
+    {
+      "id": "formula",
+      "family": "figure-formula",
+      "owner": "plan-schemas-values-and-parts",
+      "requirement": "Well-typed formula and written formula evaluate with DEAL precedence, lazy choose, short-circuit booleans, zero ties and the stated functions; unknown identifiers, assignment, indexing, unavailable calls and mismatched branches reject.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-construction-contracts.py",
+      "seam": "formula",
+      "evidence": "Formula evaluation and located rejections run through compiled policy; the seam probe changes an operator and this test fails.",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal"
+      ],
+      "asserts": [
+        "Lazy choose lowering/value",
+        "Unsafe formula admitted: "
+      ]
+    },
+    {
+      "id": "figure-display",
+      "family": "figure-formula",
+      "owner": "plan-schemas-values-and-parts",
+      "requirement": "A figure with the shared decimals field issues spec numeric presentation (NumberText/ClockText), a yes_no figure publishes a boolean and a written-formula figure shows its written form.",
+      "status": "missing",
+      "blocker": "core/parts.deal still emits a figure as ui.Text label + number + unit; no ui.NumberText or ui.ClockText is issued, so typed numeric presentation at the figure site has no production path."
+    },
+    {
+      "id": "bindings-descriptors",
+      "family": "bindings-descriptors",
+      "owner": "plan-schemas-values-and-parts",
+      "requirement": "One issued operation per binding with parameter order, exact contract argument types, source ownership, duplicate and draft rejection and no partial publication.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-construction-contracts.py",
+      "seam": "binding",
+      "evidence": "Parameter order, incompatible types, unissued sources and duplicate identities are exercised; the seam probe loosens schema compatibility and this test fails.",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal"
+      ],
+      "asserts": [
+        "Descriptor issuance",
+        "Foreign descriptor draft admitted"
+      ]
+    },
+    {
+      "id": "slots-connections",
+      "family": "slots-connections-publication",
+      "owner": "ownership-slots-operations-and-assembly",
+      "requirement": "One Slot per need with reads, writes, trigger, provider flag and allowed kinds; connections resolve on exact nominal type with required-optional rules and no cycles.",
+      "status": "partial",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "blocker": "Assembly currently issues empty slots and connections for the exercised fixtures, so slot tampering, reader/writer resolution, layout and cycle rejection are not proven by a production seam."
+    },
+    {
+      "id": "publication",
+      "family": "slots-connections-publication",
+      "owner": "ownership-slots-operations-and-assembly",
+      "requirement": "Every filled slot output issues its publish_/ready_ pair with the declared type; unfilled outputs stay open and unready with signature-correct getters.",
+      "status": "missing",
+      "blocker": "No publish_/ready_ pair is emitted by core/composer.deal, so publication and readiness have no production path to prove."
+    },
+    {
+      "id": "ownership",
+      "family": "selection-alignment",
+      "owner": "ownership-slots-operations-and-assembly",
+      "requirement": "Ownership uses the user probability at the 0.2 threshold; one owner per authoritative field and one producer per derived field; composite transactions commit once.",
+      "status": "partial",
+      "test": "node tests/tools/test-generation-cutover.js",
+      "blocker": "Ownership confidence is compiled but no deterministic test drives the 0.2 user-owned threshold, a second owner or a composite transaction; segment coverage is claimed by no row."
+    },
+    {
+      "id": "classification",
+      "family": "classification-scenes",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "A free-drawing or motion request is classified once before planning as whole, part or none; unusable classification defaults ordinary without error and list/calculator/chart/button-game requests stay ordinary.",
+      "status": "missing",
+      "blocker": "No preliminary whole/part/none classification exists; whole writing is entered only when no runnable ordinary result exists."
+    },
+    {
+      "id": "chat-construction",
+      "family": "chat-construction",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "A chat target retains the first five visible needs with their hidden dependencies, removes orphan dependents to a fixpoint, discloses every omission as missing, rejects a header or three-section custom draft, and wraps multiple fragments in labelled Tabs with a retained selection.",
+      "status": "missing",
+      "blocker": "Screen.target is decoded (core/generation.deal forwards screen|chat|card) but every host path issues the default \"screen\" (android/src/EmbeddingConfig.kt, android/src/ExperienceRuntime.kt) and core/screen.deal rejects a promotion, so no chat projection, five-need cut, omission disclosure, compact draft bound or Tabs wrapper exists to exercise; tests/tools/fixtures/construction-contracts.deal only reserves an explicitly issued chat target."
+    },
+    {
+      "id": "scenes",
+      "family": "classification-scenes",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "A scene need snapshots its read inputs at start, settles once, never mutates a plan input from its frame reducer, and the frame-scene exploration accepts or rejects per the Surface script.",
+      "status": "missing",
+      "blocker": "The scene need type is accepted and the Surface script exists, but scene construction, snapshot, settle, restart and the static-Surface acceptance have no implementation."
+    },
+    {
+      "id": "selection-batches",
+      "family": "selection-alignment",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Two selection batches with the decision thresholds, forced/settled choices kept, empty-response retry, unusable second batch stops, and the events question settles a trigger or leaves it open.",
+      "status": "partial",
+      "test": "node tests/tools/test-generation-cutover.js",
+      "blocker": "Both batches and their thresholds run, but the second-stage decision list has no events question and no trigger selection reads spec.on/spec.at."
+    },
+    {
+      "id": "alignment",
+      "family": "selection-alignment",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Three ordered alignment rounds with eligible candidates, ledger/reading/quick-log preference, once-per-kind, replacement preservation, required-reader rejection, scene/written-formula bypass and normal stop.",
+      "status": "partial",
+      "blocker": "Alignment exists only as checklist into list_summary; the rounds, preferences, replacement preservation and stop rule are absent."
+    },
+    {
+      "id": "questions",
+      "family": "fill-coverage-budgets",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Thresholded human-question review at 0.6, two blocking questions, option/text exclusivity and bounds, one answered replan, no reopen, cancellation ends generation.",
+      "status": "partial",
+      "test": "node tests/tools/test-generation-cutover.js",
+      "blocker": "The adapter, option resolution and one answered replan exist, but the review does not retain its winning probability and admission decision, and no deterministic item exercises the 0.6 admission boundary."
+    },
+    {
+      "id": "fill-order",
+      "family": "fill-coverage-budgets",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Fill order options -> concurrent grounding/live -> content -> active bodies with one owner per parameter and conflict rejection.",
+      "status": "partial",
+      "test": "node tests/tools/test-generation-cutover.js",
+      "blocker": "Content fill and the catalogue disclosure gate run, but active hole-body fill is absent and the one-owner-per-parameter conflict has no vector."
+    },
+    {
+      "id": "coverage-budgets",
+      "family": "fill-coverage-budgets",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Coverage judgment against assembled behaviour, stage budgets and escalation, attempts counted per candidate check including failures, stop on repeated misses with the least-missing draft.",
+      "status": "partial",
+      "test": "node tests/tools/test-generation-cutover.js",
+      "blocker": "Stage budgets, exact repair, check accounting and repeated-miss stopping run; catalogue body counters and the nested caps are absent, and no assertion counts attempts on the repeated-miss or retained-least-missing paths."
+    },
+    {
+      "id": "lookup-refusals",
+      "family": "lookup-refusals",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Concurrent missing-need lookup with cache by need and contract digest, an 8000-character bound, named-refusal scoping and no provider substitution.",
+      "status": "missing",
+      "blocker": "No lookup mechanism declaration or refusal cache exists in compiled policy."
+    },
+    {
+      "id": "body-recovery",
+      "family": "lookup-refusals",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue body fill: one ask per instance, two repairs, revert to default, per-instance abandonment, 600-character bound, independent counters.",
+      "status": "missing",
+      "blocker": "Catalogue instances still construct empty holes and bodies; no ask, counter, revert or abandonment path exists."
+    },
+    {
+      "id": "checking-admission",
+      "family": "checking-admission",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Production compile of the candidate, manifest admission before any isolated step, isolated startup render and the compiled checker's synthetic-input steps; the accepted second candidate reports two attempts, one for its failed first check and one for its accepted second; a source check diagnostic is carried to the custom-edit ask while an operational provider failure ends the route with its own code.",
+      "status": "covered",
+      "test": "node tests/tools/test-generation-cutover.js",
+      "seam": "attempts",
+      "evidence": "The packaged generation entry compiles each candidate, admits its manifest before isolation, renders the isolated startup tree and answers every synthetic-input step the compiled checker issues; the accepted second candidate reports two attempts, one for its failed first check and one for its accepted second; the custom-edit ask carries the FIXTURE_CHECK diagnostic; and an operational provider failure ends the route with PROVIDER_HTTP. The `attempts` seam probe turns the attempt increment that charges each custom-writing candidate into a multiplication and this test fails on that attempt count.",
+      "asserts": [
+        "assert.equal(isolatedStarts,1,'admission rejects before any isolated step')",
+        "assert.equal(edits.length,1)",
+        "assert.equal(snapshot.result.attempts,2,'candidate checks are counted as attempts')",
+        "assert.equal(r.diagnostics,'FIXTURE_CHECK: retain exact pair and revise label')",
+        "assert.equal(snapshot.error.code,'PROVIDER_HTTP')"
+      ]
+    },
+    {
+      "id": "checking-imports",
+      "family": "checking-admission",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "A candidate manifest whose imports leave the permitted surface is rejected with a located ADMISSION_IMPORT after compilation and before any isolated step, while a manifest of checked standard modules and embedding/graphics, and one that imports a declared frozen provider module, are admitted.",
+      "status": "covered",
+      "test": "node tests/tools/test-generation-cutover.js",
+      "evidence": "The composed manifest is compiled by the real composer and then injected with an unissued module; the production admission rejects it with ADMISSION_IMPORT, discards the candidate and isolates nothing. A permitted-only manifest and the provider mode manifest, which imports and declares host/probe, are admitted.",
+      "asserts": [
+        "ADMISSION_IMPORT: unissued module",
+        "admission rejects before any isolated step",
+        "the composed manifest imports the declared provider module"
+      ]
+    },
+    {
+      "id": "checking-repair-and-store",
+      "family": "checking-admission",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "An admission rejection authorizes no source repair, and a host/storage call is permitted only in an effect position while any other application-store access rejects.",
+      "status": "partial",
+      "blocker": "core/construction.deal repairs the assembled candidate on any returned check diagnostic, so ADMISSION_IMPORT and ADMISSION_PACK also open a bounded assembled-edit ask (the admission test observes exactly that), and no classification of admission rejections exists. No admission rule inspects whether a host/storage call sits in an effect position, so the effect-bound allowance and its rejection have no production path."
+    },
+    {
+      "id": "candidate-predicates",
+      "family": "candidate-predicates",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Candidate admission runs the shared prop/card validator on the initial tree and on every synthetic handler, frame and pointer tree before activation, rejecting with a located CHECK_PROP naming the component, the prop and the class, or CHECK_CARD naming the component and the count, and retaining the diagnostics without activating a degraded tree.",
+      "status": "missing",
+      "blocker": "Candidate admission never invokes the shared validator: android/src/rendering/IngressValidation.kt has exactly one production caller, android/src/rendering/DealRenderer.kt:312, at render time (tests/tools/fixtures/RendererRulesTest.kt:19 drives it directly), and no CHECK_PROP or CHECK_CARD producer exists in core/ or android/src (grep over *.deal, *.kt, *.js, *.py). core/isolated-check.deal proves pack identity and the Surface script only, so an invalid candidate tree is activated with no located predicate rejection and no deterministic or device item drives this boundary."
+    },
+    {
+      "id": "precommit-validation",
+      "family": "precommit-validation",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "The serialized Session runs the same shared validator on every candidate tree before business-state/tree commit, retains the prior state and tree and starts no effect on failure, faults the Session with PROP_FAULT or CARD_FAULT naming the component, the prop and the class, keeps the failed evidence, and includes ordered NumberField/Slider bounds, time/date domains and TextField length/pattern constraints.",
+      "status": "missing",
+      "blocker": "No precommit validation exists: android/src/rendering/DealRenderer.kt:310-316 validates inside the composable and only draws the previously accepted tree, so no Session fault is retained, no business state or effect is guarded and commit ordering is never exercised. android/src/rendering/IngressValidation.kt:32-39 has no caller before a Session transition commits, and tests/tools/fixtures/RendererRulesTest.kt:19 drives the validator directly instead of through the Session commit path."
+    },
+    {
+      "id": "source-edits",
+      "family": "source-edits",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Revision- and digest-bound exact edits; nonempty, unique, disjoint searches; atomic apply all or none; rejection preserves source, revision and diagnostics.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-source-edits.py",
+      "seam": "edits",
+      "evidence": "Atomicity, staleness, ambiguity, overlap, Unicode and CRLF spans run through compiled policy; the seam probe removes ambiguity rejection and this test fails.",
+      "sources": [
+        "tests/tools/test-source-edits.js"
+      ],
+      "asserts": [
+        "expected four issued revisions: two bases and two accepted edits",
+        "the digest does not bind the accepted pair in key order"
+      ]
+    },
+    {
+      "id": "structural-edits",
+      "family": "structural-edits",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Structural add/remove/replace/move with the six-catalogue-instance bound, publisher preservation, rebuild as a revision-bound edit and compile before commit.",
+      "status": "missing",
+      "blocker": "No structural edit path exists; source edits only patch an existing pair."
+    },
+    {
+      "id": "refinement",
+      "family": "refinement",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Live refinement copies the latest authoritative state by stable identity and type into an effect-suppressed replacement store and replaces atomically or retains the old Session.",
+      "status": "missing",
+      "blocker": "No live refinement or effect-suppressed replacement store exists."
+    },
+    {
+      "id": "prop-predicates",
+      "family": "prop-predicates",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "Every prop-value constraint class is exercised at the shared validator: finite, nonnegative, positive, integral-index, chart and pose each accept an in-range value and reject an out-of-range one, and display-clamp is acceptance-only because the clamp changes display and never faults.",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "seam": "prop-ingress",
+      "evidence": "The production validator and its projected classes exercise each class; the seam probe weakens Progress.maximum and this test fails.",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "asserts": [
+        "\"PROP_FAULT\", \"Button\", \"value\", \"finite\"",
+        "\"PROP_FAULT\", \"Layers\", \"width\", \"nonnegative\"",
+        "\"PROP_FAULT\", \"AdaptiveColumns\", \"minimumWidth\", \"positive\"",
+        "\"PROP_FAULT\", \"NumberField\", \"step\", \"integral-index\"",
+        "\"PROP_FAULT\", \"Sparkline\", \"maximum\", \"chart\"",
+        "\"PROP_FAULT\", \"Transform\", \"pose\"",
+        "accepted(node(\"Button\", listOf(text(\"text\", \"x\"), number(\"value\", 1.0))))",
+        "accepted(node(\"Layers\", listOf(number(\"width\", 0.0), number(\"height\", 1.0))))",
+        "accepted(node(\"AdaptiveColumns\", listOf(number(\"minimumWidth\", 240.0))))",
+        "accepted(node(\"Select\", listOf(structured(\"labels\", \"[]\"), number(\"selected\", -1.0))))",
+        "accepted(node(\"Sparkline\", listOf(structured(\"series\", \"[1,2]\"), number(\"maximum\", 5.0))))",
+        "accepted(node(\"Transform\", listOf(structured(\"pose\", identity), number(\"durationMs\", 10.0))))",
+        "accepted(node(\"Progress\", listOf(text(\"label\", \"p\"), number(\"value\", 150.0), number(\"maximum\", 100.0))))",
+        "NumericPresentation.format(150.0, \"\", \"\", 1, -1) == \"150\""
+      ]
+    },
+    {
+      "id": "style-contract",
+      "family": "style-contract",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "A style outside its family resolves to the family's allowed fallback and is not an error, an empty Motion style takes its declared pop default, and an unknown icon, a Tile span outside 1-2 and a non-string accessibilityLabel each reject with the component and the prop.",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The shipped style families resolve an unknown Text style to the body family value, give Motion its declared empty-style default and the ingress validator rejects the closed icon set, the span domain and a mistyped accessibility label.",
+      "asserts": [
+        "accepted(node(\"Text\", listOf(text(\"text\", \"x\"), text(\"style\", \"unknown-style\"))))",
+        "StyleFamilies.resolve(\"Text\", \"nonsense\") == \"body\"",
+        "StyleFamilies.resolve(\"Button\", \"primary\") == \"primary\"",
+        "StyleFamilies.resolve(\"Motion\", \"\") == \"pop\"",
+        "\"PROP_FAULT\", \"Icon\", \"name\"",
+        "\"PROP_FAULT\", \"Tile\", \"span\"",
+        "\"PROP_FAULT\", \"Button\", \"accessibilityLabel\""
+      ]
+    },
+    {
+      "id": "style-empty",
+      "family": "style-contract",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "An empty style stays empty and is not replaced by its family default, except Motion, whose empty style takes its declared pop default, and an unknown style resolves through the declared order of allowed default, then body, then first style (docs/spec-v0.8.md:655).",
+      "status": "partial",
+      "blocker": "Both style-order clauses are unimplemented in production: android/src/rendering/PropResolution.kt:133-137 returns one family fallback for an empty style and for any style outside the family, so resolve(\"Text\",\"\") is \"body\", resolve(\"Button\",\"\") is \"primary\" and no allowed-default-then-body-then-first-style order exists. tests/tools/fixtures/RendererRulesTest.kt:193 and :202 assert the implemented fallback and the Motion pop default; no vector proves an empty non-Motion style staying empty or the ordered fallback rungs, so both clauses stay open rather than covered."
+    },
+    {
+      "id": "event-payloads",
+      "family": "event-payloads",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "Each declared payload class reconstructs its nominal value - a string from TextField, a boolean from Toggle, a number from Tabs, a row eventValue from ListItem and Path, a Button value, the Surface frame delta and pointer and a null action payload - while an undeclared card frame event and a wrong-typed payload are rejected before dispatch.",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "seam": "event-events",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The shipped EventPayloads module reconstructs each declared payload class and refuses a bad boolean spelling, an undeclared card frame event and a rejected numeric spelling.",
+      "asserts": [
+        "payload(\"Toggle\", \"onChange\", emptyMap(), \"true\")",
+        "payload(\"Toggle\", \"onChange\", emptyMap(), \"maybe\") is EventPayload.Rejected",
+        "payload(\"Button\", \"onFrame\", emptyMap(), \"1\") == EventPayload.Undeclared"
+      ]
+    },
+    {
+      "id": "numeric-presentation",
+      "family": "prop-predicates",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "Numeric presentation keeps the value, its unit and its fields separate: fixed decimals round half away from zero, automatic decimals render the shortest round-tripping decimal, minimumDigits pads without truncating, affixes are unchanged, and the numeric-component site rejects a decimals value outside -1 or integral 0-6 and a minimumDigits outside positive integral with the component and the prop.",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "seam": "numeric-presentation",
+      "evidence": "The shipped numeric presentation and prop validators exercise automatic and fixed decimals, padding, affixes and the numeric-component domain rejections; the seam probe changes the rounding mode and this test fails.",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "asserts": [
+        "NumericPresentation.format(2.5, \"\", \"\", 1, 0) == \"3\"",
+        "NumericPresentation.format(-2.5, \"\", \"\", 1, 0) == \"-3\"",
+        "NumericPresentation.format(32.0, \"\", \"\", 4, -1) == \"0032\"",
+        "NumericPresentation.format(1.0, \"\", \"\", 1, 6) == \"1.000000\"",
+        "NumericPresentation.format(1.0 / 3.0, \"\", \"\", 1, -1) == \"0.3333333333333333\"",
+        "NumericPresentation.format(3.0, \"€\", \" kg\", 2, 0) == \"€03 kg\"",
+        "\"PROP_FAULT\", \"NumberText\", \"decimals\"",
+        "\"PROP_FAULT\", \"NumberText\", \"minimumDigits\""
+      ]
+    },
+    {
+      "id": "numeric-presentation-sites",
+      "family": "prop-predicates",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "The shared decimals domain is applied by the figure and entry-field decoders themselves: a figure's absent value defaults to -1, -1 and an integral 0-6 decode at both sites, and 7, -2 and 1.5 reject at each site at the plan decode.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-construction-contracts.py",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal"
+      ],
+      "evidence": "The real plan decoder (core/plan.deal decimals()) is compiled and executed: it defaults an absent figure decimals to -1, accepts -1 and 6 on a figure and on an entry field, and rejects 7, -2 and 1.5 at each of the two sites.",
+      "asserts": [
+        "Figure decimals -1 accepted",
+        "Figure decimals 6 accepted",
+        "Declared defaults",
+        "Entry-field decimals 6 accepted",
+        "Entry-field decimals -1 accepted",
+        "Invalid figure decimals admitted",
+        "Invalid entry-field decimals admitted"
+      ]
+    },
+    {
+      "id": "numeric-presentation-reading-status",
+      "family": "prop-predicates",
+      "owner": "catalogue-sections",
+      "requirement": "A reading_status catalogue parameter that issues the shared decimals field keeps the same -1 auto or integral 0-6 domain and rejects -2, 7 and 1.5 with the instance identifier (docs/spec-v0.8.md:186,457).",
+      "status": "missing",
+      "blocker": "The reading_status parameter site does not exist: core/catalogue.deal defines 12 kinds and no reading_status definition, so its optional decimals parameter is never decoded and no vector can reject 7, -2 or 1.5 at that site. The owning kind is the missing row catalogue-reading_status."
+    },
+    {
+      "id": "card-profile",
+      "family": "card-profile",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "The card profile admits only its components, events, props and limits: five pictures of 60 shapes, five Motion, three native Timer; a violation faults with CARD_FAULT and nothing truncates.",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "seam": "card-limits",
+      "evidence": "Card membership, picture shape counts, Motion/Timer limits, Path rotation and static Surface frame targeting are exercised by the shipped rule modules; the `card-limits` seam probe raises the projected native Timer limit to four and this test fails.",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "asserts": [
+        "\"CARD_FAULT\", \"Surface\"",
+        "cardTree(5, 61)"
+      ]
+    },
+    {
+      "id": "graphics",
+      "family": "graphics",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "Nominal shapes, pointer phases, variant fields, finite numbers, lineWidth, alpha, paired points, commands, 4000 shapes, depth 12 and 1000 points fault without truncation.",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "evidence": "The shared graphics validator accepts the declared variants and faults each limit boundary.",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "asserts": [
+        "GraphicsValidation.pointer(NeutralJson.parse",
+        "GraphicsValidation.shapes(NeutralJson.parse"
+      ]
+    },
+    {
+      "id": "renderer-painters",
+      "family": "renderer-painters",
+      "owner": "ui-vocabulary-renderer-metadata-and-mechanism",
+      "requirement": "Actual Compose painting and resource lifetime for every declared component, prop, child, style and event, including Tabs child content, Timer ticks, images, transforms, chart modes, feedback and the card profile.",
+      "status": "device",
+      "test": "bash tests/tools/build-cutover-test.sh",
+      "blocker": "Deterministic items prove rules, metadata and inventory; actual painter behaviour is exercised only by the opt-in device APK (ImageChecks, TabChecks, TimerPainterChecks, TargetTransportChecks) and human visual acceptance remains separate."
+    },
+    {
+      "id": "renderer-metadata",
+      "family": "prop-predicates",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "One renderer entry per pack component, unique capabilities, projection integrity, and the pack digest and version recorded in the admission manifest; a changed digest or version is rejected with ADMISSION_PACK.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-vocabulary.py node tests/tools/test-generation-cutover.js",
+      "evidence": "Pack conformance, capability agreement, the projections and the manifest identity are asserted over the packaged pack; the production admission rejects a changed digest and a changed version with ADMISSION_PACK before any isolated step.",
+      "asserts": [
+        "assert inventory[\"version\"] == 2 and len(inventory[\"components\"]) == 64",
+        "ADMISSION_PACK: compiler pack digest mismatch",
+        "ADMISSION_PACK: compiler pack version mismatch"
+      ]
+    },
+    {
+      "id": "operation-admission",
+      "family": "operation-admission",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "Duplicate pending taps preserve sequence, phase and revision; a stale sequence, wrong phase, expired revision or revoked epoch admits nothing; a rejected effect returns accepted:false; completions are admitted in arrival order and a continuation chains only from an admitted result.",
+      "status": "partial",
+      "test": "python3 tests/tools/test-construction-contracts.py",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal"
+      ],
+      "blocker": "The compiled operation model is exercised directly by the construction-contract fixture (duplicate taps, sendCurrent, completion ordering, a stale reply, a revoked epoch), but no production module imports core/operations.deal: core/composer.deal only reserves the invocationCurrent name and no emitted operation carries a revision, so effect rejection, continuation chaining and admission on the serialized Session lane have no production path.",
+      "asserts": [
+        "Pending duplicate mutated invocation",
+        "Regrant revived old invocation"
+      ]
+    },
+    {
+      "id": "provider-invocation",
+      "family": "provider-invocation",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "A provider call validates its positional arguments and its reply against the disclosed contract, enforces the host-configured deadline, invalidates bindings on a contract change and returns the provider error code unchanged.",
+      "status": "partial",
+      "blocker": "Argument and reply validation, deadline enforcement and binding invalidation run in android/src/capabilities/CapabilityRegistry.kt over an Android binder and a live grant epoch; the deterministic lane proves the contract boundary (disclosure-bounds) only, and the provider deadline is still the adapter literal 5000 ms rather than host configuration."
+    },
+    {
+      "id": "persistence-codec",
+      "family": "persistence-graph",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "Persistence envelope {schemaDigest, value} with the spec tag set, aliases and cycles by refs, ordered fields, digest mismatch rejection and atomic failure.",
+      "status": "covered",
+      "test": "node tests/tools/test-persistence.js",
+      "evidence": "Aliases, cycles, nominal tags, ordering and poisoned-record rejection run through the pinned codec path.",
+      "asserts": [
+        "assert.equal(envelope.value[0],'record'",
+        "malformed saved bytes are refused as data"
+      ]
+    },
+    {
+      "id": "persistence-restore",
+      "family": "persistence-graph",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "Cold restore: authoritative values restored before mount, derived values recomputed, pending work stale, activation and accepted cleared, no inference and no replay.",
+      "status": "partial",
+      "test": "node tests/tools/test-persistence-provider.js",
+      "blocker": "Authoritative operation results and derived recomputation are proven, but restored pending work as stale, cleared activation markers and interrupted-work sanitisation have no deterministic vector; the journey rows carry the live/device obligation."
+    },
+    {
+      "id": "read-authority",
+      "family": "read-authority",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "A granted module reads by disclosed contract and epoch with no frozen request and no confirmation; ungranted DENIED, changed epoch REVOKED, invalid argument INVALID_ARGUMENT, all with no call.",
+      "status": "missing",
+      "blocker": "Provider admission is grant-only; the wire contract carries no read classification and no compiled read-authority decision exists."
+    },
+    {
+      "id": "mutation-authority",
+      "family": "mutation-authority",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "A mutation is authorized only by an unambiguous frozen-request determination or a correlated host confirmation; unclassified functions are mutating; denial sends nothing and is final.",
+      "status": "missing",
+      "blocker": "No host confirmation surface, mutation classification or request-authority determination exists."
+    },
+    {
+      "id": "revisions",
+      "family": "revisions-expiry",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "Issued dependency sets and one authoritative revision_<operationId> field per operation; only downstream operations invalidate; invocationCurrent compares the live revision.",
+      "status": "missing",
+      "blocker": "No operation dependency set or revision field is produced; core/operations.deal is unreachable from any module."
+    },
+    {
+      "id": "expiry",
+      "family": "revisions-expiry",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "Relative expiry from request admission, absolute expiry as given, expiry displayable stale but never satisfying a calculation or action, and pause/resume or uncertain time invalidating trust.",
+      "status": "missing",
+      "blocker": "No relative/absolute expiry classification or uncertain-time trust rule is implemented."
+    },
+    {
+      "id": "triggers",
+      "family": "triggers",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "Activation action on a guarded activation-needed flag, one-millisecond ticks, ordered clock-end and entry-added queues consumed head-first, checked event slots reachable without reducer dispatch.",
+      "status": "partial",
+      "blocker": "node tests/tools/test-composed-runtime.js runs through tests/tools/test-composer.py and proves one dispatch through a composed runtime, but drivers still poll and no checked trigger queue, activation-needed flag or slot-reachability admission exists."
+    },
+    {
+      "id": "text-generation",
+      "family": "text-generation",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "A text-generation capability binds as an ordinary action with prompt <= 2000 units, word count 1-300 defaulting to 80, exactly one button and waiting/result/failure/retry states.",
+      "status": "missing",
+      "blocker": "No text-generation capability binding or emitted text-generation operation exists."
+    },
+    {
+      "id": "text-admission",
+      "family": "text-admission",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "3000 ms identical-success reuse, 30-entry LRU answer cache, six calls per rolling 60 000 ms per owner, consent and cancellation, the answer persisted while cache and counters stay runtime-only.",
+      "status": "missing",
+      "blocker": "No reuse window, rolling cap, answer cache or owner isolation is implemented."
+    },
+    {
+      "id": "preservation",
+      "family": "preservation",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "Saved sources, permissions/grants, original request bytes and failed evidence are retained before and after each gate; deletion, rewriting and revocation fail; nothing is reset to obtain a pass.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-preservation.py",
+      "evidence": "The before/after snapshot runs over the tracked requests and the deterministic device stand-in; deletion, rewrite, revocation and identity loss controls are observed failing and restored.",
+      "asserts": [
+        "a settled store must produce no preservation violation",
+        "failed evidence added"
+      ]
+    },
+    {
+      "id": "preservation-device",
+      "family": "preservation",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "Real device saved experiences, grants and failed evidence survive generation, edits, cold reopen, incompatible-source attempts and cleanup; no uninstall, clear or reset is used to obtain a pass.",
+      "status": "device",
+      "blocker": "The deterministic gate proves the contract and the tracked request bytes; real installed saved experiences, permissions and failed evidence live on a serialized device and are not exercised by this lane."
+    },
+    {
+      "id": "build-boundary",
+      "family": "build-boundary",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "The library builds with demos/ and tests/ inaccessible and produces matching class/asset digests; every demo target compiles and packages from the packaged AAR extraction with only the pinned runtime and the platform SDK on its classpath; both negative controls fail naming the offending path.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-standalone-boundary.py",
+      "evidence": "The declared input set is audited, an isolated library build with access-failing sentinels reproduces the packaged content digests, every demo declaration (sources, app_apis, profile_jars, runtime_cp, assets) is audited and every demo target is compiled and packaged by the production target loop, and both negative controls are observed failing through the gate in front of that compile.",
+      "asserts": [
+        "negative controls observed failing",
+        "AAR extraction byte-identical"
+      ]
+    },
+    {
+      "id": "demo-compile",
+      "family": "build-boundary",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "Every demo application compiles and packages from the packaged AAR, including livedemo, with no framework implementation source, source tree or library build tree jar on its compile classpath.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-standalone-boundary.py",
+      "evidence": "The production target loop compiles and packages all seven demo targets against build/embedding-consumer (the AAR extraction); the compile declaration carries app_apis, profile_jars and runtime_cp, and an injected framework source or build-tree jar is refused before the compile.",
+      "asserts": [
+        "compiled and packaged from the AAR extraction",
+        "library build tree input instead of the AAR"
+      ]
+    },
+    {
+      "id": "journey-time-rules",
+      "family": "acceptance-journeys",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "The acceptance journeys read a rendered tree's typed evidence with one rule set: the disclosed collection or hire window is proven only by both ends (a lone start instant is no window boundary and leaves the interval unproven), an instant that rollover keeps on the previous day is never accepted as its same-day wrap, a delivery arrival counts only from an arrival or delivery-time label on the value's own node and only before 18:30 of the task date, and a required item is named only by one item node that carries the item word together with each required attribute as whole words, its attributes coming from its own props or one branch of it and never from two.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-journey-rules.py",
+      "sources": [
+        "tests/android/JourneyObservationTest.kt"
+      ],
+      "evidence": "The pure rules the opt-in journeys read a checked tree with are asserted directly on trees a view can publish: both disclosed ends and the disclosed spelling prove a window while one end, an unrelated start/end instant, a duration, a buffer and an epoch day do not; the previous day's epoch instant and negative minute count prove a rollover instant while the same clock reading of the task day is a contradiction; an arrival is proven only from an arrival or delivery-time label before 18:30, and a countdown, price, epoch day or deadline never proves it; a required item and its required attributes are read from one item node, so `male` is never satisfied by `female`, a stand that never says `adjustable` stays unproven, a heading over two separately described cables never merges them (not even behind one wrapper), while a detail repeating the item word still belongs to its row. The values one required item publishes are read from its own row, where a spare item that names the same thing never supplies them, and a value's own or its containing section's stale state is read for the withdrawal checks, where a sibling value's stale label, a heading that heads a later section and another section's banner never stand in, while a text-only banner component discloses it even when it carries its own action. The same file runs on the device lane inside CutoverInstrumentation.",
+      "asserts": [
+        "a lone start instant is no window boundary",
+        "a same-day wrap of the same clock reading contradicts",
+        "the previous day's epoch instant proves a rollover departure",
+        "an attribute published for another item never proves the requirement"
+      ]
+    },
+    {
+      "id": "journeys-budget",
+      "family": "acceptance-journeys",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "Budget: 1750 cents over budget, both amounts editable, 18000/17000/18000/19750 and approved 20000 cases typed, invalid drafts withdraw and recover, no external reads, cold reopen retains typed values.",
+      "status": "live",
+      "blocker": "The typed journey is implemented in tests/android/CutoverInstrumentation.kt but requires explicit inference opt-in and a serialized device; it is not executed by this lane."
+    },
+    {
+      "id": "journeys-departure",
+      "family": "acceptance-journeys",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "Departure: preserved venue/date/interval/12 km/buffers, authorized actual Vehicle read, typed departure and inspection instants, instants and rollover preserved (a 00:10 collection start keeps both instants on the previous day instead of a same-day wrap), recompute without another read, distance invalidation until explicit reload, no booking, cold reopen.",
+      "status": "live",
+      "blocker": "Typed journey implemented in tests/android/CutoverInstrumentation.kt; it requires the installed Vehicle provider, explicit opt-in and a serialized device. A view that publishes no typable previous-day instant for the rollover edit reports the journey blocked, and one that wraps the same clock reading onto the task day fails it."
+    },
+    {
+      "id": "journeys-food",
+      "family": "acceptance-journeys",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "Food: actual Pizza menu/delivery, six 30 cm pizzas with at least two vegan within EUR 80 including delivery before 18:30, editable quantities/budget with recomputation, missing data explained, no ordering, cold reopen.",
+      "status": "live",
+      "blocker": "Typed journey implemented in tests/android/CutoverInstrumentation.kt; it requires the installed Pizza provider, explicit opt-in and a serialized device."
+    },
+    {
+      "id": "journeys-equipment",
+      "family": "acceptance-journeys",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "Equipment: actual Rental catalogue and whole-basket quotes, one adjustable boom stand with a clip adapter and a balanced XLR female-to-male cable of at least 10 m (one item node names the item and each attribute as a whole word, its attributes coming from its own props or one branch), package versus separate whole-basket totals, the separately shown refundable deposit, shared stock proven by a typed nonnegative integral availability/stock value whose own label names the availability, editable EUR 20 budget whose invalid and reduced values withdraw the computed feasibility, invalidation of a changed quote argument and no booking, cold reopen.",
+      "status": "live",
+      "blocker": "Typed journey implemented in tests/android/CutoverInstrumentation.kt; it requires the installed Rental provider, explicit opt-in and a serialized device. The required items are proven by published string evidence on one item node, so a `male` satisfied only inside `female`, an attribute published for another item or branch, a stand published without `adjustable`, or two separately described cables standing in for one balanced female-to-male cable fail the journey, while a view that publishes no string naming the item at all leaves it unproven and blocks the journey; the cable length is read only from the required cable's own row, proven by a published value with a readable m/mm unit that meets 10 m, failed when every such length is below it, and blocked when none is readable. The naming rule itself is asserted deterministically by python3 tests/tools/test-journey-rules.py. Shared stock is proven by a typed nonnegative integral availability/stock value whose own label names the availability; a view that publishes none, or only a heading above its baskets, reports the journey blocked instead of checked, and the differing package and separate totals alone never stand in for it. That the package consumes stock shared with separate hire beyond the required items being present and the two totals differing stays unproven here, so this row never claims it.",
+      "test": "python3 tests/tools/test-journey-rules.py",
+      "sources": [
+        "tests/android/JourneyObservationTest.kt"
+      ],
+      "asserts": [
+        "`male` is not satisfied by `female`",
+        "an attribute published for another item never proves the requirement",
+        "a stand that never says adjustable leaves the required attribute unproven"
+      ]
+    },
+    {
+      "id": "journey-edits-reopen",
+      "family": "acceptance-journeys",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "Every journey proves fresh generation, a recomputing edit with no provider read, an invalid draft that withdraws dependent results and recovery, typed cold-reopen equality, pending-as-stale, explicit stale refresh and no replay.",
+      "status": "live",
+      "test": "bash tests/tools/build-cutover-test.sh",
+      "blocker": "The typed assertions are implemented in tests/android/CutoverInstrumentation.kt: Budget withdraws and recovers the typed difference, Departure preserves and edits the start and the unloading and inspection buffers, proves the disclosed 16:00-17:00 collection window and proves that a 00:10 start keeps departure and inspection on the previous day instead of wrapping them onto the task day, Food proves a typed arrival before 18:30, Equipment proves the required items, shared stock by a typed availability/stock value on the value's own availability label and that an invalid hire budget withdraws the computed feasibility, and every journey counts provider calls. Every journey's invalid draft is a well-formed number the control has to refuse (a fractional or unsafe amount, a negative distance, a negative or fractional quantity, a negative budget), because a malformed payload refused before commit records no Session fault and no revision and is reported as an unproven expectation instead: a control that refuses every candidate that way blocks the expectation, and a candidate accepted as valid that leaves the dependent evidence current fails it. A changed argument or period may display its invalidated reply staled by the value's own labels or by a stale disclosure in the value's own section, while an invalid draft must leave no current dependent value at all. A required expectation the view publishes no typed evidence for (the collection window, the previous-day instant, the delivery arrival, the shared-stock value, the interpreted cable length, a pending-as-stale transition not observed in flight after four bounded attempts) reports the journey blocked instead of checked. The lane that runs them needs an installed provider set, explicit inference opt-in and a serialized device, so it is not part of tests/run.sh."
+    },
+    {
+      "id": "human-visual",
+      "family": "human-visual",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "A human reviews actual device captures of the suggestion, pending, populated, empty and failure states for visual acceptance.",
+      "status": "human",
+      "blocker": "Human visual review has not happened; screenshots, tree assertions and model review are not accepted as visual evidence."
+    },
+    {
+      "id": "final-integration",
+      "family": "final-integration",
+      "owner": "verification-gates-and-acceptance",
+      "requirement": "One settled production build runs the complete deterministic matrix and builds every demo application through the packaged AAR.",
+      "status": "explicit",
+      "blocker": "The AC-07 final integration command builds calendar vehicle todo organizer rental pizza tests with dex, packaging and signing; the default lane builds the tests APK and compiles, packages and signs all seven demo targets (including livedemo) through the packaged AAR in the standalone boundary item, so the two commands together cover every demo application."
+    },
+    {
+      "id": "catalogue-kind-table",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "All 36 catalogue kinds are declared once with their parameter schema, row schema, initialization, transitions, published and read ports and holes; coverage is measured against the spec, never against fixtures.",
+      "status": "partial",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "blocker": "9 of 36 kinds have executable definitions and deterministic vectors, 3 have definitions without a deterministic vector and 24 have no definition; every kind is listed as its own row instead of being substituted. No vector drives a kind transition, a published port or a hole: the lane initializes only data_table, timeline, bar_chart, trend_chart, metrics and key_facts and asserts no mutable update, no effect, no port and no hole for those six (tests/tools/test-catalogue.js:113-117), while the mutable kinds that do issue them in production - note core/catalogue.deal:237, actions :288, checklist :294 and :308, filter_box :239, list_summary :311 - have no initialization, transition, port or assembly vector. Row-bound matrices exist only for data_table, timeline, bar_chart and metrics."
+    },
+    {
+      "id": "catalogue-instance-count",
+      "family": "instance-count",
+      "owner": "catalogue-sections",
+      "requirement": "Initial generation applies no catalogue instance count: a composition with more than six distinct catalogue instances decodes and assembles while a duplicate kind rejects, and the six-instance refusal belongs to a structural addition only.",
+      "status": "partial",
+      "blocker": "Duplicate-kind rejection is implemented in core/screen.deal and no vector composes more than the fixture instance set, so the more-than-six assertion for initial generation is unproven; the six-instance refusal of a structural addition has no production path because no structural edit exists."
+    },
+    {
+      "id": "catalogue-note",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind note: parameter decode and the shared disclosure predicate, where a user-owned note's invented text is refused and the same note not marked user-owned is admitted.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "evidence": "The executable definition of note decodes its text parameter and the shared disclosure predicate refuses invented user-owned content while admitting the same note unowned. Note's editable Change transition (core/catalogue.deal:237) and every port, hole and assembly vector remain the gaps recorded by catalogue-kind-table and holes-bodies.",
+      "asserts": [
+        "Unlocated user-owned note refusal",
+        "A note that is not user-owned was refused"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
+    },
+    {
+      "id": "catalogue-actions",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind actions: an accepted parameter decode with its one-to-twelve label bound, the shared disclosure predicate, the Select transition and the assembled section.",
+      "status": "partial",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "blocker": "actions has an executable definition and two decode refusals only (tests/tools/fixtures/catalogue-contracts.deal:139-140, nonarray and numeric labels): no accepted decode, no labels-bound vector, no disclosure case and no initialization, transition, port or assembly vector exercises it, so its Select transition in core/catalogue.deal:288 stays unproven.",
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
+    },
+    {
+      "id": "catalogue-metrics",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind metrics: parameter decode with its twelve-row bound (a thirteenth row rejects), the shared disclosure predicate, immutable initialized facts and the assembled section.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "evidence": "The executable definition of metrics refuses a thirteenth row, refuses an invented fact value and label, initializes an immutable MetricGroup and joins the assembled root.",
+      "asserts": [
+        "thirteen metric rows",
+        "metrics.fragment.view.includes('ui.MetricGroup()",
+        "every section view joins the root",
+        "Disclosed metric refused",
+        "Unlocated metric refusal"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
+    },
+    {
+      "id": "catalogue-key_facts",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind key_facts: parameter decode, the shared disclosure predicate, immutable initialized facts and the assembled section.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "evidence": "The executable definition of key_facts decodes its items, refuses a boolean value and a missing item list, admits a request-provenanced fact, initializes an immutable MetricGroup and joins the assembled root.",
+      "asserts": [
+        "boolean key-fact value",
+        "Request-provenance fact refused",
+        "facts.fragment.view.includes('ui.MetricGroup()",
+        "every section view joins the root"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
+    },
+    {
+      "id": "catalogue-checklist",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind checklist: parameter decode and the shared disclosure predicate for an invented row label, an invented row detail and a text completion.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "evidence": "The executable definition of checklist decodes its items and the shared disclosure predicate refuses an invented label and an invented detail while a text completion rejects at decode. Its done and total ports (core/catalogue.deal:308), Toggle transition (:294) and every initialization, port, hole and assembly vector remain the gaps recorded by catalogue-kind-table and holes-bodies.",
+      "asserts": [
+        "Unlocated checklist refusal",
+        "Unlocated checklist detail refusal",
+        "text checklist completion"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
+    },
+    {
+      "id": "catalogue-data_table",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind data_table: parameter decode with its cell, row and column bounds, the shared disclosure predicate, immutable initialized rows and the assembled section.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "evidence": "The executable definition of data_table decodes the bounded cell, row and column matrix, refuses invented cells, headers and rows, initializes immutable declared rows and joins the assembled root.",
+      "asserts": [
+        "literal(tableInstance,'headers')",
+        "thirteen table rows",
+        "cell over its bound",
+        "four-column headers",
+        "Unlocated table refusal",
+        "Unlocated header refusal",
+        "f_section_table_headers: string[];"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
+    },
+    {
+      "id": "catalogue-timeline",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind timeline: parameter decode with its shared minute domain and nondecreasing row bound, the shared disclosure predicate, immutable initialized rail and the assembled section.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "evidence": "The executable definition of timeline decodes the minute domain and the rail row bound, refuses invented minutes, titles and details, initializes an immutable rail and joins the assembled root.",
+      "asserts": [
+        "timelineInstance.fragment.view.includes('ui.Timeline()",
+        "thirteen rail rows",
+        "minute past the shared domain",
+        "decreasing timeline minutes",
+        "Disclosed rail refused",
+        "Unlocated rail minute refusal",
+        "every section view joins the root"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
+    },
+    {
+      "id": "catalogue-bar_chart",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind bar_chart: parameter decode with its point count, maximum and value bounds, the shared disclosure predicate, immutable initialized series and the assembled section.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "evidence": "The executable definition of bar_chart decodes the point count, maximum and value bounds, refuses invented points, initializes immutable series in supplied order and joins the assembled root.",
+      "asserts": [
+        "series(bars,'series')",
+        "thirteen chart points",
+        "bar value above maximum",
+        "positive maximum rule",
+        "Disclosed bar points refused",
+        "Unlocated chart refusal",
+        "f_section_bars_series: [0.0, 2.5]"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
+    },
+    {
+      "id": "catalogue-trend_chart",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind trend_chart: parameter decode with its scale and value bounds, the shared disclosure predicate, immutable initialized series and the assembled section.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "evidence": "The executable definition of trend_chart decodes the scale and value bounds, refuses a single point, an empty or reversed scale and out-of-scale values, initializes immutable series in supplied order and joins the assembled root.",
+      "asserts": [
+        "series(trend,'series')",
+        "empty trend scale",
+        "trend value above maximum",
+        "Disclosed trend points refused",
+        "Unlocated trend refusal",
+        "f_section_trend_series: [(-2.0), 0.25]"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
+    },
+    {
+      "id": "catalogue-spotlight",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind spotlight: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "partial",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "blocker": "spotlight has an executable definition, but no deterministic decode, row-bound, transition or port vector exercises it in this lane."
+    },
+    {
+      "id": "catalogue-filter_box",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind filter_box: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "partial",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "blocker": "filter_box has an executable definition, but no deterministic decode, row-bound, transition or port vector exercises it in this lane."
+    },
+    {
+      "id": "catalogue-list_summary",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind list_summary: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "partial",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "blocker": "list_summary has an executable definition, but no deterministic decode, row-bound, transition or port vector exercises it in this lane."
+    },
+    {
+      "id": "catalogue-timer",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind timer: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for timer: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-calendar_event",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind calendar_event: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for calendar_event: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-progress_goal",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind progress_goal: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for progress_goal: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-rating",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind rating: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for rating: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-search_list",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind search_list: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for search_list: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-master_list",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind master_list: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for master_list: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-detail_view",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind detail_view: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for detail_view: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-record_log",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind record_log: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for record_log: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-number_strip",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind number_strip: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for number_strip: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-breakdown_table",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind breakdown_table: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for breakdown_table: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-series_chart",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind series_chart: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for series_chart: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-settle_up",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind settle_up: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for settle_up: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-itinerary",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind itinerary: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for itinerary: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-progress_line",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind progress_line: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for progress_line: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-intent_panel",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind intent_panel: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for intent_panel: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-quick_log",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind quick_log: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for quick_log: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-reminders",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind reminders: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for reminders: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-dose_schedule",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind dose_schedule: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for dose_schedule: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-due_items",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind due_items: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for due_items: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-points_ledger",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind points_ledger: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for points_ledger: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-idea_deck",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind idea_deck: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for idea_deck: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-interval_timer",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind interval_timer: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for interval_timer: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-reading_status",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind reading_status: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for reading_status: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "catalogue-live_figure",
+      "family": "catalogue-kinds",
+      "owner": "catalogue-sections",
+      "requirement": "Catalogue kind live_figure: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
+      "status": "missing",
+      "blocker": "No executable definition exists for live_figure: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+    },
+    {
+      "id": "aggregates",
+      "family": "aggregates",
+      "owner": "catalogue-sections",
+      "requirement": "Exact integer-cent aggregates: record_log parse and half-up rounding, safe-cent overflow rejection, totals/balances averages in major units, equal-share remainder order and settlement transfer order.",
+      "status": "missing",
+      "blocker": "record_log, number_strip, breakdown_table, series_chart and settle_up are undefined, so no cent-exact aggregate, average, share or settlement exists."
+    },
+    {
+      "id": "constructive-calculations",
+      "family": "aggregates",
+      "owner": "plan-schemas-and-assembly",
+      "requirement": "Request-specific constructive calculations over actual records, nested package contents, shared stock and whole-basket quotes, recomputed after edits with deposits separate and exhaustion reported unknown.",
+      "status": "missing",
+      "blocker": "No constructive-calculation helper is implemented; provider totals alone cannot establish allocation, feasibility or comparison, and the Food/Equipment journeys remain live-blocked."
+    },
+    {
+      "id": "holes-bodies",
+      "family": "holes-bodies",
+      "owner": "catalogue-sections",
+      "requirement": "Issued hole definitions with compiling default bodies; an issued body replaces only its hole body at emission; unissued IDs, duplicate or over-bound bodies reject without partial commit.",
+      "status": "partial",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "blocker": "Only the negative decode is exercised: instances construct empty holes and the body map is asserted empty. Default bodies, insertion and rejection have no production path."
+    },
+    {
+      "id": "pins",
+      "family": "build-boundary",
+      "owner": "embedding-architecture-boundaries",
+      "requirement": "Exact dependency pins are validated before every build and never auto-pulled, reset or substituted; absolute overrides must match the same pins.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-dependencies.py",
+      "evidence": "Pin, override, symlink and shared-object failures are exercised; a mismatch fails instead of rebuilding against different upstream code.",
+      "asserts": [
+        "self.assertEqual(source.read_text(), 'changed'",
+        "self.assertNotEqual(run().returncode, 0)"
+      ]
+    },
+    {
+      "id": "pack-conformance",
+      "family": "prop-predicates",
+      "owner": "ui-vocabulary-pack-constraints-and-conformance",
+      "requirement": "The shipped pack is spec-conformant: one capability per component, no removed name or alias, declared defaults and children, version agreement, constraint-table completeness and no inventory bytes packaged.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-vocabulary.py",
+      "evidence": "Pack conformance, removed names, capability agreement, projections, version agreement and determinism are asserted over the packaged pack.",
+      "asserts": [
+        "assert len(declared) == 64 and set(declared) == set(inventory[\"components\"])",
+        "assert list(assets.iterdir()) == []"
+      ]
+    }
+  ]
+}
