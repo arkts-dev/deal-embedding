@@ -260,7 +260,9 @@ for app in "${TARGETS[@]}"; do
         dex_roots=(build/runtime-dex/provider)
     fi
     app_started=$SECONDS
-    rm -rf "build/$app"; mkdir -p "build/$app/classes" "build/$app/dex"
+    # Keep bytecode separate from packaging. The boundary gate deliberately repackages a target;
+    # unchanged Kotlin/classpath must not invoke kotlinc and D8 again.
+    mkdir -p "build/$app"
     if [[ "$profile" == "host" ]]; then
         # App transport selection only; credentials and provider calls stay gateway-side.
         for host in "$app"; do
@@ -282,20 +284,43 @@ for app in "${TARGETS[@]}"; do
         rm -rf "build/assets/$app"; mkdir -p "build/assets/$app"
         cp -r "$EMBEDDING_ASSETS"/* "build/assets/$app/"
     fi
+    rm -rf "build/$app/rjava"
     resource_link "$app" "build/$app/unsigned.apk"
-    find "build/$app/rjava" -name '*.java' > build/r-sources.txt
-    javac --release 21 -d "build/$app/classes" @build/r-sources.txt
-    app_cp=$(IFS=:; echo "${app_apis[*]}")
-    app_classpath_args=()
-    for jar in "${profile_jars[@]}" "$KOTLIN_HOME/lib/kotlin-stdlib.jar"; do app_classpath_args+=(--classpath "$jar"); done
-    "$KOTLIN_HOME/bin/kotlinc" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect -classpath "$ANDROID:$app_cp:$RUNTIME_CP" \
-        -d "build/$app/classes" "${sources[@]}"
-    jar --create --file "build/$app/app.jar" -C "build/$app/classes" .
-    # The app is dexed on its own so only app code is re-done on each iteration.
-    java -Xmx2g -XX:ActiveProcessorCount=4 -cp build/toolchain/r8.jar com.android.tools.r8.D8 --release --min-api 36 --lib "$ANDROID" \
-        --desugared-lib build/toolchain/desugar.json "${app_classpath_args[@]}" \
-        --output "build/$app/dex" "build/$app/app.jar"
-    test -n "$(find "build/$app/dex" -name 'classes*.dex')" || { echo "D8 produced no dex for $app" >&2; exit 1; }
+    bytecode_stamp="build/$app/.bytecode.sha256"
+    bytecode_outputs="build/$app/.bytecode-outputs.sha256"
+    bytecode_key=$(python3 tools/build-cache.py --archive-contents \
+        tools/build-demos.sh tools/build-cache.py "$ANDROID" \
+        "$KOTLIN_HOME/lib/kotlin-compiler.jar" "$KOTLIN_HOME/lib/compose-compiler-plugin.jar" \
+        "$KOTLIN_HOME/lib/kotlin-stdlib.jar" "${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}/release" \
+        build/toolchain/r8.jar build/toolchain/desugar.json \
+        "${app_apis[@]}" "${profile_jars[@]}" "${RUNTIME_JARS[@]}" "${sources[@]}" "build/$app/rjava")
+    bytecode_valid=false
+    if [[ -f "$bytecode_stamp" && "$(<"$bytecode_stamp")" == "$bytecode_key" && \
+          -f "$bytecode_outputs" && -f "build/$app/app.jar" && -f "build/$app/dex/classes.dex" ]]; then
+        actual_outputs=$(python3 tools/build-cache.py "build/$app/app.jar" "build/$app/dex")
+        [[ "$actual_outputs" != "$(<"$bytecode_outputs")" ]] || bytecode_valid=true
+    fi
+    if "$bytecode_valid"; then
+        printf 'App (%s), Kotlin/dex: cache hit\n' "$app"
+    else
+        rm -f "$bytecode_stamp" "$bytecode_outputs"
+        rm -rf "build/$app/classes" "build/$app/dex"
+        mkdir -p "build/$app/classes" "build/$app/dex"
+        find "build/$app/rjava" -name '*.java' > build/r-sources.txt
+        javac --release 21 -d "build/$app/classes" @build/r-sources.txt
+        app_cp=$(IFS=:; echo "${app_apis[*]}")
+        app_classpath_args=()
+        for jar in "${profile_jars[@]}" "$KOTLIN_HOME/lib/kotlin-stdlib.jar"; do app_classpath_args+=(--classpath "$jar"); done
+        "$KOTLIN_HOME/bin/kotlinc" -Xplugin="$KOTLIN_HOME/lib/compose-compiler-plugin.jar" -jvm-target 21 -no-reflect -classpath "$ANDROID:$app_cp:$RUNTIME_CP" \
+            -d "build/$app/classes" "${sources[@]}"
+        jar --create --file "build/$app/app.jar" -C "build/$app/classes" .
+        java -Xmx2g -XX:ActiveProcessorCount=4 -cp build/toolchain/r8.jar com.android.tools.r8.D8 --release --min-api 36 --lib "$ANDROID" \
+            --desugared-lib build/toolchain/desugar.json "${app_classpath_args[@]}" \
+            --output "build/$app/dex" "build/$app/app.jar"
+        test -f "build/$app/dex/classes.dex" || { echo "D8 produced no dex for $app" >&2; exit 1; }
+        python3 tools/build-cache.py "build/$app/app.jar" "build/$app/dex" > "$bytecode_outputs"
+        printf '%s\n' "$bytecode_key" > "$bytecode_stamp"
+    fi
     # Merge the shared runtime dex without overwriting the app dex names.
     rm -rf "build/$app/merged"; mkdir -p "build/$app/merged"
     cp "build/$app/dex"/classes*.dex "build/$app/merged/"
