@@ -11,7 +11,8 @@ python3 "$ROOT/tools/dependencies.py" check
 : "${OUTPUT_DIR:?Set OUTPUT_DIR to an absolute output directory}"
 KOTLIN_HOME=${KOTLIN_HOME:-/snap/kotlin/current}
 mkdir -p "$OUTPUT_DIR"
-rm -rf "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar" "$OUTPUT_DIR/generation" "$OUTPUT_DIR/logging" "$OUTPUT_DIR/assistance-policy"
+# Generated source is not an input: deleted helpers/UI modules must not leak into later AARs.
+rm -rf "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar" "$OUTPUT_DIR/generation" "$OUTPUT_DIR/logging" "$OUTPUT_DIR/assistance-policy" "$OUTPUT_DIR/syntax-source" "$OUTPUT_DIR/assistance" "$OUTPUT_DIR/generated"
 mkdir -p "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar/assets/distribution/deal" "$OUTPUT_DIR/aar/assets/distribution/std" "$OUTPUT_DIR/native-tools"
 find "$DEAL_ROOT/deal" -name '*.java' | sort > "$OUTPUT_DIR/sources.txt"
 for source in UiModel UiParser UiDiagnostic UiChecker UiBorrowedValueChecker UiDealGenerator UiSourceGenerator DealUiDealSource UiCheckpointCompiler; do
