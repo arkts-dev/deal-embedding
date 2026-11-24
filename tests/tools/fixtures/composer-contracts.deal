@@ -1076,6 +1076,12 @@ export async function assemblyRejects(): Promise<null> {
   refused = false;
   try { await composer.assembleWith(assembly(brokenHole,[],[],"screen"),[assemblyComputations()[0]],bindings.create([]),null); } catch (error) { refused = true; }
   insist(refused,"A hole body that changes the composed function signature was admitted");
+  // A body keyed by a hole the fragment does not declare is never silently ignored.
+  let unissuedBody: screens.Instance[] = [owner("a",3)];
+  unissuedBody[0].bodies = {ghostHole:"return state;"};
+  refused = false; let unissuedBodyReason: string = "";
+  try { await composer.assembleWith(assembly(unissuedBody,[],[],"screen"),[assemblyComputations()[0]],bindings.create([]),null); } catch (error) { refused = true; unissuedBodyReason = (error as Error).message; }
+  insist(refused && strings.contains(unissuedBodyReason,"Unissued body: ghostHole"),"A body for an undeclared hole was admitted: "+unissuedBodyReason);
   // `host/storage` is effect-bound at every position that reaches generated source. A field initializer
   // is emitted into initialState(), so a storage call there runs at mount outside every effect and rejects.
   let storageInit: screens.Instance[] = [fragment("a","3")];

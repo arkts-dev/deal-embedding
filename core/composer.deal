@@ -186,6 +186,11 @@ function providerCalls(facts: Record<string, unknown>, modules: Record<string, u
 // declares a different one rejects with the hole identifier instead of reaching the compiler.
 async function holeFunctions(instance: screens.Instance): Promise<string> {
   let result: string = "";
+  // A body keyed by a hole this fragment does not declare is a route nothing defines: it rejects with
+  // the identifier instead of being dropped, so an issued body is never silently ignored.
+  let declaredHoles: string[] = [];
+  for (let hole of instance.fragment.holes) { declaredHoles[declaredHoles.length] = s.identifier(hole.id); }
+  for (let key of tables.keys(instance.bodies)) { if (!s.contains(declaredHoles,key)) { s.reject("Unissued body: "+key); } s.text(instance.bodies[key]); }
   for (let hole of instance.fragment.holes) {
     let id: string = s.identifier(hole.id);
     let parameter: string = s.identifier(hole.parameter);

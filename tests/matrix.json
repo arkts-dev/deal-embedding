@@ -1891,9 +1891,10 @@
         "tests/tools/fixtures/composer-contracts.deal"
       ],
       "asserts": [
-        "A hole body that changes the composed function signature was admitted"
+        "A hole body that changes the composed function signature was admitted",
+        "A body for an undeclared hole was admitted"
       ],
-      "blocker": "The emitted-body path is delivered and tested: an issued whenFinished body replaces the declared default body in the composed function while the signature stays fixed, and a body that changes the composed signature rejects before emission. A repeated body key never reaches the instance: the composition document decode fails the whole document with its duplicate-key rejection before any instance is allocated, and an in-process composition carries no repeated key. What stays unproven here: no catalogue kind issues a hole definition (the catalogue instantiation carries an empty hole list), so no production instance reaches emission with an issued hole; the construction-level duplicate-body rejection required by the hole contract has no vector and no dedicated rejection beyond that document decode; and no over-600-code-unit body, unissued body identifier or retained-default-body vector exists in the gate. Owner catalogue-sections for the kind-issued holes."
+      "blocker": "The emitted-body path is delivered and tested: an issued whenFinished body replaces the declared default body in the composed function while the signature stays fixed; a body that changes the composed signature rejects before emission; and a body keyed by a hole the fragment does not declare rejects at assembly with the identifier instead of being ignored. What stays unproven here: no catalogue kind issues a hole definition (the catalogue instantiation carries an empty hole list), so no production instance reaches emission with an issued hole; the duplicate-body rejection required by the hole contract has no dedicated vector, because a repeated key is refused by the composition document decode itself (DEAL v1.6 rejects duplicate decoded keys) and an in-process composition cannot carry one, and no gate case drives that decode; and no over-600-code-unit body or retained-default-body vector exists in the gate. Owner catalogue-sections for the kind-issued holes."
     },
     {
       "id": "pins",

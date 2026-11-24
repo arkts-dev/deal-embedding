@@ -38,7 +38,8 @@ class WireLayout { kind:string; positions?:Position[]; }
 class WirePort { name:string; type:string; direction:string; getter:string; optional?:boolean; fallback?:string; }
 class WireFragment { declarations:string; fields:Field[]; updates:Handler[]; effects:Handler[]; helpers:string; view:string; options:Record<string, unknown>[]; content:Record<string, unknown>[]; ports:WirePort[]; holes:Record<string, unknown>[]; covers:string[]; owns:string[]; }
 class WireInstance { id:string; kind:string; origin:string; parameters:Record<string, unknown>; fragment:WireFragment; bodies:Record<string, unknown>; position?:string; definition?:WireDefinition; }
-class WireScreen { title:string; target:string; layout:WireLayout; slots:Slot[]; instances:WireInstance[]; }
+class WireSlot { id:string; need:string; reads:string[]; writes:string[]; event?:string; trigger?:string; action?:string; provider:boolean; allowedKinds:string[]; valueType?:string; status:string; instance:string|null; reason:string; }
+class WireScreen { title:string; target:string; layout:WireLayout; slots:WireSlot[]; instances:WireInstance[]; }
 class WireDefinitionField { name:string; type:string; role:string; initial:string; }
 class WireDefinitionPort { name:string; type:string; direction:string; }
 class WireDefinitionHole { id:string; parameter:string; type:string; result:string; }

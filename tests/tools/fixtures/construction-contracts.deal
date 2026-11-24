@@ -95,13 +95,13 @@ export function schemas(): null {
   rejected = false; try { selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"first\",\"probabilities\":[{\"id\":\"first\",\"p\":0.66},{\"id\":\"second\",\"p\":0.33}]}]}",issued); } catch (error) { rejected = true; } insist(rejected,"Rounded sum is invalid; never renormalize Jev answers");
   let screen: screens.Screen = screens.reserve(plan,"chat"); insist(screen.target === "chat" && screen.slots[0].status === "open","Need reservation");
   // A composition issues exactly one slot per need and a slot is identified by its need.
-  let slotJson: string = "{\"id\":\"remaining\",\"need\":\"remaining\",\"reads\":[],\"writes\":[],\"provider\":false,\"allowedKinds\":[],\"reason\":\"\",\"status\":\"open\"}";
-  let duplicateSlots: boolean = false;
-  try { screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":["+slotJson+","+slotJson+"],\"instances\":[]},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",["remaining"]); } catch (error) { duplicateSlots = true; }
-  insist(duplicateSlots,"Two slots for one need were admitted");
-  duplicateSlots = false;
-  try { screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[{\"id\":\"alias\",\"need\":\"remaining\",\"reads\":[],\"writes\":[],\"provider\":false,\"allowedKinds\":[],\"reason\":\"\",\"status\":\"open\"}],\"instances\":[]},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",["remaining"]); } catch (error) { duplicateSlots = true; }
-  insist(duplicateSlots,"A slot whose identity differs from its need was admitted");
+  let slotJson: string = "{\"id\":\"remaining\",\"need\":\"remaining\",\"reads\":[],\"writes\":[],\"provider\":false,\"allowedKinds\":[],\"reason\":\"\",\"status\":\"open\",\"instance\":null}";
+  let duplicateSlots: string = "";
+  try { screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":["+slotJson+","+slotJson+"],\"instances\":[]},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",["remaining"]); } catch (errorUnknown) { duplicateSlots = (errorUnknown as Error).message; }
+  insist(strings.contains(duplicateSlots,"Duplicate identity: remaining"),"Two slots for one need were admitted: "+duplicateSlots);
+  duplicateSlots = "";
+  try { screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[{\"id\":\"alias\",\"need\":\"remaining\",\"reads\":[],\"writes\":[],\"provider\":false,\"allowedKinds\":[],\"reason\":\"\",\"status\":\"open\",\"instance\":null}],\"instances\":[]},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",["remaining"]); } catch (errorUnknown) { duplicateSlots = (errorUnknown as Error).message; }
+  insist(strings.contains(duplicateSlots,"Slot identity differs from its need: alias"),"A slot whose identity differs from its need was admitted: "+duplicateSlots);
   insist(screens.catalogueKinds().length === 36,"Catalogue vocabulary");
   let ledger: coverage.Ledger = coverage.judge(plan,screen,[]);
   insist(ledger.needs[0].status === "missing" && ledger.requirements[0].status === "missing","Unimplemented requirement marked covered");
