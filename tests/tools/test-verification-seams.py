@@ -32,7 +32,9 @@ numbered in the same build changes how many statements precede it; an attributio
 another module does, and it has to name exactly one matching statement. An edit above the statement in
 its own source file does move it, and that needs a re-pin.
 """
+import argparse
 import hashlib
+from host_check import prepare, run as bounded_run
 import json
 import os
 from pathlib import Path
@@ -353,10 +355,13 @@ def observe(seam):
         print(f'[seam] start {seam["id"]}: {" ".join(seam["command"])}', flush=True)
         started = time.monotonic()
         try:
-            result = subprocess.run(seam['command'], cwd=ROOT, capture_output=True, text=True,
-                                    timeout=seam.get('timeout', TIMEOUT), env=environment)
+            environment['DEAL_BUILD_LOCK_HELD'] = str(ROOT)
+            result = bounded_run(seam['command'], cwd=ROOT, capture_output=True, text=True,
+                                 timeout=min(seam.get('timeout', TIMEOUT), RUN_BOUND), env=environment)
         finally:
             print(f'[seam] {seam["id"]} elapsed={time.monotonic()-started:.2f}s', flush=True)
+        if result.returncode in (75, 124, 137) or result.returncode < 0:
+            raise AssertionError(f'{seam["id"]}: infrastructure exit {result.returncode}, not evidence of the broken rule')
         if result.returncode == 0:
             raise AssertionError(f'{seam["id"]}: owning test stayed green after breaking {seam["path"]}')
         output = result.stdout + result.stderr
@@ -372,18 +377,37 @@ def observe(seam):
         release()
 
 
+RUN_BOUND = 30
+
+
 def main():
-    if '--recover' in sys.argv[1:]:
+    global RUN_BOUND
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--recover', action='store_true')
+    parser.add_argument('--list', action='store_true')
+    parser.add_argument('--seam', action='append', choices=[s['id'] for s in SEAMS])
+    parser.add_argument('--seconds', type=int, default=30)
+    args = parser.parse_args()
+    if args.seconds < 1 or args.seconds > 300:
+        parser.error('--seconds must be 1..300')
+    RUN_BOUND = args.seconds
+    selected = [s for s in SEAMS if not args.seam or s['id'] in args.seam]
+    if args.list:
+        for seam in selected:
+            print(seam['id']+' '+seam['family']+' '+' '.join(seam['command']))
+        return 0
+    lock = prepare(ROOT)
+    if args.recover:
         recover()
         return 0
     recover()
     self_check()
-    dirty = [seam['path'] for seam in SEAMS if not tracked_clean(seam['path'])]
+    dirty = [seam['path'] for seam in selected if not tracked_clean(seam['path'])]
     if dirty:
         print(f'verification seams: seam inputs already carry uncommitted changes: {dirty}', file=sys.stderr)
         return 1
     failures = []
-    for seam in SEAMS:
+    for seam in selected:
         try:
             observed = observe(seam)
         except Exception as error:
@@ -391,13 +415,13 @@ def main():
             print(f'verification seams: FAILED {seam["id"]}: {error}', file=sys.stderr)
             continue
         print(f'verification seams: {seam["id"]} broke {seam["path"]}; owning test failed: {observed}')
-    families = sorted({seam['family'] for seam in SEAMS})
+    families = sorted({seam['family'] for seam in selected})
     if failures:
         print(f'verification seams: {len(families)} family probe(s) attempted, {len(failures)} control(s) not observed; '
               f'no coverage is claimed for them', file=sys.stderr)
         return 1
     if not [seam['path'] for seam in SEAMS if not tracked_clean(seam['path'])]:
-        print(f'verification seams: {len(SEAMS)} production seams observed failing over {len(families)} families and '
+        print(f'verification seams: {len(selected)} selected production seams observed failing over {len(families)} families and '
               f'restored byte-identically; families with no controllable production seam are named by the matrix '
               f'and never claimed as seam-proven')
         return 0

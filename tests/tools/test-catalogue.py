@@ -8,7 +8,7 @@ import json
 import os
 import pathlib
 import shutil
-from host_check import prepare, run
+from host_check import prepare, run, compile_fixture
 import time
 
 started = time.monotonic()
@@ -27,7 +27,9 @@ for path in (ROOT / 'core').glob('*.deal'):
     if path.name != 'generation.deal':
         shutil.copyfile(path, source / path.name)
 shutil.copyfile(ROOT / 'tests/tools/fixtures/catalogue-contracts.deal', source / 'checks.deal')
-shutil.copytree(DEAL_UI / 'ui', STAGE / 'ui', dirs_exist_ok=True)
+shutil.rmtree(STAGE / 'ui', ignore_errors=True)
+shutil.copytree(DEAL_UI / 'ui', STAGE / 'ui')
+for obsolete in STAGE.glob('*.d.deal'): obsolete.unlink()
 externals = {}
 for path in (ROOT / 'core/host').glob('*.d.deal'):
     shutil.copyfile(path, STAGE / path.name)
@@ -35,15 +37,9 @@ for path in (ROOT / 'core/host').glob('*.d.deal'):
     externals[module] = {'declaration': path.name}
 (STAGE / 'deal.json').write_text(json.dumps({'languageVersion': '1.6', 'backend': 'js', 'moduleRoots': ['src', 'ui'], 'externals': externals}))
 classes = STAGE / 'classes'
-shutil.rmtree(classes, ignore_errors=True)
-classes.mkdir(exist_ok=True)
-shutil.rmtree(STAGE / 'js', ignore_errors=True)
 library = str(ROOT / 'build/embedding-library/classes')
 # The syntax mechanisms are the same tools the production compiler serves; they are compiled from
 # their tracked sources against the library classes so the fixture uses no private seam.
-run(['javac', '--release', '21', '-proc:none', '-cp', library, '-d', str(classes),
-                *[str(ROOT / 'tools' / f'{name}.java') for name in ('FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentAnalysis', 'FragmentMechanisms')]], check=True, timeout=20)
-run(['java', '-Ddeal.home=' + str(DEAL), '-cp', library, 'deal.Main', 'compile', str(source / 'checks.deal'),
-                '--backend', 'js', '--output', str(STAGE / 'js')], check=True, timeout=45)
+compile_fixture(ROOT, STAGE, DEAL, [ROOT / 'tools' / f'{name}.java' for name in ('FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentAnalysis', 'FragmentMechanisms')])
 run(['node', str(ROOT / 'tests/tools/test-catalogue.js'), str(STAGE), str(classes) + ':' + library], check=True, timeout=30)
 print(f'catalogue contracts: {time.monotonic() - started:.2f}s', flush=True)

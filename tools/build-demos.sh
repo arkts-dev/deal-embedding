@@ -164,11 +164,17 @@ sign() {
 library_inputs_text=$(python3 tools/library-inputs.py --lines) || exit 1
 mapfile -t library_inputs <<< "$library_inputs_text"
 library_key=$(python3 tools/build-cache.py "${library_inputs[@]}" "$ANDROID" \
-    "$KOTLIN_HOME/lib/kotlin-compiler.jar" "$KOTLIN_HOME/lib/compose-compiler-plugin.jar" \
-    "$KOTLIN_HOME/lib/kotlin-stdlib.jar" "$TOOLS/aidl" "${RUNTIME_JARS[@]}")
+    "$KOTLIN_HOME/bin/kotlinc" "$KOTLIN_HOME/lib" \
+    "${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}/release" \
+    "$TOOLS/aidl" "${RUNTIME_JARS[@]}")
 library_stamp=build/embedding-consumer/.inputs.sha256
+library_output_stamp=build/embedding-consumer/.outputs.sha256
+library_output_key=''
+if [[ -f build/embedding-library/deal-embedding.aar && -f build/capability-api.jar && -f build/embedding-consumer/classes.jar && -d build/embedding-consumer/assets ]]; then
+    library_output_key=$(python3 tools/build-cache.py build/embedding-library/deal-embedding.aar build/capability-api.jar build/embedding-consumer/classes.jar build/embedding-consumer/assets)
+fi
 mkdir -p build/embedding-consumer
-if [[ ! -f build/capability-api.jar || ! -f build/embedding-consumer/classes.jar || ! -d build/embedding-consumer/assets || ! -f "$library_stamp" || "$(<"$library_stamp")" != "$library_key" ]]; then
+if [[ -z "$library_output_key" || ! -f "$library_stamp" || "$(<"$library_stamp")" != "$library_key" || ! -f "$library_output_stamp" || "$(<"$library_output_stamp")" != "$library_output_key" ]]; then
     started=$SECONDS
     printf 'Embedding library: rebuilding (inputs changed or outputs missing)\n'
     DEAL_ROOT="$DEAL" DEAL_UI_ROOT="$DEAL_UI" ANDROID_JAR="$ANDROID" \
@@ -184,6 +190,7 @@ if [[ ! -f build/capability-api.jar || ! -f build/embedding-consumer/classes.jar
         'dev/deal/embedding/capabilities/ICapability*')
     jar --create --file build/capability-api.jar -C build/capability-api .
     printf '%s\n' "$library_key" > "$library_stamp"
+    python3 tools/build-cache.py build/embedding-library/deal-embedding.aar build/capability-api.jar build/embedding-consumer/classes.jar build/embedding-consumer/assets > "$library_output_stamp"
     printf 'Embedding library: %s s\n' "$((SECONDS - started))"
 else
     printf 'Embedding library: cache hit\n'

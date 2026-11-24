@@ -3,6 +3,9 @@
 # Repo-relative paths, `*` globs and `dep:<deal|deal-ui>:<path>` dependency paths.
 # Nothing under demos/ or tests/ may ever appear here: the library builds without application source.
 build.sh
+docs/spec-v0.8.md
+tools/build-stage.py
+tools/build-cache.py
 android
 core
 api

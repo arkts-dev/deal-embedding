@@ -15,9 +15,9 @@ CACHE = ROOT / 'build/verification/standalone-boundary.json'
 DIGEST = re.compile(r'classes ([0-9a-f]{16}) assets ([0-9a-f]{16})')
 
 
-def prove():
-    result = subprocess.run([sys.executable, 'tools/boundary-proof.py'], cwd=ROOT,
-                            capture_output=True, text=True, timeout=1800)
+def prove(*arguments):
+    result = subprocess.run(['timeout', '--kill-after=2s', '40s', sys.executable, 'tools/boundary-proof.py', *arguments], cwd=ROOT,
+                            capture_output=True, text=True)
     # unittest otherwise hides successful child diagnostics, including where the time went.
     for line in result.stderr.splitlines():
         if line.startswith('[boundary]'):
@@ -56,7 +56,7 @@ class StandaloneBoundaryTest(unittest.TestCase):
         # The demo compile is exercised in this lane, not only on a cold tree: invalidating one
         # target's validated inputs must rebuild exactly that target from the AAR.
         (ROOT / 'build/verification/demo-compile/calendar.sha256').unlink()
-        third = prove()
+        third = prove('--target', 'calendar')
         self.assertEqual(third.returncode, 0, third.stderr)
         self.assertIn('(1 rebuilt: calendar)', third.stdout,
                       'an invalidated demo target must be compiled and packaged again')
@@ -101,6 +101,11 @@ class StandaloneBoundaryTest(unittest.TestCase):
             self.assertEqual(pending, ['calendar'])
             self.assertEqual(stale.read_text(), 'a package built from the current AAR')
             self.assertTrue((module.COMPILE_CACHE / 'calendar.sha256').is_file())
+            violations, pending = module.compile_demos([declaration])
+            self.assertEqual((violations, pending), ([], []))
+            stale.write_text('corrupted output with identical inputs')
+            violations, pending = module.compile_demos([declaration])
+            self.assertEqual((violations, pending), ([], ['calendar']))
 
     def test_library_input_declaration_contains_no_application_source(self):
         sys.path.insert(0, str(ROOT / 'tools'))

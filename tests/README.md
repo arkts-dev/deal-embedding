@@ -2,7 +2,51 @@
 
 White-box construction, composition, checkpoint/runtime and packaged controller fixtures belong to the framework, not illustrative application sources. They are hard copies of the current integration tests, with paths changed for framework ownership. Inference/provider boundaries remain explicitly mocked; no paid inference, data reset, new scenario acceptance or visual review is implied.
 
-## Local commands (no device or inference)
+## Short feedback first (no device or inference)
+
+```sh
+python3 tests/check.py --list
+python3 tests/check.py construction
+python3 tests/check.py catalogue
+python3 tests/check.py composer-prepare  # compilation only, no pass/snapshot claim
+python3 tests/check.py composer:clocks   # one assertion group, not the combined batch
+python3 tests/check.py pair:clock       # exact validated composer snapshot required
+python3 tests/check.py catalogue:timers
+python3 tests/check.py renderer-admission
+```
+
+One lane per invocation, **40-second command-tree bound**, no automatic broad gate or build.
+Full logs and exit/timing receipts are kept in ignored `build/verification/short-checks/`.
+A timeout is a failure, not a negative-control pass. Earlier validated compiler artifacts survive;
+fix/profile the named stage instead of restarting a whole gate. Preparation alone is not verification.
+No claim that every cold compiler stage finishes within this bound: unresolved expensive stages stop.
+
+Library `build.sh` now has independently content-validated stages (default 30 seconds each), separate
+Java/mechanism/Kotlin outputs, and assembly into the existing packaged paths. A policy change does not
+force Java/Compose recompilation. Missing/corrupt outputs, changed source, toolchain or command invalidate
+the owning stage. Every stage clears its own generated outputs before compilation; stale deleted classes
+cannot leak into an AAR. Renderer conformance and test assertions are never cached.
+
+```sh
+python3 tests/check.py build:java_base    # then mechanisms, kotlin, generation, discovery,
+                                        # assistance_policy, logging, protocol, assistance, package_aar
+python3 tests/check.py boundary-plan
+python3 tests/check.py isolation:java_base  # same stage sequence, isolated sentinel tree
+python3 tests/check.py boundary:calendar    # selected proof only, not all seven demos
+python3 tests/tools/test-verification-seams.py --list
+python3 tests/tools/test-verification-seams.py --seam attempts
+```
+
+Selected build stages require validated predecessors, not merely existing directories. Boundary
+preparation retains its own isolated outputs, never canonical compiled outputs; final digest comparison,
+input auditing and negative controls remain mandatory. Demo proofs validate APK output content too.
+Library/composer/construction/catalogue caches store compiler artifacts only; assertions run on every check.
+Seams are selectable, hold the common lock and default to 30 seconds per owning test; infrastructure
+exit/timeout never counts as an observed broken rule. Interrupted mutation journals remain recoverable.
+`DEAL_BUILD_PLAN=1` previews library stages without compiling; `DEAL_BUILD_COLD=1` refuses artifact reuse.
+These are preparation/diagnostic controls, not substitutes for the complete gate.
+
+## Legacy broad commands (explicit, not the short feedback path)
 
 From the framework root:
 
@@ -19,9 +63,9 @@ bash tests/host.sh gate
 Both commands fail immediately with exit 75 if another build/check owns the output lock. They print
 stage, elapsed seconds and exit status; a stage timeout fails rather than counting as a negative-control
 pass. The runner holds the build lock across its tests so no cooperating build replaces their inputs.
-`DEAL_BUILD_LOCK_HELD` is an internal child-build marker; do not set it manually. Individual focused
-checks have a 120-second limit, packaging 30 minutes and the broad gate 90 minutes. These are local
-compiler/CPU limits, not device waits. Cold builds are minutes; unchanged focused checks are seconds.
+`DEAL_BUILD_LOCK_HELD` is an internal child-build marker; do not set it manually. The legacy wrapper's outer limits remain 120 seconds per focused item, packaging 30 minutes and
+90 minutes for the broad gate; the new library-stage bounds still apply inside them. These are local
+compiler/CPU limits, not device waits, and are not promises of speed. Prefer the short lanes above.
 Use `set -o pipefail` when piping either command into `tee`.
 
 The original final-gate commands remain supported, but do not protect the interval between build and
@@ -43,8 +87,11 @@ python3 tests/tools/test-composer.py --pair clock
 python3 tests/tools/test-catalogue-runtime.py --group timers
 ```
 
-Composer `--pair` requires an exact input/output-validated snapshot from `--contracts-only`; it refuses
-changed inputs, not stale assertions. The default composer command still executes every pair.
+Composer `--pair` requires an exact input/output-validated snapshot from `--contracts-only`, or all six
+current assertion groups (`validation`, `basics`, `clocks`, `operations`, `entries`, `presentation` via
+`tests/check.py composer:GROUP`). Each group executes its assertions; all 33 original fixture calls and
+their output checks remain. Group receipts record only group-owned outputs, and a pair snapshot is
+issued only when all six inputs/outputs agree. It refuses changed inputs, not stale assertions. The default composer command still executes every pair.
 Catalogue runtime groups are `timers`, `reading`, `quick`, `points`, `ideas`, `drafts`, `aggregate`,
 `lists`, `issued-bodies` and `contracts`; `local` runs all six local groups, and the default runs all
 of them. Local groups compile separately to avoid a single quadratic-sized combined fixture; no

@@ -16,6 +16,8 @@
 The isolated proof is cached only for identical validated inputs; a changed input invalidates it, and
 an unchanged demo target keeps its compile proof. Nothing tracked is modified.
 """
+import argparse
+import fcntl
 import hashlib
 import importlib.util
 import io
@@ -148,12 +150,13 @@ def proof_key(paths, android, aidl):
 
 
 def stage_tree():
-    if STAGE.exists():
-        shutil.rmtree(STAGE)
-    STAGE.mkdir(parents=True)
+    # Refresh staged source, retaining independently validated compiled outputs. Input changes
+    # invalidate the corresponding stage; never copy canonical build outputs into isolation.
+    STAGE.mkdir(parents=True, exist_ok=True)
     for name in ('build.sh', 'dependencies.lock.json', 'tools', 'core', 'api', 'ui', 'android', 'docs'):
         source = ROOT / name
         if source.is_dir():
+            shutil.rmtree(STAGE / name, ignore_errors=True)
             shutil.copytree(source, STAGE / name)
         else:
             shutil.copy2(source, STAGE / name)
@@ -164,7 +167,7 @@ def stage_tree():
     return STAGE
 
 
-def isolated_digests(android, aidl):
+def isolated_digests(android, aidl, prepare_stage=None, plan=False):
     stage = stage_tree()
     output = STAGE / 'output'
     environment = os.environ.copy()
@@ -176,11 +179,13 @@ def isolated_digests(android, aidl):
         'RUNTIME_CP': runtime_classpath(),
         'OUTPUT_DIR': str(output),
         'KOTLIN_HOME': os.environ.get('KOTLIN_HOME', '/snap/kotlin/current'),
+        'DEAL_BUILD_STAGE': prepare_stage or '',
+        'DEAL_BUILD_PLAN': '1' if plan else '0',
     })
     log = STAGE / 'invocations.log'
     environment['DEAL_INPUT_LOG'] = str(log)
     tools = STAGE / 'bin'
-    tools.mkdir()
+    tools.mkdir(exist_ok=True)
     real = {name: shutil.which(name) for name in ('javac', 'java', 'python3', 'jar', 'zip', 'aidl')}
     for name, path in real.items():
         if not path:
@@ -190,15 +195,17 @@ def isolated_digests(android, aidl):
                            'printf "%s\\0" "$(basename "$0")" "$@" >> "$DEAL_INPUT_LOG"\n'
                            f'exec "{path}" "$@"\n')
         wrapper.chmod(0o755)
+    environment['JAVA_HOME'] = os.environ.get('JAVA_HOME') or str(Path(real['javac']).resolve().parents[1])
     environment['PATH'] = f'{tools}:{environment["PATH"]}'
     print('[boundary] isolated library build starting', file=sys.stderr, flush=True)
     started = time.monotonic()
     try:
-        subprocess.run(['bash', 'build.sh'], cwd=stage, env=environment, check=True,
-                       stdout=subprocess.DEVNULL)
+        subprocess.run(['timeout', '--kill-after=2s', '35s', 'bash', 'build.sh'], cwd=stage, env=environment, check=True)
     finally:
         print(f'[boundary] isolated library build elapsed={time.monotonic()-started:.2f}s',
               file=sys.stderr, flush=True)
+    if prepare_stage or plan:
+        return None
     aar = output / 'deal-embedding.aar'
     if not aar.is_file():
         raise SystemExit(f'standalone boundary: isolated build produced no AAR at {aar}')
@@ -394,8 +401,10 @@ def compile_demos(declarations):
         if target == 'tests':
             continue
         stamp = COMPILE_CACHE / f'{target}.sha256'
-        produced = (ROOT / f'build/{target}.apk').is_file()
-        if produced and stamp.is_file() and stamp.read_text().strip() == compile_key(declaration):
+        package = ROOT / f'build/{target}.apk'
+        produced = package.is_file()
+        expected = compile_key(declaration) + ':' + sha(package.read_bytes()) if produced else ''
+        if produced and stamp.is_file() and stamp.read_text().strip() == expected:
             continue
         pending.append(target)
     if pending:
@@ -413,7 +422,7 @@ def compile_demos(declarations):
                 produced.unlink(missing_ok=True)
         started = time.monotonic()
         try:
-            subprocess.run(['bash', 'demos/build.sh', *pending], cwd=ROOT, check=True, env=environment)
+            subprocess.run(['timeout', '--kill-after=2s', '30s', 'bash', 'demos/build.sh', *pending], cwd=ROOT, check=True, env=environment)
         finally:
             print(f'[boundary] demo packaging elapsed={time.monotonic()-started:.2f}s',
                   file=sys.stderr, flush=True)
@@ -421,7 +430,7 @@ def compile_demos(declarations):
             # A key is recorded only for a target whose package this build produced: a dropped or
             # skipped target is refused below instead of leaving a stamp that claims a compile.
             if declaration['target'] in pending and (ROOT / f'build/{declaration["target"]}.apk').is_file():
-                (COMPILE_CACHE / f'{declaration["target"]}.sha256').write_text(compile_key(declaration) + '\n')
+                (COMPILE_CACHE / f'{declaration["target"]}.sha256').write_text(compile_key(declaration) + ':' + sha((ROOT / f'build/{declaration["target"]}.apk').read_bytes()) + '\n')
     violations = []
     for declaration in declarations:
         target = declaration['target']
@@ -442,7 +451,8 @@ def undeclared_build_script_inputs(paths):
     violations = []
     for token in sorted(set(re.findall(r'\$ROOT/([A-Za-z0-9_./*-]+)', (ROOT / 'build.sh').read_text()))):
         token = token.rstrip('/')
-        if not token:
+        # These are output/coordination paths, not library source inputs.
+        if not token or token in ('build', 'build/.demos-build.lock'):
             continue
         if any(token == entry or token.startswith(entry + '/') or entry.startswith(token + '/')
                for entry in declared):
@@ -517,6 +527,25 @@ def negative_controls(declarations):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--target', choices=demo_targets(), help='prove one demo; full proof still requires all targets')
+    parser.add_argument('--prepare-stage', choices=['java_base','mechanisms','kotlin','generation','discovery','assistance_policy','logging','protocol','assistance','package_aar'], help='prepare one bounded isolated-library stage, not a passing boundary proof')
+    parser.add_argument('--plan', action='store_true', help='show isolated stage readiness and pending targets without builds')
+    args = parser.parse_args()
+    (ROOT/'build').mkdir(exist_ok=True)
+    lock = (ROOT/'build/.demos-build.lock').open('a')
+    if os.environ.get('DEAL_BUILD_LOCK_HELD') != str(ROOT):
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 75
+    os.environ['DEAL_BUILD_LOCK_HELD'] = str(ROOT)
+    if args.prepare_stage or args.plan:
+        android, aidl, _ = sdk_paths()
+        # Same isolated tree, tool wrappers and argument audit trail as the final proof.
+        isolated_digests(android, aidl, prepare_stage=args.prepare_stage, plan=args.plan)
+        print('Boundary preparation only: no proof recorded; each MISS needs its named stage.')
+        return 0
     if not AAR.is_file():
         raise SystemExit(f'standalone boundary: the packaged library AAR is absent at '
                          f'{AAR.relative_to(ROOT)}; build the library before this gate item')
@@ -562,7 +591,6 @@ def main():
             return 1
         CACHE.parent.mkdir(parents=True, exist_ok=True)
         CACHE.write_text(json.dumps({'key': key, 'canonical': canonical, 'isolated': isolated}, indent=2) + '\n')
-        shutil.rmtree(STAGE / 'output', ignore_errors=True)
         print(f'standalone boundary: isolated library build without demos/ or tests/ matches the packaged '
               f'AAR content digests; classes {isolated["classes"][:16]} assets {isolated["assets"][:16]}; '
               f'{len(paths)} declared input(s) and {len(result["invocations"])} build-tool path argument(s) '
@@ -571,6 +599,8 @@ def main():
     if excluded:
         print(f'standalone boundary: nondeterministic generated asset digest not claimed: {excluded}')
     declarations = demo_declarations()
+    if args.target:
+        declarations = [d for d in declarations if d['target'] == args.target]
     # The extraction the compile consumes must first be byte-identical to the packaged AAR, then every
     # demo target compiles and packages against it only. An input outside it, or a declared input that
     # disappeared, refuses the compile. A target whose validated inputs are unchanged keeps its proof.
@@ -588,7 +618,7 @@ def main():
     print(f'standalone boundary: {len(demo_compile_targets(declarations))} demo target(s) compiled and packaged '
           f'from the AAR extraction ({len(compiled)} rebuilt: {", ".join(compiled) or "none"})')
     negative_controls(declarations)
-    print('standalone boundary: PASS')
+    print('standalone boundary: selected target PASS (not full proof)' if args.target else 'standalone boundary: PASS')
     return 0
 
 
