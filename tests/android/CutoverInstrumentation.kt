@@ -14,7 +14,10 @@ class CutoverInstrumentation : Instrumentation() {
     private var imagesOnly=false
     private var tabsOnly=false
     private var timerOnly=false
-    override fun onCreate(arguments: Bundle?) { timerOnly=arguments?.getString("timer")=="true";targetsOnly=arguments?.getString("targets")=="true";providersOnly=arguments?.getString("providers")=="true";tabsOnly=arguments?.getString("tabs")=="true";scenarioInput=arguments?.getString("scenarios");replaySource=arguments?.getString("replay")=="true";imagesOnly=arguments?.getString("images")=="true";super.onCreate(arguments); start() }
+    private var constructionOnly=false
+    private var constructionMode:String?=null
+    private var storageOnly=false
+    override fun onCreate(arguments: Bundle?) { constructionMode=arguments?.getString("mode");constructionOnly=arguments?.getString("construction")=="true";storageOnly=arguments?.getString("storage")=="true";timerOnly=arguments?.getString("timer")=="true";targetsOnly=arguments?.getString("targets")=="true";providersOnly=arguments?.getString("providers")=="true";tabsOnly=arguments?.getString("tabs")=="true";scenarioInput=arguments?.getString("scenarios");replaySource=arguments?.getString("replay")=="true";imagesOnly=arguments?.getString("images")=="true";super.onCreate(arguments); start() }
     override fun onStart() {
         val result=Bundle()
         try {
@@ -29,8 +32,8 @@ class CutoverInstrumentation : Instrumentation() {
             fun questions(input:String)=JSONArray(input.substringAfter("\nISSUED QUESTIONS\n"))
             fun actions(tree:JSONObject):List<Pair<Int,String>> { val out=mutableListOf<Pair<Int,String>>();fun visit(node:JSONObject){val props=node.getJSONArray("props");for(i in 0 until props.length()){val prop=props.getJSONObject(i);if(prop.optString("kind")=="action")out.add(prop.getInt("actionSlot") to node.optString("component"))};val children=node.getJSONArray("children");for(i in 0 until children.length())visit(children.getJSONObject(i))};visit(tree);return out }
             val ordinary="""{"title":"Double calculation","inputs":[{"id":"value","label":"Value","kind":"count","measure":"count","value":3,"min":0,"max":99}],"constants":[],"requirements":[{"id":"retain","text":"Double the edited value","sources":["request"],"needs":["calculate"]}],"needs":[{"id":"calculate","type":"figure","words":"Double the edited value","reads":["value"],"spec":{"label":"Double","format":"count","unit":"","formula":"value * 2","example":{"inputs":{"value":3},"result":6}}}],"questions":[]}"""
-            val catalogue="""{"title":"Checklist","inputs":[],"constants":[],"requirements":[{"id":"retain","text":"Toggle items and summarize remaining","sources":["request"],"needs":["items","summary"]}],"needs":[{"id":"items","type":"content","words":"Toggle disclosed items","reads":[],"spec":{}},{"id":"summary","type":"content","words":"Completion and remaining counts","reads":["items"],"spec":{}}],"questions":[]}"""
-            for(mode in if(providersOnly)emptyList() else listOf("ordinary","catalogue","mixed","partial","syntax-recovery","gap-reader","money","time","lazy-formula")) {
+            val catalogue="""{"title":"Checklist","inputs":[],"constants":[],"requirements":[{"id":"retain","text":"Toggle items and summarize remaining","sources":["request"],"needs":["items","summary"]}],"needs":[{"id":"items","type":"content","words":"Toggle disclosed items","quote":"","reads":[],"spec":{}},{"id":"summary","type":"content","words":"Completion and remaining counts","reads":["items"],"spec":{}}],"questions":[]}"""
+            for(mode in if(providersOnly || storageOnly)emptyList() else (constructionMode?.let { require(it in listOf("ordinary","catalogue","mixed","partial","syntax-recovery","gap-reader","money","time","lazy-formula"));listOf(it) } ?: listOf("ordinary","catalogue","mixed","partial","syntax-recovery","gap-reader","money","time","lazy-formula"))) {
                 val stages=mutableListOf<String>()
                 val plan=JSONObject(if(mode=="catalogue")catalogue else ordinary)
                 if(mode=="lazy-formula") {
@@ -47,8 +50,8 @@ class CutoverInstrumentation : Instrumentation() {
                 val config=EmbeddingConfig("v08-construction-$mode",GenerationGatewayConfig("http://127.0.0.1:1/generate","fixture"),inference=InferenceProvider { request,cancellation ->
                     cancellation.check();stages.add(request.stage);check(request.operation.isNotBlank())
                     when(request.stage) {
-                        "planning"->plan.toString()
-                        "selection-first","selection-second","alignment"->{val issued=questions(request.input);val answers=JSONArray();for(i in 0 until issued.length()){val q=issued.getJSONObject(i);val id=q.getString("id");val opts=q.getJSONArray("options");val options=(0 until opts.length()).map{opts.getJSONObject(it).getString("id")};val selected=when{ id.startsWith("ownership_")->"authored";id.startsWith("formula_")->"formula";id.startsWith("units_")->"preserved";id=="calculate"->"part_calculate";id=="items"->"cat_items_checklist";id.startsWith("align_")->"summary";else->"unavailable"};answers.put(answer(id,selected,options))};JSONObject().put("answers",answers).toString()}
+                        "planning"->{check(request.diagnostics.isBlank()){"$mode planning: ${request.diagnostics}"};plan.toString()}
+                        "selection-first","selection-second","alignment"->{val issued=questions(request.input);val answers=JSONArray();for(i in 0 until issued.length()){val q=issued.getJSONObject(i);val id=q.getString("id");val opts=q.getJSONArray("options");val options=(0 until opts.length()).map{opts.getJSONObject(it).getString("id")};val selected=when{id.startsWith("ownership_")->"authored";id.startsWith("formula_")->"formula";id.startsWith("units_")->"preserved";id=="calculate"->"part_calculate";id=="items"->"cat_items_checklist";id=="align_summary"->"cat_summary_list_summary";else->"unavailable"};answers.put(answer(id,selected,options))};JSONObject().put("answers",answers).toString()}
                         "content"->"""{"sections":[{"need":"items","parameters":{"title":"Disclosed checklist 😀","items":[{"id":"first","label":"First item"},{"id":"second","label":"Second item","done":true}]}},{"need":"summary","parameters":{}}]}"""
                         "coverage"->{val issued=questions(request.input);JSONObject().put("answers",JSONArray((0 until issued.length()).map {answer(issued.getJSONObject(it).getString("id"),"covered",listOf("covered","missing"))})).toString()}
                         "custom-section"->{
@@ -66,7 +69,9 @@ class CutoverInstrumentation : Instrumentation() {
                     }
                 })
                 Embedding.open(targetContext,config).use { api ->
-                    val context=api.snapshot(WireType("record"),"{}")
+                    val itemType=WireType("record",fields=listOf(WireField("id",WireType("string",maximum=32)),WireField("label",WireType("string",maximum=128)),WireField("done",WireType("boolean"))))
+                    val schema=if(mode=="catalogue")WireType("record",fields=listOf(WireField("items",WireType("array",element=itemType,maximum=8)))) else WireType("record")
+                    val context=api.snapshot(schema,if(mode=="catalogue")"""{"items":[{"id":"first","label":"First item","done":false},{"id":"second","label":"Second item","done":true}]}""" else "{}")
                     val experience=api.generate(api.request("Construction fixture","Double the edited value; toggle First item and Second item; retain extra text",context))
                     val source=api.source(experience);check(!source.deal.contains("f_whole_"));check(!stages.contains("custom-whole"));check(experience.attempts==1)
                     if(mode=="catalogue"){check(source.deal.contains("f_section_items_"));check(source.dealui.contains("Disclosed checklist 😀"));check(stages.contains("alignment"))}
@@ -74,23 +79,29 @@ class CutoverInstrumentation : Instrumentation() {
                     if(mode=="mixed" || mode=="syntax-recovery")check(source.deal.contains("f_gap_Change") && source.deal.contains("f_parts_value"))
                     if(mode=="partial")check(source.dealui.contains("notice_extra"))
                     val session=api.run(experience);val before=api.next(session,"").snapshot;check(before.fault.isEmpty());val slot=actions(before.tree).first().first
-                    api.dispatch(session,slot,if(mode=="catalogue")null else "9")
+                    api.dispatch(session,slot,if(mode=="catalogue")"0" else "9")
                     val after=api.next(session,"").snapshot;check(after.version>before.version && after.fault.isEmpty())
                     if(mode=="catalogue")check(after.tree.toString().contains("remaining: 0")) else {
-                        check(after.tree.toString().contains(if(mode=="time")"Double: 00:18" else "Double: 18"))
+                        fun hasResult(tree:JSONObject,value:Double):Boolean = ViewTree.nodes(tree).any { node ->
+                            val component=if(mode=="time")"ClockText" else "NumberText"
+                            val field=if(mode=="time")"minutes" else "value"
+                            node.optString("component").substringAfterLast('.')==component && ViewTree.number(node,field)==value
+                        }
+                        check(hasResult(after.tree,18.0)){"mode=$mode tree=${after.tree}"}
                         if(mode=="gap-reader")check(after.tree.toString().contains("Borrowed result") && after.tree.toString().contains("Above ten"))
-                        api.dispatch(session,slot,"invalid");val invalid=api.next(session,"").snapshot;check(invalid.fault.isEmpty());check(invalid.tree.toString().contains("invalid"));check(!invalid.tree.toString().contains("Double: 18"));if(mode=="gap-reader")check(!invalid.tree.toString().contains("Borrowed result"))
+                        api.dispatch(session,slot,"invalid");val invalid=api.next(session,"").snapshot;check(invalid.fault.isEmpty());check(invalid.tree.toString().contains("invalid"));check(!hasResult(invalid.tree,18.0));if(mode=="gap-reader")check(!invalid.tree.toString().contains("Borrowed result"))
                         if(mode=="money")for(value in listOf("1.5","9007199254740992","4503599627370496")) {
                             api.dispatch(session,slot,value);val invalidMoney=api.next(session,"").snapshot
-                            check(invalidMoney.fault.isEmpty() && !invalidMoney.tree.toString().contains("Double:")){"Invalid money/overflow published: $value"}
+                            check(invalidMoney.fault.isEmpty() && ViewTree.nodes(invalidMoney.tree).none { it.optString("component").substringAfterLast('.')=="NumberText" }){"Invalid money/overflow published: $value"}
                         }
-                        api.dispatch(session,slot,"4");val restored=api.next(session,"").snapshot;check(restored.fault.isEmpty() && restored.tree.toString().contains(if(mode=="time")"Double: 00:08" else "Double: 8"))
+                        api.dispatch(session,slot,"4");val restored=api.next(session,"").snapshot;check(restored.fault.isEmpty() && hasResult(restored.tree,8.0))
                     }
                     api.close(session);api.forget(experience)
                 }
             }
             // Real compiled custom effect route; only the external provider is mocked.
-            for(providerMode in listOf("custom","scalar","scalar-argument")) {
+            if(constructionOnly){result.putString("result","PASS: construction ${constructionMode ?: "all modes"}");finish(-1,result);return}
+            for(providerMode in if(storageOnly)emptyList() else listOf("custom","scalar","scalar-argument")) {
             var providerCalls=0;var failProvider=false
             val provider= nativeCapabilities(CapabilityContract("host/probe","Explicit fixture read",listOf(CapabilityFunction("read","Return fixture value",if(providerMode=="scalar-argument")listOf(Parameter("value",WireType("number",minimumNumber=0.0,maximumNumber=100.0)))else emptyList(),WireType("number")))) , mapOf("read" to { args:JSONArray->providerCalls++;check(!failProvider){"Fixture read failure"};if(providerMode=="scalar-argument")args.getDouble(0)*2 else 42 }))
             val providerStages=mutableListOf<String>()
@@ -98,8 +109,8 @@ class CutoverInstrumentation : Instrumentation() {
                 providerStages.add(request.stage)
                 when(request.stage) {
                     "planning"->if(providerMode=="scalar-argument")"""{"title":"Scalar argument","inputs":[{"id":"value","label":"Value","kind":"count","measure":"count","value":21,"min":0,"max":100}],"constants":[],"requirements":[],"needs":[{"id":"read","type":"live","words":"Read actual result for value","reads":["value"],"spec":{"label":"Scalar","measure":"number","unit":"","query":"host/probe.read"}},{"id":"double","type":"figure","words":"Double result","reads":["read"],"spec":{"label":"Doubled","format":"plain","unit":"","formula":"read*2","example":{"inputs":{"read":42},"result":84}}}],"questions":[]}""" else if(providerMode=="custom")"""{"title":"Explicit provider","inputs":[],"constants":[],"requirements":[],"needs":[{"id":"read","type":"other","words":"Explicitly load the provider value","reads":[],"spec":{}}],"questions":[]}""" else """{"title":"Scalar provider","inputs":[],"constants":[],"requirements":[],"needs":[{"id":"read","type":"live","words":"Explicitly read the scalar value","reads":[],"spec":{"label":"Scalar","measure":"number","unit":"","query":"host/probe.read"}},{"id":"double","type":"figure","words":"Double the actual result","reads":["read"],"spec":{"label":"Doubled","format":"plain","unit":"","formula":"read*2","example":{"inputs":{"read":42},"result":84}}}],"questions":[]}"""
-                    "selection-first","selection-second"->{val issued=questions(request.input);val answers=JSONArray();for(i in 0 until issued.length()){val q=issued.getJSONObject(i);val opts=q.getJSONArray("options");val options=(0 until opts.length()).map{opts.getJSONObject(it).getString("id")};answers.put(answer(q.getString("id"),when{providerMode=="custom" && "unavailable" in options->"unavailable";q.getString("id").startsWith("real_")->"read";q.getString("id").startsWith("formula_")->"formula";q.getString("id").startsWith("units_")->"preserved";q.getString("id").startsWith("argument_")->"bound";q.getString("id")=="read"->"scalar_0";q.getString("id")=="double"->"part_double";else->options.last()},options))};JSONObject().put("answers",answers).toString()}
-                    "custom-whole"->"""<classes>import * as probe from "host/probe"; export class Load {} export class Loaded { value:string; }</classes><fields>value: string = "Unavailable";</fields><functions>export function start(state:AppState,action:Load):AppState {return {value:state.value};} export async function load(state:AppState,action:Load):Promise<Loaded> {let value:number=await probe.read();return {value:JSON.stringify(value) as string};} export function loaded(state:AppState,action:Loaded):AppState {return {value:action.value};}</functions><view>import * as app from "./experience";import * as ui from "./platform.dealui-pack";export view Panel(state:app.AppState):View {ui.Column(){ui.Button(text:"Load",onClick:action app.Load {}) ui.Text(text:state.value)}}</view>"""
+                    "selection-first","selection-second","alignment"->{val issued=questions(request.input);val answers=JSONArray();for(i in 0 until issued.length()){val q=issued.getJSONObject(i);val opts=q.getJSONArray("options");val options=(0 until opts.length()).map{opts.getJSONObject(it).getString("id")};answers.put(answer(q.getString("id"),when{providerMode=="custom" && "unavailable" in options->"unavailable";q.getString("id").startsWith("real_")->"read";q.getString("id").startsWith("formula_")->"formula";q.getString("id").startsWith("units_")->"preserved";q.getString("id").startsWith("argument_")->"bound";q.getString("id")=="read"->"scalar_0";q.getString("id")=="double"->"part_double";else->options.last()},options))};JSONObject().put("answers",answers).toString()}
+                    "custom-whole"->"""<classes>import * as probe from "host/probe"; export class Load {sequence:number;} export class Loaded { value:string; }</classes><fields>value: string = "Unavailable";</fields><functions>export function start(state:AppState,action:Load):AppState {return {value:state.value};} export async function load(state:AppState,action:Load):Promise<Loaded> {let value:number=await probe.read();return {value:JSON.stringify(value) as string};} export function loaded(state:AppState,action:Loaded):AppState {return {value:action.value};}</functions><view>import * as app from "./experience";import * as ui from "./platform.dealui-pack";export view Panel(state:app.AppState):View {ui.Column(){ui.Button(text:"Load",value:0,onClick:action app.Load {sequence:payload}) ui.Text(text:state.value)}}</view>"""
                     "coverage"->{val issued=questions(request.input);JSONObject().put("answers",JSONArray((0 until issued.length()).map {answer(issued.getJSONObject(it).getString("id"),"covered",listOf("covered","missing"))})).toString()}
                     else->error("Unexpected provider stage ${request.stage}: ${request.diagnostics}")
                 }
@@ -109,39 +120,41 @@ class CutoverInstrumentation : Instrumentation() {
                 val experience=api.generate(api.request("Provider fixture","Explicitly load the provider value",api.snapshot(WireType("record"),"{}")))
                 check(providerCalls==0){"Isolated checking or preparation read a provider"}
                 val session=api.run(experience);val initial=api.next(session,"").snapshot;check(providerCalls==0)
-                api.dispatch(session,actions(initial.tree).first{it.second=="ui.Button"}.first,null)
+                fun load(tree:JSONObject) { val button=ViewTree.nodes(tree).first{it.optString("component")=="ui.Button"};api.dispatch(session,ViewTree.actionSlot(button)!!,ViewTree.number(button,"value")?.toString()) }
+                fun doubled(tree:JSONObject,value:Double)=ViewTree.nodes(tree).any { it.optString("component")=="ui.NumberText" && ViewTree.number(it,"value")==value }
+                load(initial.tree)
                 val deadline=android.os.SystemClock.elapsedRealtime()+5000
                 var updated=api.next(session,"").snapshot
                 while(!updated.tree.toString().contains(if(providerMode!="custom")"84" else "42") && android.os.SystemClock.elapsedRealtime()<deadline){Thread.sleep(20);updated=api.next(session,"").snapshot}
                 check(updated.version>initial.version && updated.fault.isEmpty() && updated.tree.toString().contains(if(providerMode!="custom")"84" else "42")){"Compiled provider result not committed: ${updated.json()}"}
                 check(providerCalls==1)
-                if(providerMode!="custom")check(updated.tree.toString().contains("Doubled: 84"))
+                if(providerMode!="custom")check(doubled(updated.tree,84.0))
                 if(providerMode=="scalar-argument") {
                     api.dispatch(session,actions(updated.tree).first{it.second=="ui.TextField"}.first,"20")
-                    val changed=api.next(session,"").snapshot;check(!changed.tree.toString().contains("Doubled:"))
+                    val changed=api.next(session,"").snapshot;check(!doubled(changed.tree,84.0))
                     check(providerCalls==1){"Input edit automatically replayed provider read"}
-                    api.dispatch(session,actions(changed.tree).first{it.second=="ui.Button"}.first,null)
+                    load(changed.tree)
                     val until=android.os.SystemClock.elapsedRealtime()+5000
                     var latest=api.next(session,"").snapshot
-                    while(!latest.tree.toString().contains("Doubled: 80") && android.os.SystemClock.elapsedRealtime()<until){Thread.sleep(20);latest=api.next(session,"").snapshot}
-                    check(latest.fault.isEmpty() && latest.tree.toString().contains("Doubled: 80") && providerCalls==2)
+                    while(!doubled(latest.tree,80.0) && android.os.SystemClock.elapsedRealtime()<until){Thread.sleep(20);latest=api.next(session,"").snapshot}
+                    check(latest.fault.isEmpty() && doubled(latest.tree,80.0) && providerCalls==2)
                     api.revoke("host/probe")
-                    api.dispatch(session,actions(latest.tree).first{it.second=="ui.Button"}.first,null)
+                    load(latest.tree)
                     var failed=api.next(session,"").snapshot
                     val deniedUntil=android.os.SystemClock.elapsedRealtime()+5000
                     while(!failed.tree.toString().contains("not granted") && android.os.SystemClock.elapsedRealtime()<deniedUntil){Thread.sleep(20);failed=api.next(session,"").snapshot}
-                    check(failed.fault.isEmpty() && !failed.tree.toString().contains("Doubled:") && providerCalls==2)
+                    check(failed.fault.isEmpty() && !doubled(failed.tree,80.0) && providerCalls==2)
                     api.grant("host/probe");failProvider=true
-                    api.dispatch(session,actions(failed.tree).first{it.second=="ui.Button"}.first,null)
+                    load(failed.tree)
                     val failureUntil=android.os.SystemClock.elapsedRealtime()+5000
                     while(!failed.tree.toString().contains("Fixture read failure") && android.os.SystemClock.elapsedRealtime()<failureUntil){Thread.sleep(20);failed=api.next(session,"").snapshot}
-                    check(failed.fault.isEmpty() && failed.tree.toString().contains("Fixture read failure") && !failed.tree.toString().contains("Doubled:") && providerCalls==3)
+                    check(failed.fault.isEmpty() && failed.tree.toString().contains("Fixture read failure") && !doubled(failed.tree,80.0) && providerCalls==3)
                     Thread.sleep(100);check(providerCalls==3){"Failed provider read automatically retried"}
                     failProvider=false
-                    api.dispatch(session,actions(failed.tree).first{it.second=="ui.Button"}.first,null)
+                    load(failed.tree)
                     val retryUntil=android.os.SystemClock.elapsedRealtime()+5000
-                    while(!failed.tree.toString().contains("Doubled: 80") && android.os.SystemClock.elapsedRealtime()<retryUntil){Thread.sleep(20);failed=api.next(session,"").snapshot}
-                    check(failed.fault.isEmpty() && failed.tree.toString().contains("Doubled: 80") && providerCalls==4)
+                    while(!doubled(failed.tree,80.0) && android.os.SystemClock.elapsedRealtime()<retryUntil){Thread.sleep(20);failed=api.next(session,"").snapshot}
+                    check(failed.fault.isEmpty() && doubled(failed.tree,80.0) && providerCalls==4)
                 }
                 api.close(session);api.forget(experience)
             }

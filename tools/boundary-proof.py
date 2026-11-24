@@ -200,7 +200,12 @@ def isolated_digests(android, aidl, prepare_stage=None, plan=False):
     print('[boundary] isolated library build starting', file=sys.stderr, flush=True)
     started = time.monotonic()
     try:
-        subprocess.run(['timeout', '--kill-after=2s', '35s', 'bash', 'build.sh'], cwd=stage, env=environment, check=True)
+        # Preparation executes one compiler stage, not a whole proof. Kotlin's measured
+        # active-analysis path needs more than the cached-proof bound on this toolchain.
+        seconds = 65 if prepare_stage == 'kotlin' else 35
+        if prepare_stage == 'kotlin':
+            environment['DEAL_BUILD_STAGE_SECONDS'] = '60'
+        subprocess.run(['timeout', '--kill-after=2s', f'{seconds}s', 'bash', 'build.sh'], cwd=stage, env=environment, check=True)
     finally:
         print(f'[boundary] isolated library build elapsed={time.monotonic()-started:.2f}s',
               file=sys.stderr, flush=True)

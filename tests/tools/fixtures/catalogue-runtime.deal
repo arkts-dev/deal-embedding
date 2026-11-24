@@ -93,7 +93,7 @@ export async function aggregate(): Promise<string> {
 }
 // Readers over typed publishers: the query box filters both lists, the selected row feeds the detail
 // view, and the checklist counts feed the summary and the progress line.
-export async function lists(): Promise<string> {
+async function listGroup(trips: boolean): Promise<string> {
   let items: Piece[] = [
     {need:"filter",kind:"filter_box",json:"{\"title\":\"Filter\"}"},
     {need:"search",kind:"search_list",json:"{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\",\"detail\":\"first\"},{\"id\":\"b\",\"label\":\"Beta\",\"detail\":\"second\"}]}"},
@@ -118,8 +118,17 @@ export async function lists(): Promise<string> {
     link("trip","start","fuel","goal"), link("trip","deadline","fuel","goal"),
     link("trip3","start","fuel","goal")
   ];
-  return await compose(items,links);
+  let selected: Piece[] = []; let names: string[] = [];
+  for (let item of items) {
+    let trip: boolean = s.contains(["trip","trip2","trip3","fuel"],item.need);
+    if (trip === trips) { selected[selected.length] = item; names[names.length] = item.need; }
+  }
+  let connected: Link[] = [];
+  for (let edge of links) { if (s.contains(names,edge.reader) && s.contains(names,edge.writer)) { connected[connected.length] = edge; } }
+  return await compose(selected,connected);
 }
+export async function lists(): Promise<string> { return await listGroup(false); }
+export async function trips(): Promise<string> { return await listGroup(true); }
 // The same countdown with an issued end body and an issued row filter: the body replaces the default
 // in place, changes behavior and leaves the signature and the parameter values alone.
 export async function issuedBodies(): Promise<string> {

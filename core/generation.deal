@@ -38,7 +38,7 @@ export async function generate(request: GenerationInput): Promise<GenerationResu
   if (classified.classification === "whole") {
     // A whole classification writes one complete Surface without a plan and never enters the
     // ordinary stages, even when an ordinary composition would have been runnable.
-    let surfaceInput: writing.Input = {original:request.intent,facts:disclosed,contracts:contracts,specification:assets.writingSpecification(),language:assets.language(),pack:assets.pack(),target:target,plan:null,answers:[],wholeSurface:true,providers:providers,clockIntervalMs:clockIntervalMs,clockToleranceMs:clockToleranceMs};
+    let surfaceInput: writing.Input = {original:request.intent,facts:disclosed,contracts:contracts,specification:assets.writingSpecification(),language:assets.language(),pack:assets.pack(),target:target,plan:null,answers:[],wholeSurface:true,providers:providers,registry:bindings.create(request.capabilities),clockIntervalMs:clockIntervalMs,clockToleranceMs:clockToleranceMs};
     let surface: writing.Result = await writing.run(surfaceInput);
     return {candidateId:surface.candidateId,attempts:surface.attempts,diagnostics:surface.diagnostics,origin:"generated",classification:trace,classificationReason:reason};
   }
@@ -47,7 +47,7 @@ export async function generate(request: GenerationInput): Promise<GenerationResu
   // A part classification enters the plan as exactly one scene need that reads the plan inputs.
   if (result.plan !== null && classified.classification === "part") { classification.scene(result.plan as plans.Plan,request.intent); }
   let context: selection.Context = {original:request.intent,facts:disclosed,contracts:contracts,specification:assets.selectionSpecification()};
-  let writingInput: writing.Input = {original:request.intent,facts:disclosed,contracts:contracts,specification:assets.writingSpecification(),language:assets.language(),pack:assets.pack(),target:input.target,plan:result.plan,answers:result.answers,providers:providers,clockIntervalMs:clockIntervalMs,clockToleranceMs:clockToleranceMs};
+  let writingInput: writing.Input = {original:request.intent,facts:disclosed,contracts:contracts,specification:assets.writingSpecification(),language:assets.language(),pack:assets.pack(),target:input.target,plan:result.plan,answers:result.answers,providers:providers,registry:bindings.create(request.capabilities),clockIntervalMs:clockIntervalMs,clockToleranceMs:clockToleranceMs};
   if (result.plan !== null) {
     let ordinary: construction.Result = await construction.run(writingInput,context,result.plan as plans.Plan,bindings.create(request.capabilities));
     if (ordinary.runnable) { return {candidateId:ordinary.candidateId,attempts:ordinary.attempts,diagnostics:ordinary.diagnostics,origin:"generated",classification:trace,classificationReason:reason}; }

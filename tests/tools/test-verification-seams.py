@@ -365,6 +365,11 @@ def observe(seam):
         if result.returncode == 0:
             raise AssertionError(f'{seam["id"]}: owning test stayed green after breaking {seam["path"]}')
         output = result.stdout + result.stderr
+        evidence = ROOT / 'build/verification/seams'
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / f'{seam["id"]}-{time.time_ns()}.log').write_text(output)
+        if 'returned non-zero exit status 124' in output or 'returned non-zero exit status 137' in output:
+            raise AssertionError(f'{seam["id"]}: nested timeout, not evidence of the broken rule')
         expected = seam.get('expect')
         if expected and expected not in output:
             raise AssertionError(f'{seam["id"]}: owning test failed for a reason other than the broken rule; '

@@ -44,7 +44,7 @@ const catalogueSectionsPlan={title:'Facts',inputs:[],constants:[],requirements:[
 const escapedCell='sh"q\\b\n\u{1F600}\u0001end';
 const catalogueReadonlyPlan={title:'Read-only sections',inputs:[],constants:[],requirements:[{id:'preserve',text:'Show the disclosed table, rail, charts and facts',sources:['request'],needs:['table','rail','bars','trend','facts','details']}],needs:[{id:'table',type:'content',words:'Show the disclosed table',quote:'',reads:[],spec:{}},{id:'rail',type:'content',words:'Show the disclosed timeline',quote:'',reads:[],spec:{}},{id:'bars',type:'content',words:'Show the disclosed bars',quote:'',reads:[],spec:{}},{id:'trend',type:'content',words:'Show the disclosed trend',quote:'',reads:[],spec:{}},{id:'facts',type:'content',words:'Show the disclosed facts',quote:'',reads:[],spec:{}},{id:'details',type:'content',words:'Show the disclosed details',quote:'',reads:[],spec:{}}],questions:[]};
 // Every cell, rail title and detail, chart label with its decimal spelling and fact is disclosed.
-const catalogueReadonlyFacts={headers:['Item','Amount','Note'],table:[{item:'Rent',amount:'40',note:'paid'},{item:'Food',amount:'2.5'}],rail:[{at:'Standup',note:'daily',minute:570},{at:'Review',minute:600}],chart:[{day:'Mon',spent:0},{day:'Tue',spent:2.5},{day:'Wed',spent:10},{at:'a',delta:-2},{at:'b',delta:0.25},{at:'c',delta:3}],notes:[{label:'first',value:'items'},{label:'second',value:'done'}]};
+const catalogueReadonlyFacts={headers:['Item','Amount','Note'],table:[{item:'Rent',amount:'40',note:'paid'},{item:'Food',amount:'2.5',note:escapedCell}],rail:[{at:'Standup',note:'daily',minute:570},{at:'Review',minute:600}],chart:[{day:'Mon',spent:0},{day:'Tue',spent:2.5},{day:'Wed',spent:10},{at:'a',delta:-2},{at:'b',delta:0.25},{at:'c',delta:3}],notes:[{label:'first',value:'items'},{label:'second',value:'done'}]};
 // Empty sections carry no row, so they are admitted and must compile as their explanation alone.
 const catalogueReadonlyEmptyPlan={title:'Empty sections',inputs:[],constants:[],requirements:[{id:'preserve',text:'Explain the empty table, rail and chart',sources:['request'],needs:['table','rail','bars']}],needs:[{id:'table',type:'content',words:'Show the disclosed table',quote:'',reads:[],spec:{}},{id:'rail',type:'content',words:'Show the disclosed timeline',quote:'',reads:[],spec:{}},{id:'bars',type:'content',words:'Show the disclosed bars',quote:'',reads:[],spec:{}}],questions:[]};
 // One disclosed row and one invented cell: the predicate at its production call site must refuse the
@@ -56,7 +56,7 @@ const catalogueUndisclosedFacts={headers:['Item','Amount','Note'],table:[{item:'
 // A need whose fill answer does not match its declared rows: the fill decoder refuses the instance, so
 // the located parameter refusal (never a disclosure or coverage verdict) is what the shipped notice
 // carries for that need.
-const fixtureFacts='{"items":[{"id":"first","label":"First item"},{"id":"second","label":"Second item","done":true}]}';
+const fixtureFacts=JSON.stringify({items:[{id:'first',label:'First item'},{id:'second',label:'Second item',done:true}],notes:[{label:'first',value:'items'},{label:'second',value:'done'}]});
 const fixturePlan={title:'Editable calculation',inputs:[],constants:[],requirements:[{id:'preserve',text:'Double the edited value',sources:['request'],needs:['calculate']}],needs:[{id:'calculate',type:'other',words:'Double the edited value',reads:[],spec:{}}],questions:[]};
 // An action need whose trigger the plan left open (`other`): the second Select batch must decide it
 // before any writer sees the plan (docs/spec-v0.8.md:260).
@@ -83,12 +83,14 @@ async function run(mode){
  // Each mode compiles into a clean staging directory: no declaration or module from another mode survives.
  fs.rmSync(path.join(root,'build/v08-cutover/composed-executable'),{recursive:true,force:true});
  // The production host's capabilityDeclarations text for the one contract this mode declares.
- const productionPrompt=mode==='scalar-read'?cp.execFileSync('java',['-cp',javaWithKotlin,'ProviderDeclaration','prompt'],{encoding:'utf8'}).trim():'';
+ const hasProvider=['scalar-read','classified-whole','success'].includes(mode);
+ const authoredRegions=hasProvider?regions.replace('<classes>','<classes>import * as probe from "host/probe";'):regions;
+ const productionPrompt=hasProvider?cp.execFileSync('java',['-cp',javaWithKotlin,'ProviderDeclaration','prompt'],{encoding:'utf8'}).trim():'';
  const chosenPlan=mode==='units-rejected'?wrongUnitPlan:mode==='events-open'?eventsOpenPlan:mode.startsWith('events')?eventsPlan:mode==='classified-part-gap'?mixedPlan:['ordinary','repair','construction-failure','store-reducer','assembly-imports'].includes(mode)||mode.startsWith('admission-')||mode.startsWith('classified-')?ordinaryPlan:mode==='catalogue'?cataloguePlan:mode==='catalogue-empty'?catalogueEmptyPlan:mode==='catalogue-sections'?catalogueSectionsPlan:mode==='catalogue-readonly'?catalogueReadonlyPlan:mode==='catalogue-readonly-empty'?catalogueReadonlyEmptyPlan:mode==='catalogue-undisclosed'?catalogueUndisclosedPlan:mode==='catalogue-refused'?catalogueUndisclosedPlan:mode==='scalar-read'?scalarPlan:mode==='alignment-once'?alignmentOncePlan:mode.startsWith('alignment')?alignmentPlan:['mixed','partial'].includes(mode)?mixedPlan:fixturePlan;
  const context=vm.createContext({sources,frozenTarget});
  for(const name of ['sandbox.js','generation-contracts.js','protocol-contracts.js','protocol-host.js','generation-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),context);
  const intent=mode.startsWith('classified-')?'Let the user draw freely on the canvas':'Double the edited value';
- vm.runInContext(`protocolContexts.fixture={value:${JSON.stringify(mode==='catalogue-readonly'?JSON.stringify(catalogueReadonlyFacts):mode==='catalogue-undisclosed'?JSON.stringify(catalogueUndisclosedFacts):mode==='catalogue-refused'?JSON.stringify(catalogueUndisclosedFacts):fixtureFacts)},schema:{kind:'record',fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0}};const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));runGeneration(factories,{intent:${JSON.stringify(mode==='catalogue-readonly'?'Double the edited value '+escapedCell:intent)},context:{id:'fixture'},target:frozenTarget,clockIntervalMs:1000,clockToleranceMs:2000,capabilities:${mode==='scalar-read'?JSON.stringify([providerContract]):'[]'}});`,context);
+ vm.runInContext(`protocolContexts.fixture={value:${JSON.stringify(mode==='catalogue-readonly'?JSON.stringify(catalogueReadonlyFacts):mode==='catalogue-undisclosed'?JSON.stringify(catalogueUndisclosedFacts):mode==='catalogue-refused'?JSON.stringify(catalogueUndisclosedFacts):fixtureFacts)},schema:{kind:'record',fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0}};const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));runGeneration(factories,{intent:${JSON.stringify(mode==='catalogue-readonly'?'Double the edited value '+escapedCell:intent)},context:{id:'fixture'},target:frozenTarget,clockIntervalMs:1000,clockToleranceMs:2000,capabilities:${hasProvider?JSON.stringify([providerContract]):'[]'}});`,context);
  let asks=[],checks=0,issued=0,editSeen=false,discarded=0,isolatedStarts=0,acceptedSource=null,checkingContext=null,classificationAsks=0,surfaceAsks=0,alignmentAsks=0,alignmentQuestions=[];
  for(let turn=0;turn<2000;turn++){
   await new Promise(resolve=>setImmediate(resolve));
@@ -271,7 +273,7 @@ async function run(mode){
    }
   }
   else if(['ordinary','repair','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','catalogue-refused','scalar-read','mixed','partial','units-rejected'].includes(mode)) {
-    assert.equal(snapshot.error,null,mode+' '+JSON.stringify(snapshot.error));assert(snapshot.result.candidateId);assert(checks>=1);
+    assert.equal(snapshot.error,null,mode+' '+JSON.stringify(snapshot.error));assert(snapshot.result.candidateId,mode+' '+JSON.stringify(snapshot.result));assert(checks>=1);
     assert(!asks.some(r=>r.stage==='custom-whole'),'Runnable ordinary result must never enter whole writing: '+mode+' '+JSON.stringify(asks.map(r=>r.stage)));
     if(mode==='repair'){assert.equal(checks,2);assert.equal(snapshot.result.attempts,2,'a failed check plus an accepted repair is two attempts');assert.equal(asks.filter(r=>r.stage==='assembled-edit').length,1);}
     if(mode==='ordinary'){assert.equal(checks,1);assert.equal(snapshot.result.attempts,1,'candidate checks are counted as attempts');assert.deepEqual(asks.map(r=>r.stage),['planning','selection-first','selection-second','coverage']);}
@@ -347,7 +349,7 @@ async function run(mode){
     case 'embedding/construction-identity':value='issued-'+(++issued);break;
     case 'embedding/policy-data':
      if(request.function==='catalogJson')value=JSON.stringify(request.args[0]);
-     else if(request.function==='capabilityDeclarations'){assert.deepEqual(request.args[0],mode==='scalar-read'?[providerContract]:[]);const reply=request.args[0].map(c=>'// '+c.module+'\n'+declaration(c)).join('\n');if(productionPrompt)assert.equal(reply,productionPrompt,'the capability declarations equal the production host text');value=reply;}
+     else if(request.function==='capabilityDeclarations'){assert.deepEqual(request.args[0],hasProvider?[providerContract]:[]);const reply=request.args[0].map(c=>'// '+c.module+'\n'+declaration(c)).join('\n');if(productionPrompt)assert.equal(reply,productionPrompt,'the capability declarations equal the production host text');value=reply;}
      else if(request.function==='sha256')value=crypto.createHash('sha256').update(request.args[0]).digest('hex');
      else throw Error('Unexpected policy data');break;
     case 'embedding/inference':{
@@ -385,7 +387,7 @@ async function run(mode){
      }
      else if(r.stage==='surface-whole'){
       surfaceAsks++;assert.equal(r.maxTokens,14000);assert(r.input.includes('one complete Surface'));
-      value={content:regions,finish:'stop',refusal:''};
+      value={content:authoredRegions,finish:'stop',refusal:''};
      }
      else if(r.stage==='planning'){assert(r.input.includes('\nFROZEN TARGET\n'+frozenTarget+'\n'));value={content:JSON.stringify(chosenPlan),finish:'stop',refusal:''};}
      else if(['selection-first','selection-second'].includes(r.stage)) {
@@ -417,8 +419,8 @@ async function run(mode){
      }
      else if(r.stage==='content') {const sections=mode==='catalogue-refused'?[{need:'table',parameters:{headers:['Item','Amount','Note'],rows:[['Rent','40']]}},{need:'watch',parameters:{message:'Highlighted message'}}]:mode==='catalogue-readonly'?[{need:'table',parameters:{title:'Disclosed table',headers:['Item','Amount','Note'],rows:[['Rent','40','paid'],['Food','2.5',escapedCell]]}},{need:'rail',parameters:{title:'Disclosed rail',rows:[{minute:570,title:'Standup',detail:'daily'},{minute:600,title:'Review'}]}},{need:'bars',parameters:{points:[{label:'Mon',value:0},{label:'Tue',value:2.5},{label:'Wed',value:10}],maximum:10}},{need:'trend',parameters:{points:[{label:'a',value:-2},{label:'b',value:0.25},{label:'c',value:3}],minimum:-3,maximum:3}},{need:'facts',parameters:{values:[{label:'first',value:'items'}]}},{need:'details',parameters:{items:[{label:'second',value:'done'}]}}]:mode==='catalogue-readonly-empty'?[{need:'table',parameters:{title:'Empty table',headers:['Item','Amount','Note'],rows:[]}},{need:'rail',parameters:{title:'Empty rail',rows:[]}},{need:'bars',parameters:{title:'Empty bars',points:[],maximum:4}}]:mode==='catalogue-undisclosed'?[{need:'table',parameters:{title:'Fabricated table',headers:['Item','Amount','Note'],rows:[['Rent','40','paid'],['Food','2.5','invented']]}},{need:'watch',parameters:{message:'Highlighted message'}}]:mode==='catalogue-sections'?[{need:'facts',parameters:{title:'Facts',subtitle:'Disclosed',values:[{label:'first',value:'items'}]}},{need:'watch',parameters:{message:'Highlighted message'}},{need:'details',parameters:{items:[{label:'second',value:'done'}]}}]:mode==='catalogue-empty'?[{need:'items',parameters:{items:[]}},{need:'facts',parameters:{values:[]}}]:(mode.startsWith('alignment'))?alignmentSections.filter(section=>['items','extra'].includes(section.need)||(mode==='alignment-rounds'&&section.need==='summary')):[{need:'items',parameters:{title:'Disclosed checklist',items:[{id:'first',label:'First item'},{id:'second',label:'Second item',done:true}]}},{need:'summary',parameters:{}},{need:'choice',parameters:{labels:['Alpha','Beta']}}];value={content:JSON.stringify({sections}),finish:'stop',refusal:''};}
      else if(r.stage==='custom-section'){assert.equal(r.maxTokens,['classified-part','classified-part-gap'].includes(mode)?7000:6000,mode+' custom-section tokens '+r.ask+' '+r.diagnostics);assert(r.input.includes('Write only a custom section'));value={content:['classified-part','classified-part-gap'].includes(mode)?sceneRegions:mode==='store-reducer'?storeRegions:mode==='assembly-imports'?importRegions:['partial','units-rejected','catalogue-undisclosed','catalogue-refused'].includes(mode)||mode.startsWith('events')||mode.startsWith('alignment')?'':regions,finish:'stop',refusal:''};}
-     else if(r.stage==='assembled-edit') {const revision=JSON.parse(r.input.split('\nCURRENT ISSUED SOURCE REVISION\n')[1].split('\nRepair only ')[0]);assert.equal(r.maxTokens,2000);value={content:JSON.stringify({revision:revision.revision,digest:revision.digest,edits:[{file:'dealui',search:'f_parts_Panel(state: state)',replace:'f_parts_Panel(state: state)\n    ui.Text(text: "Source repaired")'}]}),finish:'stop',refusal:''};}
-     else if(r.stage==='custom-whole'){assert.equal(r.maxTokens,8000);value={content:regions,finish:'stop',refusal:''};}
+     else if(r.stage==='assembled-edit') {const revision=JSON.parse(r.input.split('\nCURRENT ISSUED SOURCE REVISION\n')[1].split('\nRepair only ')[0]);assert.equal(r.maxTokens,2000);value={content:JSON.stringify({revision:revision.revision,digest:revision.digest,edits:[{file:'dealui',search:'label: "Value"',replace:'label: "Repaired value"'}]}),finish:'stop',refusal:''};}
+     else if(r.stage==='custom-whole'){assert.equal(r.maxTokens,8000);value={content:authoredRegions,finish:'stop',refusal:''};}
      else if(r.stage==='custom-edit'){
       const marker='\nCURRENT ISSUED SOURCE REVISION\n';const revision=JSON.parse(r.input.split(marker)[1].split('\nReturn only ')[0]);
       assert.equal(r.diagnostics,'FIXTURE_CHECK: retain exact pair and revise label');assert.equal(revision.digest,crypto.createHash('sha256').update(JSON.stringify(revision.source)).digest('hex'));editSeen=true;
@@ -438,7 +440,7 @@ async function run(mode){
        isolatedStarts++;
        checkingContext=vm.createContext({});
        for(const name of ['sandbox.js','text-pattern.js','checking-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),checkingContext);
-       if(mode==='scalar-read')vm.runInContext('configureDealCapabilities('+JSON.stringify([providerContract])+')',checkingContext);
+       if(hasProvider)vm.runInContext('configureDealCapabilities('+JSON.stringify([providerContract])+')',checkingContext);
        const executable=path.join(stage,'../composed-executable/js');const modules={};
        function load(dir){for(const n of fs.readdirSync(dir)){const f=path.join(dir,n);if(fs.statSync(f).isDirectory())load(f);else if(n.endsWith('.js'))modules[path.relative(executable,f)]=fs.readFileSync(f,'utf8');}}load(executable);
        checkingContext.sources=modules;vm.runInContext(`openChecking(Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)])),'experience_entry.js')`,checkingContext);
@@ -447,7 +449,7 @@ async function run(mode){
      }
      assert.equal(request.function,'compile');checks++;fs.writeFileSync(path.join(stage,'experience.deal'),request.args[0]);fs.writeFileSync(path.join(stage,'experience.dealui'),request.args[1]);fs.writeFileSync(path.join(stage,'metadata.json'),request.args[2]);
      // The composer receives each declared provider declaration, exactly as the compiler writes them.
-     const modules=providerDeclarations(mode==='scalar-read'?[providerContract]:[]),lines=[];let index=0;
+     const modules=providerDeclarations(hasProvider?[providerContract]:[]),lines=[];let index=0;
      for(const [module,text] of Object.entries(modules)){const file='provider-'+(index++)+'.d.deal';fs.writeFileSync(path.join(stage,file),text+'\n');lines.push(module+'='+file);}
      fs.writeFileSync(path.join(stage,'providers.txt'),lines.length?lines.join('\n')+'\n':'');
      cp.execFileSync('java',['-Ddeal.home='+path.resolve(process.env.DEAL_ROOT||path.join(root,'dependencies/deal')),'-cp',classpath,'CompileComposer',root,stage,frozenTarget,path.join(stage,'metadata.json'),String(request.args[3])]);
@@ -461,7 +463,7 @@ async function run(mode){
      // A declared frozen provider module is part of the permitted import surface: the composed
      // manifest of the provider mode imports it and lists it among its providers, and that candidate
      // is admitted.
-     if(mode==='scalar-read'){assert(value.manifest.imports.includes('host/probe'),'the composed manifest imports the declared provider module');assert.deepEqual(value.manifest.providers,['host/probe'],'the composed manifest declares the provider module');}
+     if(hasProvider){assert(value.manifest.imports.includes('host/probe'),'the composed manifest imports the declared provider module');assert.deepEqual(value.manifest.providers,['host/probe'],'the composed manifest declares the provider module');}
      // Admission controls mutate only the compiled manifest the production checker path consumes; the
      // first attempt carries the injected defect and the repaired attempt carries the real one.
      if(mode.startsWith('admission-')&&checks===1){
@@ -491,8 +493,8 @@ const requested=supplied.filter(argument=>argument.startsWith('--mode=')).map(ar
  if(unknownArguments.length)throw Error('Unknown argument: '+unknownArguments.join(','));
  const unknown=requested.filter(name=>!MODES.some(([,mode])=>mode===name));
  if(unknown.length)throw Error('Unknown generation mode: '+unknown.join(','));
- const retained=requested.filter(name=>RETAINED.has(name));
- if(retained.length)throw Error('Generation mode(s) '+retained.join(',')+' retain a source pair; only the unfiltered matrix may record its digest');
+ // Selected runs may inspect retained cases, but never authorize downstream pair digests.
+ // Their copied output lacks generation.sha256 until the complete matrix passes.
  const chosen=requested.length?MODES.filter(([,mode])=>requested.includes(mode)):MODES;
  const receipt={};for(const [key,mode] of chosen)receipt[key]=await run(mode);
  await closeTransport();

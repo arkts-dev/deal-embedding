@@ -433,28 +433,30 @@ if(group==='all'||group==='lists') {
   assert.strictEqual(app.display('f_section_line_percent'),50);
   // Itinerary accumulation: the published start shifts every stop, the published deadline compares the
   // total, and per-stop reached flags drive the reached markers and the done count.
-  const tripSchedule=String(app.display('f_section_trip_schedule'));
+  const tripsApp=open('trips',JSON.parse(await step('trips')));
+  const tripSchedule=String(tripsApp.display('f_section_trip_schedule'));
   assert.ok(tripSchedule.includes('Home at 8'),'the schedule accumulates from the published start');
   assert.ok(tripSchedule.includes('Work at 28'),'cumulative stop minutes accumulate in supplied order');
   assert.ok(tripSchedule.includes('After the deadline'),'the total is compared with the published deadline');
-  assert.ok(String(app.display('f_section_trip2_schedule')).includes('Times unavailable without a start'),'a missing start leaves times unavailable');
-  assert.ok(String(app.display('f_section_trip2_schedule')).startsWith('Home'),'the schedule keeps the supplied stop order');
-  const openTrip=String(app.display('f_section_trip3_schedule'));
+  assert.ok(String(tripsApp.display('f_section_trip2_schedule')).includes('Times unavailable without a start'),'a missing start leaves times unavailable');
+  assert.ok(String(tripsApp.display('f_section_trip2_schedule')).startsWith('Home'),'the schedule keeps the supplied stop order');
+  const openTrip=String(tripsApp.display('f_section_trip3_schedule'));
   assert.ok(openTrip.includes('Home at 8'),'a start without a deadline still accumulates');
   assert.strictEqual(openTrip.includes('After the deadline'),false,'an absent deadline compares nothing');
-  assert.strictEqual(s().f_section_trip_reached_0,false,'every stop starts unreached');
-  app.dispatch(must(app.slot('Button','Advance','onClick'),'the itinerary binds Advance'),'0');
-  assert.strictEqual(s().f_section_trip_reached_0,true,'advance reaches the first stop');
-  assert.strictEqual(s().f_section_trip_reached_1,false);
-  assert.strictEqual(s().f_section_trip_done_display,1,'a reached stop is counted');
-  assert.strictEqual(s().f_section_trip_total_display,2);
-  assert.ok(String(app.display('f_section_trip_schedule')).includes('Home (reached) at 8'),'the reached stop is marked');
-  app.dispatch(must(app.slot('Button','Advance','onClick'),'the itinerary advances again'),'0');
-  assert.strictEqual(s().f_section_trip_reached_1,true,'advance reaches the next stop');
-  assert.strictEqual(s().f_section_trip_done_display,2);
-  app.dispatch(must(app.slot('Button','Reset trip','onClick'),'the itinerary binds Reset'),'0');
-  assert.strictEqual(s().f_section_trip_done_display,0);
-  assert.strictEqual(s().f_section_trip_reached_0,false,'reset clears every reached flag');
+  const tripState=()=>tripsApp.state();
+  assert.strictEqual(tripState().f_section_trip_reached_0,false,'every stop starts unreached');
+  tripsApp.dispatch(must(tripsApp.slot('Button','Advance','onClick'),'the itinerary binds Advance'),'0');
+  assert.strictEqual(tripState().f_section_trip_reached_0,true,'advance reaches the first stop');
+  assert.strictEqual(tripState().f_section_trip_reached_1,false);
+  assert.strictEqual(tripState().f_section_trip_done_display,1,'a reached stop is counted');
+  assert.strictEqual(tripState().f_section_trip_total_display,2);
+  assert.ok(String(tripsApp.display('f_section_trip_schedule')).includes('Home (reached) at 8'),'the reached stop is marked');
+  tripsApp.dispatch(must(tripsApp.slot('Button','Advance','onClick'),'the itinerary advances again'),'0');
+  assert.strictEqual(tripState().f_section_trip_reached_1,true,'advance reaches the next stop');
+  assert.strictEqual(tripState().f_section_trip_done_display,2);
+  tripsApp.dispatch(must(tripsApp.slot('Button','Reset trip','onClick'),'the itinerary binds Reset'),'0');
+  assert.strictEqual(tripState().f_section_trip_done_display,0);
+  assert.strictEqual(tripState().f_section_trip_reached_0,false,'reset clears every reached flag');
   // An empty checklist publishes done 0 and total 0; the progress line reports the invalid total
   // instead of dividing by it.
   assert.strictEqual(s().f_section_emptycheck_total_display,0,'an empty checklist publishes zero total');

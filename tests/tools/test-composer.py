@@ -65,7 +65,9 @@ else:
         raise SystemExit(0)
     for name in ['FragmentRegionsTest','FragmentQualifierTest','FragmentMechanismsTest']:
         run(['java','-cp',str(classes)+':'+cp,name],check=True)
-    run(['node',str(root/'tests/tools/test-composer.js'),str(stage),str(classes)+':'+cp,args.group or 'all'],check=True)
+    # The complete default executes every group, each with its own unchanged bound.
+    for group in ([args.group] if args.group else GROUPS):
+        run(['node',str(root/'tests/tools/test-composer.js'),str(stage),str(classes)+':'+cp,group],check=True)
     if args.group:
         # Receipts authorize only a frozen fixture snapshot, never skip assertions.
         group_record=stage/('group-'+args.group+'.json')

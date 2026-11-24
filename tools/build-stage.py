@@ -48,7 +48,10 @@ def main():
     function = command[-1]
     names = [function] + (['small_policy'] if function in ('assistance_policy', 'logging') else [])
     body = {name: os.environ.get('BASH_FUNC_' + name + '%%', '') for name in names}
-    tool_options = {k: os.environ.get(k, '') for k in ('JAVA_OPTS', 'JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', 'KOTLIN_OPTS')}
+    option_names = ['JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS']
+    if function in ('kotlin', 'test_kotlin'):
+        option_names += ['JAVA_OPTS', 'KOTLIN_OPTS']
+    tool_options = {k: os.environ.get(k, '') for k in option_names}
     try:
         inputs = fingerprint(args.input)
     except FileNotFoundError as error:

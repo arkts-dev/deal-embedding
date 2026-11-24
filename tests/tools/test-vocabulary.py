@@ -375,14 +375,16 @@ def main():
     shutil.copy(THEME, reduced / "theme.json")
     assert run(sys.executable, ROOT / "tools/theme-build.py", reduced / "theme.json", reduced / "PackTheme.kt").returncode == 0
     build = (ROOT / "build.sh").read_text()
-    assert build.count("ui-vocabulary.json") == 1, "only the conformance validator consumes the inventory"
-    assert "--inventory" in build
+    inventory_uses = [line.strip() for line in build.splitlines() if "ui-vocabulary.json" in line]
+    assert len(inventory_uses) == 2, inventory_uses
+    assert sum('--inventory "$ROOT/tools/ui-vocabulary.json"' in line for line in inventory_uses) == 1, "only conformance consumes the inventory"
+    assert sum(line.startswith('INPUTS=') for line in inventory_uses) == 1, "the inventory must invalidate its conformance stage"
     readers = [ROOT / "tools/theme-build.py", ROOT / "tools/GenerationGuidance.java"]
     for base in ("ui", "core", "android/src", "tests/tools", "tools"):
         readers.extend((ROOT / base).rglob("*"))
     for file in readers:
         if not file.is_file() or file.name in ("pack-conformance.py", "test-vocabulary.py", "build-demos.sh",
-                                               "test-matrix.py"):
+                                               "test-matrix.py", "test-build-stages.py"):
             continue
         if file.suffix not in (".sh", ".kt", ".py", ".java", ".json", ".deal", ".js"):
             continue

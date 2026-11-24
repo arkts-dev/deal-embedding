@@ -40,6 +40,66 @@ class BuildStages(unittest.TestCase):
             source.unlink()
             self.assertEqual(run('--plan').returncode, 3)
 
+    def test_actual_test_apk_script_resumes_and_tracks_packaging_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('tools', 'tests/tools', 'tests/android', 'demos', 'bin', 'jdk', 'kotlin/bin', 'kotlin/lib', 'sdk/build-tools/36.0.0/lib', 'sdk/platforms/android-37.0', 'build/compose', 'build/embedding-consumer/assets', 'build/runtime-dex/host-stable', 'build/embedding-dex', 'build/toolchain'):
+                (root/name).mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT/'tests/tools/build-cutover-test.sh', root/'tests/tools/build-cutover-test.sh')
+            for name in ('build-stage.py', 'build-cache.py'):
+                shutil.copy(ROOT/'tools'/name, root/'tools'/name)
+            (root/'demos/build.sh').write_text('printf \'%s\\n\' \'{"sources":["tests/android/Test.kt"],"app_apis":[],"runtime_cp":["runtime.jar"]}\'')
+            (root/'tools/package-java-resources.py').write_text('')
+            for name in ('tests/android/Test.kt', 'jdk/release', 'runtime.jar', 'kotlin/lib/kotlin-compiler.jar', 'kotlin/lib/kotlin-stdlib.jar', 'kotlin/lib/compose-compiler-plugin.jar', 'sdk/platforms/android-37.0/android.jar', 'sdk/build-tools/36.0.0/lib/apksigner.jar', 'build/compose/res.zip', 'build/embedding-consumer/assets/policy.js', 'build/runtime-dex/host-stable/classes.dex', 'build/embedding-dex/classes.dex', 'build/toolchain/r8.jar', 'build/toolchain/desugar.json', 'build/debug.keystore', 'other.keystore'):
+                (root/name).write_text(name)
+            (root/'build/compose/resources.txt').write_text('build/compose/res.zip\n')
+            (root/'build/compose/packages.txt').write_text('test.resources')
+            fake = '''#!/usr/bin/env python3
+import os,sys,pathlib,shutil,zipfile,time
+root=pathlib.Path(os.environ['ROOT']);name=pathlib.Path(sys.argv[0]).name;a=sys.argv[1:]
+def put(p,text='compiled'):
+ p=pathlib.Path(p);p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
+if name=='aapt2':
+ put(pathlib.Path(a[a.index('--java')+1])/'R.java')
+ with zipfile.ZipFile(a[a.index('-o')+1],'w') as z:z.writestr('AndroidManifest.xml','manifest')
+elif name in ('javac','kotlinc'):put(pathlib.Path(a[a.index('-d')+1])/(name+'.class'))
+elif name=='jar':
+ with zipfile.ZipFile(a[a.index('--file')+1],'w') as z:z.writestr('test.class','bytecode')
+elif name=='java':
+ if (root/'slow-dex').exists():time.sleep(20)
+ put(pathlib.Path(a[a.index('--output')+1])/'classes.dex')
+elif name=='zipalign':shutil.copyfile(a[-2],a[-1])
+elif name=='apksigner':shutil.copyfile(a[-1],a[a.index('--out')+1])
+elif name=='timeout':
+ if (root/'slow-dex').exists() and a[-1]=='dex':a[2]='.1s'
+ os.execv('/usr/bin/timeout',['timeout',*a])
+'''
+            for name in ('bin/javac','bin/java','bin/jar','bin/timeout','kotlin/bin/kotlinc','sdk/build-tools/36.0.0/aapt2','sdk/build-tools/36.0.0/zipalign','sdk/build-tools/36.0.0/apksigner'):
+                (root/name).write_text(fake);(root/name).chmod(0o755)
+            env={**os.environ,'ROOT':str(root),'PATH':str(root/'bin')+':'+os.environ['PATH'],'JAVA_HOME':str(root/'jdk'),'KOTLIN_HOME':str(root/'kotlin'),'ANDROID_SDK_ROOT':str(root/'sdk')}
+            def run(**extra):
+                return subprocess.run(['bash','tests/tools/build-cutover-test.sh'],cwd=root,env={**env,**extra},capture_output=True,text=True,timeout=10)
+            result=run();self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            result=run();self.assertEqual(result.returncode,0,result.stdout+result.stderr);self.assertNotIn(': MISS',result.stdout)
+            (root/'build/embedding-consumer/assets/policy.js').write_text('new policy')
+            result=run();self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('resources: MISS',result.stdout);self.assertIn('test_kotlin: hit',result.stdout);self.assertIn('dex: hit',result.stdout)
+            result=run(DEAL_TEST_KEYSTORE='other.keystore');self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('package_apk: MISS',result.stdout);self.assertIn('test_kotlin: hit',result.stdout)
+            out=root/'build/v08-cutover/device-test'
+            (out/'dex/classes.dex').write_text('corrupt');(root/'slow-dex').touch()
+            result=run(DEAL_TEST_KEYSTORE='other.keystore');self.assertEqual(result.returncode,124,result.stdout+result.stderr)
+            self.assertFalse((out/'stages/dex.json').exists());self.assertTrue((out/'stages/test_kotlin.json').exists())
+            (root/'slow-dex').unlink()
+            result=run(DEAL_TEST_KEYSTORE='other.keystore');self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('test_kotlin: hit',result.stdout);self.assertIn('dex: MISS',result.stdout)
+            (out/'tests.apk').write_text('corrupt')
+            result=run(DEAL_TEST_KEYSTORE='other.keystore');self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('package_apk: MISS',result.stdout);self.assertIn('dex: hit',result.stdout)
+            (root/'tests/android/Test.kt').write_text('new fixture')
+            result=run(DEAL_TEST_KEYSTORE='other.keystore');self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('test_kotlin: MISS',result.stdout)
+
     def test_composer_groups_keep_each_original_fixture_call_once(self):
         import re
         text=(ROOT/'tests/tools/test-composer.js').read_text().split('const group=')[0]
@@ -60,6 +120,11 @@ class BuildStages(unittest.TestCase):
                     module.observe(seam)
                 self.assertEqual(path.read_text(),'enabled')
                 release.assert_called_once()
+            nested=subprocess.CompletedProcess([],1,'',"subprocess.CalledProcessError: returned non-zero exit status 124.")
+            with patch.object(module,'ROOT',root), patch.object(module,'anchor',return_value=(b'enabled',b'broken')), patch.object(module,'track'), patch.object(module,'release'), patch.object(module,'bounded_run',return_value=nested):
+                with self.assertRaisesRegex(AssertionError,'nested timeout'):
+                    module.observe(seam)
+                self.assertEqual(path.read_text(),'enabled')
 
     def test_boundary_output_corruption_is_not_a_cache_hit(self):
         spec=importlib.util.spec_from_file_location('boundary_test',ROOT/'tests/tools/test-standalone-boundary.py')

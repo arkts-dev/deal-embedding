@@ -90,8 +90,9 @@ mkdir -p build/toolchain
 # descriptors, so its descendant builds use this marker rather than reacquiring their parent's lock.
 if [[ "${DEAL_BUILD_LOCK_HELD:-}" != "$PWD" ]]; then
     exec 9> build/.demos-build.lock
-    flock 9
+    flock -n -E 75 9 || exit 75
 fi
+export DEAL_BUILD_LOCK_HELD="$PWD"
 if [[ ! -f build/debug.keystore ]]; then
     keytool -genkeypair -keystore build/debug.keystore -storepass android -keypass android \
         -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 3650 -dname 'CN=Android Debug'

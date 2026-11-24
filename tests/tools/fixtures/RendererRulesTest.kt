@@ -703,10 +703,11 @@ fun main(args: Array<String>) {
     // Pattern syntax admission is tested on the real Session adapter before commit/effects.
     for (component in listOf("TimeField", "ClockText")) {
         val prop = if (component == "ClockText") "minutes" else "value"
+        val labels = if (component == "TimeField") listOf(text("label", "Time")) else emptyList()
         for (valid in listOf(0.0, 1439.0))
-            accepted(node(component, listOf(text("label", "Time"), number(prop, valid))))
+            accepted(node(component, labels + number(prop, valid)))
         for (invalid in listOf(-1.0, 1440.0, 0.5, Double.NaN, Double.POSITIVE_INFINITY))
-            rejected(node(component, listOf(text("label", "Time"), number(prop, invalid))), "PROP_FAULT", component, prop)
+            rejected(node(component, labels + number(prop, invalid)), "PROP_FAULT", component, prop)
     }
     for (valid in listOf(-1.0, 0.0, 19000.0))
         accepted(node("DateField", listOf(text("label", "Day"), number("value", valid))))

@@ -11,13 +11,21 @@ python3 tests/tools/test-verification-seams.py --recover
 python3 tools/preservation.py begin
 preservation_end() {
     local status=$?
-    python3 tools/preservation.py end || status=1
+    command python3 tools/preservation.py end || status=1
     exit "$status"
 }
 trap preservation_end EXIT
 # Bash functions resolve these commands in this script only; child test processes keep their real
 # executables. Report every gate item immediately, including failures, without changing its status.
+# Explicit segment selection resumes investigation without rerunning earlier passing items.
+# A segment is never reported as a complete gate; the matrix still audits the full default lane.
+GATE_WAITING=${DEAL_GATE_FROM:-}
 timed() {
+    if [[ -n "$GATE_WAITING" ]]; then
+        [[ ${2:-} == "$GATE_WAITING" ]] || return 0
+        printf '[gate] SEGMENT starting at %s; earlier items NOT executed in this invocation\n' "$GATE_WAITING"
+        GATE_WAITING=''
+    fi
     local started=$SECONDS status=0
     printf '[gate] start %s\n' "$*"
     command "$@" || status=$?
@@ -76,3 +84,7 @@ python3 tests/tools/test-standalone-boundary.py
 python3 tests/tools/test-verification-seams.py
 # The matrix is checked last: every covered row must name a test this lane already executed.
 python3 tests/tools/test-matrix.py
+if [[ -n "$GATE_WAITING" ]]; then
+    printf '[gate] unknown segment: %s\n' "$GATE_WAITING" >&2
+    exit 2
+fi
