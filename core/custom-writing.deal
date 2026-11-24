@@ -81,13 +81,9 @@ export async function assemble(response: string, input: Input): Promise<Assemble
     for (let need of (input.plan as plans.Plan).needs) {
       if (Object.hasOwn(input,"openNeeds") && !s.contains(input.openNeeds as string[],need.id)) { continue; }
       covers[covers.length] = need.id;
-      let published: string = "";
-      if (need.type === "figure") { published = "number"; if (Object.hasOwn(need.spec,"format") && s.text(need.spec.format) === "yes_no") { published = "boolean"; } }
-      else if (need.type === "live" || need.type === "countdown" || need.type === "stopwatch" || need.type === "entries") { published = "number"; }
-      let slot: screens.Slot = {id:need.id,need:need.id,reads:need.reads,writes:[],provider:false,allowedKinds:[],valueType:published,status:"unchecked",instance:owner,reason:"Behavior coverage not yet judged"};
-      // A custom implementation of an action need keeps the need's issued trigger, so the trigger
-      // still reaches the emitted operation instead of losing its event and source.
-      if (need.type === "action" && Object.hasOwn(need,"trigger")) { let planned: plans.Trigger = need.trigger as plans.Trigger; slot.event = planned.on; slot.trigger = planned.at; }
+      let slot: screens.Slot = {id:need.id,need:need.id,reads:need.reads,writes:[],provider:false,allowedKinds:[],valueType:screens.publishedType(need),status:"unchecked",instance:owner,reason:"Behavior coverage not yet judged"};
+      // A written slot claims no event here: a trigger is the route to an issued operation, and this
+      // draft only inherits one when the base composition already issued it (see the merge below).
       slots[slots.length] = slot;
     }
   }
@@ -118,6 +114,9 @@ export async function assemble(response: string, input: Input): Promise<Assemble
       // A gap implementation replaces the fragment, not the operation a plan action need is already
       // dispatched to: keep the issued operation identity so the slot still names it.
       for (let prior of base.screen.slots) { if (prior.need === slot.need && Object.hasOwn(prior,"action")) { slot.action = prior.action as string; } }
+      // The slot claims the need's checked trigger only when it carries that operation's issued identity,
+      // so an emitted slot never names a route nothing raises.
+      if (Object.hasOwn(slot,"action") && input.plan !== null) { for (let need of (input.plan as plans.Plan).needs) { if (need.id === slot.need && need.type === "action" && Object.hasOwn(need,"trigger")) { let planned: plans.Trigger = need.trigger as plans.Trigger; slot.event = planned.on; slot.trigger = planned.at; } } }
       mergedSlots[mergedSlots.length] = slot;
     }
     let connections: screens.Connection[] = []; for (let connection of base.connections) { connections[connections.length] = connection; }
@@ -147,20 +146,11 @@ export async function assemble(response: string, input: Input): Promise<Assemble
   if (notAdmitted.code !== "") { throw {name:notAdmitted.code,message:notAdmitted.message}; }
   let active: bindings.Registry = bindings.create([]);
   if (Object.hasOwn(input,"registry")) { active = input.registry as bindings.Registry; }
-  // A trigger is the route to an issued operation: an implementation that inherited no issued operation
-  // identity claims no event, so its slot carries no route nothing raises and keeps its coverage
-  // judgement with its own reason. Assembly rejects any event left without its operation.
-  for (let slot of composition.screen.slots) { if (Object.hasOwn(slot,"event") && !Object.hasOwn(slot,"action")) { delete slot.event; delete slot.trigger; } }
-  let root: composer.ChatRoot | null = null;
-  if (composition.screen.target === "chat" && composition.screen.instances.length > 1) {
-    let children: composer.ChildLabel[] = [];
-    for (let instance of composition.screen.instances) {
-      let label: string = instance.id;
-      if (input.plan !== null) { for (let need of (input.plan as plans.Plan).needs) { if (s.contains(instance.fragment.covers,need.id)) { label = need.words; } } }
-      children[children.length] = {instance:instance.id,label:label};
-    }
-    root = {children:children,initialSelection:0};
-  }
+  // A trigger is the route to an issued operation. The Bind stage is the one owner of that rule: it
+  // drops the event of a slot whose operation was not issued, and this composition inherits only those
+  // already-stripped slots beside its own new one. Assembly then rejects any event left without its
+  // operation, so no route nothing raises is ever emitted.
+  let root: composer.ChatRoot | null = composer.chatRoot(composition,input.plan);
   let result: composer.Result = await composer.assembleWith(composition,computations,active,root);
   // The issued metadata is carried with the pair and reaches the compiler and checking admission.
   return {deal:result.source.deal,dealui:result.source.dealui,metadata:s.encode(result.metadata)};
@@ -319,9 +309,10 @@ export async function run(input: Input): Promise<Result> {
   if (best !== null && bestMetadata !== "") {
     let retained: revisions.Source = await withNotices(best as revisions.Source,bestMissing);
     attempts += 1;
-    // The retained pair carries the issued composition of the assembly it came from and keeps that
-    // assembly's freshness: the appended notices make a fresh whole pair a repaired one, while an
-    // edited pair was already checked as repaired.
+    // The retained pair carries the issued composition of the assembly it came from and keeps the
+    // freshness it was checked under: appended notices are view nodes, so they add no declaration and
+    // every compiled declaration of a fresh pair still has its issued owner. An edited pair was already
+    // checked as repaired.
     let checked: checking.Result = await checking.run(retained.deal,retained.dealui,bestMetadata,bestFresh);
     if (checked.accepted) { return {candidateId:checked.candidateId,attempts:attempts,diagnostics:"Missing or unchecked original behavior: "+s.encode(bestMissing)}; }
     // A retained draft rejected by an authority verdict is not downgraded to a partial: the verdict is

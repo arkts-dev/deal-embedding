@@ -225,19 +225,6 @@ function alternativeKind(choice: selecting.Choice): string {
   }
   s.reject("Unissued alternative kind: "+choice.alternative); return "";
 }
-// A frozen chat target with more than one retained fragment needs its issued child labels and
-// initial selection. Generation supplies them here from the plan's own need wording; assembly derives
-// no label text.
-function chatRoot(composition: screens.Composition, plan: plans.Plan): composer.ChatRoot | null {
-  if (composition.screen.target !== "chat" || composition.screen.instances.length < 2) { return null; }
-  let children: composer.ChildLabel[] = [];
-  for (let instance of composition.screen.instances) {
-    let label: string = instance.id;
-    for (let need of plan.needs) { if (s.contains(instance.fragment.covers,need.id)) { label = need.words; } }
-    children[children.length] = {instance:instance.id,label:label};
-  }
-  return {children:children,initialSelection:0};
-}
 // A plan action need names its operation and argument sources. The Bind stage resolves the module
 // and function exactly against the frozen contracts; an unknown or ambiguous operation issues no
 // binding and keeps its need open with the located reason, because the plan decode accepts any name
@@ -341,15 +328,14 @@ export async function run(input: writing.Input, context: selecting.Context, plan
       } }
     } }
     if (!ownershipChecked) { entry.accepted = false; entry.reason = "Content ownership unchecked"; }
-    if (entry.accepted) { let undecided: string = catalogue.disclosed(entry,context.original,context.facts,userOwned); if (undecided !== "") {
-      entry.accepted = false; entry.reason = undecided;
-      // The refused instance leaves its need missing with the located reason, so the diagnostic names
-      // the instance and offending row instead of a generic coverage gap. A filled slot is never
-      // demoted: one selected alternative per need makes that unreachable today, and the guard keeps
-      // a future second implementation from silently losing its coverage.
-      locate(composition,entry.need,undecided);
-    } }
+    if (entry.accepted) { let undecided: string = catalogue.disclosed(entry,context.original,context.facts,userOwned); if (undecided !== "") { entry.accepted = false; entry.reason = undecided; } }
   }
+  // A selected alignment, fill, ownership or disclosure refusal keeps its need visibly missing with the
+  // located reason that step recorded, instead of reverting to the generic coverage gap. One loop covers
+  // every refusal the stages above recorded. A filled slot is never demoted: one selected alternative per
+  // need makes that unreachable today, and the guard keeps a future second implementation from silently
+  // losing its coverage.
+  for (let entry of entries) { if (!entry.accepted) { locate(composition,entry.need,entry.reason); } }
   // Publishers first; typed reader resolution is deterministic and never model-issued.
   let pending: screens.Instance[] = [];
   for (let entry of entries) { if (entry.accepted) { let instance: screens.Instance = await catalogue.instantiate(entry,registry); let reader: boolean = false; for (let port of instance.fragment.ports) { if (port.direction === "read") { reader = true; } }
@@ -364,7 +350,7 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   let providers: string[] = []; for (let contract of registry.contracts) { providers[providers.length] = contract.module; }
   let notAdmitted: admission.Verdict = await admission.composition(composition.screen.instances,providers);
   if (notAdmitted.code !== "") { return {candidateId:"",attempts:0,diagnostics:notAdmitted.message,runnable:true}; }
-  let assembled: composer.Result = await composer.assembleWith(composition,computations,registry,chatRoot(composition,plan));
+  let assembled: composer.Result = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan));
   let questions: selections.Question[] = coverage.questions(plan,composition.screen);
   let judged: selections.Answer[] = await selecting.batch("coverage",{original:context.original,facts:context.facts,contracts:context.contracts,specification:context.specification+"\nCURRENT ASSEMBLED SOURCE\n"+s.encode(assembled.source)},plan,questions,false);
   let ledger: coverage.Ledger = coverage.judge(plan,composition.screen,judged); let open: string[] = []; let diagnostics: string = reasons;
@@ -402,10 +388,10 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   // ran for it, so an unhandled need is never silently dropped.
   let noticed: boolean = false;
   for (let need of ledger.needs) { if (need.status !== "covered") { composition.screen.instances[composition.screen.instances.length] = notice("notice_"+need.id,need.id+": "+need.status+" — "+need.reason); noticed = true; } }
-  if (noticed || wrote) { assembled = await composer.assembleWith(composition,computations,registry,chatRoot(composition,plan)); }
+  if (noticed || wrote) { assembled = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan)); }
   if (missingRequirements.length > 0) {
     for (let id of missingRequirements) { composition.screen.instances[composition.screen.instances.length] = notice("requirement_"+id,"Requirement "+id+": missing or unchecked original behavior"); }
-    assembled = await composer.assembleWith(composition,computations,registry,chatRoot(composition,plan));
+    assembled = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan));
   }
   for (let note of assembled.metadata.notices) { if (!diagnostics.includes(note)) { diagnostics = diagnostics+"composition: "+note+"; "; } }
   let checked: checker.Result = await checker.run(assembled.source.deal,assembled.source.dealui,s.encode(assembled.metadata),true); attempts = attempts+1;

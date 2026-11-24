@@ -147,7 +147,9 @@ export function reserve(plan: plans.Plan, target: string): Screen {
   return {title:plan.title,target:target,layout:{kind:"stack",positions:[]},slots:slots,instances:[]};
 }
 // The need-fixed value type of a slot output. A need without a published value issues none.
-function publishedType(need: plans.Need): string {
+// The value type one slot publishes for its need. Assembly and the custom writer both ask this one
+// rule, so a new need kind or figure format is never mapped twice with different results.
+export function publishedType(need: plans.Need): string {
   if (need.type === "figure") { if (Object.hasOwn(need.spec,"format") && s.text(need.spec.format) === "yes_no") { return "boolean"; } return "number"; }
   if (need.type === "live" || need.type === "countdown" || need.type === "stopwatch" || need.type === "entries") { return "number"; }
   return "";

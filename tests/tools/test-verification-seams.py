@@ -61,12 +61,12 @@ SEAMS = [
     # module the compiler numbers before core/custom-writing.deal (core/execution.deal included) renumbers
     # it and the anchor has to be re-pinned; a shifted anchor fails loudly, and `expect` keeps a rebound
     # anchor from passing on an unrelated assertion. The anchored statement is
-    # `custom-writing.deal:297 attempts = attempts+1`, the increment the counted-check mode executes.
+    # `custom-writing.deal:287 attempts = attempts+1`, the increment the counted-check mode executes.
     # The command names that one mode: the unbounded matrix of the packaged entry would otherwise let
     # the control's own bound, not the broken rule, decide the outcome.
     {'id': 'attempts', 'family': 'checking-admission', 'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'old': '$s133302 = ($rt.numOf($s133296) + $rt.numOf($s133299));',
-     'new': '$s133302 = ($rt.numOf($s133296) * $rt.numOf($s133299));',
+     'old': '$s133184 = ($rt.numOf($s133178) + $rt.numOf($s133181));',
+     'new': '$s133184 = ($rt.numOf($s133178) * $rt.numOf($s133181));',
      'expect': 'candidate checks are counted as attempts',
      'command': ['node', 'tests/tools/test-generation-cutover.js', '--mode=success']},
     {'id': 'vocabulary-inventory', 'family': 'prop-predicates', 'path': 'ui/platform.dealui-pack',

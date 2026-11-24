@@ -293,10 +293,10 @@
       "id": "typed-collections-utf16",
       "family": "typed-values",
       "owner": "plan-schemas-values-and-parts",
-      "requirement": "DEAL v1.6 typed collections keep their invariant element types by decoding into a fresh checked array, so a non-array, a wrong element kind and a hole reject while the same UTF-16 units survive (including an unpaired surrogate and astral pairs); dynamic JSON arrays convert into the same units and emitted source literals round-trip the tested astral, unpaired-surrogate, control, quote, backslash and newline spellings.",
+      "requirement": "plan-schemas-values-and-parts \"JSON and wire decoding\": a typed collection decodes by checking that the value is an array and each element matches the element schema, and the result is a new invariant T[] (no cast and no try/catch fallback). A non-array, a wrong element kind and an array carrying a hole reject; the same UTF-16 units survive (including an unpaired surrogate and astral pairs); dynamic JSON arrays convert into the same units and emitted source literals round-trip the tested astral, unpaired-surrogate, control, quote, backslash and newline spellings.",
       "status": "covered",
       "test": "python3 tests/tools/test-construction-contracts.py",
-      "evidence": "The compiled decoder and source-literal helpers are exercised directly: a typed string array decodes into a fresh array with the same units, a dynamic array converts to the same UTF-16 units, a non-array and a wrong element kind are refused with their index, and the emitted literal parses back to the original text.",
+      "evidence": "The compiled decoder and source-literal helpers are exercised directly: a typed string array decodes into a fresh array with the same units (the fresh T[] the contract requires, not the caller's array), a dynamic array converts to the same UTF-16 units, a non-array and a wrong element kind are refused with their index, an array that carries a hole is refused by both checked decoders, and the emitted literal parses back to the original text.",
       "sources": [
         "tests/tools/fixtures/construction-contracts.deal",
         "tests/tools/test-construction-contracts.js"
@@ -339,17 +339,15 @@
       "test": "python3 tests/tools/test-construction-contracts.py python3 tests/tools/test-composer.py",
       "sources": [
         "tests/tools/fixtures/construction-contracts.deal",
-        "tests/tools/test-clock-part.js",
-        "tests/tools/test-entries-part.js"
+        "tests/tools/test-clock-part.js"
       ],
-      "evidence": "plan.decode resolves countdown.length through plans.durationSource and converts it with the checked plans.milliseconds, so a seconds input converts to 90000 ms and a minutes constant to 300000 ms while a money source, an unissued identifier, a negative value and an overflowing value reject with the need identifier; the clock and entries parts the conversion feeds are driven at their emitted runtime by the composer item (private driver press/tick readings, completion once, restart, entry keys, timestamps and totals).",
+      "evidence": "plan.decode resolves countdown.length through plans.durationSource and converts it with the checked plans.milliseconds, so a seconds input converts to 90000 ms and a minutes constant to 300000 ms while a money source, an unissued identifier, a negative value and an overflowing value reject with the need identifier; the clock part that conversion feeds is driven at its emitted runtime by the composer item (private driver press/tick readings, completion once, restart and clamped remaining).",
       "asserts": [
         "milliseconds(seconds,90,\"cook\") === 90000",
         "cook: length source is not a duration",
         "cook: unissued duration source timer",
-        "assert.strictEqual(driver.intervalMs,1000,'the driver interval is host configuration')",
-        "assert.strictEqual(current.f_parts_records_spend[0].key,'k1','the seed gets a stable key')",
-        "insist(negative,\"Negative duration converted\")"
+        "insist(negative,\"Negative duration converted\")",
+        "assert.strictEqual(driver.intervalMs,1000,'the driver interval is host configuration')"
       ]
     },
     {
@@ -421,10 +419,10 @@
         "tests/tools/fixtures/construction-contracts.deal",
         "tests/tools/fixtures/composer-contracts.deal"
       ],
-      "evidence": "core/formula.deal evaluates boolean operands lazily (a false left operand of && short-circuits, a true left operand of || short-circuits) and issues pow in its call set, folding it through the host Math.pow so the emitted source carries Math.pow rather than a hand-written helper; the composer item compiles a pow figure and a written formula through the production compiler.",
+      "evidence": "core/formula.deal issues pow in its written-formula call set and folds it through the host Math.pow, so the emitted source carries Math.pow rather than a hand-written helper; a boolean operator over issued boolean operands is lowered to the host && / || operator over those operands, so the emitted policy keeps the host short-circuit rather than evaluating both operands eagerly. The composer item compiles a pow figure and a written formula through the production compiler.",
       "asserts": [
-        "Boolean formula precedence",
-        "Lazy choose lowering/value",
+        "Boolean && was not lowered to the short-circuiting host operator",
+        "Boolean || was not lowered to the short-circuiting host operator",
         "the lowered formula emitted no host pow call",
         "the emitted pair still carries a hand-written pow helper",
         "pow(9, 0.5) is not exactly 3"
@@ -1893,7 +1891,7 @@
       "asserts": [
         "A hole body that changes the composed function signature was admitted"
       ],
-      "blocker": "The emitted-body path is delivered and tested: an issued whenFinished body replaces the declared default body in the composed function while the signature stays fixed, and a body that changes the composed signature rejects before emission. Three clauses stay unproven here: no catalogue kind issues a hole definition (the catalogue instantiation carries an empty hole list), so no production instance reaches the emission with an issued hole; a duplicate body for one hole has no rejection, because the instance body map arrives through the contextual JSON decode that discards duplicate keys and no duplicate-key-preserving token fact feeds it; and no over-600-code-unit body, unissued body identifier or retained-default-body vector exists in the gate. Owner catalogue-sections for the kind-issued holes; the duplicate-key carrier is an unissued private mechanism seam."
+      "blocker": "The emitted-body path is delivered and tested: an issued whenFinished body replaces the declared default body in the composed function while the signature stays fixed, and a body that changes the composed signature rejects before emission. A repeated body key never reaches the instance: the composition document decode fails the whole document with its duplicate-key rejection before any instance is allocated, and an in-process composition carries no repeated key. What stays unproven here: no catalogue kind issues a hole definition (the catalogue instantiation carries an empty hole list), so no production instance reaches emission with an issued hole; the construction-level duplicate-body rejection required by the hole contract has no vector and no dedicated rejection beyond that document decode; and no over-600-code-unit body, unissued body identifier or retained-default-body vector exists in the gate. Owner catalogue-sections for the kind-issued holes."
     },
     {
       "id": "pins",

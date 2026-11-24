@@ -145,6 +145,13 @@ export function schemas(): null {
   const unaryNumber: formula.Expression = formula.compile("-(2) + 3",[]); insist((unaryNumber.number as number) === 1,"Unary numeric formula");
   const unaryBoolean: formula.Expression = formula.compile("!false",[]); insist((unaryBoolean.boolean as boolean) === true,"Unary boolean formula");
   const booleanPrecedence: formula.Expression = formula.compile("false && true || true",[]); insist((booleanPrecedence.boolean as boolean) === true,"Boolean formula precedence");
+  // A boolean operator over issued boolean operands keeps the host operator in the lowered source, so the
+  // emitted policy short-circuits the right operand instead of evaluating both eagerly.
+  let shortOperands: formula.Operand[] = [{id:"flag",expression:"state.flag",type:"boolean",dependency:"f_parts_flag"},{id:"other",expression:"state.other",type:"boolean",dependency:"f_parts_other"}];
+  const shortCircuit: formula.Expression = formula.compile("flag && other",shortOperands);
+  insist(strings.contains(shortCircuit.source,"state.flag && state.other"),"Boolean && was not lowered to the short-circuiting host operator: "+shortCircuit.source);
+  const shortOr: formula.Expression = formula.compile("flag || other",shortOperands);
+  insist(strings.contains(shortOr.source,"state.flag || state.other"),"Boolean || was not lowered to the short-circuiting host operator: "+shortOr.source);
   const comparison: formula.Expression = formula.compile("2 <= 2",[]); insist((comparison.boolean as boolean) === true,"Comparison formula");
   const floored: formula.Expression = formula.compile("floor(1.9)",[]); insist((floored.number as number) === 1,"floor formula");
   const ceiled: formula.Expression = formula.compile("ceil(1.1)",[]); insist((ceiled.number as number) === 2,"ceil formula");
