@@ -339,9 +339,10 @@
       "test": "python3 tests/tools/test-construction-contracts.py python3 tests/tools/test-composer.py",
       "sources": [
         "tests/tools/fixtures/construction-contracts.deal",
-        "tests/tools/test-clock-part.js"
+        "tests/tools/test-clock-part.js",
+        "tests/tools/test-clock-input.js"
       ],
-      "evidence": "plan.decode resolves countdown.length through plans.durationSource and converts it with the checked plans.milliseconds, so a seconds input converts to 90000 ms and a minutes constant to 300000 ms while a money source - the same measure test that refuses a percent, count or number measure - an unissued identifier, a negative value, a nonfinite value and an overflowing value reject with the need identifier; the clock part that conversion feeds is driven at its emitted runtime by the composer item (private driver press/tick readings, completion once, restart and clamped remaining).",
+      "evidence": "plan.decode resolves countdown.length through plans.durationSource and keeps the source's measure and unit; the clock part converts that source with the checked plans.milliseconds (seconds x1000, minutes x60000), so a decoded seconds source converts to 90000 ms and a minutes constant to 300000 ms while a money source - the same measure test that refuses a percent, count or number measure - an unissued identifier, a negative value, a nonfinite value and an overflowing value reject with the need identifier; the clock part that conversion feeds is driven at its emitted runtime by the composer item (private driver press/tick readings, completion once, restart and clamped remaining), and the same composer item mounts the emitted pair with an edited seconds input.",
       "asserts": [
         "milliseconds(seconds,90,\"cook\") === 90000",
         "cook: length source is not a duration",
@@ -1894,7 +1895,7 @@
         "A hole body that changes the composed function signature was admitted",
         "A body for an undeclared hole was admitted"
       ],
-      "blocker": "The emitted-body path is delivered and tested: an issued whenFinished body replaces the declared default body in the composed function while the signature stays fixed; a body that changes the composed signature rejects before emission; and a body keyed by a hole the fragment does not declare rejects at assembly with the identifier instead of being ignored. What stays unproven here: no catalogue kind issues a hole definition (the catalogue instantiation carries an empty hole list), so no production instance reaches emission with an issued hole; the duplicate-body rejection required by the hole contract has no dedicated vector, because a repeated key is refused by the composition document decode itself (DEAL v1.6 rejects duplicate decoded keys) and an in-process composition cannot carry one, and no gate case drives that decode; and no over-600-code-unit body or retained-default-body vector exists in the gate. Owner catalogue-sections for the kind-issued holes."
+      "blocker": "The emitted-body path is delivered and tested: an issued whenFinished body replaces the declared default body in the composed function while the signature stays fixed; a body that changes the composed signature rejects before emission; and a body keyed by a hole the fragment does not declare rejects at assembly with the identifier instead of being ignored. What stays unproven here: no catalogue kind issues a hole definition (the catalogue instantiation carries an empty hole list), so no production instance reaches emission with an issued hole; the duplicate-body rejection required by the hole contract has no dedicated vector, because a repeated key is refused by the composition document decode itself (DEAL v1.6 rejects duplicate decoded keys) and an in-process composition cannot carry one, and no gate case drives that decode with a duplicate body key; and no over-600-code-unit body or retained-default-body vector exists in the gate. Owner catalogue-sections for the kind-issued holes."
     },
     {
       "id": "pins",

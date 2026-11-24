@@ -158,7 +158,7 @@ export function publishedType(need: plans.Need): string {
 function screen(raw: WireScreen, frozenTarget: string, needIds: string[]): Screen {
   let target: string = s.oneOf(raw.target,["screen","chat","card"]); if (target !== frozenTarget) { s.reject("Screen target promotion"); }
   let result: Screen = {title:s.nonblank(raw.title),target:target,layout:layout(raw.layout),slots:[],instances:[]};
-  let slotIds: string[] = []; let slotNeeds: string[] = []; let instanceIds: string[] = []; let catalogue: string[] = [];
+  let slotIds: string[] = []; let instanceIds: string[] = []; let catalogue: string[] = [];
   for (let value of raw.instances) {
     let id: string = s.identifier(value.id); s.unique(instanceIds,id);
     let entry: Instance = {id:id,kind:s.nonblank(value.kind),origin:s.oneOf(value.origin,["part","catalogue","custom","notice"]),parameters:value.parameters as Record<string, unknown>,fragment:fragment(value.fragment,id),bodies:value.bodies as Record<string, unknown>};
@@ -180,7 +180,7 @@ function screen(raw: WireScreen, frozenTarget: string, needIds: string[]): Scree
     if (!s.contains(needIds,entry.need)) { s.reject("Unissued slot need"); }
     // A slot is identified by its need and a composition issues exactly one slot per need.
     if (entry.id !== entry.need) { s.reject("Slot identity differs from its need: "+entry.id); }
-    s.unique(slotIds,entry.id); s.unique(slotNeeds,entry.need);
+    s.unique(slotIds,entry.id);
     if (value.instance !== null) { entry.instance = s.identifier(value.instance); if (!s.contains(instanceIds,entry.instance as string)) { s.reject("Unissued slot instance"); } }
     if (entry.status === "filled" && entry.instance === null) { s.reject("Filled slot without implementation"); }
     if (Object.hasOwn(value,"event")) { entry.event = s.identifier(value.event); }
