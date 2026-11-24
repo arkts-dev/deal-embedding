@@ -14,7 +14,7 @@ export class Accepted { need: string; id: string; kind: string; }
 // every need left open beside its located reason and whether an unanswered batch stopped the stage.
 export class Outcome { accepted: Accepted[]; open: string[]; reasons: string[]; rounds: number; publishers: number; stopped: boolean; }
 
-function copy(values: string[]): string[] { let result: string[] = []; for (let value of values) { result[result.length] = value; } return result; }
+function copy(values: readonly string[]): string[] { return values.slice(); }
 function declared(candidate: Candidate, publishers: string[]): boolean {
   for (let port of candidate.reads) { if (!s.contains(publishers,port)) { return false; } }
   return true;

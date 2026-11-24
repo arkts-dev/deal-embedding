@@ -136,16 +136,12 @@ export class Alternative { source: string; size: number; }
 export class Enumeration { alternatives: Alternative[]; count: number; overCap: boolean; }
 export function alternativeBound(): number { return 255; }
 function before(left: Alternative, right: Alternative): boolean { if (left.size !== right.size) { return left.size < right.size; } return left.source < right.source; }
-function ordered(alternatives: Alternative[]): Alternative[] {
-  let result: Alternative[] = Array.from(alternatives,(item: Alternative): Alternative => item);
-  let index: number = 0;
-  while (index < result.length) {
-    let best: number = index; let scan: number = index+1;
-    while (scan < result.length) { if (before(result[scan],result[best])) { best = scan; } scan = scan+1; }
-    if (best !== index) { let swap: Alternative = result[index]; result[index] = result[best]; result[best] = swap; }
-    index = index+1;
-  }
-  return result;
+function ordered(alternatives: readonly Alternative[]): Alternative[] {
+  return alternatives.toSorted((left: Alternative, right: Alternative): number => {
+    if (before(left,right)) { return -1; }
+    if (before(right,left)) { return 1; }
+    return 0;
+  });
 }
 export function enumerate(operands: Operand[], aggregates: string[]): Enumeration {
   // Only compatible alternatives are issued: a boolean operand has no numeric unary or binary form.

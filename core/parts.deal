@@ -324,7 +324,7 @@ export function defineWithProviders(plan: plans.Plan, providerOperands: formula.
             if (!Number.isFinite(actual) || Math.abs(actual-expected) > tolerance) { s.reject("Formula fails the issued numeric example"); }
           }
           // The alternative set is measured over the operands this figure's own formula can reference.
-          let available: formula.Operand[] = Array.from(issued,(item: formula.Operand): formula.Operand => item);
+          let available: formula.Operand[] = issued.slice();
           definitions.figures[definitions.figures.length] = {need:need.id,expression:expression,label:s.nonblank(need.spec.label),unit:s.text(need.spec.unit),format:format,shown:s.truth(need.spec.shown),valueType:required,operands:available,example:examples,result:expected};
           let criteria: string = "Pure checked numeric formula "+s.text(need.spec.formula)+" over issued inputs/constants. Preserves numeric value, explicit readiness and units; no provider work, timer, records or external action.";
           if (booleanValue) { criteria = "Pure checked boolean comparison "+s.text(need.spec.formula)+" over issued inputs/constants. Preserves the boolean value, explicit readiness and the fixed Yes/No spelling; no provider work, timer, records or external action."; }
@@ -374,7 +374,7 @@ function lowerFor(figure: Figure, written: string): formula.Lowered {
 // issued operands, checked against the figure's issued example and used in place of the original
 // formula. The 300-unit written bound rejects; nothing is truncated.
 export function applyWritten(plan: plans.Plan, definitions: Definitions, answers: selections.Answer[]): Definitions {
-  let result: Definitions = {alternatives:definitions.alternatives,figures:[],unavailable:Array.from(definitions.unavailable,(issued: DefinitionProblem): DefinitionProblem => issued)};
+  let result: Definitions = {alternatives:definitions.alternatives,figures:[],unavailable:definitions.unavailable.slice()};
   for (let figure of definitions.figures) {
     let overCap: boolean = formula.enumerate(figure.operands,aggregateIds(figure.operands)).overCap;
     let written: string = "";

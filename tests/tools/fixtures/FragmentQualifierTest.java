@@ -23,6 +23,23 @@ public final class FragmentQualifierTest {
         String printed=FragmentSyntax.qualify(chains,Map.of()); FragmentSyntax.parse(printed);
         String qualified=(String)FragmentQualifier.qualify(chains,"",view,names,fields,types).get("declarations"); FragmentSyntax.parse(qualified);
         for(String source:List.of(printed,qualified))if(!source.contains("?.[")||!source.contains("?.(")||!source.contains("?.value")||!source.contains("`") || source.contains("String("))throw new AssertionError("Lost optional/template semantics: "+source);
+        String readonly="export class Snapshot { readonly values: readonly number[]; } export function values(snapshot: Snapshot): readonly number[] { return snapshot.values; }";
+        for(String preserved:List.of(FragmentSyntax.qualify(readonly,Map.of()), (String)FragmentQualifier.qualify(readonly,"",view,names,fields,types).get("declarations"))) {
+            var parsed=FragmentSyntax.parse(preserved);
+            var declaration=(deal.ast.ClassDeclaration)((deal.ast.ExportDeclaration)parsed.statements().getFirst()).declaration();
+            if(!declaration.fields().getFirst().readonly() || !((deal.ast.ArrayType)declaration.fields().getFirst().type()).readonly())throw new AssertionError("Erased readonly: "+preserved);
+        }
+        for(var layers:List.of(List.of(true,false),List.of(false,true),List.of(true,true))) {
+            var type=new deal.ui.UiModel.TypeRef("number",false,2,layers);
+            var module=UiParser.parseViews(Path.of("arrays.dealui"),"export view Arrays(values: "+type.sourceType("number")+"): View { }");
+            if(!module.views().getFirst().parameters().getFirst().type().equals(type))throw new AssertionError("Array layer roundtrip: "+type);
+            String source="export class Nested { readonly values: "+type.sourceType("number")+"; }";
+            for(String preserved:List.of(FragmentSyntax.qualify(source,Map.of()), (String)FragmentQualifier.qualify(source,"",view,names,fields,types).get("declarations"))) {
+                var declaration=(deal.ast.ClassDeclaration)((deal.ast.ExportDeclaration)FragmentSyntax.parse(preserved).statements().getFirst()).declaration();
+                var outer=(deal.ast.ArrayType)declaration.fields().getFirst().type();
+                if(outer.readonly()!=layers.get(1)||((deal.ast.ArrayType)outer.elementType()).readonly()!=layers.get(0))throw new AssertionError("Array layers erased: "+preserved);
+            }
+        }
         if(args.length>0){Files.createDirectories(Path.of(args[0]));Files.writeString(Path.of(args[0],"qualified.deal"),(String)result.get("declarations")+"export class AppState { f_a_value: number; f_a_rows: f_a_Row[]; }\n"+code);}
         System.out.println("fragment qualifier: contextual state/member/action identities, locals, Unicode and parsed views passed");
     }

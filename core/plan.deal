@@ -15,7 +15,7 @@ export class HumanQuestion { id: string; text: string; options: Record<string, u
 export class Plan { title: string; eyebrow: string; subtitle: string; inputs: Input[]; constants: Constant[]; requirements: Requirement[]; needs: Need[]; questions: HumanQuestion[]; }
 function member(value: unknown, allowed: string[], owner: string): string {
   if (typeof value === "string") { if (s.contains(allowed,value)) { return value; } }
-  s.reject(owner+": expected one of "+allowed.join(", ")); return "";
+  s.reject(owner+": expected one of "+allowed.join(", "));
 }
 // A model-supplied identifier is reported against the field that carries it, so a plan the planner
 // can correct names its own need and parameter instead of a bare rejected spelling.
@@ -26,7 +26,7 @@ function namedIdentifier(value: unknown, owner: string): string {
 }
 function number(value: unknown, owner: string): number {
   if (typeof value === "number") { if (Number.isFinite(value)) { return value; } }
-  s.reject(owner+": expected a finite number"); return 0;
+  s.reject(owner+": expected a finite number");
 }
 function integer(value: unknown, owner: string): number {
   let result: number = number(value,owner);
@@ -35,15 +35,15 @@ function integer(value: unknown, owner: string): number {
 }
 function text(value: unknown, owner: string): string {
   if (typeof value === "string") { return value; }
-  s.reject(owner+": expected text"); return "";
+  s.reject(owner+": expected text");
 }
 function truth(value: unknown, owner: string): boolean {
   if (typeof value === "boolean") { return value; }
-  s.reject(owner+": expected a boolean"); return false;
+  s.reject(owner+": expected a boolean");
 }
 function record(value: unknown, owner: string): Record<string, unknown> {
   if (typeof value === "object" && value !== null) { try { return value as Record<string, unknown>; } catch (error) { } }
-  s.reject(owner+": expected a record"); return {};
+  s.reject(owner+": expected a record");
 }
 // A declared array of the Plan or Requirement schema is required: the spec marks these fields without
 // an omission default, so an absent one is the named missing field rather than an empty list. Only an
@@ -291,7 +291,7 @@ function durationSource(id: string, inputs: Input[], constants: Constant[], need
     let declared: string = needTimeMeasure(need);
     if (declared !== "") { return {id:id,measure:declared,unit:""}; }
     s.reject(owner+": length source is not a duration"); } }
-  s.reject(owner+": unissued duration source "+id); return {id:id,measure:"",unit:""};
+  s.reject(owner+": unissued duration source "+id);
 }
 // Checked millisecond conversion of a resolved duration source. Fractional milliseconds remain legal.
 export function milliseconds(source: DurationSource, value: number, owner: string): number {

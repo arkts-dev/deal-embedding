@@ -126,6 +126,26 @@ elif name=='timeout':
                     module.observe(seam)
                 self.assertEqual(path.read_text(),'enabled')
 
+    def test_boundary_preparation_bound_does_not_relax_proof(self):
+        from unittest.mock import patch
+        spec=importlib.util.spec_from_file_location('boundary_bounds',ROOT/'tools/boundary-proof.py')
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            stage=Path(directory)
+            with patch.object(module,'STAGE',stage), patch.object(module,'stage_tree',return_value=stage), patch.object(module,'runtime_classpath',return_value='runtime'), patch.object(module.library_inputs,'dependency_roots',return_value={'deal':ROOT,'deal-ui':ROOT}), patch.object(module.subprocess,'run') as run, patch.dict(os.environ,{'DEAL_BUILD_STAGE_SECONDS':'130'}):
+                module.isolated_digests(Path('android'),Path('aidl'),prepare_stage='java_base')
+                args,kwargs=run.call_args
+                self.assertEqual(args[0][2],'240s')
+                self.assertEqual(kwargs['env']['DEAL_BUILD_STAGE_SECONDS'],'130')
+                with patch.dict(os.environ,{'DEAL_BUILD_STAGE_SECONDS':'300'}):
+                    module.isolated_digests(Path('android'),Path('aidl'),prepare_stage='java_base')
+                    self.assertEqual(run.call_args.args[0][2],'305s')
+                with self.assertRaises(SystemExit):
+                    module.isolated_digests(Path('android'),Path('aidl'))
+                self.assertEqual(run.call_args.args[0][2],'600s','proof keeps upstream\'s independent deadline')
+                with patch.dict(os.environ,{'DEAL_BUILD_STAGE_SECONDS':'0'}), self.assertRaises(SystemExit):
+                    module.isolated_digests(Path('android'),Path('aidl'),prepare_stage='java_base')
+
     def test_boundary_output_corruption_is_not_a_cache_hit(self):
         spec=importlib.util.spec_from_file_location('boundary_test',ROOT/'tests/tools/test-standalone-boundary.py')
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)

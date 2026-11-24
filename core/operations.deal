@@ -8,9 +8,9 @@ export class Operation {
   arguments: Record<string, unknown>; calls: Call[];
 }
 export class Call { id: string; terminal: boolean; status: string; outcome: string; message: string; result?: unknown; }
-export class Envelope { operationId: string; sequence: number; phase: string; revision: number; lifetime: string; epoch: number; callId: string; }
-export class Completion { envelope: Envelope; accepted: boolean; status: string; message: string; outcome: string; result?: unknown; }
-export class Prerequisites { ready: boolean; unexpired: boolean; revision: number; lifetime: string; epoch: number; }
+export class Envelope { readonly operationId: string; readonly sequence: number; readonly phase: string; readonly revision: number; readonly lifetime: string; readonly epoch: number; readonly callId: string; }
+export class Completion { readonly envelope: Envelope; readonly accepted: boolean; readonly status: string; readonly message: string; readonly outcome: string; readonly result?: unknown; }
+export class Prerequisites { readonly ready: boolean; readonly unexpired: boolean; readonly revision: number; readonly lifetime: string; readonly epoch: number; }
 function copy(operation: Operation): Operation {
   let result: Operation = {id:operation.id,owner:operation.owner,status:operation.status,sequence:operation.sequence,phase:operation.phase,revision:operation.revision,lifetime:operation.lifetime,epoch:operation.epoch,accepted:false,continuation:false,message:operation.message,outcome:operation.outcome,arguments:operation.arguments,calls:[]};
   if (Object.hasOwn(operation,"result")) { result.result = operation.result; }
@@ -25,7 +25,7 @@ export function idle(id: string, owner: string): Operation {
 export function current(operation: Operation, envelope: Envelope, prerequisites: Prerequisites): boolean {
   return operation.id === envelope.operationId && operation.status === "pending" && operation.sequence === envelope.sequence && operation.phase === envelope.phase && operation.revision === envelope.revision && operation.revision === prerequisites.revision && operation.lifetime === envelope.lifetime && operation.lifetime === prerequisites.lifetime && operation.epoch === envelope.epoch && operation.epoch === prerequisites.epoch && prerequisites.ready && prerequisites.unexpired;
 }
-export function begin(operation: Operation, phase: string, prerequisites: Prerequisites, args: Record<string, unknown>, callIds: string[], admittedAt: number, expiresAt: number | null): Operation {
+export function begin(operation: Operation, phase: string, prerequisites: Prerequisites, args: Record<string, unknown>, callIds: readonly string[], admittedAt: number, expiresAt: number | null): Operation {
   let next: Operation = copy(operation);
   // Reject before changing sequence, phase, correlation or invocation eligibility.
   if (operation.status === "pending" || !prerequisites.ready || !prerequisites.unexpired) { return next; }

@@ -223,7 +223,7 @@ function minuteOfDay(value: unknown, name: string): number { let result: number 
 function dayOf(value: unknown, name: string): number { return integer(value,name); }
 // A zero maximum states "no dataset bound", which is how personal-record arrays keep the rows the
 // user supplied instead of being trimmed to a fixture-shaped size.
-function within(entries: unknown[], minimum: number, maximum: number, name: string): void {
+function within(entries: readonly unknown[], minimum: number, maximum: number, name: string): void {
   if (entries.length < minimum) { s.reject("Catalogue array minimum: "+name); }
   if (maximum > 0 && entries.length > maximum) { s.reject("Catalogue array bound: "+name); }
 }
@@ -316,7 +316,7 @@ async function row(type: string, entry: unknown, ids: string[], name: string): P
   s.reject("Catalogue parameter row type: "+type); throw {name:"CONSTRUCTION_SCHEMA",message:"Catalogue parameter row type"};
 }
 async function rowList(parameter: Parameter, value: unknown, minimum: number, ids: string[]): Promise<Record<string, unknown>[]> {
-  list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,minimum,parameter.maximum,parameter.name); let checked: Record<string, unknown>[] = [];
+  list(value,parameter.name); const entries: readonly unknown[] = value as readonly unknown[]; within(entries,minimum,parameter.maximum,parameter.name); let checked: Record<string, unknown>[] = [];
   for (let entry of entries) { checked[checked.length] = await row(parameter.type,entry,ids,parameter.name); }
   return checked;
 }
@@ -360,42 +360,42 @@ export async function decode(definition: Definition, raw: unknown): Promise<Reco
       let referenced: string = s.text(value); result[parameter.name] = ""; if (referenced !== "") { result[parameter.name] = s.identifier(value); }
     }
     else if (parameter.type === "labels") {
-      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,1,parameter.maximum,parameter.name);
+      list(value,parameter.name); const entries: readonly unknown[] = value as readonly unknown[]; within(entries,1,parameter.maximum,parameter.name);
       let labels: string[] = []; for (let label of entries) { labels[labels.length] = await text(label,32,true); }
       result[parameter.name] = labels;
     }
     else if (parameter.type === "categories") {
-      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,1,parameter.maximum,parameter.name);
+      list(value,parameter.name); const entries: readonly unknown[] = value as readonly unknown[]; within(entries,1,parameter.maximum,parameter.name);
       let labels: string[] = []; let ids: string[] = [];
       for (let label of entries) { let checked: string = await text(label,32,true); s.unique(ids,checked); labels[labels.length] = checked; }
       result[parameter.name] = labels;
     }
     else if (parameter.type === "people") {
-      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,1,parameter.maximum,parameter.name);
+      list(value,parameter.name); const entries: readonly unknown[] = value as readonly unknown[]; within(entries,1,parameter.maximum,parameter.name);
       let people: string[] = []; let ids: string[] = [];
       for (let person of entries) { let checked: string = await text(person,32,true); s.unique(ids,checked); people[people.length] = checked; }
       result[parameter.name] = people;
     }
     else if (parameter.type === "actionIds") {
-      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,1,parameter.maximum,parameter.name);
+      list(value,parameter.name); const entries: readonly unknown[] = value as readonly unknown[]; within(entries,1,parameter.maximum,parameter.name);
       let issued: string[] = []; for (let entry of entries) { let id: string = rowIdentity(entry,"actionIds"); s.unique(issued,id); issued[issued.length] = id; }
       result[parameter.name] = issued;
     }
     else if (parameter.type === "headers") {
-      list(value,parameter.name); let entries: unknown[] = value as unknown[]; if (entries.length !== parameter.maximum) { s.reject("Catalogue headers bound"); }
+      list(value,parameter.name); const entries: readonly unknown[] = value as readonly unknown[]; if (entries.length !== parameter.maximum) { s.reject("Catalogue headers bound"); }
       let names: string[] = [];
       for (let name of entries) { names[names.length] = await text(name,32,true); }
       headers = names; result[parameter.name] = names;
     } else if (parameter.type === "cells") {
-      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,0,parameter.maximum,parameter.name);
+      list(value,parameter.name); const entries: readonly unknown[] = value as readonly unknown[]; within(entries,0,parameter.maximum,parameter.name);
       for (let entry of entries) {
         list(entry,"cells"); let cells: string[] = [];
-        for (let cell of entry as unknown[]) { cells[cells.length] = await text(cell,512,false); }
+        for (let cell of entry as readonly unknown[]) { cells[cells.length] = await text(cell,512,false); }
         table[table.length] = cells;
       }
       result[parameter.name] = table;
     } else if (parameter.type === "numbers") {
-      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,0,parameter.maximum,parameter.name);
+      list(value,parameter.name); const entries: readonly unknown[] = value as readonly unknown[]; within(entries,0,parameter.maximum,parameter.name);
       let amounts: number[] = []; for (let entry of entries) { amounts[amounts.length] = positiveNumber(entry,"amount"); }
       result[parameter.name] = amounts;
     } else if (parameter.type === "source") {
@@ -596,12 +596,12 @@ export function disclosed(entry: Configured, original: string, facts: string, us
     let raw: unknown = entry.parameters[parameter.name];
     if (!s.encode(raw).startsWith("[")) { continue; }
     let index: number = 0;
-    let rows: unknown[] = JSON.parse(s.encode(raw));
+    const rows: readonly unknown[] = raw as readonly unknown[];
     for (let row of rows) {
       let values: Record<string, unknown> = {};
       if (typeof row === "string") { values.value = row; }
       else if (typeof row === "object" && row !== null) {
-        if (s.encode(row).startsWith("[")) { let cell: number = 0; let cells: unknown[] = JSON.parse(s.encode(row)); for (let value of cells) { values["cell"+String(cell)] = value; cell = cell+1; } }
+        if (s.encode(row).startsWith("[")) { let cell: number = 0; const cells: readonly unknown[] = row as readonly unknown[]; for (let value of cells) { values["cell"+String(cell)] = value; cell = cell+1; } }
         else { let record: Record<string, unknown> = row as Record<string, unknown>; for (let key of tables.keys(record)) { if (key !== "id" && key !== "done" && key !== "selected" && key !== "completed" && key !== "daily") { let value: unknown = record[key]; if (value !== null) { values[key] = value; } } } }
       }
       if (!disclosure.admitsRecord(data,values)) { return refusal(entry,parameter.name+" row "+String(index)+" fields are not one disclosed record"); }

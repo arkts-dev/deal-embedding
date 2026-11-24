@@ -2,9 +2,9 @@ import * as s from "./construction-schema";
 import * as data from "embedding/policy-data";
 import * as identity from "embedding/construction-identity";
 
-export class Source { deal: string; dealui: string; }
-export class Revision { revision: string; digest: string; source: Source; }
-export class Edit { file: string; search: string; replace: string; start: number; end: number; }
+export class Source { readonly deal: string; readonly dealui: string; }
+export class Revision { readonly revision: string; readonly digest: string; readonly source: Source; }
+export class Edit { readonly file: string; readonly search: string; readonly replace: string; readonly start: number; readonly end: number; }
 export class Applied { accepted: boolean; current: Revision; diagnostics: string; }
 class WireEdit { file:string; search:string; replace:string; }
 class EditRequest { revision:string; digest:string; edits:WireEdit[]; }

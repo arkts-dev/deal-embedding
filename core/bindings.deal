@@ -40,7 +40,7 @@ export function domain(type: string): embedding.WireType {
   if (type === "null") { return {kind:"null",fields:fields,element:null,maximum:0,minimumNumber:0,maximumNumber:0}; }
   if (type === "Record<string, unknown>") { return {kind:"record",fields:fields,element:null,maximum:0,minimumNumber:0,maximumNumber:0}; }
   if (type.endsWith("[]")) { return {kind:"array",fields:fields,element:domain(type.substring(0,type.length-2)),maximum:8192,minimumNumber:0,maximumNumber:0}; }
-  s.reject("Unknown declared source type: "+type); return {kind:"null",fields:fields,element:null,maximum:0,minimumNumber:0,maximumNumber:0};
+  s.reject("Unknown declared source type: "+type);
 }
 export function reserve(registry: Registry, issued: Source): void {
   s.identifier(issued.id); s.nonblank(issued.type); s.nonblank(issued.getter); s.nonblank(issued.ready);

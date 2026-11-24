@@ -61,7 +61,7 @@ internal class ExperienceCompiler(private val context: Context, private val conf
                     deal.ui.UiCheckpointCompiler.compile(entry.toPath(), output.toPath(), diagnostics.toPath())
                 }
                 log.event("compiler-deal", "phases", target = "Monotonic phase milliseconds; codegen-total includes lowering/emission", detail = phases.toString())
-                log.event("compiler-deal", "diagnostics", code = "STATUS_$status", detail = if (diagnostics.exists()) diagnostics.readText().replace(project.absolutePath, "candidate") else null)
+                log.event("compiler-deal", "diagnostics", code = "STATUS_$status", detail = if (diagnostics.exists()) diagnostics.readText() else null)
                 classifyCompilerOutcome(status, if (diagnostics.exists()) diagnostics.readText() else null, app.absolutePath, project.absolutePath)
             }
             File(output,"admission.json").writeText(JSONObject().put("imports",imports).put("providers",JSONArray(config.contracts.map{it.module}))
@@ -74,29 +74,21 @@ internal class ExperienceCompiler(private val context: Context, private val conf
                 .put("target",issuedTarget).toString())
             return output
         } catch (error: deal.ui.UiDiagnostic) {
-            val producer = error.compilerDiagnostic()
-            if (producer != null && (deal.diagnostics.DiagnosticClassification.forCode(producer.code()).responsibility() !=
-                    deal.diagnostics.DiagnosticClassification.Responsibility.SOURCE_CONTRACT ||
-                    producer.range().origin() != deal.diagnostics.RangeOrigin.SOURCE ||
-                    producer.range().file() != File(project, "src/${config.sourceName}.deal").absolutePath)) {
-                val failure = CompilerOperationFailed(1, listOf(producer.code()))
+            val sources = mapOf(
+                File(project, "src/${config.sourceName}.deal").absolutePath to dealSource,
+                File(project, "src/${config.sourceName}.dealui").absolutePath to uiSource
+            )
+            try {
+                val ownedFile = error.file()?.toAbsolutePath()?.normalize()
+                if (ownedFile == null || sources.keys.none { File(it).toPath() == ownedFile }) {
+                    throw CompilerOperationFailed(1, listOf(error.code()))
+                }
+                classifyCompilerOutcome(1, error.toJson(project.toPath(), sources), ownedFile.toString(), project.absolutePath)
+                error("A rejected UI diagnostic cannot be accepted")
+            } catch (failure: Throwable) {
                 runCatching { StagingReclamation.remove(context, project) }.onFailure { failure.addSuppressed(it) }
                 throw failure
             }
-            val evidence = if (producer != null) {
-                deal.diagnostics.DiagnosticStructuredOutput.toJson(listOf(producer))
-            } else {
-                JSONObject().put("version", 2).put("diagnostics", JSONArray().put(JSONObject()
-                    .put("stage", "ui").put("code", error.code()).put("message", error.message)
-                    .put("range", JSONObject().put("file", error.file()?.fileName?.toString())
-                        .put("startLine", error.line()).put("startColumn", error.column())
-                        .put("endLine", error.endLine()).put("endColumn", error.endColumn() + 1))
-                    .put("expected", error.expected()).put("actual", error.actual())
-                    .put("notes", JSONArray(error.notes().map { note -> JSONObject().put("message", note.message()) })))).toString()
-            }
-            val rejection=CandidateRejected(evidence.replace(project.absolutePath + "/", ""))
-            runCatching{StagingReclamation.remove(context,project)}.onFailure{rejection.addSuppressed(it)}
-            throw rejection
         } catch (error: Throwable) { runCatching{StagingReclamation.remove(context,project)}.onFailure{error.addSuppressed(it)};throw error }
     }
 }

@@ -60,7 +60,7 @@ public final class FragmentSyntax {
         String type(TypeNode node){return switch(node){
             case NamedType t->name(t.name());
             case QualifiedType t->name(t.moduleName())+"."+name(t.typeName());
-            case ArrayType t->type(t.elementType())+"[]";
+            case ArrayType t->t.readonly()?"readonly ("+type(t.elementType())+")[]":(t.elementType() instanceof ArrayType inner && inner.readonly()?"("+type(t.elementType())+")[]":type(t.elementType())+"[]");
             case NullableType t->"("+type(t.innerType())+(t.undefinedMember()?" | undefined)":" | null)");
             case FunctionType t->"("+t.params().stream().map(p->name(p.name())+":"+type(p.type())).collect(Collectors.joining(","))+") => "+result(t.returnType(),t.isAsync());
         };}
@@ -70,7 +70,7 @@ public final class FragmentSyntax {
             case ExportDeclaration e->"export "+statement(e.declaration());
             case FunctionDeclaration f->(f.isAsync()?"async ":"")+"function "+name(f.name())+"("+parameters(f.params())+"):"+result(f.returnType(),f.isAsync())+block(f.body())+"\n";
             case ImportDeclaration i->"import * as "+name(i.alias())+" from "+quote(i.modulePath())+";\n";
-            case ClassDeclaration c->"class "+name(c.name())+" {\n"+c.fields().stream().map(f->name(f.name())+(f.optional()?"?":"")+": "+type(f.type())+";\n").collect(Collectors.joining())+"}\n";
+            case ClassDeclaration c->"class "+name(c.name())+" {\n"+c.fields().stream().map(f->(f.readonly()?"readonly ":"")+name(f.name())+(f.optional()?"?":"")+": "+type(f.type())+";\n").collect(Collectors.joining())+"}\n";
             case Block b->block(b);
             case VariableDeclaration v->(v.isConst()?"const ":"let ")+name(v.name())+v.typeAnnotation().map(t->":"+type(t)).orElse("")+"="+expression(v.initializer())+";\n";
             case ReturnStatement r->"return"+r.expr().map(e->" "+expression(e)).orElse("")+";\n";

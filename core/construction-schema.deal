@@ -2,16 +2,16 @@ import * as tables from "std/table";
 import * as decoded from "./decoded";
 
 export function reject(message: string): never { throw {name:"CONSTRUCTION_SCHEMA",message:message}; }
-export function closed(value: Record<string, unknown>, required: string[], optional: string[]): void {
+export function closed(value: Record<string, unknown>, required: readonly string[], optional: readonly string[]): void {
   for (let key of required) { if (!Object.hasOwn(value,key)) { reject("Missing field: "+key); } }
   for (let key of tables.keys(value)) { if (!contains(required,key) && !contains(optional,key)) { reject("Unknown field: "+key); } }
 }
-export function contains(values: string[], value: string): boolean { return values.includes(value); }
+export function contains(values: readonly string[], value: string): boolean { return values.includes(value); }
 // Declared kinds are checked, never cast: a value of another runtime kind rejects here.
-export function finite(value: unknown): number { if (typeof value === "number") { if (Number.isFinite(value)) { return value; } } reject("Expected finite number"); return 0; }
+export function finite(value: unknown): number { if (typeof value === "number") { if (Number.isFinite(value)) { return value; } } reject("Expected finite number"); }
 export function integral(value: unknown): number { let n: number = finite(value); if (Math.floor(n) !== n) { reject("Expected integral number"); } return n; }
-export function text(value: unknown): string { if (typeof value === "string") { return value; } reject("Expected text"); return ""; }
-export function truth(value: unknown): boolean { if (typeof value === "boolean") { return value; } reject("Expected boolean"); return false; }
+export function text(value: unknown): string { if (typeof value === "string") { return value; } reject("Expected text"); }
+export function truth(value: unknown): boolean { if (typeof value === "boolean") { return value; } reject("Expected boolean"); }
 export function nonblank(value: unknown): string { let result: string = text(value); if (result.trim() === "") { reject("Expected nonblank text"); } return result; }
 export function identifier(value: unknown): string {
   let name: string = text(value); let index: number = 0;
@@ -33,7 +33,7 @@ export function identifierText(value: string): boolean {
   try { identifier(value); } catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } return false; }
   return true;
 }
-export function oneOf(value: unknown, allowed: string[]): string { let name: string = text(value); if (!contains(allowed,name)) { reject("Unknown alternative: "+name); } return name; }
+export function oneOf(value: unknown, allowed: readonly string[]): string { let name: string = text(value); if (!contains(allowed,name)) { reject("Unknown alternative: "+name); } return name; }
 export function records(owner: Record<string, unknown>, name: string): Record<string, unknown>[] { if (!Object.hasOwn(owner,name)) { return []; } return decoded.records(owner[name]); }
 export function stringArray(value: unknown): string[] { return decoded.strings(value); }
 export function optionalText(owner: Record<string, unknown>, name: string): string { if (!Object.hasOwn(owner,name)) { return ""; } return text(owner[name]); }

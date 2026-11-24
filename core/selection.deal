@@ -14,7 +14,7 @@ export function threshold(category: string): number {
   if (category === "ownership") { return 0.2; }
   if (category === "live" || category === "live-alignment") { return 0.65; }
   if (category === "human-question" || category === "structural-edit") { return 0.6; }
-  s.reject("Unknown decision category: "+category); return 1;
+  s.reject("Unknown decision category: "+category);
 }
 export function question(id: string, need: string, category: string, instructions: string, options: Option[]): Question {
   let ids: string[] = []; for (let option of options) { s.unique(ids,s.identifier(option.id)); s.nonblank(option.criteria); }

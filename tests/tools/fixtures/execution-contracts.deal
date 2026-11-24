@@ -28,6 +28,9 @@ function admitted(value: execution.Executed, at: number, expiry: string): execut
 function correlated(value: execution.Executed): operations.Envelope {
   return {operationId:value.operation.id,sequence:value.operation.sequence,phase:value.operation.phase,revision:value.operation.revision,lifetime:value.operation.lifetime,epoch:value.operation.epoch,callId:"call-1"};
 }
+function alteredEnvelope(value: operations.Envelope, epoch: number, phase: string, sequence: number): operations.Envelope {
+  return {operationId:value.operationId,sequence:sequence,phase:phase,revision:value.revision,lifetime:value.lifetime,epoch:epoch,callId:value.callId};
+}
 function completion(envelope: operations.Envelope, result: unknown): operations.Completion {
   return {envelope:envelope,accepted:true,status:"ready",message:"",outcome:"success",result:result};
 }
@@ -221,7 +224,7 @@ export function admission(): null {
   // it admits is still compared with the epoch this invocation captured.
   let liveEpochResend: execution.Admission = execution.admit(recorded,revokedAtSend,"{}",["call-3"],1200,"");
   insist(liveEpochResend.accepted && liveEpochResend.executed.operation.epoch === 8,"An explicit retry did not capture the live permission epoch");
-  let previousEnvelope: operations.Envelope = correlated(recorded); previousEnvelope.epoch = 7;
+  const previousEnvelope: operations.Envelope = alteredEnvelope(correlated(recorded),7,recorded.operation.phase,recorded.operation.sequence);
   insist(!execution.invocationCurrent(liveEpochResend.executed,previousEnvelope,revokedAtSend),"A reply envelope from the previous invocation established currentness");
   // A module the host no longer grants sends nothing, whatever its epoch or history, and the refusal
   // changes no record and starts no call.
@@ -244,7 +247,7 @@ export function admission(): null {
   let zeroSettled: operations.Operation = operations.complete(capturedZero.executed.operation,completion(correlated(capturedZero.executed),5),zeroPrerequisites);
   let zeroRecorded: execution.Executed = {operation:zeroSettled,dependencies:capturedZero.executed.dependencies,expiryKind:"none",period:0,trusted:true,stale:false};
   let movedEpoch: execution.Live = ready(0); movedEpoch.epoch = 1;
-  let movedEnvelope: operations.Envelope = correlated(zeroRecorded); movedEnvelope.epoch = 1;
+  const movedEnvelope: operations.Envelope = alteredEnvelope(correlated(zeroRecorded),1,zeroRecorded.operation.phase,zeroRecorded.operation.sequence);
   insist(!execution.invocationCurrent(zeroRecorded,movedEnvelope,movedEpoch),"A reply under a moved epoch established currentness");
   let zeroResend: execution.Admission = execution.admit(zeroRecorded,movedEpoch,"{}",["call-2"],1200,"");
   insist(zeroResend.accepted && zeroResend.executed.operation.epoch === 1,"A retry did not capture the moved epoch");
@@ -259,9 +262,9 @@ export function admission(): null {
   // The currentness hook compares the live revision, not a render version or a global counter.
   insist(execution.invocationCurrent(first.executed,correlated(first.executed),ready(0)),"Current invocation refused");
   insist(!execution.invocationCurrent(first.executed,correlated(first.executed),ready(1)),"Stale revision established currentness");
-  let wrongPhase: operations.Envelope = correlated(first.executed); wrongPhase.phase = "other";
+  const wrongPhase: operations.Envelope = alteredEnvelope(correlated(first.executed),first.executed.operation.epoch,"other",first.executed.operation.sequence);
   insist(!execution.invocationCurrent(first.executed,wrongPhase,ready(0)),"Wrong phase established currentness");
-  let wrongSequence: operations.Envelope = correlated(first.executed); wrongSequence.sequence = wrongSequence.sequence+1;
+  const wrongSequence: operations.Envelope = alteredEnvelope(correlated(first.executed),first.executed.operation.epoch,first.executed.operation.phase,first.executed.operation.sequence+1);
   insist(!execution.invocationCurrent(first.executed,wrongSequence,ready(0)),"Stale sequence established currentness");
   let wrongEpoch: execution.Live = ready(0); wrongEpoch.epoch = 8;
   insist(!execution.invocationCurrent(first.executed,correlated(first.executed),wrongEpoch),"Revoked epoch established currentness");

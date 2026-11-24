@@ -29,7 +29,7 @@ export function repairAdmission(): null {
   for (const diagnostics of ["ADMISSION_IMPORT: std/console","ADMISSION_PACK: compiler pack digest mismatch","ADMISSION_PACK: compiler pack version mismatch","ADMISSION_TARGET: a compile input requires the experience's frozen target","CHECK_PROVIDER: provider access during checking"]) {
     insist(!checking.repairable(diagnostics),"Authority verdict authorized repair: "+diagnostics);
   }
-  for (const diagnostics of ["CHECK_PROP: Surface.width finite","CHECK_CARD: sixth picture","CHECK_SURFACE: missing, blank or unchanged frame scene","CHECK_TREE: bad tree","{\"version\":2,\"diagnostics\":[{\"code\":\"E8001\"}]}","FIXTURE_CHECK: source repair required"]) {
+  for (const diagnostics of ["CHECK_PROP: Surface.width finite","CHECK_CARD: sixth picture","CHECK_SURFACE: missing, blank or unchanged frame scene","CHECK_TREE: bad tree","{\"version\":3,\"status\":\"rejected\",\"files\":[{\"file\":\"src/experience.deal\",\"revision\":\"fixture-revision\",\"snapshot\":\"current\"}],\"diagnostics\":[{\"code\":\"E8001\",\"severity\":\"error\",\"message\":\"Checked source assertion rejected\",\"responsibility\":\"SOURCE_CONTRACT\",\"range\":{\"file\":0,\"at\":[1,1,1,2]}}]}","FIXTURE_CHECK: source repair required"]) {
     insist(checking.repairable(diagnostics),"Source feedback refused repair: "+diagnostics);
   }
   return null;

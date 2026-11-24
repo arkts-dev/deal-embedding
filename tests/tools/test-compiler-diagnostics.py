@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise production diagnostic classification with a real compiler JSON v2 rejection."""
+"""Exercise production diagnostic classification with a real compiler diagnostic protocol v3 rejection."""
 import json, os, pathlib, subprocess
 import json_runtime
 root = pathlib.Path(__file__).resolve().parents[2]

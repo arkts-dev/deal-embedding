@@ -77,7 +77,7 @@ public final class FragmentQualifier {
         return switch(type) {
             case NamedType n -> name(n.name());
             case QualifiedType q -> name(q.moduleName()) + "." + q.typeName();
-            case ArrayType a -> type(a.elementType()) + "[]";
+            case ArrayType a -> a.readonly() ? "readonly (" + type(a.elementType()) + ")[]" : (a.elementType() instanceof ArrayType inner && inner.readonly() ? "(" + type(a.elementType()) + ")[]" : type(a.elementType()) + "[]");
             case NullableType n -> "(" + type(n.innerType()) + (n.undefinedMember() ? " | undefined)" : " | null)");
             case FunctionType f -> "(" + f.params().stream().map(p -> p.name()+": "+type(p.type())).collect(Collectors.joining(", ")) + ") => " + result(f.returnType(),f.isAsync());
         };
@@ -102,7 +102,7 @@ public final class FragmentQualifier {
         if (statement instanceof ExportDeclaration e) return prefix + "export " + statement(e.declaration(),scope,returns,level).stripLeading();
         return prefix + switch(statement) {
             case ImportDeclaration i -> "import * as " + name(i.alias()) + " from " + quote(i.modulePath()) + ";\n";
-            case ClassDeclaration c -> "class " + name(c.name()) + " {\n" + c.fields().stream().map(f -> indent(level+1) + f.name() + (f.optional()?"?":"") + ": " + type(f.type()) + ";\n").collect(Collectors.joining()) + prefix + "}\n";
+            case ClassDeclaration c -> "class " + name(c.name()) + " {\n" + c.fields().stream().map(f -> indent(level+1) + (f.readonly()?"readonly ":"") + f.name() + (f.optional()?"?":"") + ": " + type(f.type()) + ";\n").collect(Collectors.joining()) + prefix + "}\n";
             case FunctionDeclaration f -> {
                 var local = new LinkedHashMap<>(scope); f.params().forEach(p -> local.put(p.name(),p.type()));
                 yield (f.isAsync()?"async ":"") + "function " + name(f.name()) + "(" + parameters(f.params()) + "): " + result(f.returnType(),f.isAsync()) + " " + block(f.body(),local,f.returnType(),level) + "\n";
@@ -235,7 +235,7 @@ public final class FragmentQualifier {
     }
     private String uiType(UiModel.TypeRef type) {
         String[] parts = type.name().split("\\."); String result = parts.length==2 ? name(parts[0])+"."+(parts[1].equals("AppState")?"AppState":name(parts[1])) : name(type.name());
-        return result + "[]".repeat(type.dimensions()) + (type.optional()?" | null":"");
+        return type.sourceType(result);
     }
     private String stateField(String field) {
         String resolved=fields.get(field);

@@ -227,7 +227,7 @@ function alternativeKind(choice: selecting.Choice): string {
   if (choice.alternative.startsWith("cat_")) {
     for (let definition of catalogue.definitions()) { if (choice.alternative.endsWith("_"+definition.kind)) { return definition.kind; } }
   }
-  s.reject("Unissued alternative kind: "+choice.alternative); return "";
+  s.reject("Unissued alternative kind: "+choice.alternative);
 }
 // A plan action need names its operation and argument sources. The Bind stage resolves the module
 // and function exactly against the frozen contracts; an unknown or ambiguous operation issues no

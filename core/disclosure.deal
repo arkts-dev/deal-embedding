@@ -81,7 +81,7 @@ function structuredRecord(source: unknown, values: Record<string, unknown>): boo
   }
   // JSON arrays are row containers, not tables and never one combined record.
   if (s.encode(source).startsWith("[")) {
-    let rows: unknown[] = source as unknown[]; let scalarRow: boolean = true;
+    const rows: readonly unknown[] = source as readonly unknown[]; let scalarRow: boolean = true;
     for (let row of rows) { if (typeof row === "object" && row !== null) { scalarRow = false; } }
     if (scalarRow) {
       let all: boolean = true;
@@ -145,7 +145,7 @@ export function admitsTimestamp(facts: string, value: number): string {
   if (!Object.hasOwn(root,"facts")) { return ""; }
   let issued: unknown = root.facts;
   if (typeof issued !== "object" || issued === null) { return ""; }
-  let entries: unknown[] = issued as unknown[];
+  const entries: readonly unknown[] = issued as readonly unknown[];
   for (let entry of entries) {
     if (typeof entry !== "object" || entry === null) { continue; }
     let fact: Record<string, unknown> = entry as Record<string, unknown>;

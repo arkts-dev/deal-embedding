@@ -204,6 +204,11 @@ def isolated_digests(android, aidl, prepare_stage=None, plan=False):
         # stage on this toolchain (Java and Kotlin analysis measured at 52s and 63s); the inner bound
         # stays the build's own, so a validated stage is still refused after its own limit.
         seconds = 240 if prepare_stage else 600
+        if prepare_stage and 'DEAL_BUILD_STAGE_SECONDS' in environment:
+            stage_seconds = int(environment['DEAL_BUILD_STAGE_SECONDS'])
+            if stage_seconds <= 0:
+                raise SystemExit('standalone boundary: preparation stage bound must be positive')
+            seconds = max(seconds, stage_seconds + 5)
         subprocess.run(['timeout', '--kill-after=2s', f'{seconds}s', 'bash', 'build.sh'], cwd=stage, env=environment, check=True)
     finally:
         print(f'[boundary] isolated library build elapsed={time.monotonic()-started:.2f}s',
