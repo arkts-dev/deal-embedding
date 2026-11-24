@@ -1,0 +1,131 @@
+import * as plans from "./plan";
+import * as screens from "./screen";
+import * as selections from "./selection";
+import * as s from "./construction-schema";
+import * as tables from "std/table";
+
+// The trigger of an action need is a second-batch Select decision, never a choice the writer makes
+// (docs/spec-v0.8.md:260). `at` names the clock, entries/list or time source of its trigger;
+// `button` omits it and `other` stays open for custom writing (docs/spec-v0.8.md:180).
+export class Alternative { id: string; on: string; at: string; }
+export class Outcome { need: string; status: string; reason: string; }
+export class Settlement { settled: string[]; outcomes: Outcome[]; }
+export function triggers(): string[] { return ["countdown_end","entry_added","row_tap","time"]; }
+function clock(plan: plans.Plan, id: string): boolean {
+  for (let need of plan.needs) { if (need.id === id && (need.type === "countdown" || need.type === "stopwatch")) { return true; } }
+  return false;
+}
+// A typed entries part is the only plan-level list source: `entry_added` adds to it and `row_tap`
+// taps one of its rows.
+function list(plan: plans.Plan, id: string): boolean {
+  for (let need of plan.needs) { if (need.id === id && need.type === "entries") { return true; } }
+  return false;
+}
+function timed(plan: plans.Plan, id: string): boolean {
+  // A scheduled "time" trigger names a disclosed time source, never a clock or a list.
+  for (let input of plan.inputs) { if (input.id === id && input.kind === "time") { return true; } }
+  return false;
+}
+// A trigger is settled only when it names a source that actually resolves in the issued plan.
+export function resolves(plan: plans.Plan, on: string, at: string): boolean {
+  s.oneOf(on,["button","countdown_end","entry_added","row_tap","time","other"]);
+  if (on === "button") { return at === ""; }
+  if (on === "other" || at === "") { return false; }
+  if (on === "countdown_end") { return clock(plan,at); }
+  if (on === "entry_added" || on === "row_tap") { return list(plan,at); }
+  return timed(plan,at);
+}
+function trigger(need: plans.Need): string { return s.oneOf(need.spec.on,["button","countdown_end","entry_added","row_tap","time","other"]); }
+function source(need: plans.Need): string {
+  if (!Object.hasOwn(need.spec,"at")) { return ""; }
+  // A decoded plan may carry any value here for `other`, so the wire kind is checked before the
+  // identifier cast instead of raising an unclassified host type error.
+  let raw: unknown = need.spec.at;
+  if (!s.encode(raw).startsWith("\"")) { s.reject("Action trigger source must be an identifier"); }
+  return s.identifier(raw);
+}
+export function settled(plan: plans.Plan, need: plans.Need): boolean { return resolves(plan,trigger(need),source(need)); }
+export function unsettled(plan: plans.Plan): plans.Need[] {
+  let result: plans.Need[] = [];
+  for (let need of plan.needs) { if (need.type === "action" && !settled(plan,need)) { result[result.length] = need; } }
+  return result;
+}
+// Issued trigger alternatives name the trigger (`button` alone, or `<on>_<source>`), so an answer can
+// never settle a trigger whose source is absent or a button that carries one.
+export function alternatives(plan: plans.Plan, need: plans.Need): Alternative[] {
+  let result: Alternative[] = [{id:"button",on:"button",at:""}];
+  for (let on of triggers()) {
+    for (let candidate of plan.needs) {
+      if (candidate.type !== "entries" && candidate.type !== "countdown" && candidate.type !== "stopwatch") { continue; }
+      let at: string = candidate.id;
+      if (resolves(plan,on,at)) { result[result.length] = {id:on+"_"+at,on:on,at:at}; }
+    }
+    for (let input of plan.inputs) {
+      if (input.kind !== "time") { continue; }
+      let at: string = input.id;
+      if (resolves(plan,on,at)) { result[result.length] = {id:on+"_"+at,on:on,at:at}; }
+    }
+  }
+  return result;
+}
+export function options(plan: plans.Plan, need: plans.Need): selections.Option[] {
+  let result: selections.Option[] = [];
+  for (let alternative of alternatives(plan,need)) {
+    if (alternative.on === "button") { result[result.length] = {id:alternative.id,criteria:"The requested action is an explicit tap; no clock, entry, row or scheduled time triggers it."}; }
+    else { result[result.length] = {id:alternative.id,criteria:"The requested action happens when "+alternative.on+" fires on the issued source "+alternative.at+"; that source resolves in this plan."}; }
+  }
+  result[result.length] = {id:"unavailable",criteria:"None of these triggers matches the requested behavior; the written action must declare its own trigger, and no event slot is issued until it does."};
+  return result;
+}
+export function questions(plan: plans.Plan): selections.Question[] {
+  let result: selections.Question[] = [];
+  for (let need of unsettled(plan)) {
+    result[result.length] = selections.question("events_"+need.id,need.id,"ordinary","Decide the trigger of this requested operation: "+need.words+" ("+s.text(need.spec.operation)+"). Offer only a trigger whose source resolves in the issued plan; never infer a trigger from the operation text and never substitute a tap for a described clock, entry, row or time event.",
+      options(plan,need));
+  }
+  return result;
+}
+function outcome(result: Settlement, need: string, status: string, reason: string): void {
+  result.outcomes[result.outcomes.length] = {need:need,status:status,reason:reason};
+}
+export function settle(plan: plans.Plan, answers: selections.Answer[]): Settlement {
+  let result: Settlement = {settled:[],outcomes:[]};
+  for (let need of unsettled(plan)) {
+    let chosen: selections.Answer | null = null;
+    for (let answer of answers) { if (answer.id === "events_"+need.id) { chosen = answer; } }
+    // Defensive: the selected batch always answers every issued question, and an unsettled trigger
+    // is never treated as settled because its question went unanswered.
+    if (chosen === null) { outcome(result,need.id,"open","Unsettled action trigger: the events question is unanswered"); continue; }
+    let answer: selections.Answer = chosen as selections.Answer;
+    if (!answer.accepted) { outcome(result,need.id,"open","Unsettled action trigger: the answer is below the ordinary threshold"); continue; }
+    if (answer.selected === "unavailable") {
+      // Stayed `other`: the written action must declare its own trigger and issue no event slot.
+      outcome(result,need.id,"custom","Unsettled action trigger: the written action must declare its trigger"); continue;
+    }
+    let issued: boolean = false; let on: string = ""; let at: string = "";
+    for (let alternative of alternatives(plan,need)) {
+      if (alternative.id === answer.selected) { issued = true; on = alternative.on; at = alternative.at; }
+    }
+    // Only an issued alternative can settle a trigger: an unissued one, and any source the plan does
+    // not resolve (including a button id that carries one), are not issued and reject here.
+    if (!issued) { s.reject("Ineligible issued trigger alternative: "+answer.selected); }
+    // The settled trigger replaces the spec fields atomically: a button spec carries no source.
+    let next: Record<string, unknown> = {};
+    for (let key of tables.keys(need.spec)) { if (key !== "at") { next[key] = need.spec[key]; } }
+    next.on = on;
+    if (on !== "button") { next.at = at; }
+    need.spec = next;
+    result.settled[result.settled.length] = need.id;
+  }
+  return result;
+}
+// A need whose trigger is not settled stays visibly missing with its located reason, so no later
+// stage can claim it and no writer is told to implement an inferred trigger.
+export function apply(screen: screens.Screen, settlement: Settlement): void {
+  for (let value of settlement.outcomes) {
+    // `other` stays open for the written action to declare its own trigger.
+    if (value.status !== "open") { continue; }
+    for (let slot of screen.slots) { if (slot.need === value.need) { slot.status = "missing"; slot.reason = value.reason; } }
+  }
+}
+export function main(): void { return; }

@@ -2,6 +2,7 @@ import * as host from "embedding/checker";
 import * as decoded from "./decoded";
 import * as s from "./construction-schema";
 import * as graphics from "./graphics";
+import * as admission from "./admission";
 
 export class Result { accepted: boolean; candidateId: string; diagnostics: string; }
 function tree(report: Record<string, unknown>): Record<string, unknown> { return JSON.parse(report.tree as string); }
@@ -81,11 +82,21 @@ export async function prepare(id: string): Promise<Result> {
   await host.finish(id);
   return {accepted:diagnostic === "",candidateId:id,diagnostics:diagnostic};
 }
-function admission(manifest: Record<string, unknown>): string {
-  let providers: string[] = decoded.strings(manifest.providers);
-  for (let module of decoded.strings(manifest.imports)) {
-    if (!s.contains(["std/math","std/string","std/table","std/time","embedding/graphics"],module) && !s.contains(providers,module)) { return "ADMISSION_IMPORT: unissued module"; }
-  }
+// A rejected candidate's diagnostic decides whether bounded repair may run. Admission verdicts are
+// authority and host-configuration decisions, and provider access during checking is an authority
+// violation: neither is a source diagnostic, so neither is repair evidence
+// (docs/spec-v0.8.md:707; generation-recovery-and-source-editing "Checking and repair admission").
+// Every other rejection is trusted checker feedback about the assembled source.
+export function repairable(diagnostics: string): boolean {
+  if (diagnostics.startsWith("ADMISSION_")) { return false; }
+  if (diagnostics.startsWith("CHECK_PROVIDER:")) { return false; }
+  return true;
+}
+// The manifest import surface and the permitted store module are the one policy generation also
+// applies before emission (admission.modules), never a second rule set.
+function manifestAdmission(manifest: Record<string, unknown>): string {
+  let imported: admission.Verdict = admission.modules(decoded.strings(manifest.imports),decoded.strings(manifest.providers));
+  if (imported.code !== "") { return imported.message; }
   for (let digest of decoded.strings(manifest.packDigests)) { if (digest !== (manifest.issuedPackDigest as string)) { return "ADMISSION_PACK: compiler pack digest mismatch"; } }
   for (let version of decoded.strings(manifest.packVersions)) { if (version !== (manifest.issuedPackVersion as string)) { return "ADMISSION_PACK: compiler pack version mismatch"; } }
   return "";
@@ -94,7 +105,7 @@ export async function run(deal: string, dealui: string): Promise<Result> {
   let compiled: Record<string, unknown> = await host.compile(deal,dealui);
   if (!(compiled.accepted as boolean)) { return {accepted:false,candidateId:"",diagnostics:compiled.diagnostics as string}; }
   let id: string = compiled.candidateId as string;
-  let diagnostic: string = admission(compiled.manifest as Record<string, unknown>);
+  let diagnostic: string = manifestAdmission(compiled.manifest as Record<string, unknown>);
   if (diagnostic !== "") { await host.discard(id); return {accepted:false,candidateId:"",diagnostics:diagnostic}; }
   // The host reclaims all outstanding isolates/staging on operational failure.
   let result: Result = await execute(id);

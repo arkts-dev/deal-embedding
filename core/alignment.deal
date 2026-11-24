@@ -1,0 +1,178 @@
+import * as plans from "./plan";
+import * as selecting from "./construction-selection";
+import * as selections from "./selection";
+import * as s from "./construction-schema";
+
+// Alignment is the ordered, thresholded stage over the composition built so far
+// (generation-recovery-and-source-editing "Alignment"). Kind definitions, their declared ports, the
+// eligible candidate set and every decision threshold are issued facts: this policy declares no kind,
+// no port and no threshold of its own. A candidate carries its declared readers and publishers as
+// `name:type` identities, so a reader meets only the exact nominal port assembly resolves.
+export class Candidate { need: string; id: string; kind: string; criteria: string; reads: string[]; publishes: string[]; }
+export class Accepted { need: string; id: string; kind: string; }
+// The trace retains the ordered rounds actually dispatched, the publishers accepted alignments added,
+// every need left open beside its located reason and whether an unanswered batch stopped the stage.
+export class Outcome { accepted: Accepted[]; open: string[]; reasons: string[]; rounds: number; publishers: number; stopped: boolean; }
+
+function copy(values: string[]): string[] { let result: string[] = []; for (let value of values) { result[result.length] = value; } return result; }
+function declared(candidate: Candidate, publishers: string[]): boolean {
+  for (let port of candidate.reads) { if (!s.contains(publishers,port)) { return false; } }
+  return true;
+}
+function has(candidates: Candidate[], need: string): boolean {
+  for (let candidate of candidates) { if (candidate.need === need) { return true; } }
+  return false;
+}
+function acceptedFor(outcome: Outcome, need: string): boolean {
+  for (let entry of outcome.accepted) { if (entry.need === need) { return true; } }
+  return false;
+}
+function note(outcome: Outcome, need: string, reason: string): void {
+  let index: number = 0;
+  while (index < outcome.open.length) { if (outcome.open[index] === need) { outcome.reasons[index] = reason; return; } index = index+1; }
+  outcome.open[outcome.open.length] = need; outcome.reasons[outcome.reasons.length] = reason;
+}
+// The located reason for a need alignment left open; a need it never could speak about has none.
+export function reason(outcome: Outcome, need: string): string {
+  let index: number = 0;
+  while (index < outcome.open.length) { if (outcome.open[index] === need) { return outcome.reasons[index]; } index = index+1; }
+  return "";
+}
+function options(candidates: Candidate[], need: string, publishers: string[], used: string[], readers: boolean, standalone: boolean): Candidate[] {
+  let result: Candidate[] = [];
+  for (let candidate of candidates) {
+    if (candidate.need !== need || s.contains(used,candidate.kind)) { continue; }
+    let plain: boolean = candidate.reads.length === 0;
+    if (plain && !standalone) { continue; }
+    if (!plain && !readers) { continue; }
+    if (!declared(candidate,publishers)) { continue; }
+    result[result.length] = candidate;
+  }
+  return result;
+}
+function unused(candidates: Candidate[], need: string, used: string[]): string[] {
+  // The kinds a need could still take if none were selected already; an empty result beside a
+  // non-empty candidate set names the once-per-kind rule rather than an unsatisfiable reader.
+  let result: string[] = [];
+  for (let candidate of candidates) {
+    if (candidate.need !== need || s.contains(used,candidate.kind) || s.contains(result,candidate.kind)) { continue; }
+    result[result.length] = candidate.kind;
+  }
+  return result;
+}
+// The first round whose trigger enables an eligible candidate asks the need. A need is asked once per
+// candidate set: the pairs recorded in `offered` are the candidates every earlier batch put on that
+// need's question, so a settled or accepted need is never re-asked, a below-threshold or unavailable
+// answer is never retried with the same candidates, and a reader a publisher accepted in round 1 or 2
+// newly enables is still asked in round 3 instead of being closed by an earlier answer. A question
+// carries every candidate that round enables for that need (so a need asked for a satisfied reader also
+// offers its standalone kinds). Round 1 offers the readers the accepted composition already satisfies
+// plus that need's standalone kinds; round 2 offers only standalone kinds; round 3 offers only the
+// readers an instance accepted in round 1 or 2 enables, and is never reached without such a publisher.
+function enabled(round: number, candidates: Candidate[], initial: string[], added: string[]): boolean {
+  for (let candidate of candidates) {
+    if (round === 1 && candidate.reads.length > 0 && declared(candidate,initial)) { return true; }
+    if (round === 2 && candidate.reads.length === 0) { return true; }
+    // The round-three candidate set is already restricted to the readers an earlier acceptance enables.
+    if (round === 3 && candidate.reads.length > 0 && added.length > 0) { return true; }
+  }
+  return false;
+}
+function answered(offered: string[], need: string, candidates: Candidate[]): boolean {
+  for (let candidate of candidates) { if (!s.contains(offered,need+"|"+candidate.kind)) { return false; } }
+  return true;
+}
+// Round three offers only the readers an instance accepted in an earlier round enables: a reader the
+// accepted composition already satisfied was on its round-one question and is never re-offered.
+function fresh(candidates: Candidate[], initial: string[]): Candidate[] {
+  let result: Candidate[] = [];
+  for (let candidate of candidates) { if (!declared(candidate,initial)) { result[result.length] = candidate; } }
+  return result;
+}
+// An alignment acceptance closes the need it fills: the located reason an earlier round recorded is stale,
+// and an accepted need never reports itself open to the stage that reads the outcome.
+function close(outcome: Outcome, need: string): void {
+  let open: string[] = []; let reasons: string[] = []; let index: number = 0;
+  while (index < outcome.open.length) {
+    if (outcome.open[index] !== need) { open[open.length] = outcome.open[index]; reasons[reasons.length] = outcome.reasons[index]; }
+    index = index+1;
+  }
+  outcome.open = open; outcome.reasons = reasons;
+}
+function instructions(round: number, need: string): string {
+  let where: string = "an issued standalone section";
+  if (round === 1) { where = "an issued section whose readers the accepted composition already satisfies"; }
+  else if (round === 3) { where = "an issued reader section enabled by a publisher accepted in an earlier round"; }
+  return "Choose one issued catalogue section for need "+need+" only when "+where+" preserves every requested behavior, reader and required aggregate of the original need; the unavailable option leaves the need open for custom writing.";
+}
+export async function run(context: selecting.Context, plan: plans.Plan, candidates: Candidate[], settled: string[], accepted: string[], initialPublishers: string[]): Promise<Outcome> {
+  let outcome: Outcome = {accepted:[],open:[],reasons:[],rounds:0,publishers:initialPublishers.length,stopped:false};
+  let publishers: string[] = copy(initialPublishers); let initial: string[] = copy(initialPublishers); let added: string[] = [];
+  let used: string[] = copy(accepted); let offered: string[] = [];
+  let round: number = 1;
+  while (round <= 3 && !outcome.stopped) {
+    let needs: string[] = []; let issuable: Candidate[][] = []; let questions: selections.Question[] = [];
+    for (let need of plan.needs) {
+      if (s.contains(settled,need.id) || acceptedFor(outcome,need.id) || need.type === "scene") { continue; }
+      let readers: boolean = round !== 2; let standalone: boolean = round !== 3;
+      let choices: Candidate[] = options(candidates,need.id,publishers,used,readers,standalone);
+      if (round === 3) { choices = fresh(choices,initial); }
+      if (!enabled(round,choices,initial,added) || answered(offered,need.id,choices)) { continue; }
+      let entries: selections.Option[] = [];
+      for (let candidate of choices) { entries[entries.length] = {id:candidate.id,criteria:candidate.criteria}; }
+      entries[entries.length] = {id:"unavailable",criteria:"No issued section preserves the complete original need; leave it open for custom writing."};
+      let category: string = "nonlive-alignment"; if (need.type === "live") { category = "live-alignment"; }
+      needs[needs.length] = need.id; issuable[issuable.length] = choices;
+      questions[questions.length] = selections.question("align_"+need.id,need.id,category,instructions(round,need.id),entries);
+    }
+    if (questions.length === 0) { round = round+1; continue; }
+    // One batch per round, one call, never retried inside a round. An unanswered or unusable batch is
+    // a normal stop: no later round is issued, accepted alignments stay and the remaining needs stay
+    // open with their located reason (docs/spec-v0.8.md:285).
+    let answers: selections.Answer[] = await selecting.batch("alignment",context,plan,questions,false);
+    outcome.rounds = outcome.rounds+1;
+    if (answers.length === 0) { outcome.stopped = true; break; }
+    // Every candidate this batch put on a question is answered now, so a later round offers that need
+    // only a candidate it has not seen yet.
+    let recorded: number = 0;
+    while (recorded < needs.length) { for (let candidate of issuable[recorded]) { offered[offered.length] = needs[recorded]+"|"+candidate.kind; } recorded = recorded+1; }
+    let index: number = 0;
+    while (index < questions.length) {
+      let need: string = needs[index];
+      let matched: number = -1; let cursor: number = 0;
+      while (cursor < answers.length) { if (answers[cursor].id === questions[index].id) { matched = cursor; } cursor = cursor+1; }
+      if (matched < 0) { s.reject("Alignment batch lost an issued answer"); }
+      let answer: selections.Answer = answers[matched];
+      if (answer.selected === "unavailable") { note(outcome,need,"Alignment chose the unavailable option"); index = index+1; continue; }
+      let picked: number = -1; cursor = 0;
+      while (cursor < issuable[index].length) { if (issuable[index][cursor].id === answer.selected) { picked = cursor; } cursor = cursor+1; }
+      if (picked < 0) { s.reject("Alignment answer names no issued candidate"); }
+      let chosen: Candidate = issuable[index][picked];
+      if (!answer.accepted) { note(outcome,need,"Alignment below the "+String(questions[index].threshold)+" threshold"); index = index+1; continue; }
+      if (s.contains(used,chosen.kind)) { note(outcome,need,"Catalogue kind already selected: "+chosen.kind); index = index+1; continue; }
+      used[used.length] = chosen.kind;
+      close(outcome,need);
+      outcome.accepted[outcome.accepted.length] = {need:need,id:chosen.id,kind:chosen.kind};
+      for (let port of chosen.publishes) {
+        if (!s.contains(publishers,port)) { publishers[publishers.length] = port; }
+        if (!s.contains(initial,port) && !s.contains(added,port)) { added[added.length] = port; }
+      }
+      index = index+1;
+    }
+    outcome.publishers = publishers.length;
+    round = round+1;
+  }
+  for (let need of plan.needs) {
+    if (s.contains(settled,need.id) || need.type === "scene") { continue; }
+    // Only needs alignment could have spoken about carry an alignment reason; a need with no issued
+    // candidate is left to the stage that owns it instead of gaining a misleading verdict here.
+    if (!has(candidates,need.id) || acceptedFor(outcome,need.id)) { continue; }
+    if (reason(outcome,need.id) === "") {
+      if (outcome.stopped) { note(outcome,need.id,"alignment stopped"); }
+      else if (unused(candidates,need.id,used).length === 0) { note(outcome,need.id,"Every eligible catalogue kind is already selected"); }
+      else { note(outcome,need.id,"No eligible alignment candidate"); }
+    }
+  }
+  return outcome;
+}
+export function main(): void { return; }

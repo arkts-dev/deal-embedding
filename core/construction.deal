@@ -5,11 +5,14 @@ import * as selections from "./selection";
 import * as parts from "./parts";
 import * as scalar from "./scalar-read";
 import * as catalogue from "./catalogue";
+import * as alignment from "./alignment";
 import * as bindings from "./bindings";
 import * as composer from "./composer";
 import * as coverage from "./coverage";
 import * as writing from "./custom-writing";
 import * as checker from "./isolated-check";
+import * as events from "./events";
+import * as admission from "./admission";
 import * as s from "./construction-schema";
 import * as revisions from "./source-revisions";
 import * as inference from "./inference";
@@ -30,12 +33,13 @@ function issueSources(registry: bindings.Registry, instance: screens.Instance): 
     bindings.reserve(registry,{id:instance.id+"_"+port.name,type:port.type,schema:null,dependencies:[],owner:instance.id,payloadOwner:"",getter:"f_"+instance.id+"_"+port.getter,ready:"f_"+instance.id+"_"+port.getter+"_ready"});
   } }
 }
-function connect(composition: screens.Composition, instance: screens.Instance, registry: bindings.Registry, plan: plans.Plan): boolean {
+function connect(composition: screens.Composition, instance: screens.Instance, registry: bindings.Registry, plan: plans.Plan): string {
   let connections: screens.Connection[] = [];
   for (let port of instance.fragment.ports) { if (port.direction === "read") {
-    let found: boolean = false;
+    let found: boolean = false; let published: string = "";
     for (let publisher of composition.screen.instances) { if (publisher.id !== instance.id && !found) { for (let output of publisher.fragment.ports) {
       if (!found && output.direction === "publish" && output.name === port.name && output.type === port.type) {
+        published = publisher.id;
         let requested: boolean = false;
         for (let need of plan.needs) { if (s.contains(instance.fragment.covers,need.id)) { for (let publisherNeed of publisher.fragment.covers) { if (s.contains(need.reads,publisherNeed)) { requested = true; } } } }
         if (!requested) { continue; }
@@ -44,10 +48,15 @@ function connect(composition: screens.Composition, instance: screens.Instance, r
         connections[connections.length] = {readerInstance:instance.id,readerPort:port.name,writerInstance:publisher.id,writerPort:output.name}; found = true;
       }
     } } }
-    if (!found && !port.optional) { return false; }
+    if (!found && !port.optional) {
+      // A publisher that exists but is not a requested dependency is a different rejection from a port
+      // the composition never publishes, and the need's located reason names which one happened.
+      if (published !== "") { return "Reader port is not a requested dependency: "+port.name; }
+      return "Required reader port has no publisher: "+port.name;
+    }
   } }
   for (let connection of connections) { composition.connections[composition.connections.length] = connection; }
-  return true;
+  return "";
 }
 function ownership(plan: plans.Plan, alternatives: selecting.Alternative[]): selections.Question[] {
   let result: selections.Question[] = [];
@@ -57,18 +66,39 @@ function ownership(plan: plans.Plan, alternatives: selecting.Alternative[]): sel
   }
   return result;
 }
-async function align(context: selecting.Context, plan: plans.Plan, entries: catalogue.Configured[], settled: string[]): Promise<void> {
-  let questions: selections.Question[] = []; let candidates: string[] = []; let hasChecklist: boolean = false; let kinds: string[] = [];
-  for (let entry of entries) { kinds[kinds.length] = entry.definition.kind; if (entry.definition.kind === "checklist") { hasChecklist = true; } }
-  if (!hasChecklist || s.contains(kinds,"list_summary")) { return; }
-  for (let need of plan.needs) { if (!s.contains(settled,need.id) && (need.type === "content" || need.type === "other")) {
-    candidates[candidates.length] = need.id; questions[questions.length] = selections.question("align_"+need.id,need.id,"nonlive-alignment","An issued checklist can publish done:number and total:number. Does a read-only completion summary implement this original need without replacing any behavior?",[{id:"summary",criteria:"A done/total/remaining summary of this checklist is the complete requested need."},{id:"unavailable",criteria:"The original behavior requires anything else."}]);
-  } }
-  let answers: selections.Answer[] = await selecting.batch("alignment",context,plan,questions,false);
-  // Unanswered terminates alignment; at most one instance of each catalogue kind.
-  for (let answer of answers) { if (answer.accepted && answer.selected === "summary") {
-    for (let need of plan.needs) { if (answer.id === "align_"+need.id) { for (let definition of catalogue.definitions()) { if (definition.kind === "list_summary") { entries[entries.length] = {need:need.id,definition:definition,parameters:{},accepted:false,reason:"Not filled"}; return; } } } }
-  } }
+// Every catalogue kind the catalogue issues is an alternative for a need no accepted choice fills. A
+// reader section is offered only for a need that requests a dependency another need publishes
+// (catalogue.carriesReaders), so an alignment the connection step can never wire is never selected. Only
+// content and other needs are issued kinds today, which is what keeps a scene need out of alignment: the
+// scene is written by the ordinary writing operation (generation-recovery-and-source-editing
+// "Alignment"). Kind eligibility for the remaining need types is catalogue-owned and missing.
+function alignmentCandidates(plan: plans.Plan, settled: string[]): alignment.Candidate[] {
+  let result: alignment.Candidate[] = [];
+  for (let need of plan.needs) {
+    if (s.contains(settled,need.id)) { continue; }
+    if (need.type !== "content" && need.type !== "other") { continue; }
+    for (let definition of catalogue.definitions()) {
+      if (definition.reads.length > 0 && !catalogue.carriesReaders(plan,need)) { continue; }
+      result[result.length] = {need:need.id,id:"cat_"+need.id+"_"+definition.kind,kind:definition.kind,criteria:definition.criteria,reads:definition.reads,publishes:definition.publishes};
+    }
+  }
+  return result;
+}
+function published(entries: catalogue.Configured[]): string[] {
+  let result: string[] = [];
+  for (let entry of entries) { for (let port of entry.definition.publishes) { if (!s.contains(result,port)) { result[result.length] = port; } } }
+  return result;
+}
+function usedKinds(entries: catalogue.Configured[]): string[] {
+  let result: string[] = [];
+  for (let entry of entries) { if (!s.contains(result,entry.definition.kind)) { result[result.length] = entry.definition.kind; } }
+  return result;
+}
+function locate(composition: screens.Composition, need: string, reason: string): void {
+  // A need alignment could not implement stays visibly missing with its located reason instead of a
+  // generic coverage gap. A filled slot is never demoted: one implementation per need keeps that
+  // unreachable, and the guard keeps a future second implementation from losing its coverage.
+  for (let slot of composition.screen.slots) { if (slot.need === need && slot.status !== "filled") { slot.status = "missing"; slot.reason = reason; } }
 }
 export async function run(input: writing.Input, context: selecting.Context, plan: plans.Plan, registry: bindings.Registry): Promise<Result> {
   let scalarCandidates: scalar.Candidate[] = scalar.candidates(plan,registry.contracts);
@@ -79,6 +109,9 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   let firstQuestions: selections.Question[] = ownership(plan,alternatives); for (let question of scalar.questions(scalarCandidates)) { firstQuestions[firstQuestions.length] = question; }
   let first: selecting.Result = await selecting.first(context,plan,alternatives,[],firstQuestions);
   let secondQuestions: selections.Question[] = parts.formulaQuestions(plan,definitions,first); for (let question of scalar.argumentQuestions(scalarCandidates,first)) { secondQuestions[secondQuestions.length] = question; }
+  // The events question belongs to the second batch: the trigger is a selection decision, not a
+  // writer choice (docs/spec-v0.8.md:260).
+  for (let question of events.questions(plan)) { secondQuestions[secondQuestions.length] = question; }
   let second: selecting.Result = await selecting.second(context,plan,alternatives,first,secondQuestions);
   let retained: selecting.Choice[] = [];
   for (let choice of second.choices) {
@@ -95,11 +128,27 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   }
   second.choices = retained;
   if (!second.usable) { return {candidateId:"",attempts:0,diagnostics:"Unusable second selection batch",runnable:false}; }
-  let composition: screens.Composition = {screen:screens.reserve(plan,input.target),bindings:{},actions:{},connections:[]};
+  let settlement: events.Settlement = events.settle(plan,second.answers);
+  // A need whose trigger is not settled is never implemented from an inferred trigger, so any
+  // implementation selected for it is dropped and its located reason is recorded on the slot. No
+  // alternative is issued for an action need today; the guard keeps a future one honest.
+  for (let outcome of settlement.outcomes) {
+    let kept: selecting.Choice[] = [];
+    for (let choice of second.choices) { if (choice.need !== outcome.need) { kept[kept.length] = choice; } }
+    second.choices = kept;
+  }  let composition: screens.Composition = {screen:screens.reserve(plan,input.target),bindings:{},actions:{},connections:[]};
+  events.apply(composition.screen,settlement);
   let computations: composer.Computation[] = []; let built: parts.Built = parts.buildWithProviders(plan,definitions,second.choices,registry,scalar.build(plan,scalarCandidates,first,second));
   if (built.instance.fragment.covers.length > 0) { mark(composition.screen,built.instance); computations = built.computations; }
   let entries: catalogue.Configured[] = catalogue.selected(plan,second.choices);
-  await align(context,plan,entries,second.settled);
+  // Alignment runs after both selection batches and before Fill, over the needs no accepted choice
+  // fills (docs/spec-v0.8.md:256,285). Publishers of the accepted composition and of the sections a
+  // round accepts decide which readers each round may offer; the stage never declares them itself.
+  let aligned: alignment.Outcome = await alignment.run(context,plan,alignmentCandidates(plan,second.settled),second.settled,usedKinds(entries),published(entries));
+  for (let accepted of aligned.accepted) {
+    for (let definition of catalogue.definitions()) { if (definition.kind === accepted.kind) { entries[entries.length] = {need:accepted.need,definition:definition,parameters:{},accepted:false,reason:catalogue.notFilled()}; } }
+  }
+  for (let need of aligned.open) { locate(composition,need,alignment.reason(aligned,need)); }
   await catalogue.fill(context,plan,entries);
   // Ownership is checked independently of the winning option, at the user threshold.
   for (let entry of entries) {
@@ -112,46 +161,72 @@ export async function run(input: writing.Input, context: selecting.Context, plan
       } }
     } }
     if (!ownershipChecked) { entry.accepted = false; entry.reason = "Content ownership unchecked"; }
-    if (entry.accepted) { let undecided: string = catalogue.disclosed(entry,context.original,context.facts,userOwned); if (undecided !== "") {
-      entry.accepted = false; entry.reason = undecided;
-      // The refused instance leaves its need missing with the located reason, so the diagnostic names
-      // the instance and offending row instead of a generic coverage gap. A filled slot is never
-      // demoted: one selected alternative per need makes that unreachable today, and the guard keeps
-      // a future second implementation from silently losing its coverage.
-      for (let slot of composition.screen.slots) { if (slot.need === entry.need && slot.status !== "filled") { slot.status = "missing"; slot.reason = undecided; } }
-    } }
+    if (entry.accepted) { let undecided: string = catalogue.disclosed(entry,context.original,context.facts,userOwned); if (undecided !== "") { entry.accepted = false; entry.reason = undecided; } }
   }
+  // A selected alignment that never became an instance keeps its need visibly missing with the
+  // located reason the fill, ownership or disclosure step recorded, instead of reverting to the
+  // generic "implementation not selected". A filled slot is never demoted.
+  for (let entry of entries) { if (!entry.accepted) { locate(composition,entry.need,entry.reason); } }
   // Publishers first; typed reader resolution is deterministic and never model-issued.
   let pending: screens.Instance[] = [];
   for (let entry of entries) { if (entry.accepted) { let instance: screens.Instance = await catalogue.instantiate(entry,registry); let reader: boolean = false; for (let port of instance.fragment.ports) { if (port.direction === "read") { reader = true; } }
     if (reader) { pending[pending.length] = instance; } else { mark(composition.screen,instance); issueSources(registry,instance); for (let computation of catalogue.computations(instance,[])) { computations[computations.length] = computation; } }
   } }
-  for (let instance of pending) { if (connect(composition,instance,registry,plan)) { mark(composition.screen,instance); for (let computation of catalogue.computations(instance,composition.connections)) { computations[computations.length] = computation; } } }
+  for (let instance of pending) { let failure: string = connect(composition,instance,registry,plan); if (failure === "") { mark(composition.screen,instance); for (let computation of catalogue.computations(instance,composition.connections)) { computations[computations.length] = computation; } } else { for (let need of instance.fragment.covers) { locate(composition,need,failure); } } }
   if (composition.screen.instances.length === 0) { return {candidateId:"",attempts:0,diagnostics:"No runnable ordinary implementation",runnable:false}; }
+  // The composition is admitted before emission: an import outside the issued surface or a storage
+  // call outside an effect position is an authority verdict, not source feedback, so it authorizes no
+  // repair and no candidate check (generation-recovery-and-source-editing "Checking and repair
+  // admission").
+  let providers: string[] = []; for (let contract of registry.contracts) { providers[providers.length] = contract.module; }
+  let notAdmitted: admission.Verdict = await admission.composition(composition.screen.instances,providers);
+  if (notAdmitted.code !== "") { return {candidateId:"",attempts:0,diagnostics:notAdmitted.message,runnable:true}; }
   let assembled: composer.Result = await composer.assemble(composition,computations);
   let questions: selections.Question[] = coverage.questions(plan,composition.screen);
   let judged: selections.Answer[] = await selecting.batch("coverage",{original:context.original,facts:context.facts,contracts:context.contracts,specification:context.specification+"\nCURRENT ASSEMBLED SOURCE\n"+s.encode(assembled.source)},plan,questions,false);
   let ledger: coverage.Ledger = coverage.judge(plan,composition.screen,judged); let open: string[] = []; let diagnostics: string = "";
   for (let need of ledger.needs) { if (need.status !== "covered") { open[open.length] = need.id; diagnostics = diagnostics+need.id+": "+need.status+"; "; } }
+  // A need whose trigger the selector could not settle is never handed to the writer: the written
+  // action would have to invent the trigger the decision stage refused to choose. It stays visibly
+  // missing with its located reason instead, including when a requirement names it.
+  let unsettled: string[] = [];
+  for (let outcome of settlement.outcomes) { if (outcome.status === "open") { unsettled[unsettled.length] = outcome.need; } }
   let attempts: number = 0;
   let missingRequirements: string[] = [];
   for (let requirement of ledger.requirements) { if (requirement.status !== "covered") {
     diagnostics = diagnostics+requirement.id+": "+requirement.status+"; "; missingRequirements[missingRequirements.length] = requirement.id;
-    for (let need of requirement.needs) { if (!s.contains(open,need)) { open[open.length] = need; } }
+    for (let need of requirement.needs) { if (!s.contains(open,need) && !s.contains(unsettled,need)) { open[open.length] = need; } }
   } }
-  if (open.length > 0) {
-    let written: writing.Result = await writing.run({original:input.original,facts:input.facts,contracts:input.contracts,specification:input.specification,language:input.language,pack:input.pack,target:input.target,plan:plan,answers:input.answers,base:composition,computations:computations,openNeeds:open});
+  let writeable: string[] = [];
+  for (let id of open) { if (!s.contains(unsettled,id)) { writeable[writeable.length] = id; } }
+  let wrote: boolean = false;
+  if (writeable.length > 0) {
+    let written: writing.Result = await writing.run({original:input.original,facts:input.facts,contracts:input.contracts,specification:input.specification,language:input.language,pack:input.pack,target:input.target,plan:plan,answers:input.answers,base:composition,computations:computations,openNeeds:writeable,providers:providers});
     attempts = written.attempts;
-    if (written.candidateId !== "") { return {candidateId:written.candidateId,attempts:attempts,diagnostics:written.diagnostics,runnable:true}; }
-    for (let need of ledger.needs) { if (need.status !== "covered") { composition.screen.instances[composition.screen.instances.length] = notice("notice_"+need.id,need.id+": "+need.status+" — "+need.reason); } }
-    assembled = await composer.assemble(composition,computations);
+    // The writer's own draft is admitted before emission too; its verdict is an authority decision
+    // that ends the request instead of falling back to a partial composition. One predicate decides
+    // both classifications: a non-repairable diagnostic is never source feedback.
+    if (written.candidateId === "" && !checker.repairable(written.diagnostics)) { return {candidateId:"",attempts:attempts,diagnostics:written.diagnostics,runnable:true}; }
+    // A non-verdict failure falls through to the located notices below: the writer was never issued
+    // the unsettled need, so its candidate cannot report why the trigger stayed open.
+    if (written.candidateId !== "" && unsettled.length === 0) { return {candidateId:written.candidateId,attempts:attempts,diagnostics:written.diagnostics,runnable:true}; }
+    wrote = true;
   }
+  // A runnable partial ships its missing and unchecked behavior as notices whether or not a writer
+  // ran for it, so an unhandled need is never silently dropped.
+  let noticed: boolean = false;
+  for (let need of ledger.needs) { if (need.status !== "covered") { composition.screen.instances[composition.screen.instances.length] = notice("notice_"+need.id,need.id+": "+need.status+" — "+need.reason); noticed = true; } }
+  if (noticed || wrote) { assembled = await composer.assemble(composition,computations); }
   if (missingRequirements.length > 0) {
     for (let id of missingRequirements) { composition.screen.instances[composition.screen.instances.length] = notice("requirement_"+id,"Requirement "+id+": missing or unchecked original behavior"); }
     assembled = await composer.assemble(composition,computations);
   }
   let checked: checker.Result = await checker.run(assembled.source.deal,assembled.source.dealui); attempts = attempts+1;
   if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
+  // An admission or authority verdict is not source feedback: it authorizes no repair and leaves the
+  // accepted source and saved data untouched (generation-recovery-and-source-editing "Checking and
+  // repair admission").
+  if (!checker.repairable(checked.diagnostics as string)) { return {candidateId:"",attempts:attempts,diagnostics:checked.diagnostics as string,runnable:true}; }
   let revision: revisions.Revision = await revisions.issue({deal:assembled.source.deal,dealui:assembled.source.dealui});
   let repair: inference.Operation = inference.operation(await identity.issue(),2);
   let diagnostic: string = checked.diagnostics as string; let previous: string = "";
@@ -163,6 +238,9 @@ export async function run(input: writing.Input, context: selecting.Context, plan
       revision = applied.current; attempts = attempts+1;
       checked = await checker.run(revision.source.deal,revision.source.dealui);
       if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
+      // A repaired candidate rejected by an admission or authority verdict ends the request: the
+      // verdict is never fed back as a source diagnostic.
+      if (!checker.repairable(checked.diagnostics as string)) { return {candidateId:"",attempts:attempts,diagnostics:checked.diagnostics as string,runnable:true}; }
       diagnostic = checked.diagnostics as string;
     }
   }

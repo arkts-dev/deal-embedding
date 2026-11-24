@@ -287,16 +287,31 @@ export async function assembly(): Promise<string> {
 // construction uses, so an empty table, a fabricated cell and a short row are decided as at runtime.
 export async function fillPath(): Promise<string> {
   let context: selecting.Context = {original:"Show what I paid",facts:"{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"row\":{\"item\":\"Rent\",\"amount\":\"40\"}}",contracts:"[]",specification:"specification"};
-  let plan: plans.Plan = {title:"Table",eyebrow:"",subtitle:"",inputs:[],constants:[],requirements:[],needs:[{id:"empty",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"fabricated",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"short",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"nulled",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}}],questions:[]};
+  let plan: plans.Plan = {title:"Table",eyebrow:"",subtitle:"",inputs:[],constants:[],requirements:[],needs:[{id:"empty",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"unanswered",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"fabricated",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"short",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"nulled",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}}],questions:[]};
   let empty: catalogue.Configured = {need:"empty",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
   let fabricated: catalogue.Configured = {need:"fabricated",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
+  let unanswered: catalogue.Configured = {need:"unanswered",definition:definition("data_table"),parameters:{},accepted:false,reason:catalogue.notFilled()};
   let short: catalogue.Configured = {need:"short",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
   let nulled: catalogue.Configured = {need:"nulled",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
-  await catalogue.fill(context,plan,[empty,fabricated,short,nulled]);
+  await catalogue.fill(context,plan,[empty,unanswered,fabricated,short,nulled]);
   // Construction applies the one predicate after an accepted fill; a rejected decode never reaches it.
   let admittedEmpty: boolean = catalogue.disclosed(empty,context.original,context.facts,false) === "";
   let locatedFabricated: string = catalogue.disclosed(fabricated,context.original,context.facts,false);
-  return s.encode({empty:empty,fabricated:fabricated,short:short,nulled:nulled,admittedEmpty:admittedEmpty,locatedFabricated:locatedFabricated});
+  return s.encode({empty:empty,unanswered:unanswered,fabricated:fabricated,short:short,nulled:nulled,admittedEmpty:admittedEmpty,locatedFabricated:locatedFabricated});
+}
+
+// The two Select batches and alignment issue reader kinds only for a need that requests a dependency
+// another plan need publishes. A read that names an input or a constant asks for a seed, so a reader
+// kind offered for it could never be connected; the same predicate governs both call sites.
+export async function alternatives(): Promise<string> {
+  let plan: plans.Plan = plans.decode("{\"title\":\"Reader\",\"inputs\":[{\"id\":\"value\",\"label\":\"Value\",\"kind\":\"count\",\"measure\":\"count\",\"value\":3}],\"needs\":[{\"id\":\"items\",\"type\":\"content\",\"words\":\"Toggle the items\",\"spec\":{}},{\"id\":\"summary\",\"type\":\"content\",\"words\":\"Show completion\",\"reads\":[\"items\"],\"spec\":{}},{\"id\":\"seeded\",\"type\":\"content\",\"words\":\"Show the edited value\",\"reads\":[\"value\"],\"spec\":{}}]}",[],[]);
+  let offered: Record<string, unknown> = {};
+  for (let need of plan.needs) {
+    let kinds: string[] = [];
+    for (let alternative of catalogue.alternatives(plan)) { if (alternative.need === need.id) { kinds[kinds.length] = alternative.kind; } }
+    offered[need.id] = kinds;
+  }
+  return s.encode(offered);
 }
 
 export function main(): void { return; }

@@ -59,12 +59,12 @@ SEAMS = [
     # module the compiler numbers before core/custom-writing.deal (core/execution.deal included) renumbers
     # it and the anchor has to be re-pinned; a shifted anchor fails loudly, and `expect` keeps a rebound
     # anchor from passing on an unrelated assertion. The anchored statement is
-    # `custom-writing.deal:176 attempts = attempts+1`, the increment the counted-check mode executes.
+    # `custom-writing.deal:252 attempts = attempts+1`, the increment the counted-check mode executes.
     # The command names that one mode: the unbounded matrix of the packaged entry would otherwise make
     # the control's own timeout, not the broken rule, decide the outcome.
     {'id': 'attempts', 'family': 'checking-admission', 'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'old': '$s71297 = ($rt.numOf($s71291) + $rt.numOf($s71294));',
-     'new': '$s71297 = ($rt.numOf($s71291) * $rt.numOf($s71294));',
+     'old': '$s84628 = ($rt.numOf($s84622) + $rt.numOf($s84625));',
+     'new': '$s84628 = ($rt.numOf($s84622) * $rt.numOf($s84625));',
      'expect': 'candidate checks are counted as attempts',
      'command': ['node', 'tests/tools/test-generation-cutover.js', '--mode=success']},
     {'id': 'vocabulary-inventory', 'family': 'prop-predicates', 'path': 'ui/platform.dealui-pack',
@@ -78,6 +78,13 @@ SEAMS = [
     {'id': 'formula', 'family': 'figure-formula', 'path': 'core/formula.deal',
      'old': 'if (token === "choose") {',
      'new': 'if (token === "choose_disabled") {',
+     'command': ['python3', 'tests/tools/test-construction-contracts.py']},
+    # Alignment's once-per-kind rule: dropping it lets a second open need select a kind the
+    # composition already holds, which the contract lane refuses with its located reason.
+    {'id': 'alignment-kind', 'family': 'selection-alignment', 'path': 'core/alignment.deal',
+     'old': 'if (s.contains(used,chosen.kind)) { note(outcome,need,"Catalogue kind already selected: "+chosen.kind);',
+     'new': 'if (false) { note(outcome,need,"Catalogue kind already selected: "+chosen.kind);',
+     'expect': 'Once-per-kind kept the first answer only',
      'command': ['python3', 'tests/tools/test-construction-contracts.py']},
     {'id': 'binding', 'family': 'bindings-descriptors', 'path': 'core/bindings.deal',
      'old': 'actual.maximum > expected.maximum',

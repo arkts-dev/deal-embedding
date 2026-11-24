@@ -434,8 +434,9 @@
       "family": "classification-scenes",
       "owner": "generation-recovery-and-source-editing",
       "requirement": "A free-drawing or motion request is classified once before planning as whole, part or none; unusable classification defaults ordinary without error and list/calculator/chart/button-game requests stay ordinary.",
-      "status": "missing",
-      "blocker": "No preliminary whole/part/none classification exists; whole writing is entered only when no runnable ordinary result exists."
+      "status": "partial",
+      "test": "node tests/tools/test-generation-cutover.js python3 tests/tools/test-construction-contracts.py",
+      "blocker": "The compiled route now decides whole/part/none once before plan: the packaged entry proves a whole classification writes one complete Surface without any planning or selection dispatch even when the ordinary plan was runnable, a part classification enters exactly one scene need reading every plan input without entering a selection batch and reaches the writer at the 7000 scene budget, none and an unusable answer run the ordinary flow while retaining the classification trace, a chat target is never classified and never promoted, and the contract lane proves one ask at the ordinary section budget with no retry, refusal/absent/malformed/unknown answers defaulting to none without error, the list/calculator/chart/button-game downgrade, and operational failure escaping unchanged. The route gate is a closed drawing/motion cue list matched as whole request words, so a request whose text merely contains the letters of a cue dispatches no ask and a word that merely contains a downgrade cue does not discard an eligible answer, and the model still decides eligibility; the remaining clauses are the semantic scene start/snapshot/settle/restart behavior and the full scene exploration boundary matrix, recorded by the `scenes` row."
     },
     {
       "id": "chat-construction",
@@ -450,8 +451,9 @@
       "family": "classification-scenes",
       "owner": "generation-recovery-and-source-editing",
       "requirement": "A scene need snapshots its read inputs at start, settles once, never mutates a plan input from its frame reducer, and the frame-scene exploration accepts or rejects per the Surface script.",
-      "status": "missing",
-      "blocker": "The scene need type is accepted and the Surface script exists, but scene construction, snapshot, settle, restart and the static-Surface acceptance have no implementation."
+      "status": "partial",
+      "test": "node tests/tools/test-generation-cutover.js python3 tests/tools/test-construction-contracts.py",
+      "blocker": "A part classification now inserts exactly one scene need that reads every plan input, keeps a scene the planner already proposed, is never offered to a selection batch, is written by the ordinary writing operation at the 7000 ordinary-scene budget with the snapshot/start/settle contract issued in its prompt, and the existing compiled Surface script plus six-button exploration accept or reject static versus frame Surfaces. The scene contract and the ordinary-scene budget follow the need, not the whole write: a section write that carries the scene beside another unfilled need still receives them, proven by a packaged vector where the scene and an unfilled other need reach one writer ask. The scene-owned semantic behavior is only instructed, not verified: no check proves that start copies every read input into a snapshot, that a settled scene ignores frames/recomputation/cold restore, that a second start takes a new snapshot, or the exact 240-frame/120-frame/sixth-versus-seventh-button boundary matrix."
     },
     {
       "id": "selection-batches",
@@ -459,16 +461,54 @@
       "owner": "generation-recovery-and-source-editing",
       "requirement": "Two selection batches with the decision thresholds, forced/settled choices kept, empty-response retry, unusable second batch stops, and the events question settles a trigger or leaves it open.",
       "status": "partial",
-      "test": "node tests/tools/test-generation-cutover.js",
-      "blocker": "Both batches and their thresholds run, but the second-stage decision list has no events question and no trigger selection reads spec.on/spec.at."
+      "test": "node tests/tools/test-generation-cutover.js python3 tests/tools/test-construction-contracts.py",
+      "blocker": "The second batch decides the trigger through one events question and the alignment stage now runs its ordered rounds after both batches (the `alignment-rounds` row), but the formula/written-formula alternative enumeration boundary (the 255-alternative cap, the written-formula bound and its 0.4/0.5 questions) is absent, so the formula half of this row and the unusable-first-batch fallback into alignment remain unproven."
     },
     {
-      "id": "alignment",
+      "id": "alignment-rounds",
       "family": "selection-alignment",
       "owner": "generation-recovery-and-source-editing",
-      "requirement": "Three ordered alignment rounds with eligible candidates, ledger/reading/quick-log preference, once-per-kind, replacement preservation, required-reader rejection, scene/written-formula bypass and normal stop.",
-      "status": "partial",
-      "blocker": "Alignment exists only as checklist into list_summary; the rounds, preferences, replacement preservation and stop rule are absent."
+      "requirement": "Alignment runs in the order existing readers, standalone sections, then readers enabled by new publishers, one batch per round, asking an open need once per candidate set with every candidate that round enables (a need asked for a satisfied reader also offers its standalone kinds) and re-asking it in a later round only for a candidate a newly accepted publisher enables that it was never offered, at the copied nonlive 0.5 and live 0.65 thresholds; each catalogue kind is selected at most once, a reader kind is issued only for a need that requests a dependency another plan need publishes, a candidate whose required readers the composition cannot satisfy is never offered, an unanswered batch stops the stage while an alignment an earlier round accepted stays and the remaining needs record their located reason, and a scene need is never asked.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-construction-contracts.py python3 tests/tools/test-catalogue.py node tests/tools/test-generation-cutover.js",
+      "seam": "alignment-kind",
+      "evidence": "The contract lane drives the production policy with issued candidate facts only: round one offers the reader the accepted composition already satisfies beside that need's standalone kinds, round two only standalone kinds, round three only the reader the instance accepted in round two enables (asserted by the accepted need order, the publisher count, the closed open set of the need the third round accepted, and a scenario where a content need carries both standalone and reader candidates so its standalone answer leaves it open for the enabled reader); a second scenario with an initial publisher, a satisfied reader and a newly enabled reader shows the third round issued exactly the newly offered reader (the reader the composition already satisfied is not re-offered) and the standalone round asking only the other need (a need is never re-asked with a candidate set it already answered); a 0.5 nonlive answer is admitted and a 0.49 answer refused with the copied threshold in its reason; a 0.6 live answer is refused at the copied 0.65 threshold; once-per-kind refuses a second kind both mid-batch and when every candidate kind is already held, and an unsatisfiable reader is never offered; an unanswered second batch stops after an accepted first round, keeps that alignment and leaves the needs it never reached on 'alignment stopped'; a scene need with an issued candidate is never asked and gains no reason; and the catalogue lane proves the shared reader-eligibility predicate at its Select call site (a need that reads nothing or only an input is never offered a reader kind, while a need that reads another need is). The packaged entry proves the real consumer: alignment dispatches after both selection batches and before Fill, the standalone batch carries every open need in plan order at the nonlive-alignment decision with threshold 0.5 ending in the unavailable option and offers no reader kind, the 0.5 answer admits a section that reaches assembly connected, the checklist accepted in that batch publishes done/total so the third round issues another batch that asks only the not-yet-filled content need for the reader it was never offered, whose acceptance reaches assembly bound to that publisher, a stage that added no publisher issues no later round, a second answer naming the accepted kind is refused with its located reason, an unanswered batch stops alignment with no later round and the writer still running, and a part classification whose only open need is a scene issues no alignment batch.",
+      "asserts": [
+        "reader,plain,source,late",
+        "Alignment below the 0.5 threshold",
+        "Alignment below the 0.65 threshold",
+        "Catalogue kind already selected: metrics",
+        "No eligible alignment candidate",
+        "Every eligible catalogue kind is already selected",
+        "alignment stopped",
+        "A stop discarded an accepted alignment",
+        "A scene need entered an alignment batch",
+        "a need that reads only an input is offered a reader kind",
+        "a need that reads a publisher is refused its reader kind",
+        "Catalogue parameters were not filled",
+        "['align_items','align_summary','align_extra']",
+        "question.decision,'nonlive-alignment'",
+        "question.threshold,0.5",
+        "Alignment chose the unavailable option",
+        "the scene entered an alignment batch",
+        "An accepted need stayed open",
+        "alignment round offered",
+        "the reader computation reads the publisher through the issued connection"
+      ],
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal",
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/test-construction-contracts.js"
+      ]
+    },
+    {
+      "id": "alignment-preference",
+      "family": "selection-alignment",
+      "owner": "generation-recovery-and-source-editing",
+      "requirement": "Alignment prefers points_ledger for earn or redeem behavior, reading_status for measurement behavior and quick_log for one-tap logging, and an alignment that replaces an accepted instance preserves every retained clock reader, countdown_end action, entry_added or row_tap trigger and required aggregate or is rejected with the prior instance kept.",
+      "status": "missing",
+      "blocker": "core/catalogue.deal issues twelve kinds and none of points_ledger, reading_status or quick_log exists, so no preferred kind can be offered and the preference order has no production path; the catalogue owner supplies those definitions. No alignment path replaces an accepted instance either: both Select batches settle every need alignment could re-decide, so a retained clock reader, end action, entry trigger or required aggregate can never be dropped by an alignment and the preservation rule has no reachable vector. One reader case also stays unproven: a need that requests a dependency no accepted publisher covers is refused by the connection step with the located 'Reader port is not a requested dependency' or 'Required reader port has no publisher' reason, and no deterministic lane drives that refusal."
     },
     {
       "id": "questions",
@@ -476,8 +516,8 @@
       "owner": "generation-recovery-and-source-editing",
       "requirement": "Thresholded human-question review at 0.6, two blocking questions, option/text exclusivity and bounds, one answered replan, no reopen, cancellation ends generation.",
       "status": "partial",
-      "test": "node tests/tools/test-generation-cutover.js",
-      "blocker": "The adapter, option resolution and one answered replan exist, but the review does not retain its winning probability and admission decision, and no deterministic item exercises the 0.6 admission boundary."
+      "test": "python3 tests/tools/test-construction-contracts.py node tests/tools/test-generation-cutover.js",
+      "blocker": "The review admits at the copied 0.6 boundary, retains its winning probability and admission decision, closes every proposed question once and performs one answered replan, but the production host adapter answers every admitted question as unanswered (android/src/bindings/ExperienceGenerator.kt:78-81), so no end-to-end human answer reaches the replan."
     },
     {
       "id": "fill-order",
@@ -495,7 +535,7 @@
       "requirement": "Coverage judgment against assembled behaviour, stage budgets and escalation, attempts counted per candidate check including failures, stop on repeated misses with the least-missing draft.",
       "status": "partial",
       "test": "node tests/tools/test-generation-cutover.js",
-      "blocker": "Stage budgets, exact repair, check accounting and repeated-miss stopping run; catalogue body counters and the nested caps are absent, and no assertion counts attempts on the repeated-miss or retained-least-missing paths."
+      "blocker": "Stage budgets, exact repair, check accounting and repeated-miss stopping run, and the packaged entry asserts one attempt per completed candidate check across every mode (whole plus fallback, retained least-missing draft, rejected admission and accepted repair); catalogue body counters and the nested caps are absent."
     },
     {
       "id": "lookup-refusals",
@@ -521,10 +561,11 @@
       "status": "covered",
       "test": "node tests/tools/test-generation-cutover.js",
       "seam": "attempts",
-      "evidence": "The packaged generation entry compiles each candidate, admits its manifest before isolation, renders the isolated startup tree and answers every synthetic-input step the compiled checker issues; the accepted second candidate reports two attempts, one for its failed first check and one for its accepted second; the custom-edit ask carries the FIXTURE_CHECK diagnostic; and an operational provider failure ends the route with PROVIDER_HTTP. The `attempts` seam probe turns the attempt increment that charges each custom-writing candidate into a multiplication and this test fails on that attempt count.",
+      "evidence": "The packaged generation entry compiles each candidate, admits its manifest before isolation, renders the isolated startup tree and answers every synthetic-input step the compiled checker issues; a permitted manifest starts exactly one isolated execution while a rejected import or pack identity isolates nothing and returns its located verdict without a repair ask; the accepted second candidate reports two attempts, one for its failed first check and one for its accepted second; the custom-edit ask carries the FIXTURE_CHECK diagnostic; and an operational provider failure ends the route with PROVIDER_HTTP. The `attempts` seam probe turns the attempt increment that charges each custom-writing candidate into a multiplication and this test fails on that attempt count.",
       "asserts": [
-        "assert.equal(isolatedStarts,1,'admission rejects before any isolated step')",
-        "assert.equal(edits.length,1)",
+        "assert.equal(isolatedStarts,1)",
+        "assert.equal(isolatedStarts,0,'admission rejects before any isolated step')",
+        "assert.equal(asks.filter(r=>r.stage==='assembled-edit').length,1)",
         "assert.equal(snapshot.result.attempts,2,'candidate checks are counted as attempts')",
         "assert.equal(r.diagnostics,'FIXTURE_CHECK: retain exact pair and revise label')",
         "assert.equal(snapshot.error.code,'PROVIDER_HTTP')"
@@ -536,12 +577,17 @@
       "owner": "generation-recovery-and-source-editing",
       "requirement": "A candidate manifest whose imports leave the permitted surface is rejected with a located ADMISSION_IMPORT after compilation and before any isolated step, while a manifest of checked standard modules and embedding/graphics, and one that imports a declared frozen provider module, are admitted.",
       "status": "covered",
-      "test": "node tests/tools/test-generation-cutover.js",
-      "evidence": "The composed manifest is compiled by the real composer and then injected with an unissued module; the production admission rejects it with ADMISSION_IMPORT, discards the candidate and isolates nothing. A permitted-only manifest and the provider mode manifest, which imports and declares host/probe, are admitted.",
+      "test": "node tests/tools/test-generation-cutover.js python3 tests/tools/test-construction-contracts.py",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal"
+      ],
+      "evidence": "One policy decides the surface at both timings. A writer draft whose declaration region imports std/console is refused on the composition before emission, so no compile and no isolated step run and no repair ask follows. The contract lane drives the same per-instance path with the real compiler facts of an authored fragment: std/table and a disclosed host/probe provider are admitted while std/console is refused. After compilation, a composed manifest injected with an unissued module is rejected with the located ADMISSION_IMPORT naming it, discards the candidate and isolates nothing, and a permitted-only manifest and the provider mode manifest are admitted.",
       "asserts": [
-        "ADMISSION_IMPORT: unissued module",
+        "ADMISSION_IMPORT: std/console",
         "admission rejects before any isolated step",
-        "the composed manifest imports the declared provider module"
+        "the composed manifest imports the declared provider module",
+        "A permitted import was rejected",
+        "an admission verdict must not authorize repair"
       ]
     },
     {
@@ -550,7 +596,24 @@
       "owner": "generation-recovery-and-source-editing",
       "requirement": "An admission rejection authorizes no source repair, and a host/storage call is permitted only in an effect position while any other application-store access rejects.",
       "status": "partial",
-      "blocker": "core/construction.deal repairs the assembled candidate on any returned check diagnostic, so ADMISSION_IMPORT and ADMISSION_PACK also open a bounded assembled-edit ask (the admission test observes exactly that), and no classification of admission rejections exists. No admission rule inspects whether a host/storage call sits in an effect position, so the effect-bound allowance and its rejection have no production path."
+      "test": "node tests/tools/test-generation-cutover.js python3 tests/tools/test-construction-contracts.py",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal"
+      ],
+      "evidence": "Admission verdicts (ADMISSION_IMPORT, ADMISSION_PACK, ADMISSION_TARGET, ADMISSION_STORE) and provider access during checking authorize no repair, and a retained draft rejected by such a verdict is not downgraded to a partial result. core/admission.deal owns the one policy the composition applies before emission and the manifest check reuses: a store call is admitted only from a registered effect or a function that effect reaches, while a reducer call, a call through a captured store function and an authoritative initializer each reject with the located function and expression. The contract lane drives those verdicts with the real compiler facts of an authored fragment, including a reducer that enters a store-using helper, a registered reducer an effect also calls, a captured store function, a store call inside a closure and an authoritative initializer, and it admits the effect position and a normal initializer while the fragment imports the store; the packaged entry proves the reducer position end to end, refused with no compile, no isolated step, no repair ask and no counted attempt.",
+      "blocker": "The effect-bound allowance has no end-to-end path yet: the production compiler stages no host/storage declaration and the checking and session sandboxes bind no per-Experience storage host, so an emitted effect-bound call cannot compile or run. Because no composed candidate can resolve the store module, an edited candidate cannot smuggle an admitted store call either; the initializer and getter positions are proven at the policy level only. The compiler staging and the storage host belong to the compiler and execution boundaries, and the composed-source timing must be added with them.",
+      "asserts": [
+        "ADMISSION_STORE: change calls storage.save",
+        "Reducer storage verdict",
+        "Captured store verdict",
+        "Closure store verdict",
+        "Entered store chain verdict",
+        "Initializer storage verdict",
+        "An effect-position store call was rejected",
+        "A storage call reached from an effect was rejected",
+        "An admission verdict authorized repair",
+        "an admission verdict must not authorize repair"
+      ]
     },
     {
       "id": "candidate-predicates",
@@ -695,7 +758,7 @@
         "NumericPresentation.format(32.0, \"\", \"\", 4, -1) == \"0032\"",
         "NumericPresentation.format(1.0, \"\", \"\", 1, 6) == \"1.000000\"",
         "NumericPresentation.format(1.0 / 3.0, \"\", \"\", 1, -1) == \"0.3333333333333333\"",
-        "NumericPresentation.format(3.0, \"€\", \" kg\", 2, 0) == \"€03 kg\"",
+        "NumericPresentation.format(3.0, \"\u20ac\", \" kg\", 2, 0) == \"\u20ac03 kg\"",
         "\"PROP_FAULT\", \"NumberText\", \"decimals\"",
         "\"PROP_FAULT\", \"NumberText\", \"minimumDigits\""
       ]

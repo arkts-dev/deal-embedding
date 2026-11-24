@@ -63,7 +63,7 @@ public final class FragmentAnalysis {
             case ArrayLiteralExpr a->a.elements().forEach(e->expression(e,scope));
             case ObjectLiteralExpr o->o.properties().forEach(p->expression(p.value(),scope));
             case HasExpr h->{expression(h.object(),scope);expression(h.key(),scope);}
-            case FunctionExpr f->indirect=true;
+            case FunctionExpr f->{indirect=true;Set<String> local=new HashSet<>(scope);f.params().forEach(p->local.add(p.name()));statement(f.body(),local);}
             case TemplateLiteralExpr t->t.parts().forEach(e->expression(e,scope));
         }
     }

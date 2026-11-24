@@ -1,0 +1,134 @@
+import * as screens from "./screen";
+import * as decoded from "./decoded";
+import * as syntax from "embedding/fragment-syntax";
+import * as tables from "std/table";
+import * as s from "./construction-schema";
+
+// One admission policy for emitted source: the permitted import surface and effect-only private
+// storage (docs/spec-v0.8.md:86; ownership-slots-operations-and-assembly "Permitted imports and store
+// access"). Generation applies it to the composition before emission, so an unauthorized import or a
+// store use outside an effect position is a located verdict rather than a source diagnostic that would
+// authorize repair. The assembler issues the view's own imports, so this policy judges the application
+// module: its declaration imports, its functions and its authoritative initializers.
+export class Verdict { code: string; message: string; }
+function accepted(): Verdict { return {code:"",message:""}; }
+function refused(code: string, message: string): Verdict { return {code:code,message:code+": "+message}; }
+// Checked standard modules, the nominal graphics declarations and the per-Experience store; a
+// disclosed provider module is admitted because it is part of the frozen contract surface.
+function permitted(providers: string[]): string[] {
+  let result: string[] = ["std/math","std/string","std/table","std/time","embedding/graphics","host/storage"];
+  for (let module of providers) { if (!s.contains(result,module)) { result[result.length] = module; } }
+  return result;
+}
+// A module outside the permitted surface rejects with its own located result: another std module
+// such as the administration console, a test module, an administrative mechanism module and an
+// unissued relative path are all outside it.
+export function modules(imports: string[], providers: string[]): Verdict {
+  let allowed: string[] = permitted(providers);
+  for (let module of imports) { if (!s.contains(allowed,module)) { return refused("ADMISSION_IMPORT",module); } }
+  return accepted();
+}
+function storeUse(fact: Record<string, unknown>, aliases: string[]): string {
+  // A member access on the store alias is a store use even when the call itself goes through a
+  // captured function value; the fact producer also analyses closure bodies, so a store call inside a
+  // callback is attributed to the function that owns it. Reads and writes are inspected because
+  // capturing the module and deleting through it are store uses too.
+  let paths: string[] = [];
+  for (let name of ["calls","reads","writes"]) { if (Object.hasOwn(fact,name)) { for (let path of decoded.strings(fact[name])) { paths[paths.length] = path; } } }
+  for (let path of paths) {
+    for (let alias of aliases) { if (path === alias || path.startsWith(alias+".") || path.startsWith(alias+"[")) { return path; } }
+  }
+  return "";
+}
+function calls(fact: Record<string, unknown>): string[] {
+  let result: string[] = [];
+  if (!Object.hasOwn(fact,"calls")) { return result; }
+  for (let call of decoded.strings(fact.calls)) { if (!s.contains(result,call)) { result[result.length] = call; } }
+  return result;
+}
+// A store use is permitted only from an effect position: a registered effect function, or a function
+// that only an effect position reaches. The rule is a real position check, not a whitelist: a function
+// that executes as a reducer, or that enters a store-using chain from a reducer position, is refused
+// even when an effect calls it too, so a reducer can never write the store through a helper.
+function reached(facts: Record<string, unknown>, roots: string[]): string[] {
+  let result: string[] = []; let pending: string[] = [];
+  for (let name of roots) { if (!s.contains(result,name)) { result[result.length] = name; pending[pending.length] = name; } }
+  let index: number = 0;
+  while (index < pending.length) {
+    let name: string = pending[index]; index = index+1;
+    if (Object.hasOwn(facts,name)) {
+      for (let call of calls(facts[name] as Record<string, unknown>)) {
+        if (Object.hasOwn(facts,call) && !s.contains(result,call)) { result[result.length] = call; pending[pending.length] = call; }
+      }
+    }
+  }
+  return result;
+}
+function enters(facts: Record<string, unknown>, name: string, users: string[]): string {
+  let graph: string[] = calls(facts[name] as Record<string, unknown>); let cursor: number = 0; let seen: string[] = [];
+  while (cursor < graph.length) {
+    let call: string = graph[cursor]; cursor = cursor+1;
+    if (!Object.hasOwn(facts,call) || s.contains(seen,call)) { continue; }
+    seen[seen.length] = call;
+    if (s.contains(users,call)) { return call; }
+    for (let next of calls(facts[call] as Record<string, unknown>)) { graph[graph.length] = next; }
+  }
+  return "";
+}
+export function stores(facts: Record<string, unknown>, effects: string[], updates: string[], aliases: string[]): Verdict {
+  if (aliases.length === 0) { return accepted(); }
+  let users: string[] = [];
+  for (let name of tables.keys(facts)) { if (storeUse(facts[name] as Record<string, unknown>,aliases) !== "") { users[users.length] = name; } }
+  if (users.length === 0) { return accepted(); }
+  let byEffect: string[] = reached(facts,effects);
+  let byReducer: string[] = reached(facts,updates);
+  for (let name of tables.keys(facts)) {
+    let fact: Record<string, unknown> = facts[name] as Record<string, unknown>;
+    let use: string = storeUse(fact,aliases);
+    if (use === "") { use = enters(facts,name,users); }
+    if (use === "") { continue; }
+    // A reducer position is never permitted, and neither is a function an effect and a reducer both
+    // reach; only a pure effect-position chain may use the store.
+    if (!s.contains(byEffect,name) || s.contains(byReducer,name) || s.contains(updates,name)) { return refused("ADMISSION_STORE",name+" calls "+use); }
+  }
+  return accepted();
+}
+// An initializer is never an effect position: it seeds authoritative state during construction, so
+// any store use there is refused before the call could run.
+export async function initializer(value: screens.Field, aliases: string[]): Promise<Verdict> {
+  if (aliases.length === 0) { return accepted(); }
+  let facts: Record<string, unknown> = JSON.parse(await syntax.analyzeExpression(s.encode({source:value.initial})));
+  let use: string = storeUse(facts,aliases);
+  if (use === "") { return accepted(); }
+  return refused("ADMISSION_STORE",value.name+" initializer uses "+use);
+}
+// Compiler-parsed facts for one fragment: its declaration imports, the call facts of its functions
+// and the expressions that seed its authoritative fields. The effect positions are the fragment's own
+// registered effects, never a source scan.
+export async function instance(value: screens.Instance, providers: string[]): Promise<Verdict> {
+  let facts: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:value.fragment.declarations,fields:"",functions:value.fragment.helpers,view:value.fragment.view})));
+  let imported: string[] = []; let aliases: string[] = [];
+  for (let item of decoded.records(facts.imports)) {
+    let module: string = s.nonblank(item.module); imported[imported.length] = module;
+    if (module === "host/storage") { aliases[aliases.length] = s.identifier(item.alias); }
+  }
+  let verdict: Verdict = modules(imported,providers);
+  if (verdict.code !== "") { return verdict; }
+  let functions: Record<string, unknown> = JSON.parse(await syntax.analyzeFunctions(s.encode({source:value.fragment.helpers})));
+  let effects: string[] = []; let updates: string[] = [];
+  for (let handler of value.fragment.effects) { effects[effects.length] = s.identifier(handler.function); }
+  for (let handler of value.fragment.updates) { updates[updates.length] = s.identifier(handler.function); }
+  verdict = stores(functions,effects,updates,aliases);
+  if (verdict.code !== "") { return verdict; }
+  for (let field of value.fragment.fields) { verdict = await initializer(field,aliases); if (verdict.code !== "") { return verdict; } }
+  return accepted();
+}
+// The whole composition is admitted before emission: one verdict, in instance order.
+export async function composition(values: screens.Instance[], providers: string[]): Promise<Verdict> {
+  for (let value of values) {
+    let verdict: Verdict = await instance(value,providers);
+    if (verdict.code !== "") { return verdict; }
+  }
+  return accepted();
+}
+export function main(): void { return; }

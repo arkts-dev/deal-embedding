@@ -59,6 +59,7 @@ results.disclosure=await step('disclosure');
 results.initialization=JSON.parse(await step('initialization'));
 results.assembly=JSON.parse(await step('assembly'));
 results.fillPath=JSON.parse(await step('fillPath'));
+results.alternatives=JSON.parse(await step('alternatives'));
 const decoded=results.decoding;
 const table=(decoded.data_table.rows);
 const astral='😀';
@@ -193,5 +194,15 @@ assert(fill.short.reason.includes('Catalogue columns match headers'),'the reject
 assert.equal(fill.nulled.accepted,false,'a null parameter record leaves its instance unfilled');
 assert.deepEqual(fill.nulled.parameters,{},'a null parameter record installs no parameters');
 assert(fill.nulled.reason.includes('Catalogue parameters required'),'a null parameter record keeps its reason: '+fill.nulled.reason);
-console.log('catalogue sections: closed decode, row bounds, exact order and UTF-16 text, shared disclosure, immutable initialization, empty states and computation-free assembly passed');
+// --- an entry the fill never answered keeps the production placeholder as its located reason.
+assert.equal(fill.unanswered.accepted,false);
+assert.equal(fill.unanswered.reason,'Catalogue parameters were not filled','an unanswered fill keeps the placeholder reason: '+fill.unanswered.reason);
+
+// --- alternatives: a reader kind is issued only for a need that requests another need's value.
+const offered=results.alternatives;
+assert(!offered.items.includes('list_summary'),'a need that reads nothing is offered a reader kind: '+JSON.stringify(offered.items));
+assert(!offered.seeded.includes('list_summary'),'a need that reads only an input is offered a reader kind: '+JSON.stringify(offered.seeded));
+assert(offered.summary.includes('list_summary'),'a need that reads a publisher is refused its reader kind: '+JSON.stringify(offered.summary));
+assert(offered.items.includes('checklist'),'the standalone kinds stay issued: '+JSON.stringify(offered.items));
+console.log('catalogue sections: closed decode, row bounds, exact order and UTF-16 text, shared disclosure, reader eligibility, immutable initialization, empty states and computation-free assembly passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -1,14 +1,21 @@
 import * as plans from "./plan";
 import * as s from "./construction-schema";
-import * as data from "embedding/policy-data";
 import * as host from "embedding/questions";
 
+// Every proposed question is closed exactly once: the caller carries the closed identities in its
+// request trace, so a question is never re-asked, reopened after its answer, or reissued by the
+// answered replan (docs/spec-v0.8.md:270; generation-recovery-and-source-editing "Human question review").
 export class Resolution { answers: Record<string, unknown>[]; changed: boolean; }
-export async function resolve(requestId: string, questions: plans.HumanQuestion[]): Promise<Resolution> {
+export async function resolve(requestId: string, questions: plans.HumanQuestion[], alreadyClosed: string[]): Promise<Resolution> {
+  s.nonblank(requestId);
   if (questions.length > 2) { s.reject("At most two blocking questions"); }
   // Validate the complete batch before displaying any question.
   let ids: string[] = [];
+  let closed: string[] = [];
+  for (let prior of alreadyClosed) { s.unique(closed,s.identifier(prior)); }
   for (let question of questions) {
+    s.identifier(question.id);
+    if (s.contains(closed,question.id)) { s.reject("Question already closed: "+question.id); }
     s.unique(ids,question.id);
     if (question.options.length < 2 || question.options.length > 4) { s.reject("Question needs two to four options"); }
     s.nonblank(question.text); let options: string[] = [];

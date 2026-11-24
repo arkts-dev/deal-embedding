@@ -243,11 +243,12 @@ const {providerContract,declaration}=require('./fixtures/provider-contract.js');
   assert.deepEqual(Object.keys(runtime.state()).filter(name=>name.startsWith('f_section_')),[],'the emitted state seeds no section field');
 }
 
-// --- partial: the unresolved-need notice instance shows its message unconditionally.
+// --- partial: the unresolved-need notice instance shows its message unconditionally. The need was
+// offered to alignment, whose unavailable answer leaves the slot missing with that located reason.
 {
   const runtime=open('partial');
   const source=runtime.source();
-  const message='extra: missing — No implementation';
+  const message='extra: missing — Alignment chose the unavailable option';
   assert(source.includes('ui.Text(text: "'+message+'", style: "muted")'),'the unresolved-need notice is emitted with its message and style');
   assert.equal(withText(runtime.tree(),message,'muted').length,1);
   const notice=runtime.source().split('export view f_notice_extra_Panel')[1].split('// @ui-root')[0];

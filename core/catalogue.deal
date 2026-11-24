@@ -10,31 +10,50 @@ import * as s from "./construction-schema";
 
 // Only executable definitions are issued. Unsupported kinds remain open for custom sections.
 export class Parameter { name: string; type: string; required: boolean; fallback: unknown; maximum: number; }
-export class Definition { kind: string; criteria: string; parameters: Parameter[]; mutable: boolean; }
+// A kind's declared ports are eligibility facts: alignment offers a kind only when the composition can
+// satisfy every declared reader. Each entry spells the port as `name:type`, so a reader and a publisher
+// meet only on the exact nominal identity assembly resolves (ownership-slots-operations-and-assembly
+// "Connection and layout").
+export class Definition { kind: string; criteria: string; parameters: Parameter[]; mutable: boolean; reads: string[]; publishes: string[]; }
+// The one placeholder a configured instance carries until the fill decodes it, and the located reason
+// an instance keeps when the fill never answered for it.
+export function notFilled(): string { return "Catalogue parameters were not filled"; }
 export class Configured { need: string; definition: Definition; parameters: Record<string, unknown>; accepted: boolean; reason: string; }
 // `maximum` is the row/text bound of a list or text parameter and the exact column count of
 // `headers`; a heading itself decodes with the label bound of the shared row contract. Numeric
 // parameters keep 0 there because their domains are declared by the spec row, not by a count.
 export function definitions(): Definition[] {
   return [
-    {kind:"note",criteria:"Editable retained text, not structured records, calculations or provider work.",parameters:[{name:"text",type:"string",required:false,fallback:"",maximum:512}],mutable:true},
-    {kind:"spotlight",criteria:"Highlighted read-only message; never a substitute for constructing or obtaining a result.",parameters:[{name:"message",type:"string",required:true,fallback:"",maximum:512}],mutable:false},
-    {kind:"metrics",criteria:"Read-only labelled facts from disclosed data, not generated estimates, calculations or provider records.",parameters:[{name:"values",type:"facts",required:true,fallback:null,maximum:12}],mutable:false},
-    {kind:"key_facts",criteria:"Read-only labelled facts from disclosed data; no calculation, timer, action or external data.",parameters:[{name:"items",type:"facts",required:true,fallback:null,maximum:12}],mutable:false},
-    {kind:"actions",criteria:"Local label selection and last-tapped label only. No external operation or completion claims.",parameters:[{name:"labels",type:"labels",required:true,fallback:null,maximum:12}],mutable:true},
-    {kind:"checklist",criteria:"Keyed toggles with checked and total counts; not records, assignments or external operations.",parameters:[{name:"items",type:"entries",required:false,fallback:null,maximum:12}],mutable:true},
-    {kind:"filter_box",criteria:"Editable query publishing query:string for an issued reader. No search provider or external effect.",parameters:[],mutable:true},
-    {kind:"list_summary",criteria:"Read-only done/total/remaining from exact typed publishers; cannot create or replace a publisher.",parameters:[],mutable:false},
-    {kind:"data_table",criteria:"Read-only disclosed cells in three columns whose rows match their headers; never calculations, estimates or provider data.",parameters:[{name:"headers",type:"headers",required:true,fallback:null,maximum:3},{name:"rows",type:"cells",required:true,fallback:null,maximum:12}],mutable:false},
-    {kind:"timeline",criteria:"Read-only chronological rail of disclosed minute-ordered rows in their supplied order; no records, actions or external data.",parameters:[{name:"rows",type:"timeline",required:true,fallback:null,maximum:12}],mutable:false},
-    {kind:"bar_chart",criteria:"Read-only zero-based labelled bars of disclosed values inside one declared positive scale; never an estimate or calculation.",parameters:[{name:"points",type:"points",required:true,fallback:null,maximum:12},{name:"maximum",type:"positive",required:true,fallback:null,maximum:0}],mutable:false},
-    {kind:"trend_chart",criteria:"Read-only ordered line chart of two to twelve grounded disclosed points inside one declared scale; never an estimate or calculation.",parameters:[{name:"points",type:"points",required:true,fallback:null,maximum:12},{name:"minimum",type:"number",required:true,fallback:null,maximum:0},{name:"maximum",type:"number",required:true,fallback:null,maximum:0}],mutable:false}
+    {kind:"note",criteria:"Editable retained text, not structured records, calculations or provider work.",parameters:[{name:"text",type:"string",required:false,fallback:"",maximum:512}],mutable:true,reads:[],publishes:[]},
+    {kind:"spotlight",criteria:"Highlighted read-only message; never a substitute for constructing or obtaining a result.",parameters:[{name:"message",type:"string",required:true,fallback:"",maximum:512}],mutable:false,reads:[],publishes:[]},
+    {kind:"metrics",criteria:"Read-only labelled facts from disclosed data, not generated estimates, calculations or provider records.",parameters:[{name:"values",type:"facts",required:true,fallback:null,maximum:12}],mutable:false,reads:[],publishes:[]},
+    {kind:"key_facts",criteria:"Read-only labelled facts from disclosed data; no calculation, timer, action or external data.",parameters:[{name:"items",type:"facts",required:true,fallback:null,maximum:12}],mutable:false,reads:[],publishes:[]},
+    {kind:"actions",criteria:"Local label selection and last-tapped label only. No external operation or completion claims.",parameters:[{name:"labels",type:"labels",required:true,fallback:null,maximum:12}],mutable:true,reads:[],publishes:[]},
+    {kind:"checklist",criteria:"Keyed toggles with checked and total counts; not records, assignments or external operations.",parameters:[{name:"items",type:"entries",required:false,fallback:null,maximum:12}],mutable:true,reads:[],publishes:["done:number","total:number"]},
+    {kind:"filter_box",criteria:"Editable query publishing query:string for an issued reader. No search provider or external effect.",parameters:[],mutable:true,reads:[],publishes:["query:string"]},
+    {kind:"list_summary",criteria:"Read-only done/total/remaining from exact typed publishers; cannot create or replace a publisher.",parameters:[],mutable:false,reads:["done:number","total:number"],publishes:[]},
+    {kind:"data_table",criteria:"Read-only disclosed cells in three columns whose rows match their headers; never calculations, estimates or provider data.",parameters:[{name:"headers",type:"headers",required:true,fallback:null,maximum:3},{name:"rows",type:"cells",required:true,fallback:null,maximum:12}],mutable:false,reads:[],publishes:[]},
+    {kind:"timeline",criteria:"Read-only chronological rail of disclosed minute-ordered rows in their supplied order; no records, actions or external data.",parameters:[{name:"rows",type:"timeline",required:true,fallback:null,maximum:12}],mutable:false,reads:[],publishes:[]},
+    {kind:"bar_chart",criteria:"Read-only zero-based labelled bars of disclosed values inside one declared positive scale; never an estimate or calculation.",parameters:[{name:"points",type:"points",required:true,fallback:null,maximum:12},{name:"maximum",type:"positive",required:true,fallback:null,maximum:0}],mutable:false,reads:[],publishes:[]},
+    {kind:"trend_chart",criteria:"Read-only ordered line chart of two to twelve grounded disclosed points inside one declared scale; never an estimate or calculation.",parameters:[{name:"points",type:"points",required:true,fallback:null,maximum:12},{name:"minimum",type:"number",required:true,fallback:null,maximum:0},{name:"maximum",type:"number",required:true,fallback:null,maximum:0}],mutable:false,reads:[],publishes:[]}
   ];
+}
+// A reader kind can only be wired when the need requests a dependency another need publishes: a plan
+// read that names an input or constant asks for a seed, never for a publisher's value, so issuing a
+// reader kind for it would offer an instance assembly can never connect. Both call sites that issue
+// catalogue alternatives — the two Select batches and alignment — share this one predicate.
+export function carriesReaders(plan: plans.Plan, need: plans.Need): boolean {
+  for (let other of plan.needs) { if (other.id !== need.id && s.contains(need.reads,other.id)) { return true; } }
+  return false;
 }
 export function alternatives(plan: plans.Plan): selecting.Alternative[] {
   let result: selecting.Alternative[] = [];
   for (let need of plan.needs) { if (need.type === "content" || need.type === "other") {
-    for (let definition of definitions()) { result[result.length] = {id:"cat_"+need.id+"_"+definition.kind,need:need.id,origin:"catalogue",kind:definition.kind,criteria:definition.criteria,eligible:true,reason:""}; }
+    let readers: boolean = carriesReaders(plan,need);
+    for (let definition of definitions()) {
+      if (definition.reads.length > 0 && !readers) { continue; }
+      result[result.length] = {id:"cat_"+need.id+"_"+definition.kind,need:need.id,origin:"catalogue",kind:definition.kind,criteria:definition.criteria,eligible:true,reason:""};
+    }
   } }
   return result;
 }
@@ -203,7 +222,7 @@ export function disclosed(entry: Configured, original: string, facts: string, us
 }
 export function selected(plan: plans.Plan, choices: selecting.Choice[]): Configured[] {
   let result: Configured[] = []; let kinds: string[] = [];
-  for (let choice of choices) { for (let definition of definitions()) { if (choice.alternative === "cat_"+choice.need+"_"+definition.kind && !s.contains(kinds,definition.kind)) { kinds[kinds.length] = definition.kind; result[result.length] = {need:choice.need,definition:definition,parameters:{},accepted:false,reason:"Not filled"}; } } }
+  for (let choice of choices) { for (let definition of definitions()) { if (choice.alternative === "cat_"+choice.need+"_"+definition.kind && !s.contains(kinds,definition.kind)) { kinds[kinds.length] = definition.kind; result[result.length] = {need:choice.need,definition:definition,parameters:{},accepted:false,reason:notFilled()}; } } }
   return result;
 }
 export async function fill(context: selecting.Context, plan: plans.Plan, entries: Configured[]): Promise<void> {

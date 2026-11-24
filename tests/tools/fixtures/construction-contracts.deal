@@ -16,6 +16,22 @@ import * as formula from "./formula";
 import * as decoded from "./decoded";
 import * as literals from "./source-literals";
 import * as graphics from "./graphics";
+import * as events from "./events";
+import * as checking from "./isolated-check";
+import * as classification from "./classification";
+import * as admission from "./admission";
+import * as alignment from "./alignment";
+
+export function repairAdmission(): null {
+  // Admission and authority verdicts are never repair evidence; trusted checker feedback is.
+  for (const diagnostics of ["ADMISSION_IMPORT: std/console","ADMISSION_PACK: compiler pack digest mismatch","ADMISSION_PACK: compiler pack version mismatch","ADMISSION_TARGET: a compile input requires the experience's frozen target","CHECK_PROVIDER: provider access during checking"]) {
+    insist(!checking.repairable(diagnostics),"Authority verdict authorized repair: "+diagnostics);
+  }
+  for (const diagnostics of ["CHECK_PROP: Surface.width finite","CHECK_CARD: sixth picture","CHECK_SURFACE: missing, blank or unchanged frame scene","CHECK_TREE: bad tree","{\"version\":2,\"diagnostics\":[{\"code\":\"E8001\"}]}","FIXTURE_CHECK: source repair required"]) {
+    insist(checking.repairable(diagnostics),"Source feedback refused repair: "+diagnostics);
+  }
+  return null;
+}
 
 function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
 function rejectsPlan(raw: string): void { let rejected: boolean = false; try { plans.decode(raw,[],[]); } catch (error) { rejected = true; } insist(rejected,"Invalid plan admitted"); }
@@ -234,4 +250,374 @@ export async function planningLimits(): Promise<null> {
   insist(result.plan === null && result.asks === 3,"Failed planning exceeded cap or fabricated plan");
   return null;
 }
+// ---- Action triggers are a second-batch decision -------------------------------------------
+function action(id: string, on: string, at: string): string {
+  let source: string = ""; if (at !== "") { source = ",\"at\":\""+at+"\""; }
+  return "{\"id\":\""+id+"\",\"type\":\"action\",\"words\":\"Perform "+id+"\",\"spec\":{\"on\":\""+on+"\""+source+",\"operation\":\"host/ops.run\"}}";
+}
+function triggerPlan(): plans.Plan {
+  return plans.decode("{\"title\":\"Triggers\",\"inputs\":[{\"id\":\"when\",\"label\":\"When\",\"kind\":\"time\",\"measure\":\"minutes\",\"value\":600}],\"needs\":["
+    +"{\"id\":\"timer\",\"type\":\"countdown\",\"words\":\"Count down\",\"spec\":{\"label\":\"Timer\",\"length\":\"when\"}},"
+    +"{\"id\":\"rows\",\"type\":\"entries\",\"words\":\"Log rows\",\"spec\":{\"label\":\"Rows\"}},"
+    +action("ends","countdown_end","timer")+","
+    +action("taps","row_tap","rows")+","
+    +action("clocked","time","when")+","
+    +action("tapped","button","")+","
+    +action("later","other","")+","
+    +action("lost","entry_added","absent")+"]}",[],[]);
+}
+function ids(needs: plans.Need[]): string[] { let result: string[] = []; for (let need of needs) { result[result.length] = need.id; } return result; }
+function answer(id: string, selected: string, p: number): selection.Answer { return {id:id,selected:selected,probability:p,accepted:p >= selection.threshold("ordinary"),probabilities:[{id:selected,p:1},{id:"unavailable",p:0}]}; }
+function optionIds(question: selection.Question): string[] { let result: string[] = []; for (let option of question.options) { result[result.length] = option.id; } return result; }
+export function triggers(): null {
+  let plan: plans.Plan = triggerPlan();
+  insist(ids(events.unsettled(plan)).join(",") === "later,lost","Only unresolved triggers stay open: "+ids(events.unsettled(plan)).join(","));
+  let issued: selection.Question[] = events.questions(plan);
+  insist(issued.length === 2 && issued[0].id === "events_later" && issued[1].id === "events_lost","One events question per unsettled action");
+  insist(issued[0].decision === "ordinary" && issued[0].threshold === 0.25,"Events question copies the ordinary threshold");
+  // Only `button` (without a source) and the triggers whose source resolves in the plan are offered.
+  insist(optionIds(issued[0]).join(",") === "button,countdown_end_timer,entry_added_rows,row_tap_rows,time_when,unavailable","Issued trigger alternatives: "+optionIds(issued[0]).join(","));
+  // A clock is a `countdown_end` source, never the `time` source a scheduled action names.
+  insist(!s.contains(optionIds(issued[0]),"time_timer"),"A countdown was offered as a time source");
+  // An entry trigger naming a source absent from the plan is not offered, while the tap stays legal.
+  let lost: string[] = optionIds(issued[1]); insist(!s.contains(lost,"entry_added_absent") && s.contains(lost,"row_tap_rows"),"Eligibility of named sources");
+  // Settling binds the chosen trigger on the plan itself, so the writer receives it and no later
+  // batch re-asks it.
+  let settled: events.Settlement = events.settle(plan,[answer("events_later","button",1),answer("events_lost","row_tap_rows",1)]);
+  insist(settled.settled.join(",") === "later,lost","Settled trigger identities");
+  insist(events.questions(plan).length === 0,"Settled trigger re-asked");
+  let later: plans.Need = plan.needs[6]; let lostNeed: plans.Need = plan.needs[7];
+  insist((later.spec.on as string) === "button" && !Object.hasOwn(later.spec,"at"),"Button trigger must omit its source");
+  insist((lostNeed.spec.on as string) === "row_tap" && (lostNeed.spec.at as string) === "rows","Chosen trigger source not bound");
+  // `other`/unavailable keeps the trigger with the written action and never invents one.
+  let custom: plans.Plan = triggerPlan();
+  let kept: events.Settlement = events.settle(custom,[answer("events_later","unavailable",1),answer("events_lost","unavailable",1)]);
+  insist(kept.settled.length === 0 && kept.outcomes.length === 2,"Unavailable trigger settled a source");
+  insist((custom.needs[6].spec.on as string) === "other" && !Object.hasOwn(custom.needs[6].spec,"at"),"Unavailable trigger rewrote the plan");
+  insist(kept.outcomes[0].status === "custom" && kept.outcomes[0].reason.includes("declare its trigger"),"Custom trigger reason");
+  // Unanswered and below-threshold answers leave the need visibly open with a located reason.
+  let unanswered: events.Settlement = events.settle(triggerPlan(),[]);
+  insist(unanswered.outcomes.length === 2 && unanswered.outcomes[0].status === "open" && unanswered.outcomes[0].reason.includes("unanswered"),"Unanswered trigger not reported");
+  let below: events.Settlement = events.settle(triggerPlan(),[{id:"events_later",selected:"button",probability:0.1,accepted:0.1 >= selection.threshold("ordinary"),probabilities:[]},{id:"events_lost",selected:"button",probability:0.1,accepted:0.1 >= selection.threshold("ordinary"),probabilities:[]}]);
+  insist(below.outcomes[0].status === "open" && below.outcomes[0].reason.includes("threshold"),"Below-threshold trigger not reported");
+  // The located reason reaches the composition as a visibly missing slot, so no later stage can
+  // claim the need and no writer is told to implement an inferred trigger.
+  let reserved: screens.Screen = screens.reserve(triggerPlan(),"screen");
+  events.apply(reserved,events.settle(triggerPlan(),[]));
+  let marked: number = 0;
+  for (let slot of reserved.slots) { if (slot.need === "later" || slot.need === "lost") { marked = marked+1; insist(slot.status === "missing" && slot.reason.includes("Unsettled action trigger"),"Unsettled trigger slot: "+slot.need+" "+slot.status); } }
+  insist(marked === 2,"Unsettled trigger slots: "+s.encode(marked));
+  let written: screens.Screen = screens.reserve(triggerPlan(),"screen");
+  events.apply(written,events.settle(triggerPlan(),[answer("events_later","unavailable",1),answer("events_lost","unavailable",1)]));
+  let left: number = 0;
+  for (let slot of written.slots) { if (slot.need === "later" || slot.need === "lost") { left = left+1; insist(slot.status === "open" && slot.reason === "Implementation not selected","Custom trigger slot was closed: "+slot.need+" "+slot.status); } }
+  insist(left === 2,"Custom trigger slots: "+s.encode(left));
+  // Ineligible issued alternatives reject: an unissued trigger and a button that carries a source.
+  let unissued: string = "";
+  try { events.settle(triggerPlan(),[answer("events_later","countdown_end_when",1),answer("events_lost","button",1)]); }
+  catch (errorUnknown) { let error: Error = errorUnknown as Error; unissued = error.message; }
+  insist(unissued.includes("Ineligible issued trigger alternative"),"Unissued trigger alternative admitted: "+unissued);
+  let carrying: string = "";
+  try { events.settle(triggerPlan(),[answer("events_later","button_when",1),answer("events_lost","button",1)]); }
+  catch (errorUnknown) { let error: Error = errorUnknown as Error; carrying = error.message; }
+  insist(carrying.includes("Ineligible issued trigger alternative"),"Button alternative carrying a source admitted: "+carrying);
+  // A trigger whose named source the plan does not resolve is never offered, and a decoded plan that
+  // carries a non-identifier source rejects instead of raising an unclassified host type error.
+  let nontext: string = "";
+  try { events.unsettled(plans.decode("{\"title\":\"x\",\"needs\":[{\"id\":\"act\",\"type\":\"action\",\"words\":\"Act\",\"spec\":{\"on\":\"other\",\"at\":7,\"operation\":\"host/ops.run\"}}]}",[],[])); }
+  catch (errorUnknown) { let error: Error = errorUnknown as Error; nontext = error.name+":"+error.message; }
+  insist(nontext === "CONSTRUCTION_SCHEMA:Action trigger source must be an identifier","Non-text trigger source: "+nontext);
+  return null;
+}
+// ---- Human question review closes every proposed question exactly once -----------------------
+function humanQuestion(id: string): string { return "{\"id\":\""+id+"\",\"text\":\"Which option?\",\"default\":\"a\",\"options\":[{\"id\":\"a\",\"label\":\"A\"},{\"id\":\"b\",\"label\":\"B\"}]}"; }
+function questionPlan(questions: string): plans.Plan { return plans.decode("{\"title\":\"Pick\",\"requirements\":[{\"id\":\"preserve\",\"text\":\"Keep the request\",\"sources\":[\"request\"]}],\"needs\":[{\"id\":\"body\",\"type\":\"other\",\"words\":\"Something useful\",\"spec\":{}}],\"questions\":["+questions+"]}",[],[]); }
+function seeded(plan: plans.Plan, closed: string[]): planning.Result { return {plan:plan,diagnostics:"",answers:[],asks:0,review:[],closed:closed}; }
+function reviewInput(requestId: string): planning.Input { return {requestId:requestId,request:"Keep the request",facts:"{}",factIds:[],sourceIds:[],contracts:"[]",specification:"Plan contract",target:"screen"}; }
+export async function reviewAdmission(): Promise<null> {
+  // 0.59 does not reach the human-question threshold of 0.6: nothing is shown, the issued default
+  // stands and the decision is retained with its winning probability.
+  let low: planning.Result = await planning.review(reviewInput("request-low"),seeded(questionPlan(humanQuestion("q1")),[]));
+  insist(low.review.length === 1 && !low.review[0].admitted && low.review[0].probability === 0.59 && low.review[0].threshold === 0.6,"Below-threshold review admission");
+  insist((low.answers[0].optionId as string) === "a" && (low.plan as plans.Plan).questions.length === 1,"Unadmitted question lost its default");
+  insist(low.closed.join(",") === "q1","Unadmitted question was not closed");
+  // Exactly 0.6 admits; an unanswered host reply uses the issued default and performs no replan.
+  let at: planning.Result = await planning.review(reviewInput("request-at"),seeded(questionPlan(humanQuestion("q1")),[]));
+  insist(at.review[0].admitted && at.asks === 1,"Inclusive human-question threshold");
+  insist((at.answers[0].optionId as string) === "a" && (at.plan as plans.Plan).questions.length === 1,"Default-only resolution changed the plan");
+  // A nondefault option answer triggers exactly one answered replan that preserves requirement ids
+  // and clears the question list.
+  let changed: planning.Result = await planning.review(reviewInput("request-changed"),seeded(questionPlan(humanQuestion("q1")),[]));
+  insist(changed.asks === 2 && changed.review[0].probability === 0.75,"One answered replan expected");
+  // The replan reply proposes its own question, so only the answered-replan path can clear it.
+  insist((changed.plan as plans.Plan).questions.length === 0 && (changed.plan as plans.Plan).requirements[0].id === "preserve","Answered replan did not close the question");
+  insist((changed.answers[0].optionId as string) === "b" && changed.closed.join(",") === "q1","Answer trace lost");
+  // A winning `default` admits nothing whatever its probability.
+  let byDefault: planning.Result = await planning.review(reviewInput("request-default"),seeded(questionPlan(humanQuestion("q1")),[]));
+  insist(!byDefault.review[0].admitted && byDefault.review[0].selected === "default" && (byDefault.answers[0].optionId as string) === "a","Winning default admitted a question");
+  // A refused, absent or malformed review admits nothing, keeps every default and raises no error.
+  let unusable: planning.Result = await planning.review(reviewInput("request-unusable"),seeded(questionPlan(humanQuestion("q1")),[]));
+  insist(!unusable.review[0].admitted && (unusable.answers[0].optionId as string) === "a" && unusable.asks === 1,"Unusable review raised or admitted");
+  // Three admissible proposed questions show the first two in plan order; the third takes its
+  // issued default without error and is closed all the same.
+  let three: planning.Result = await planning.review(reviewInput("request-three"),seeded(questionPlan(humanQuestion("q1")+","+humanQuestion("q2")+","+humanQuestion("q3")),[]));
+  insist(three.review.length === 3 && three.review[0].admitted && three.review[1].admitted && !three.review[2].admitted,"Third admissible question was shown");
+  insist(three.closed.join(",") === "q1,q2,q3" && (three.answers[0].id as string) === "q3" && (three.answers[0].optionId as string) === "a","Third question was not defaulted and closed");
+  insist((three.answers[1].id as string) === "q1" && (three.answers[2].id as string) === "q2","Shown questions lost their plan order");
+  // Free text is bounded in UTF-16 units: 4096 is accepted exactly and triggers the answered replan.
+  let long: planning.Result = await planning.review(reviewInput("request-long"),seeded(questionPlan(humanQuestion("q1")),[]));
+  insist((long.answers[0].text as string).length === 4096 && long.asks === 2,"Accepted free text length lost");
+  // 4097 units, blank text, both answer kinds and an unissued option each reject with their
+  // located reason and authorize no source repair.
+  for (let kind of ["overlong","blank","both","unissued"]) {
+    let rejected: string = "";
+    try { await planning.review(reviewInput("request-"+kind),seeded(questionPlan(humanQuestion("q1")),[])); }
+    catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name+":"+error.message; }
+    let expected: string = kind === "overlong" || kind === "blank" ? "Question text length" : kind === "both" ? "Option and text are mutually exclusive" : "Unissued question option";
+    insist(rejected === "CONSTRUCTION_SCHEMA:"+expected,"Rejected question answer: "+kind+" -> "+rejected);
+  }
+  // A question already closed by this request rejects instead of being asked twice.
+  let reissue: string = "";
+  try { await planning.review(reviewInput("request-at"),seeded(questionPlan(humanQuestion("q1")),["q1"])); }
+  catch (errorUnknown) { let error: Error = errorUnknown as Error; reissue = error.name+":"+error.message; }
+  insist(reissue === "CONSTRUCTION_SCHEMA:Question already closed: q1","Closed question reissue: "+reissue);
+  // Cancellation ends generation with the cancellation classification.
+  let cancelled: boolean = false;
+  try { await planning.review(reviewInput("request-cancel"),seeded(questionPlan(humanQuestion("q1")),[])); } catch (errorUnknown) { let error: Error = errorUnknown as Error; cancelled = error.name === "CANCELLED"; }
+  insist(cancelled,"Cancelled question did not end generation");
+  return null;
+}
 export function main(): void { return; }
+// ---- The permitted import surface and effect-only private storage -------------------------
+export function admissionSurface(): null {
+  let providers: string[] = ["host/probe"];
+  // The permitted surface is one policy: checked standard modules, the nominal graphics
+  // declarations, the per-Experience store and each disclosed provider module.
+  insist(admission.modules(["std/math","std/string","std/table","std/time","embedding/graphics","host/storage","host/probe"],providers).code === "","A permitted import was rejected");
+  // Every excluded class is located by its module, never by a generic message.
+  insist(admission.modules(["std/console"],providers).message === "ADMISSION_IMPORT: std/console","The administration console module was admitted");
+  insist(admission.modules(["test/checker"],providers).message === "ADMISSION_IMPORT: test/checker","A test module was admitted");
+  insist(admission.modules(["host/admin-console"],providers).message === "ADMISSION_IMPORT: host/admin-console","An administrative mechanism module was admitted");
+  insist(admission.modules(["./helper"],providers).message === "ADMISSION_IMPORT: ./helper","An unissued relative path was admitted");
+  // Storage is permitted from a registered effect and from a helper that only the effect reaches; it
+  // is rejected from a reducer, from a reducer that enters a store-using helper, and from a store use
+  // performed or captured inside a function.
+  let reducer: Record<string, unknown> = JSON.parse("{\"change\":{\"calls\":[\"storage.save\"],\"reads\":[],\"indirect\":false}}");
+  insist(admission.stores(reducer,[],[],["storage"]).message === "ADMISSION_STORE: change calls storage.save","Reducer storage verdict: "+s.encode(admission.stores(reducer,[],[],["storage"])));
+  let helper: Record<string, unknown> = JSON.parse("{\"summarize\":{\"calls\":[\"storage.remove\"],\"reads\":[],\"indirect\":false},\"persist\":{\"calls\":[\"summarize\"],\"reads\":[],\"indirect\":true}}");
+  insist(admission.stores(helper,[],[],["storage"]).message === "ADMISSION_STORE: summarize calls storage.remove","Recomputation helper storage verdict: "+s.encode(admission.stores(helper,[],[],["storage"])));
+  // A reducer that enters a store-using function is refused as a position, not only as a direct call.
+  let entered: Record<string, unknown> = JSON.parse("{\"change\":{\"calls\":[\"persist\"],\"reads\":[],\"indirect\":false},\"persist\":{\"calls\":[\"storage.save\"],\"reads\":[],\"indirect\":true}}");
+  insist(admission.stores(entered,[],[],["storage"]).message === "ADMISSION_STORE: change calls persist","Entered store chain verdict: "+s.encode(admission.stores(entered,[],[],["storage"])));
+  let captured: Record<string, unknown> = JSON.parse("{\"change\":{\"calls\":[\"save\"],\"reads\":[\"storage.save\"],\"indirect\":false}}");
+  insist(admission.stores(captured,[],[],["storage"]).message === "ADMISSION_STORE: change calls storage.save","Captured store verdict: "+s.encode(admission.stores(captured,[],[],["storage"])));
+  let effect: Record<string, unknown> = JSON.parse("{\"persist\":{\"calls\":[\"storage.save\"],\"reads\":[],\"indirect\":true},\"saveThrough\":{\"calls\":[\"storage.save\"],\"reads\":[],\"indirect\":false}}");
+  // A registered reducer that an effect also calls stays a reducer position.
+  let shared: Record<string, unknown> = JSON.parse("{\"persist\":{\"calls\":[\"change\"],\"reads\":[],\"indirect\":true},\"change\":{\"calls\":[\"storage.save\"],\"reads\":[],\"indirect\":false}}");
+  insist(admission.stores(shared,["persist"],["change"],["storage"]).message === "ADMISSION_STORE: change calls storage.save","Shared reducer position verdict: "+s.encode(admission.stores(shared,["persist"],["change"],["storage"])));
+
+  insist(admission.stores(effect,["persist","saveThrough"],[],["storage"]).code === "","An effect storage call was rejected");
+  let reached: Record<string, unknown> = JSON.parse("{\"persist\":{\"calls\":[\"write\"],\"reads\":[],\"indirect\":true},\"write\":{\"calls\":[\"storage.save\"],\"reads\":[],\"indirect\":false}}");
+  insist(admission.stores(reached,["persist"],[],["storage"]).code === "","A storage call reached from an effect was rejected");
+  // A fragment that imports no store has no position to check.
+  insist(admission.stores(reducer,[],[],[]).code === "","An absent store alias rejected a call");
+  // Both verdicts are authority decisions, not source feedback, so neither authorizes repair.
+  insist(!checking.repairable("ADMISSION_IMPORT: std/console") && !checking.repairable("ADMISSION_STORE: change calls storage.save"),"An admission verdict authorized repair");
+  return null;
+}
+// The policy at its production input: compiler-parsed facts of an authored fragment.
+export async function admissionFragments(): Promise<null> {
+  let store: admission.Verdict = await admission.instance(fragment("import * as storage from \"host/storage\"; export class Change { value: number; }","export function change(state: AppState, action: Change): AppState { storage.save(\"k\", \"v\"); return {value: action.value}; }",[],[]),[]);
+  insist(store.message === "ADMISSION_STORE: change calls storage.save","Reducer storage verdict: "+store.message);
+  // A call through a captured store function is still a store use in a reducer position.
+  let captured: admission.Verdict = await admission.instance(fragment("import * as storage from \"host/storage\"; export class Change { value: number; }","export function change(state: AppState, action: Change): AppState { let save = storage.save; save(\"k\", \"v\"); return {value: action.value}; }",[],[]),[]);
+  insist(captured.message === "ADMISSION_STORE: change calls storage.save","Captured store verdict: "+captured.message);
+  // A store call inside a closure is attributed to the function that owns the closure.
+  let closure: admission.Verdict = await admission.instance(fragment("import * as storage from \"host/storage\"; export class Change { value: number; }","export function change(state: AppState, action: Change): AppState { let items: number[] = [1]; items.forEach((item: number): void => { storage.save(\"k\", \"v\"); }); return {value: action.value}; }",[],[]),[]);
+  insist(closure.message === "ADMISSION_STORE: change calls storage.save","Closure store verdict: "+closure.message);
+  // An initializer that seeds authoritative state from the store rejects before the call could run.
+  let seeded: admission.Verdict = await admission.instance(fragment("import * as storage from \"host/storage\";","export function change(state: AppState): AppState { return state; }",[{name:"value",type:"string",role:"authoritative",dependencies:[],initial:"storage.load(\"k\")",owner:"gap"}],[]),[]);
+  insist(seeded.message === "ADMISSION_STORE: value initializer uses storage.load","Initializer storage verdict: "+seeded.message);
+  // A registered effect that calls the store is the permitted position, and a normal initializer
+  // stays admitted while the fragment imports the store for that effect.
+  let effect: screens.Handler = {action:"Save",function:"persist"};
+  let allowed: admission.Verdict = await admission.instance(fragment("import * as storage from \"host/storage\"; export class Save { value: string; } export class Saved { value: string; }","export async function persist(state: AppState, action: Save): Promise<Saved> { let value: string = await storage.save(\"k\", \"v\"); return {value: value}; }",[{name:"value",type:"string",role:"authoritative",dependencies:[],initial:"\"draft\"",owner:"gap"}],[effect]),[]);
+  insist(allowed.code === "","An effect-position store call was rejected: "+allowed.message);
+  // A disclosed provider module and the checked standard modules are inside the surface.
+  let permittedFragment: admission.Verdict = await admission.instance(fragment("import * as tables from \"std/table\"; import * as probe from \"host/probe\"; export class Change { value: number; }","export function change(state: AppState, action: Change): AppState { return {value: action.value}; }",[],[]),["host/probe"]);
+  insist(permittedFragment.code === "","A permitted import was rejected: "+permittedFragment.message);
+  let excluded: admission.Verdict = await admission.instance(fragment("import * as console from \"std/console\"; export class Change { value: number; }","export function change(state: AppState, action: Change): AppState { return {value: action.value}; }",[],[]),[]);
+  insist(excluded.message === "ADMISSION_IMPORT: std/console","Authored import verdict: "+excluded.message);
+  return null;
+}
+function fragment(declarations: string, helpers: string, fields: screens.Field[], effects: screens.Handler[]): screens.Instance {
+  return {id:"gap",kind:"custom",origin:"custom",parameters:{},fragment:{declarations:declarations,fields:fields,updates:[],effects:effects,helpers:helpers,view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){ui.Text(text: \"draft\")}}",options:[],content:[],ports:[],holes:[],covers:[],owns:["gap"]},bodies:{}};
+}
+// ---- Construction classification: one ask, unusable defaults ordinary ----------------------
+export async function classificationRoute(): Promise<null> {
+  // The route gate only decides whether the one ask is dispatched; the ask repeats the semantic
+  // eligibility rule, so a cue never classifies a request on its own.
+  insist(classification.permits("Let the user draw freely on the canvas"),"Explicit free drawing was not recognized");
+  insist(classification.permits("Animate the shape with motion"),"Explicit motion was not recognized");
+  insist(!classification.permits("Double the edited value"),"An ordinary request was classified");
+  let whole: classification.Outcome = await classification.run("Let the user draw freely on the canvas","{}","[]","screen");
+  insist(whole.classification === "whole" && whole.asked && whole.reason === "One complete drawing Surface","Whole classification: "+s.encode(whole));
+  let part: classification.Outcome = await classification.run("Let the user sketch a moving scene","{}","[]","screen");
+  insist(part.classification === "part" && part.asked && part.reason === "One scene inside an ordinary plan","Part classification: "+s.encode(part));
+  let none: classification.Outcome = await classification.run("Draw a picture of a house","{}","[]","screen");
+  insist(none.classification === "none" && none.asked,"None classification");
+  // Unusable model content is a normal outcome with a located reason, never an error.
+  let malformed: classification.Outcome = await classification.run("Let the user draw freely","{}","[]","screen");
+  insist(malformed.classification === "none" && malformed.asked && malformed.reason.includes("Unusable classification"),"Malformed classification: "+s.encode(malformed));
+  let unknown: classification.Outcome = await classification.run("Let the user draw freely","{}","[]","screen");
+  insist(unknown.classification === "none" && unknown.reason.includes("Unknown alternative"),"Unknown classification: "+s.encode(unknown));
+  let refused: classification.Outcome = await classification.run("Let the user draw freely","{}","[]","screen");
+  insist(refused.classification === "none" && refused.reason.includes("refused"),"Refused classification: "+s.encode(refused));
+  let absent: classification.Outcome = await classification.run("Let the user draw freely","{}","[]","screen");
+  insist(absent.classification === "none" && absent.reason.includes("no answer"),"Absent classification: "+s.encode(absent));
+  // A list, calculator, chart or button-game answer is unusable even when it said whole.
+  let conflict: classification.Outcome = await classification.run("Let the user draw a chart of the values","{}","[]","screen");
+  insist(conflict.classification === "none" && conflict.reason.includes("list, calculator, chart or button game"),"Conflict classification: "+s.encode(conflict));
+  // Operational inference failure keeps its own classification and is never a content default.
+  let failed: string = "";
+  try { await classification.run("Let the user draw freely","{}","[]","screen"); }
+  catch (errorUnknown) { let error: Error = errorUnknown as Error; failed = error.message; }
+  insist(failed.includes("Injected operational failure"),"Operational failure was disguised: "+failed);
+  // Chat and card targets are never classified and never promoted.
+  let chat: classification.Outcome = await classification.run("Let the user draw freely","{}","[]","chat");
+  insist(chat.classification === "none" && !chat.asked && chat.reason.includes("never classified"),"Chat target was classified: "+s.encode(chat));
+  let card: classification.Outcome = await classification.run("Let the user draw freely","{}","[]","card");
+  insist(card.classification === "none" && !card.asked && card.reason.includes("never classified"),"Card target was classified: "+s.encode(card));
+  // A request that does not permit drawing or motion dispatches nothing.
+  let ordinary: classification.Outcome = await classification.run("Double the edited value","{}","[]","screen");
+  insist(ordinary.classification === "none" && !ordinary.asked && ordinary.reason.includes("does not explicitly permit"),"Ordinary request dispatched classification: "+s.encode(ordinary));
+  // A cue is matched as a whole word of the request: the letters of an emotion or a withdrawal never
+  // permit drawing, so an ineligible request dispatches no paid classification ask.
+  let emotion: classification.Outcome = await classification.run("Track my emotions and the withdrawals","{}","[]","screen");
+  insist(emotion.classification === "none" && !emotion.asked,"A cue substring dispatched classification: "+s.encode(emotion));
+  // A punctuation-delimited cue is still a whole word, and a word that merely contains a cue is not.
+  let punctuated: classification.Outcome = await classification.run("Let them sketch, then (paint)!","{}","[]","screen");
+  insist(punctuated.classification === "whole" && punctuated.asked,"A punctuation-delimited cue was not admitted: "+s.encode(punctuated));
+  let paragraph: classification.Outcome = await classification.run("Let the user draw a paragraph of text","{}","[]","screen");
+  insist(paragraph.classification === "whole","A word containing a conflict cue downgraded the answer: "+s.encode(paragraph));
+  // An inflected list, calculator or chart behavior is the same required behavior, so the downgrade
+  // still fires on the whole inflected word.
+  let inflected: classification.Outcome = await classification.run("Draw a tool that calculates the totals","{}","[]","screen");
+  insist(inflected.classification === "none" && inflected.reason.includes("list, calculator, chart or button game"),"An inflected calculator was admitted: "+s.encode(inflected));
+  // The token boundary is ASCII: a cue attached to a non-ASCII code unit is still read as a token, so the
+  // gate offers the ask and the model's own eligibility answer decides it rather than dropping it here.
+  let accented: classification.Outcome = await classification.run("Édraw a house for me","{}","[]","screen");
+  insist(accented.classification === "whole" && accented.asked,"A non-ASCII-adjacent cue was refused without an ask: "+s.encode(accented));
+  // Part enters the plan as exactly one scene need reading every plan input, and a second part
+  // classification adds none.
+  let plan: plans.Plan = plans.decode("{\"title\":\"Draw\",\"inputs\":[{\"id\":\"size\",\"label\":\"Size\",\"kind\":\"count\",\"measure\":\"count\",\"value\":3},{\"id\":\"active\",\"label\":\"Active\",\"kind\":\"toggle\",\"measure\":\"count\",\"value\":true}],\"needs\":[{\"id\":\"body\",\"type\":\"other\",\"words\":\"Draw it\",\"spec\":{}}]}",[],[]);
+  let added: plans.Need = classification.scene(plan,"Draw freely");
+  insist(added.id === "scene" && added.type === "scene" && added.quote === "Draw freely" && added.reads.join(",") === "size,active","Scene need shape: "+s.encode(added));
+  insist(classification.scenes(plan).length === 1,"Scene need not exactly once");
+  classification.scene(plan,"Draw freely");
+  insist(classification.scenes(plan).length === 1,"Second part classification added a scene");
+  let order: string[] = []; for (let need of plan.needs) { order[order.length] = need.id; }
+  insist(order.join(",") === "body,scene","Scene need order: "+order.join(","));
+  // A plan that already proposed a scene keeps it instead of gaining a second one.
+  let proposed: plans.Plan = plans.decode("{\"title\":\"Draw\",\"inputs\":[],\"needs\":[{\"id\":\"picture\",\"type\":\"scene\",\"words\":\"Draw it\",\"spec\":{}}]}",[],[]);
+  let kept: plans.Need = classification.scene(proposed,"Draw freely");
+  insist(kept.id === "picture" && classification.scenes(proposed).length === 1,"Proposed scene was duplicated");
+  return null;
+}
+
+// Alignment is the ordered, thresholded stage over the accepted composition. Rounds, their enabled
+// sets, the copied decision thresholds, once-per-kind and the normal stop are driven here through the
+// production policy with issued candidate facts only: the policy never declares a kind or a threshold.
+function alignPlan(needs: string): plans.Plan { return plans.decode("{\"title\":\"Align\",\"needs\":"+needs+"}",[],[]); }
+function alignContext(): constructionSelection.Context { return {original:"Align the issued sections",facts:"{}",contracts:"",specification:""}; }
+function alignCandidate(need: string, kind: string, reads: string, publishes: string): alignment.Candidate {
+  return {need:need,id:"cat_"+need+"_"+kind,kind:kind,criteria:"Issued "+kind+" section for "+need,reads:decoded.strings(JSON.parse(reads)),publishes:decoded.strings(JSON.parse(publishes))};
+}
+function alignNeeds(): string { return "[{\"id\":\"reader\",\"type\":\"content\",\"words\":\"Show completion\",\"spec\":{}},{\"id\":\"plain\",\"type\":\"content\",\"words\":\"Toggle the items\",\"spec\":{}},{\"id\":\"source\",\"type\":\"content\",\"words\":\"List the rows\",\"spec\":{}},{\"id\":\"late\",\"type\":\"live\",\"words\":\"Read the latest value\",\"spec\":{\"label\":\"Latest\",\"measure\":\"number\",\"unit\":\"\",\"query\":\"host/probe.read\"}}]"; }
+function alignCandidates(): alignment.Candidate[] {
+  return [alignCandidate("reader","list_summary","[\"done:number\",\"total:number\"]","[]"),alignCandidate("reader","progress_line","[\"done:number\",\"total:number\"]","[]"),
+    alignCandidate("plain","checklist","[]","[\"labels:string[]\"]"),
+    alignCandidate("source","master_list","[]","[\"items:string[]\",\"selected:number\"]"),
+    alignCandidate("late","detail_view","[\"items:string[]\",\"selected:number\"]","[]")];
+}
+export async function alignmentRounds(): Promise<null> {
+  // A: round one offers the reader the accepted composition already satisfies, round two the
+  // standalone kinds, and round three only the reader an instance accepted in round two enables.
+  let ordered: alignment.Outcome = await alignment.run(alignContext(),alignPlan(alignNeeds()),alignCandidates(),[],["note"],["done:number","total:number"]);
+  insist(!ordered.stopped,"Alignment stopped without an unanswered batch");
+  insist(ordered.rounds === 3,"Expected three ordered rounds, saw "+String(ordered.rounds));
+  let order: string[] = []; for (let entry of ordered.accepted) { order[order.length] = entry.need; }
+  insist(order.join(",") === "reader,plain,source,late","Round order: "+order.join(","));
+  // The accepted readers and standalone sections publish exactly the ports their definitions declare.
+  insist(ordered.publishers === 5,"Expected five publishers, saw "+String(ordered.publishers));
+  // B: an answer below the 0.5 nonlive threshold is refused, and an unanswered batch stops the stage
+  // with no later round while the needs it never reached stay open with their located reason.
+  let below: alignment.Outcome = await alignment.run(alignContext(),alignPlan(alignNeeds()),alignCandidates(),[],["note"],["done:number","total:number"]);
+  insist(below.stopped,"An unanswered alignment batch did not stop the stage");
+  insist(below.rounds === 2,"A stopped stage issued a later round: "+String(below.rounds));
+  insist(below.accepted.length === 0,"A refused alignment was accepted");
+  insist(alignment.reason(below,"reader") === "Alignment below the 0.5 threshold","Nonlive threshold not copied: "+alignment.reason(below,"reader"));
+  insist(alignment.reason(below,"late") === "alignment stopped","Remaining need reason: "+alignment.reason(below,"late"));
+  insist(below.publishers === 2,"A stopped stage changed the publishers: "+String(below.publishers));
+  // C: a live need uses the live-alignment threshold, so 0.6 is below it and 0.65 exactly decides it.
+  let meterPlan: plans.Plan = alignPlan("[{\"id\":\"meter\",\"type\":\"live\",\"words\":\"Read the meter\",\"spec\":{\"label\":\"Meter\",\"measure\":\"number\",\"unit\":\"\",\"query\":\"host/probe.read\"}}]");
+  let meterCandidates: alignment.Candidate[] = [alignCandidate("meter","reading_status","[\"latest:number\"]","[\"count:number\"]")];
+  let meter: alignment.Outcome = await alignment.run(alignContext(),meterPlan,meterCandidates,[],["note"],["latest:number"]);
+  insist(meter.rounds === 1 && meter.accepted.length === 0,"A 0.6 live answer cleared the live threshold");
+  insist(alignment.reason(meter,"meter") === "Alignment below the 0.65 threshold","Live threshold not copied: "+alignment.reason(meter,"meter"));
+  // D: each catalogue kind is selected at most once per composition, and a candidate whose required
+  // readers the composition cannot satisfy is never offered.
+  let uniquePlan: plans.Plan = alignPlan("[{\"id\":\"a\",\"type\":\"content\",\"words\":\"Show the disclosed facts\",\"spec\":{}},{\"id\":\"b\",\"type\":\"content\",\"words\":\"Show the disclosed notes\",\"spec\":{}},{\"id\":\"c\",\"type\":\"content\",\"words\":\"Show the disclosed details\",\"spec\":{}}]");
+  let uniqueCandidates: alignment.Candidate[] = [alignCandidate("a","metrics","[]","[]"),alignCandidate("b","metrics","[]","[]"),alignCandidate("c","detail_view","[\"items:string[]\",\"selected:number\"]","[]")];
+  let unique: alignment.Outcome = await alignment.run(alignContext(),uniquePlan,uniqueCandidates,[],["note"],[]);
+  insist(unique.rounds === 1,"Expected the standalone round only, saw "+String(unique.rounds));
+  insist(unique.accepted.length === 1 && unique.accepted[0].need === "a","Once-per-kind kept the first answer only: "+String(unique.accepted.length));
+  insist(alignment.reason(unique,"b") === "Catalogue kind already selected: metrics","Once-per-kind: "+alignment.reason(unique,"b"));
+  insist(alignment.reason(unique,"c") === "No eligible alignment candidate","An unsatisfiable reader was offered: "+alignment.reason(unique,"c"));
+  // E: an unanswered batch stops the stage without discarding an alignment an earlier round already
+  // accepted, and the needs it never reached stay open with the stop reason.
+  let stopped: alignment.Outcome = await alignment.run(alignContext(),alignPlan(alignNeeds()),alignCandidates(),[],["note"],["done:number","total:number"]);
+  insist(stopped.stopped,"An unanswered batch did not stop alignment");
+  insist(stopped.rounds === 2,"A stopped stage issued a later round: "+String(stopped.rounds));
+  insist(stopped.accepted.length === 1 && stopped.accepted[0].need === "reader","A stop discarded an accepted alignment: "+String(stopped.accepted.length));
+  insist(alignment.reason(stopped,"plain") === "alignment stopped","A need the stop never reached: "+alignment.reason(stopped,"plain"));
+  // F: a scene need is never spoken about by alignment, even when a candidate is issued for it.
+  let scenePlan: plans.Plan = alignPlan("[{\"id\":\"picture\",\"type\":\"scene\",\"words\":\"Draw the scene\",\"spec\":{}}]");
+  let sceneOutcome: alignment.Outcome = await alignment.run(alignContext(),scenePlan,[alignCandidate("picture","spotlight","[]","[]")],[],["note"],[]);
+  insist(sceneOutcome.rounds === 0,"A scene need entered an alignment batch");
+  insist(sceneOutcome.open.length === 0,"A scene need was left open by alignment");
+  insist(alignment.reason(sceneOutcome,"picture") === "","A scene need gained an alignment reason");
+  // G: a need whose every candidate kind the composition already holds is named by the once-per-kind
+  // rule rather than by an unsatisfiable reader.
+  let exhaustedPlan: plans.Plan = alignPlan("[{\"id\":\"a\",\"type\":\"content\",\"words\":\"Show the disclosed facts\",\"spec\":{}},{\"id\":\"b\",\"type\":\"content\",\"words\":\"Show the disclosed notes\",\"spec\":{}}]");
+  let exhaustedCandidates: alignment.Candidate[] = [alignCandidate("a","metrics","[]","[]"),alignCandidate("b","metrics","[]","[]")];
+  let exhausted: alignment.Outcome = await alignment.run(alignContext(),exhaustedPlan,exhaustedCandidates,[],["note","metrics"],[]);
+  insist(exhausted.rounds === 0,"An exhausted kind set dispatched a batch: "+String(exhausted.rounds));
+  insist(alignment.reason(exhausted,"a") === "Every eligible catalogue kind is already selected","Exhausted kinds: "+alignment.reason(exhausted,"a"));
+  // H: an open need that carries both standalone and reader candidates is asked in the standalone
+  // round with the standalone kinds only; when the instance accepted there publishes the ports its
+  // reader declares, the third round re-asks that need with the reader it was never offered instead of
+  // closing it by its earlier answer.
+  let enabledPlan: plans.Plan = alignPlan("[{\"id\":\"items\",\"type\":\"content\",\"words\":\"Toggle the items\",\"spec\":{}},{\"id\":\"summary\",\"type\":\"content\",\"words\":\"Show completion\",\"reads\":[\"items\"],\"spec\":{}}]");
+  let enabledCandidates: alignment.Candidate[] = [alignCandidate("items","note","[]","[]"),alignCandidate("items","checklist","[]","[\"done:number\",\"total:number\"]"),alignCandidate("summary","note","[]","[]"),alignCandidate("summary","list_summary","[\"done:number\",\"total:number\"]","[]")];
+  let enabled: alignment.Outcome = await alignment.run(alignContext(),enabledPlan,enabledCandidates,[],["metrics"],[]);
+  insist(!enabled.stopped,"The reader round stopped without an unanswered batch");
+  insist(enabled.rounds === 2,"Expected the standalone round and the enabled-reader round, saw "+String(enabled.rounds));
+  let enabledOrder: string[] = []; for (let entry of enabled.accepted) { enabledOrder[enabledOrder.length] = entry.need+":"+entry.kind; }
+  insist(enabledOrder.join(",") === "items:checklist,summary:list_summary","Re-asked need did not end on its enabled reader: "+enabledOrder.join(","));
+  // The need the third round filled is closed: an earlier round's located reason is not retained beside
+  // an accepted instance.
+  insist(enabled.open.length === 0,"An accepted need stayed open: "+s.encode(enabled.open));
+  insist(alignment.reason(enabled,"summary") === "","An accepted need kept its earlier reason: "+alignment.reason(enabled,"summary"));
+  // I: a need asked in the reader round is not re-asked in the standalone round with a candidate set it
+  // already answered, and the third round offers it only the reader an earlier acceptance enables, not
+  // the reader the accepted composition already satisfied.
+  let repeatPlan: plans.Plan = alignPlan("[{\"id\":\"counter\",\"type\":\"content\",\"words\":\"Keep the count\",\"spec\":{}},{\"id\":\"items\",\"type\":\"content\",\"words\":\"Toggle the items\",\"spec\":{}},{\"id\":\"reader\",\"type\":\"content\",\"words\":\"Read the meter\",\"reads\":[\"counter\"],\"spec\":{}}]");
+  let repeatCandidates: alignment.Candidate[] = [alignCandidate("items","checklist","[]","[\"done:number\",\"total:number\"]"),alignCandidate("reader","reading_status","[\"latest:number\"]","[]"),alignCandidate("reader","metrics","[]","[]"),alignCandidate("reader","list_summary","[\"done:number\",\"total:number\"]","[]")];
+  let repeat: alignment.Outcome = await alignment.run(alignContext(),repeatPlan,repeatCandidates,[],["note"],["latest:number"]);
+  insist(!repeat.stopped,"The reader rounds stopped without an unanswered batch");
+  insist(repeat.rounds === 3,"Expected three dispatched rounds, saw "+String(repeat.rounds));
+  insist(repeat.accepted.length === 1 && repeat.accepted[0].need === "items","The standalone round accepted: "+s.encode(repeat.accepted));
+  insist(alignment.reason(repeat,"reader") === "Alignment chose the unavailable option","The reader round reason: "+alignment.reason(repeat,"reader"));
+  return null;
+}
