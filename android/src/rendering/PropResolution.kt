@@ -93,7 +93,9 @@ internal object PropResolution {
 /** Style families and the closed icon set. Style never faults; an unknown icon does. */
 internal object StyleFamilies {
     private val text = listOf("body", "display", "title", "heading", "caption", "eyebrow", "metric", "muted", "success", "warning", "danger")
-    private val containers = listOf("default", "compact", "spacious", "center", "end", "surface", "accent", "split", "joined")
+    private val column = listOf("default", "compact", "spacious", "center", "end", "surface", "accent")
+    // Row declares the container family and adds the two row-only arrangements.
+    private val row = column + listOf("split", "joined")
     private val lists = listOf("default", "compact", "comfortable")
     private val grids = listOf("default", "compact", "spacious")
     private val motions = listOf("pop", "pulse", "jelly", "press", "flash", "breathe", "shake", "nod", "wobble", "swing",
@@ -101,39 +103,47 @@ internal object StyleFamilies {
                                  "rise", "zoom", "slide", "float", "drift")
     private val common = listOf("default", "accent", "success", "warning", "danger", "muted")
     private val families = mapOf(
-        "Text" to (text to "body"), "NumberText" to (text to "body"), "ClockText" to (text to "body"),
-        "Timer" to (text to "body"),
-        "Column" to (containers to "default"), "Row" to (containers to "default"),
-        "Card" to (listOf("surface", "accent", "success", "warning", "danger") to "surface"),
-        "Button" to (listOf("primary", "secondary", "success", "danger") to "primary"),
-        "Cell" to (listOf("primary", "secondary", "success", "danger") to "primary"),
-        "IconButton" to (listOf("primary", "secondary", "success", "danger", "quiet") to "primary"),
-        "Section" to (listOf("content", "hero", "summary", "supporting", "warning") to "content"),
-        "AppTheme" to (listOf("clean", "soft", "expressive", "editorial", "technical", "playful") to "clean"),
-        "ListGroup" to (lists to "default"), "Timeline" to (lists to "default"),
-        "ListItem" to (lists to "default"), "TimelineItem" to (lists to "default"),
-        "NumberListItem" to (lists to "default"),
-        "Grid" to (grids to "default"), "MetricGroup" to (grids to "default"),
-        "KeyValueGroup" to (grids to "default"), "AdaptiveColumns" to (grids to "default"),
-        "Hero" to (listOf("plain", "accent") to "plain"),
-        "Header" to (listOf("default", "center") to "default"),
-        "ActionBar" to (listOf("default", "end", "center", "spread") to "default"),
-        "Spacer" to (listOf("none", "small", "default", "large") to "default"),
-        "TextField" to (listOf("default", "multiline") to "default"),
-        "Transform" to (listOf("default", "solid") to "default"),
-        "Stage" to (listOf("default", "floor") to "default"),
-        "Surface" to (listOf("default", "fill", "clear") to "default"),
-        "Motion" to (motions to "pop"),
+        "Text" to text, "NumberText" to text, "ClockText" to text, "Timer" to text,
+        "Column" to column, "Row" to row,
+        "Card" to listOf("surface", "accent", "success", "warning", "danger"),
+        "Button" to listOf("primary", "secondary", "success", "danger"),
+        "Cell" to listOf("primary", "secondary", "success", "danger"),
+        "IconButton" to listOf("primary", "secondary", "success", "danger", "quiet"),
+        "Section" to listOf("content", "hero", "summary", "supporting", "warning"),
+        "AppTheme" to listOf("clean", "soft", "expressive", "editorial", "technical", "playful"),
+        "ListGroup" to lists, "Timeline" to lists,
+        "ListItem" to lists, "TimelineItem" to lists, "NumberListItem" to lists,
+        "Grid" to grids, "MetricGroup" to grids, "KeyValueGroup" to grids, "AdaptiveColumns" to grids,
+        "Hero" to listOf("plain", "accent"),
+        "Header" to listOf("default", "center"),
+        "ActionBar" to listOf("default", "end", "center", "spread"),
+        "Spacer" to listOf("none", "small", "default", "large"),
+        "TextField" to listOf("default", "multiline"),
+        "Transform" to listOf("default", "solid"),
+        "Stage" to listOf("default", "floor"),
+        "Surface" to listOf("default", "fill", "clear"),
+        "Motion" to motions,
     )
     private val icons = setOf("check", "close", "plus", "minus", "chevron-right", "navigate", "pin", "calendar",
                               "clock", "star", "user", "warning", "info", "trash", "list", "chart")
 
-    private fun family(component: String): Pair<List<String>, String> = families[component] ?: (common to "default")
+    /** The declared values a component's style accepts, in the order the pack lists them. */
+    fun allowed(component: String): List<String> = families[component] ?: common
 
+    /**
+     * The painted style value. An empty style stays empty - the declaration's own absence - except
+     * Motion, whose declared default is its first preset. A value outside the family falls back
+     * through the declared order: the allowed `default`, then `body`, then the family's first value.
+     */
     fun resolve(component: String, style: String): String {
-        val (allowed, fallback) = family(component)
-        if (style.isEmpty()) return fallback
-        return if (style in allowed) style else fallback
+        val allowed = allowed(component)
+        if (style.isEmpty()) return if (component == "Motion") allowed.first() else ""
+        if (style in allowed) return style
+        return when {
+            "default" in allowed -> "default"
+            "body" in allowed -> "body"
+            else -> allowed.first()
+        }
     }
 
     /** Painters that give the heading family value its own typography (Text and Timer); their other

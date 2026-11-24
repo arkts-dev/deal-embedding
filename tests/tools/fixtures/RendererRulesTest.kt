@@ -190,8 +190,37 @@ fun main(args: Array<String>) {
 
     // Style, icons, spans and accessibility: style never faults.
     accepted(node("Text", listOf(text("text", "x"), text("style", "unknown-style"))))
-    check(StyleFamilies.resolve("Text", "") == "body")
+    // An empty style stays empty; Motion alone takes its declared default. An unknown style falls back
+    // through the declared order: the allowed default, then body, then the family's first value.
+    check(StyleFamilies.resolve("Text", "") == "") { "an empty Text style stays empty" }
+    check(StyleFamilies.resolve("Button", "") == "") { "an empty Button style stays empty" }
+    check(StyleFamilies.resolve("Column", "") == "") { "an empty Column style stays empty" }
+    check(StyleFamilies.resolve("Card", "") == "") { "an empty Card style stays empty" }
+    // Every declared component keeps an empty style empty; Motion alone takes the default the pack
+    // declares for it, which the assertion below pins.
+    for (component in RenderComponent.entries.map { it.component }) {
+        if (component == "Motion") continue
+        check(StyleFamilies.resolve(component, "") == "") { "$component did not keep its empty style empty" }
+    }
     check(StyleFamilies.resolve("Text", "nonsense") == "body")
+    check(StyleFamilies.resolve("Column", "nonsense") == "default") { "an allowed default is the first fallback rung" }
+    check(StyleFamilies.resolve("Card", "nonsense") == "surface") { "a family without a default falls back to its first style" }
+    check(StyleFamilies.resolve("AppTheme", "nonsense") == "clean") { "a family with neither default nor body falls back to its first style" }
+    check(StyleFamilies.resolve("Spacer", "nonsense") == "default") { "the allowed default wins over body" }
+    // split and joined are Row-only arrangements: a Column never admits them.
+    check("split" in StyleFamilies.allowed("Row") && "joined" in StyleFamilies.allowed("Row")) { "Row declares split and joined" }
+    check("split" !in StyleFamilies.allowed("Column") && "joined" !in StyleFamilies.allowed("Column")) { "Column declares neither row-only arrangement" }
+    check(StyleFamilies.resolve("Column", "split") == "default") { "a Column asking for split falls back to its default" }
+    check(StyleFamilies.resolve("Column", "joined") == "default") { "a Column asking for joined falls back to its default" }
+    check(StyleFamilies.resolve("Row", "split") == "split")
+    check(StyleFamilies.resolve("Row", "joined") == "joined")
+    // The declared lists are checked against the spec's own vocabulary, never against each other.
+    check(StyleFamilies.allowed("Column") == listOf("default", "compact", "spacious", "center", "end", "surface", "accent")) {
+        "Column declares the container family"
+    }
+    check(StyleFamilies.allowed("Row") == listOf("default", "compact", "spacious", "center", "end", "surface", "accent", "split", "joined")) {
+        "Row declares the container family plus split and joined"
+    }
     // Timer carries the text style family: its painter asks the family whether the value is the
     // heading, which paints with distinct typography, and paints every other value as body.
     check(StyleFamilies.heading("Timer", "heading"))
@@ -552,5 +581,339 @@ fun main(args: Array<String>) {
     check(CompileInput.target("chat") == "chat")
     check(CompileInput.target("card") == "card")
 
-    println("renderer rules: metadata, resolution, seven classes, presentation, style, payloads, graphics, card, dispatch, tabs panels, drafts and display vocabulary passed")
+    // Declared container modes: every Column/Row style has one painted decision, and only Row carries
+    // the split and joined arrangements.
+    check(ContainerModes.column("").gap == GapToken.GROUP) { "an empty Column style is the base layout" }
+    check(ContainerModes.column("").tone == Tone.NONE && ContainerModes.column("").align == Horizontal.START)
+    check(ContainerModes.column("compact").gap == GapToken.TIGHT)
+    check(ContainerModes.column("spacious").gap == GapToken.SCREEN)
+    check(ContainerModes.column("center").align == Horizontal.CENTER)
+    check(ContainerModes.column("end").align == Horizontal.END)
+    check(ContainerModes.column("surface").tone == Tone.SURFACE)
+    check(ContainerModes.column("accent").tone == Tone.ACCENT)
+    check(ContainerModes.column("split").gap == GapToken.GROUP) { "a Column paints a row-only style as its default" }
+    check(ContainerModes.column("default").gap == GapToken.GROUP && ContainerModes.column("default").tone == Tone.NONE) {
+        "the declared default Column style is the base layout"
+    }
+    check(ContainerModes.row("").arrangement == RowArrangement.WRAP) { "an empty Row style is the adaptive wrap" }
+    check(ContainerModes.row("split").arrangement == RowArrangement.SPLIT)
+    check(ContainerModes.row("joined").arrangement == RowArrangement.JOINED) { "a joined Row paints no gap between children" }
+    check(ContainerModes.row("center").arrangement == RowArrangement.CENTER)
+    check(ContainerModes.row("end").arrangement == RowArrangement.END)
+    check(ContainerModes.row("compact").gap == GapToken.TIGHT && ContainerModes.row("compact").arrangement == RowArrangement.WRAP)
+    check(ContainerModes.row("spacious").gap == GapToken.SCREEN) { "a spacious Row carries the screen gap" }
+    check(ContainerModes.row("accent").tone == Tone.ACCENT && ContainerModes.row("accent").arrangement == RowArrangement.WRAP)
+    check(ContainerModes.row("default").arrangement == RowArrangement.WRAP && ContainerModes.row("default").gap == GapToken.GROUP) {
+        "the declared default Row style is the adaptive wrap"
+    }
+    check(ContainerModes.row("surface").tone == Tone.SURFACE && ContainerModes.row("surface").arrangement == RowArrangement.WRAP)
+    // Declared column counts, and the AdaptiveColumns two-column decision.
+    check(ContainerModes.columns(1.0) == 1)
+    check(ContainerModes.columns(3.0) == 3) { "a declared column count is honoured" }
+    check(ContainerModes.columns(0.0) == 1) { "a declared count below one paints one column" }
+    check(ContainerModes.columns(Double.NaN) == 1)
+    check(ContainerModes.gridGap("Grid", "compact") == GapToken.TIGHT) { "the grid family's compact style is its gap" }
+    check(ContainerModes.gridGap("MetricGroup", "spacious") == GapToken.SCREEN)
+    check(ContainerModes.gridGap("KeyValueGroup", "") == GapToken.GROUP) { "an empty grid style keeps the base gap" }
+    check(ContainerModes.adaptiveColumns(720, 349, 22) == 2) { "two minimum widths plus the theme gap fit" }
+    check(ContainerModes.adaptiveColumns(719, 349, 22) == 1) { "one pixel short of the fit paints one column" }
+    check(ContainerModes.adaptiveColumns(2400, 240, 12) == 2) { "more width never paints three columns" }
+    check(ContainerModes.adaptiveColumns(0, 240, 12) == 1)
+
+    // Declared chart modes: an empty dataset explains itself, bars and lines are distinct geometry and
+    // the second series' declared style names its tone.
+    check(ChartModes.mode(emptyList(), emptyList(), bars = false, secondStyle = "").explanation == ChartModes.EMPTY)
+    check(ChartModes.mode(listOf(1.0), emptyList(), bars = true, secondStyle = "").explanation == null)
+    check(ChartModes.mode(listOf(1.0), emptyList(), bars = true, secondStyle = "").bars) { "the declared bars mode paints bars" }
+    check(ChartModes.mode(listOf(1.0), emptyList(), bars = false, secondStyle = "").bars.not())
+    check(ChartModes.mode(listOf(1.0), emptyList(), bars = false, secondStyle = "danger").tone == "danger")
+    check(ChartModes.mode(listOf(1.0), emptyList(), bars = false, secondStyle = "").tone == "") { "an empty second-series style stays empty" }
+    check(ChartModes.mode(listOf(1.0), emptyList(), bars = false, secondStyle = "nonsense").tone == "default")
+    check(ChartModes.points(listOf(0.0, 5.0, 10.0), 3, 0.0, 10.0, 90f, 50f) ==
+        listOf(ChartPoint(15f, 50f), ChartPoint(45f, 25f), ChartPoint(75f, 0f))) { "a line rises with its scale" }
+    check(ChartModes.points(emptyList(), 3, 0.0, 10.0, 100f, 50f).isEmpty())
+    check(ChartModes.points(listOf(1.0), 1, 0.0, 10.0, 100f, 50f) == listOf(ChartPoint(50f, 45f)))
+    check(ChartModes.points(listOf(0.0), 1, 5.0, 5.0, 100f, 50f).isEmpty()) { "an empty scale plots nothing" }
+    // Both series share one x axis: a shorter second series keeps the points of the first.
+    check(ChartModes.count(listOf(1.0, 2.0, 3.0), listOf(1.0)) == 3)
+    check(ChartModes.points(listOf(1.0), 3, 0.0, 10.0, 90f, 50f) == listOf(ChartPoint(15f, 45f))) {
+        "a shorter second series plots on the first series' shared axis"
+    }
+    check(ChartModes.bars(listOf(10.0), 2, 0.0, 10.0, 100f, 50f) == listOf(ChartRect(6.25f, 0f, 43.75f, 50f)))
+    val chartBars = ChartModes.bars(listOf(0.0, 10.0), 2, 0.0, 10.0, 100f, 50f)
+    check(chartBars.size == 2 && chartBars[0].left == 6.25f && chartBars[0].right == 43.75f) { "bars share the width: $chartBars" }
+    check(chartBars[0].top == 50f && chartBars[0].bottom == 50f) { "a bar at the scale minimum has no height" }
+    check(chartBars[1].top == 0f && chartBars[1].bottom == 50f) { "the tallest bar reaches the top of the scale" }
+    check(ChartModes.category(1, listOf("Mon", "Tue")) == "Tue")
+    check(ChartModes.category(3, listOf("Mon")) == "")
+    check(ChartModes.category(1, listOf("Mon", null)) == "") { "a category that is not a string leaves its own point unlabelled" }
+    check(ChartModes.category(2, listOf("Mon", null, "Wed")) == "Wed") {
+        "a label after an undeclared point stays on its own point"
+    }
+
+    // TextField: each declared rule reports its own message, lengths count UTF-16 units, the keyboard
+    // hint only changes keys, and an unparseable pattern rejects instead of matching nothing.
+    check(TextFieldRules.keyboard("") == KeyboardHint.TEXT)
+    check(TextFieldRules.keyboard("number") == KeyboardHint.NUMBER) { "a numeric keyboard is a key hint" }
+    check(TextFieldRules.keyboard("email") == KeyboardHint.EMAIL)
+    check(TextFieldRules.keyboard("nonsense") == KeyboardHint.TEXT) { "an unknown key hint asks for the text keys" }
+    check(TextFieldRules.feedback("", required = true, requiredMessage = "Needed") == TextFieldFeedback("required", "Needed"))
+    check(TextFieldRules.feedback("", email = true, minLength = 3.0, pattern = "[a-z]+") == null) {
+        "an untouched optional field reports nothing"
+    }
+    check(TextFieldRules.feedback("a@b.co", email = true, emailMessage = "Bad") == null)
+    check(TextFieldRules.feedback("a@b", email = true, emailMessage = "Bad") == TextFieldFeedback("email", "Bad")) {
+        "a domain without a dot is not an email"
+    }
+    check(!TextFieldRules.email("@b.co")) { "an email needs a nonempty local part" }
+    check(!TextFieldRules.email("a@b.co ")) { "an email carries no whitespace" }
+    check(!TextFieldRules.email("a@b@c.co")) { "an email has one @" }
+    check(!TextFieldRules.email("a@b.co\u00A0")) { "a no-break space is whitespace in an email" }
+    check(!TextFieldRules.email("a.co")) { "an email needs an @" }
+    check(!TextFieldRules.email("a@bco")) { "an email needs a dotted domain" }
+    check(TextFieldRules.feedback("ab", minLength = 3.0, minLengthMessage = "Longer") == TextFieldFeedback("minLength", "Longer"))
+    check(TextFieldRules.feedback("abcd", maxLength = 3.0, maxLengthMessage = "Shorter") == TextFieldFeedback("maxLength", "Shorter"))
+    check(TextFieldRules.feedback("\uD83D\uDE00", minLength = 3.0, minLengthMessage = "Longer") == TextFieldFeedback("minLength", "Longer")) {
+        "an astral character counts as the two UTF-16 units a JavaScript length counts"
+    }
+    check(TextFieldRules.feedback("\uD83D\uDE00", maxLength = 2.0, maxLengthMessage = "Shorter") == null)
+    check(TextFieldRules.feedback("\uD83D\uDE00\uD83D\uDE00", maxLength = 3.0, maxLengthMessage = "Shorter") ==
+        TextFieldFeedback("maxLength", "Shorter")) { "two astral characters are four UTF-16 units, never two" }
+    check(TextFieldRules.feedback("\uD83D\uDE00", minLength = 2.0, minLengthMessage = "Longer") == null) {
+        "one astral character is exactly two UTF-16 units"
+    }
+    check(TextFieldRules.feedback("ab", pattern = "[0-9]+", patternMessage = "Digits") == TextFieldFeedback("pattern", "Digits"))
+    check(TextFieldRules.feedback("12", pattern = "[0-9]+") == null)
+    check(TextFieldRules.feedback("12ab", pattern = "[0-9]+")?.rule == "pattern") { "the declared pattern matches the whole string" }
+    check(TextFieldRules.feedback("ab", required = true, email = true, minLength = 5.0, minLengthMessage = "Longer") ==
+        TextFieldFeedback("email", "")) { "the first violated rule in declaration order reports" }
+    check(TextFieldRules.validPattern("[0-9]+"))
+    check(!TextFieldRules.validPattern("[0-9")) { "an invalid pattern is refused" }
+    // The declared ECMAScript pattern is translated to the platform engine, and a construct ECMAScript
+    // would refuse never matches here.
+    check(TextFieldRules.matches("\\u{1F600}", "\uD83D\uDE00")) { "a code-point escape names the declared character" }
+    check(TextFieldRules.matches("[^]", "x")) { "the ECMAScript any-character class matches one character" }
+    check(!TextFieldRules.matches("[^]", "ab")) { "the declared pattern matches the whole string" }
+    check(TextFieldRules.matches("\\p{Letter}+", "abc")) { "a Unicode category name matches letters" }
+    check(TextFieldRules.matches("\\p{Script=Greek}+", "\u03B1\u03B2"))
+    check(!TextFieldRules.validPattern("\\p{IsGreek}+")) { "a platform-only property spelling is refused" }
+    check(!TextFieldRules.validPattern("\\Aabc")) { "a platform-only escape is refused" }
+    check(!TextFieldRules.validPattern("a++")) { "a possessive quantifier is not an ECMAScript pattern" }
+    check(!TextFieldRules.validPattern("(?>a)")) { "an atomic group is not an ECMAScript pattern" }
+    check(!TextFieldRules.validPattern("\\u{110000}")) { "a code point beyond Unicode is refused" }
+    accepted(node("TextField", listOf(text("label", "Name"), text("value", "ab"), text("pattern", "\\p{Letter}+"))))
+    // The declared ECMAScript pattern is checked against the engine-derived fixture: an admitted
+    // pattern must behave like the declaration, and a refusal is the only way out of the subset.
+    val patternFixture = NeutralJson.parse(Files.readString(root.resolve("tests/tools/fixtures/renderer-patterns.json")))
+        ?: error("the renderer pattern fixture is not JSON")
+    val patternCases = ((patternFixture as JsonValue.Obj).fields["cases"] as JsonValue.Arr).items
+    check(patternCases.size >= 50) { "the pattern fixture lost cases: ${patternCases.size}" }
+    var admittedCases = 0
+    for (entry in patternCases) {
+        val fields = (entry as JsonValue.Obj).fields
+        val pattern = (fields["pattern"] as JsonValue.Str).value
+        val admitted = (fields["native"] as JsonValue.Str).value == "accepted"
+        check(TextFieldRules.validPattern(pattern) == admitted) { "the portable subset disagrees with its own expectation for $pattern" }
+        if (!admitted) continue
+        admittedCases++
+        check((fields["esValid"] as JsonValue.Flag).value) { "the subset admitted a pattern ECMAScript refuses: $pattern" }
+        for (sample in (fields["samples"] as JsonValue.Arr).items) {
+            val sampleFields = (sample as JsonValue.Obj).fields
+            val value = (sampleFields["value"] as JsonValue.Str).value
+            val matches = (sampleFields["matches"] as JsonValue.Flag).value
+            check(TextFieldRules.matches(pattern, value) == matches) {
+                "the admitted pattern $pattern does not match $value like the declaration"
+            }
+        }
+    }
+    check(admittedCases >= 35) { "the fixture must keep the admitted patterns it proves: $admittedCases" }
+    accepted(node("TextField", listOf(text("label", "Email"), text("value", "a@b.co"), flag("email", true),
+        text("pattern", "[^@]+@[^@]+"), number("minLength", 5.0), number("maxLength", 40.0), text("emailMessage", "Bad"))))
+    rejected(node("TextField", listOf(text("label", "Email"), text("value", "a@b.co"), text("pattern", "[0-9"))),
+        "PROP_FAULT", "TextField", "pattern")
+
+    // Checked draft conversion: only the declared spelling commits, and a temporal draft stays inside
+    // the shared minute-of-day or local epoch-day domain.
+    check(DraftConversion.decimal("12") == 12.0)
+    check(DraftConversion.decimal("+12") == 12.0)
+    check(DraftConversion.decimal("-12.5") == -12.5)
+    check(DraftConversion.decimal(".5") == 0.5)
+    check(DraftConversion.decimal("5.") == 5.0)
+    check(DraftConversion.decimal("1e5") == null) { "an exponent is not the declared decimal grammar" }
+    check(DraftConversion.decimal("1,5") == null) { "grouping and a decimal comma are not the declared grammar" }
+    check(DraftConversion.decimal(" 1") == null && DraftConversion.decimal("1 ") == null) { "whitespace is not the declared grammar" }
+    check(DraftConversion.decimal("1 kg") == null) { "a unit is not part of the draft" }
+    check(DraftConversion.decimal("") == null)
+    check(DraftConversion.integral("2") == 2.0)
+    check(DraftConversion.integral("2.5") == null) { "a count is integral" }
+    check(DraftConversion.timeOfDay("13:45") == 825.0)
+    check(DraftConversion.timeOfDay("9:05") == 545.0)
+    check(DraftConversion.timeOfDay("825") == 825.0) { "the shared time domain is minute-of-day" }
+    check(DraftConversion.timeOfDay("24:00") == null) { "the time domain ends at 23:59" }
+    check(DraftConversion.timeOfDay("13:60") == null)
+    check(DraftConversion.timeOfDay("1440") == null)
+    check(DraftConversion.timeOfDay("-1") == null)
+    check(DraftConversion.timeOfDay("13:45 ") == null)
+    check(DraftConversion.day("12") == 12.0 && DraftConversion.day("-3") == -3.0)
+    check(DraftConversion.day("1.5") == null) { "a day is integral" }
+    check(DraftConversion.timeText(825.0) == "13:45")
+    check(DraftConversion.timeText(5.0) == "00:05")
+    check(DraftConversion.dayText(19000.0) == "19000")
+
+    // Motion: the style names a preset, every declared preset rests at the identity frame, and only a
+    // changed trigger after the first render animates.
+    check(MotionPresets.names.toSet() == StyleFamilies.allowed("Motion").toSet()) { "every declared Motion style owns a preset: ${MotionPresets.names}" }
+    val declaredMotions = listOf("pop", "pulse", "jelly", "press", "flash", "breathe", "shake", "nod", "wobble", "swing",
+        "recoil", "bounce", "hop", "jump", "fall", "spin", "turn", "tumble", "flip", "fade",
+        "rise", "zoom", "slide", "float", "drift")
+    check(StyleFamilies.allowed("Motion") == declaredMotions) { "Motion declares the spec's own preset list" }
+    check(MotionPresets.sample(MotionPresets.preset("pop"), 1f) == MotionFrame(1f)) { "a finished preset rests at the identity frame" }
+    check(MotionPresets.sample(MotionPresets.preset("fade"), 0f).alpha == 0f) { "fade starts transparent" }
+    check(MotionPresets.sample(MotionPresets.preset("pop"), 0f).scale < 1f) { "pop starts smaller than its resting size" }
+    check(MotionPresets.sample(MotionPresets.preset("spin"), 0.5f).rotate == 180f)
+    for (name in MotionPresets.names) {
+        val frames = MotionPresets.preset(name)
+        check(frames.first().at == 0f) { "$name does not start at the beginning of its trajectory" }
+        check(frames.last() == MotionFrame(1f)) { "$name does not rest at the identity frame" }
+        for (frame in frames) {
+            check(frame.at.isFinite() && frame.scale.isFinite() && frame.rotate.isFinite() &&
+                frame.moveX.isFinite() && frame.moveY.isFinite()) { "$name carries a nonfinite frame" }
+            check(frame.alpha in 0f..1f) { "$name leaves the opacity range" }
+            check(frame.scale > 0f) { "$name scales to or below zero" }
+        }
+    }
+    check(!MotionPresets.animates(null, 1.0)) { "a first render never animates" }
+    check(!MotionPresets.animates(1.0, 1.0)) { "an unchanged trigger never animates" }
+    check(MotionPresets.animates(1.0, 2.0)) { "a changed trigger animates" }
+    check(MotionPresets.sample(emptyList(), 0.5f) == MotionFrame(1f)) { "an absent trajectory rests" }
+
+    // Transform pose: the identity, interpolation over the declared duration, the solid backface and
+    // the shared perspective.
+    check(PoseMotion.normalised(listOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0)) == PoseMotion.IDENTITY)
+    check(PoseMotion.normalised(listOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)) == PoseMotion.IDENTITY) { "a short pose is no pose" }
+    check(PoseMotion.interpolate(PoseMotion.IDENTITY, listOf(90.0, 0.0, 0.0, 10.0, 0.0, 0.0, 2.0, 0.0), 0.5) ==
+        listOf(45.0, 0.0, 0.0, 5.0, 0.0, 0.0, 1.5, 0.5)) { "the whole pose interpolates over the duration" }
+    check(PoseMotion.interpolate(PoseMotion.IDENTITY, listOf(90.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0), 2.0) ==
+        listOf(90.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0)) { "progress is bounded by the interpolation duration" }
+    check(!PoseMotion.animates(0.0)) { "a zero duration applies the committed pose at once" }
+    check(!PoseMotion.animates(-1.0)) { "a negative duration is no trajectory either" }
+    check(!PoseMotion.animates(Double.POSITIVE_INFINITY)) { "a duration that is not finite is no trajectory" }
+    check(PoseMotion.animates(300.0)) { "a declared positive duration interpolates the pose" }
+    check(!PoseMotion.backface(PoseMotion.IDENTITY))
+    check(!PoseMotion.backface(listOf(90.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0))) { "a quarter turn is the edge, not a backface" }
+    check(PoseMotion.backface(listOf(91.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0)))
+    check(PoseMotion.backface(listOf(269.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0)))
+    check(!PoseMotion.backface(listOf(271.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0))) { "a heading past the edge is the front face again" }
+    check(!PoseMotion.backface(listOf(0.0, 450.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0))) { "angles wrap by a full turn" }
+    check(PoseMotion.backface(listOf(0.0, 180.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0)))
+    check(PoseMotion.cameraDistance(0.0, 2f) == 16f) { "an undeclared perspective keeps this renderer's default depth cue" }
+    check(PoseMotion.cameraDistance(900.0, 2f) == 1800f) { "the shared perspective is the camera distance" }
+    // Stage: depth order is the painting order and the shared perspective is the camera distance.
+    val stagePoses = listOf(
+        listOf(0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 1.0, 1.0),
+        PoseMotion.IDENTITY,
+        listOf(0.0, 0.0, 0.0, 0.0, 0.0, -3.0, 1.0, 1.0),
+    )
+    check(StageSort.order(stagePoses) == listOf(2, 1, 0)) { "the farther Transform paints first" }
+    check(StageSort.order(listOf(PoseMotion.IDENTITY, PoseMotion.IDENTITY)) == listOf(0, 1)) { "equal depth keeps the declared order" }
+
+    // Path rotation: supported off the card, still at zero, and refused by the card target.
+    check(PathSpin.rotationDegrees(1000.0, 0L) == 0f)
+    check(PathSpin.rotationDegrees(1000.0, 250L) == 90f)
+    check(PathSpin.rotationDegrees(1000.0, 1000L) == 0f) { "one full period returns the Path to its origin" }
+    check(PathSpin.rotationDegrees(4000.0, 1000L) == 90f)
+    check(PathSpin.rotationDegrees(0.0, 500L) == 0f) { "a still Path never rotates" }
+    check(PathSpin.rotationDegrees(-5.0, 500L) == 0f)
+    val spinningPath = node("Path", listOf(text("commands", "M 0 0 L 1 1"), number("spinPeriodMs", 1000.0)))
+    accepted(spinningPath)
+    accepted(node("Path", listOf(text("commands", "M 0 0 L 1 1"), number("spinPeriodMs", 0.0))), target = "card")
+    rejected(spinningPath, "CARD_FAULT", "Path", "spinPeriodMs", target = "card")
+
+    // The painters consume these rules: a decision nobody paints is dead code, so the production
+    // painter's call sites are checked as source, and the chart painter's argument order with them.
+    val painter = Files.readString(root.resolve("android/src/rendering/DealRenderer.kt"))
+    for (call in listOf(
+        "ContainerModes.column(styleName)",
+        "ContainerModes.row(styleName)",
+        "ContainerModes.gridGap(\"Grid\", styleName)",
+        "ContainerModes.adaptiveColumns(",
+        "ContainerModes.columns(",
+        "TextFieldRules.feedback(",
+        "keyboardType(values.text(\"keyboardType\"))",
+        "DraftConversion.decimal(raw)",
+        "DraftConversion.timeOfDay(raw)",
+        "DraftConversion.day(raw)",
+        "ChartModes.mode(",
+        "ChartModes.points(values, count,",
+        "ChartModes.bars(values, count,",
+        "MotionPresets.preset(StyleFamilies.resolve(\"Motion\", styleName))",
+        "MotionPresets.sample(frames, progress.value)",
+        "MotionPresets.animates(seen, trigger)",
+        "PoseMotion.interpolate(start, pose,",
+        "PoseMotion.backface(frame)",
+        "PoseMotion.cameraDistance(perspective, density)",
+        "StageSort.order(node.children.map(::declaredPose))",
+        "PathSpin.rotationDegrees(spinPeriod, visible + (now - start))",
+        "rotate(rotation)",
+        "private fun SparklinePicture(series: List<Double>, second: List<Double>, count: Int, " +
+            "maximum: Double, minimum: Double, mode: ChartMode)",
+    )) {
+        check(call in painter) { "the painter does not consume the declared rule: $call" }
+    }
+
+    // The remaining painters read the declared value they were repaired for: the chart reads a
+    // point's own category at its own position, the pose reads the declared duration through its rule
+    // and hides a solid backface, and the Path paints the tone its declared style names.
+    check("values.json(\"categories\")" in painter) { "the chart must read the declared categories in place" }
+    check("ChartModes.category(index, categories)" in painter) { "the chart must label the point each category names" }
+    check("!PoseMotion.animates(duration)" in painter) { "the pose must read its declared duration through the pose rule" }
+    check("if (solid && PoseMotion.backface(frame)) 0f else frame[7].toFloat()" in painter) {
+        "a solid Transform hides the backface it is turned to"
+    }
+    check("PathTone(styleName)" in painter) { "the Path paints the tone its declared style names" }
+    check("stroke.color = tone.toArgb()" in painter) { "the Path stroke is the tone its style named" }
+    check("MotionPresets.preset(StyleFamilies.resolve(\"Motion\", styleName))" in painter) {
+        "the Motion painter selects the preset its declared style names"
+    }
+    check("val sizing = if (size > 0) Modifier.size(size.dp) else Modifier.fillMaxWidth()" in painter) {
+        "a Transform with a declared size paints that size"
+    }
+    // The declared accessibility label reaches the graphics Surface through its own parameter, so the
+    // call site and its application are pinned separately from the literal-label branches below.
+    check("values.slot(\"onFrame\"), values.text(\"accessibilityLabel\"), dispatch)" in painter) {
+        "the Surface passes its declared accessibility label to the painter"
+    }
+    check("semantics { contentDescription = label }" in painter) { "the Surface publishes the label it received" }
+    // Declared feedback and accessibility are presentation only: a TextField still paints the typed
+    // draft and dispatches it unconditionally, so declared feedback marks the error state only and
+    // never suppresses input; and every interactive painter publishes the label it declares.
+    check("onValueChange = { next -> draft = Draft(next, authoritative); emit(\"onChange\", next) }" in painter) {
+        "declared feedback must never suppress the typed string the field dispatches"
+    }
+    check("OutlinedTextField(value = shown," in painter) { "the field paints the typed draft, never a rule-filtered value" }
+    check("isError = feedback != null" in painter) { "declared feedback is the error state, not a replacement for validation" }
+    // Every interactive branch publishes the declared label: the painter's source is sliced at its own
+    // branch markers, so a label lost in one branch names that component and the source it reads instead
+    // of only changing a total.
+    val branchMarkers = Regex("(?m)^\\s+RenderComponent\\.").findAll(painter).map { it.range.first }.toList()
+    val painterBranches = branchMarkers.mapIndexed { at, start ->
+        painter.substring(start, branchMarkers.getOrElse(at + 1) { painter.length })
+    }
+    fun branch(component: String): String? =
+        painterBranches.firstOrNull { it.substringBefore(" ->").contains("RenderComponent.$component") }
+    for (component in listOf("Path", "Slider", "Snackbar", "InsetBanner", "EmptyState", "Checkbox", "TextField",
+        "Select", "Tabs", "NumberField", "TimeField", "DateField", "Button", "Cell", "IconButton", "ListItem",
+        "NumberListItem")) {
+        val slice = branch(component)
+        check(slice != null && "contentDescription" in slice && "values.text(\"accessibilityLabel\")" in slice) {
+            "$component does not publish the accessibility label it declares"
+        }
+    }
+    // The banner paints the icon it declares; the same line exists on other components, so it is
+    // checked on the banner's own branch.
+    check(branch("InsetBanner")?.contains("if (values.text(\"icon\").isNotEmpty()) PackIcon(values.text(\"icon\"))") == true) {
+        "the banner paints the icon it declares instead of dropping it"
+    }
+
+    println("renderer rules: metadata, resolution, seven classes, presentation, style, payloads, graphics, card, dispatch, tabs panels, drafts, display vocabulary, container and chart modes, text-field feedback, draft conversion, motion, pose, stage ordering and path rotation passed")
 }

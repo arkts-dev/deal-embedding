@@ -88,6 +88,14 @@ internal object IngressValidation {
             }
         }
         styleFault(name, resolved)?.let { return it }
+        if (name == "TextField") {
+            // Declared feedback never replaces DEAL validation, but an unparseable pattern can never
+            // match, so it rejects instead of silently passing or silently failing every value.
+            val pattern = (resolved["pattern"] as? UiValue.Text)?.value ?: ""
+            if (!TextFieldRules.validPattern(pattern)) {
+                return IngressFault("PROP_FAULT", name, "pattern", detail = "pattern must be a valid regular expression")
+            }
+        }
         if (name == "Surface") {
             val shapes = (resolved["shapes"] as? UiValue.Json)?.value
             GraphicsValidation.shapes(shapes)?.let { return IngressFault("PROP_FAULT", name, "shapes", detail = it) }

@@ -17,6 +17,13 @@ SOURCES=(
   android/src/rendering/HttpImageTransport.kt \
   android/src/rendering/TabPanels.kt \
   android/src/rendering/DraftText.kt \
+  android/src/rendering/DraftConversion.kt \
+  android/src/rendering/ContainerModes.kt \
+  android/src/rendering/ChartModes.kt \
+  android/src/rendering/TextFieldRules.kt \
+  android/src/rendering/MotionPresets.kt \
+  android/src/rendering/PoseMotion.kt \
+  android/src/rendering/PathSpin.kt \
   android/src/rendering/TimerPresentation.kt \
   android/src/rendering/CompileInput.kt \
   android/src/rendering/TreePresentation.kt \

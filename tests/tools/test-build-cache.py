@@ -123,7 +123,10 @@ rm -rf "build/$app/rjava"
         script = root / 'tests/tools/test-renderer-rules.sh'
         import re
         sources = re.findall(r'^  (\S+\.kt)', script.read_text(), re.MULTILINE)
-        self.assertEqual(len(sources), 20)
+        # The extracted inventory is pinned so a formatting change cannot silently shrink the compile,
+        # and its entries stay distinct so dropping one cannot be hidden by duplicating another.
+        self.assertEqual(len(sources), 27)
+        self.assertEqual(len(set(sources)), 27)
         with tempfile.TemporaryDirectory() as directory:
             work = pathlib.Path(directory)
             for folder in ('tools', 'tests/tools', 'bin', 'kotlin/bin', 'kotlin/lib', 'jdk', 'build/embedding-library/classes'):

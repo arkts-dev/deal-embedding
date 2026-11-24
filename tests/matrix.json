@@ -719,8 +719,174 @@
       "family": "style-contract",
       "owner": "ui-vocabulary-pack-and-rendering",
       "requirement": "An empty style stays empty and is not replaced by its family default, except Motion, whose empty style takes its declared pop default, and an unknown style resolves through the declared order of allowed default, then body, then first style (docs/spec-v0.8.md:655).",
-      "status": "partial",
-      "blocker": "Both style-order clauses are unimplemented in production: android/src/rendering/PropResolution.kt:133-137 returns one family fallback for an empty style and for any style outside the family, so resolve(\"Text\",\"\") is \"body\", resolve(\"Button\",\"\") is \"primary\" and no allowed-default-then-body-then-first-style order exists. tests/tools/fixtures/RendererRulesTest.kt:193 and :202 assert the implemented fallback and the Motion pop default; no vector proves an empty non-Motion style staying empty or the ordered fallback rungs, so both clauses stay open rather than covered."
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The shipped style families keep an empty style empty for every family but Motion, give Motion its declared pop, and fall back through the declared order: the allowed default first, then body, then the family's first value. Row-only split and joined are declared by Row alone, so a Column asking for either resolves to its default.",
+      "asserts": [
+        "StyleFamilies.resolve(\"Text\", \"\") == \"\"",
+        "StyleFamilies.resolve(\"Button\", \"\") == \"\"",
+        "StyleFamilies.resolve(\"Motion\", \"\") == \"pop\"",
+        "StyleFamilies.resolve(\"Card\", \"nonsense\") == \"surface\"",
+        "StyleFamilies.resolve(\"AppTheme\", \"nonsense\") == \"clean\"",
+        "\"split\" !in StyleFamilies.allowed(\"Column\")",
+        "StyleFamilies.resolve(\"Column\", \"split\") == \"default\"",
+        "StyleFamilies.resolve(component, \"\") == \"\""
+      ]
+    },
+    {
+      "id": "container-modes",
+      "family": "renderer-modes",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "Every declared Column and Row style has one painted decision (gap, placement, surface tone), split and joined belong to Row alone, the declared `columns` count of Grid, MetricGroup and KeyValueGroup is honoured, the grid family's compact and spacious styles name its gap, and AdaptiveColumns paints two columns only when two minimum widths plus the theme gap fit (docs/spec-v0.8.md:640-646, :635).",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The shipped container modes resolve every declared Column and Row style value, honour the declared column count and paint one column below a declared zero, and the adaptive decision is asserted on both sides of the fit boundary and against a width that would fit three.",
+      "asserts": [
+        "ContainerModes.column(\"compact\").gap == GapToken.TIGHT",
+        "ContainerModes.row(\"joined\").arrangement == RowArrangement.JOINED",
+        "ContainerModes.column(\"split\").gap == GapToken.GROUP",
+        "ContainerModes.columns(3.0) == 3",
+        "ContainerModes.gridGap(\"Grid\", \"compact\") == GapToken.TIGHT",
+        "ContainerModes.gridGap(\"KeyValueGroup\", \"\") == GapToken.GROUP",
+        "ContainerModes.row(\"spacious\").gap == GapToken.SCREEN",
+        "ContainerModes.row(\"accent\").tone == Tone.ACCENT && ContainerModes.row(\"accent\").arrangement == RowArrangement.WRAP",
+        "ContainerModes.adaptiveColumns(720, 349, 22) == 2",
+        "ContainerModes.adaptiveColumns(719, 349, 22) == 1",
+        "ContainerModes.adaptiveColumns(2400, 240, 12) == 2"
+      ]
+    },
+    {
+      "id": "chart-modes",
+      "family": "renderer-modes",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "Sparkline's declared mode has one painted decision: `bars` selects labelled bars instead of a line, `series2Style` names the second series' tone, `categories` label the points they name, `minimum`/`maximum` scale both series on one x axis and an empty dataset shows an explanation (docs/spec-v0.8.md:608, :655).",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The shipped chart modes assert the empty explanation, the line geometry across the declared scale, the distinct bar geometry rising from the scale minimum, one shared x axis for both series, the second series' declared tone and the per-point category label, which stays at its own point where the tree declares no label. The painter's call sites for the declared mode, the point geometry and a point's own category are pinned in the same item; actual Compose painting is the device row's.",
+      "asserts": [
+        "ChartModes.mode(emptyList(), emptyList(), bars = false, secondStyle = \"\").explanation == ChartModes.EMPTY",
+        "ChartModes.points(listOf(0.0, 5.0, 10.0), 3, 0.0, 10.0, 90f, 50f) ==",
+        "ChartModes.count(listOf(1.0, 2.0, 3.0), listOf(1.0)) == 3",
+        "chartBars[0].top == 50f && chartBars[0].bottom == 50f",
+        "ChartModes.mode(listOf(1.0), emptyList(), bars = false, secondStyle = \"danger\").tone == \"danger\"",
+        "ChartModes.category(1, listOf(\"Mon\", \"Tue\")) == \"Tue\"",
+        "ChartModes.category(1, listOf(\"Mon\", null)) == \"\"",
+        "ChartModes.category(2, listOf(\"Mon\", null, \"Wed\")) == \"Wed\"",
+        "ChartModes.points(listOf(1.0), 3, 0.0, 10.0, 90f, 50f) == listOf(ChartPoint(15f, 45f))",
+        "\"values.json(\\\"categories\\\")\" in painter",
+        "\"ChartModes.category(index, categories)\" in painter"
+      ]
+    },
+    {
+      "id": "text-field-feedback",
+      "family": "renderer-modes",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "TextField required, email, minLength, maxLength and pattern feedback report their own declared messages, lengths measure UTF-16 units without splitting scalars, the keyboardType only changes keys, the pattern is a full-string ECMAScript Unicode regex and an invalid one rejects at ingress, and feedback never replaces DEAL validation or suppresses input (docs/spec-v0.8.md:610).",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh node tests/tools/test-renderer-patterns.js",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The shipped feedback rule reports the first violated declaration with its own message, separates four UTF-16 units from two code points, treats a no-break space as whitespace, rejects every non-email shape the spec names, matches the pattern against the whole string, keeps the keyboard hint a key-only decision and faults an unparseable pattern at ingress. The production painter's call sites paint the typed draft, dispatch the typed string unconditionally and carry declared feedback as the field's error state alone; actual Compose painting stays the device row's. The declared pattern admits only the portable ECMAScript subset: the fixture carries the engine's own validity and full-string match for every case, the engine test re-derives them, and the rule test proves the subset agrees with that fixture for every admitted pattern and refuses the rest, including ECMAScript-valid constructs whose two engine meanings cannot be shown equal.",
+      "asserts": [
+        "TextFieldRules.feedback(\"\", required = true, requiredMessage = \"Needed\") == TextFieldFeedback(\"required\", \"Needed\")",
+        "TextFieldRules.feedback(\"a@b\", email = true, emailMessage = \"Bad\") == TextFieldFeedback(\"email\", \"Bad\")",
+        "TextFieldRules.feedback(\"\\uD83D\\uDE00\\uD83D\\uDE00\", maxLength = 3.0, maxLengthMessage = \"Shorter\") ==",
+        "TextFieldRules.feedback(\"12ab\", pattern = \"[0-9]+\")?.rule == \"pattern\"",
+        "TextFieldRules.matches(\"\\\\p{Letter}+\", \"abc\")",
+        "the portable subset disagrees with its own expectation for $pattern",
+        "admittedCases >= 35",
+        "TextFieldRules.keyboard(\"number\") == KeyboardHint.NUMBER",
+        "\"isError = feedback != null\" in painter",
+        "\"onValueChange = { next -> draft = Draft(next, authoritative); emit(\\\"onChange\\\", next) }\" in painter",
+        "text(\"pattern\", \"[0-9\")",
+        "assert.strictEqual(entry.esValid, valid,",
+        "the subset never admits a pattern ECMAScript refuses"
+      ]
+    },
+    {
+      "id": "draft-conversion",
+      "family": "renderer-modes",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "A typed decimal draft commits only under the declared `[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)` grammar without grouping, units, exponent or whitespace, a count is integral, and a temporal draft commits only inside the shared minute-of-day 0-1439 or integral local epoch-day domain (docs/spec-v0.8.md:610, :185).",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The shipped draft conversion accepts the declared spellings, refuses exponent, grouping, a decimal comma, whitespace and units, keeps counts integral and holds the time and date drafts inside the shared domains.",
+      "asserts": [
+        "DraftConversion.decimal(\"1e5\") == null",
+        "DraftConversion.decimal(\"1,5\") == null",
+        "DraftConversion.decimal(\" 1\") == null && DraftConversion.decimal(\"1 \") == null",
+        "DraftConversion.decimal(\"1 kg\") == null",
+        "DraftConversion.integral(\"2.5\") == null",
+        "DraftConversion.timeOfDay(\"13:45\") == 825.0",
+        "DraftConversion.timeOfDay(\"24:00\") == null",
+        "DraftConversion.day(\"1.5\") == null"
+      ]
+    },
+    {
+      "id": "motion-presets",
+      "family": "renderer-modes",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "The Motion style selects one preset per declared value, every preset rests at the identity frame, and only a changed trigger after the first render animates (docs/spec-v0.8.md:652, :657).",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The shipped preset table owns one trajectory for every declared Motion style, every trajectory starts at the beginning of its own timeline, carries finite values inside the opacity range and rests at the identity frame, the trigger rule animates only a changed trigger after the first render, and the painter's preset call site is pinned in the same item; actual Compose painting stays the device row's.",
+      "asserts": [
+        "StyleFamilies.allowed(\"Motion\") == declaredMotions",
+        "MotionPresets.names.toSet() == StyleFamilies.allowed(\"Motion\").toSet()",
+        "MotionPresets.sample(MotionPresets.preset(\"fade\"), 0f).alpha == 0f",
+        "frames.first().at == 0f",
+        "frame.alpha in 0f..1f",
+        "frames.last() == MotionFrame(1f)",
+        "!MotionPresets.animates(null, 1.0)",
+        "!MotionPresets.animates(1.0, 1.0)",
+        "MotionPresets.animates(1.0, 2.0)",
+        "\"MotionPresets.preset(StyleFamilies.resolve(\\\"Motion\\\", styleName))\" in painter"
+      ]
+    },
+    {
+      "id": "transform-stage-path",
+      "family": "renderer-modes",
+      "owner": "ui-vocabulary-pack-and-rendering",
+      "requirement": "The Transform pose is the declared eight entries with identity `[0,0,0,0,0,0,1,1]`, interpolates over its duration, paints its declared size and hides its backface when solid; the Stage depth-sorts under one shared perspective; a Path rotates off the card, paints the tone its declared style family names, and the card target refuses the declared rotation (docs/spec-v0.8.md:657, :653, :655, :679).",
+      "status": "covered",
+      "test": "bash tests/tools/test-renderer-rules.sh",
+      "sources": [
+        "tests/tools/fixtures/RendererRulesTest.kt"
+      ],
+      "evidence": "The shipped pose rules keep the declared identity, interpolate the whole pose over the declared duration inside the progress bound, apply a committed pose at once for a zero, negative or nonfinite duration, distinguish the edge from the backface across a full turn, scale the declared perspective to the display's pixels and fall back to this renderer's own default depth cue, sort Stage children farthest-first by the pose's depth with ties stable, and turn a Path by its declared period while the card target faults instead of animating one. The painter applies every pose entry the platform layer can carry and its call sites are pinned in the same item: the declared duration through the pose rule, the solid backface it hides, the declared size, the Path stroke its style names (the empty and default values paint the theme accent) and the Path's declared accessibility label. moveZ is consumed as the Stage's depth order because the platform layer exposes no z translation; actual Compose painting stays the device row's.",
+      "asserts": [
+        "PoseMotion.interpolate(PoseMotion.IDENTITY, listOf(90.0, 0.0, 0.0, 10.0, 0.0, 0.0, 2.0, 0.0), 0.5) ==",
+        "PoseMotion.backface(listOf(269.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0))",
+        "!PoseMotion.animates(0.0)",
+        "PoseMotion.animates(300.0)",
+        "!PoseMotion.animates(Double.POSITIVE_INFINITY)",
+        "\"!PoseMotion.animates(duration)\" in painter",
+        "\"if (solid && PoseMotion.backface(frame)) 0f else frame[7].toFloat()\" in painter",
+        "PoseMotion.cameraDistance(0.0, 2f) == 16f",
+        "PoseMotion.cameraDistance(900.0, 2f) == 1800f",
+        "StageSort.order(stagePoses) == listOf(2, 1, 0)",
+        "PathSpin.rotationDegrees(1000.0, 1000L) == 0f",
+        "\"stroke.color = tone.toArgb()\" in painter",
+        "\"contentDescription\" in slice && \"values.text(\\\"accessibilityLabel\\\")\" in slice",
+        "\"val sizing = if (size > 0) Modifier.size(size.dp) else Modifier.fillMaxWidth()\" in painter",
+        "\"CARD_FAULT\", \"Path\", \"spinPeriodMs\""
+      ]
     },
     {
       "id": "event-payloads",
@@ -836,7 +1002,7 @@
       "requirement": "Actual Compose painting and resource lifetime for every declared component, prop, child, style and event, including Tabs child content, Timer ticks, images, transforms, chart modes, feedback and the card profile.",
       "status": "device",
       "test": "bash tests/tools/build-cutover-test.sh",
-      "blocker": "Deterministic items prove rules, metadata and inventory; actual painter behaviour is exercised only by the opt-in device APK (ImageChecks, TabChecks, TimerPainterChecks, TargetTransportChecks) and human visual acceptance remains separate. The Progress and ProgressRing display clamp (android/src/rendering/DealRenderer.kt:558,561,566,568) needs an actual painter review in that lane."
+      "blocker": "Deterministic items prove rules, metadata, inventories and painter call sites; actual painter behaviour is exercised only by the opt-in device APK and human visual acceptance remains separate. That lane currently covers images (ImageChecks), tabs (TabChecks), timer text (TimerPainterChecks) and target transport (TargetTransportChecks); motion presets, Path rotation and tone, Stage ordering, transforms, chart modes, container modes, feedback, the banner icon and the card profile have no device check yet, and the merged accessibility node (which modifier order puts a declared label on, including the absent label published as an empty description) needs the same lane. The Progress and ProgressRing display clamp (android/src/rendering/DealRenderer.kt:744,752) also needs an actual painter review there."
     },
     {
       "id": "renderer-metadata",

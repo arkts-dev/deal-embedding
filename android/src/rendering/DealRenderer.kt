@@ -1,6 +1,7 @@
 package dev.deal.embedding
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -20,13 +22,17 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -36,7 +42,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.constrainHeight
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.unit.dp
@@ -60,6 +68,12 @@ private class Values(private val map: Map<String, UiValue>) {
 
 private val LocalFramed = compositionLocalOf { false }
 private val LocalCardTarget = compositionLocalOf { false }
+
+/** The Stage's shared perspective in dp; a Transform reads it for its depth cue. */
+private val LocalPerspective = compositionLocalOf { PoseMotion.DEFAULT_PERSPECTIVE_DP }
+
+/** One Motion trajectory lasts this long; only presentation timing lives here. */
+private const val MOTION_MILLIS = 420
 
 /** Host-configured containment bounds for renderer resources; the defaults apply outside a host surface. */
 internal val LocalExecutionLimits = staticCompositionLocalOf { ExecutionLimits() }
@@ -155,25 +169,151 @@ private val DraftSaver = listSaver<Draft, String>(
 }
 
 /** Measure every child at an equal share; wrap at font-scaled minimum widths. */
-@Composable private fun AdaptiveRow(minimumChildWidth: Int, content: @Composable () -> Unit) {
+@Composable private fun AdaptiveRow(minimumChildWidth: Int, gap: Dp, content: @Composable () -> Unit) {
     val density = LocalDensity.current
     val minimum = with(density) { minimumChildWidth.coerceAtLeast(48).dp.toPx() * density.fontScale.coerceAtLeast(1f) }.toInt()
-    val gap = with(density) { 12.dp.roundToPx() }
+    val gapPx = with(density) { gap.roundToPx() }
     Layout(content = content, modifier = Modifier.fillMaxWidth()) { children, constraints ->
         val width = if (constraints.hasBoundedWidth) constraints.maxWidth else minimum
-        val columns = ((width.toLong() + gap) / (minimum.toLong() + gap)).toInt().coerceAtLeast(1).coerceAtMost(children.size.coerceAtLeast(1))
-        val cell = ((width - gap * (columns - 1)) / columns).coerceAtLeast(0)
-        val measured = children.map { it.measure(Constraints(minWidth = cell, maxWidth = cell)) }
-        val rows = measured.chunked(columns)
-        val height = rows.sumOf { row -> row.maxOf { it.height } } + gap * (rows.size - 1).coerceAtLeast(0)
-        layout(width, constraints.constrainHeight(height)) {
-            var y = 0
-            for (row in rows) {
-                row.forEachIndexed { index, child -> child.placeRelative(index * (cell + gap), y) }
-                y += row.maxOf { it.height } + gap
-            }
+        layoutGrid(children, constraints, ((width.toLong() + gapPx) / (minimum.toLong() + gapPx)).toInt(), gapPx, minimum)
+    }
+}
+
+/**
+ * Lay children out in the declared number of equal columns, one row per group. The count is the
+ * declared `columns` prop of Grid, MetricGroup and KeyValueGroup, and the adaptive AdaptiveColumns
+ * decision; a declared count is honoured instead of being flattened into one column or a wrap.
+ */
+@Composable private fun ColumnGrid(columns: Int, gap: Dp, content: @Composable () -> Unit) {
+    val gapPx = with(LocalDensity.current) { gap.roundToPx() }
+    Layout(content = content, modifier = Modifier.fillMaxWidth()) { children, constraints ->
+        layoutGrid(children, constraints, columns, gapPx, 0)
+    }
+}
+
+/**
+ * The column-placement mechanism the declared grid and the adaptive row both measure through. A
+ * bounded width divides into as many of the decided columns as the gaps leave room for; an
+ * unbounded one stacks one child per row at its own width, reported as the widest child, never as a
+ * zero-width row.
+ */
+private fun androidx.compose.ui.layout.MeasureScope.layoutGrid(
+    children: List<androidx.compose.ui.layout.Measurable>, constraints: Constraints, columns: Int, gap: Int,
+    fallbackWidth: Int,
+): androidx.compose.ui.layout.MeasureResult {
+    val bounded = constraints.hasBoundedWidth
+    val width = if (bounded) constraints.maxWidth else fallbackWidth
+    // A width that cannot hold the declared columns and their gaps keeps only the columns that fit.
+    val fitting = if (gap > 0) (width + gap) / (gap + 1) else columns
+    val count = columns.coerceIn(1, children.size.coerceAtLeast(1)).coerceAtMost(fitting.coerceAtLeast(1))
+    val cell = if (bounded && width > 0) ((width - gap * (count - 1)) / count).coerceAtLeast(0) else 0
+    val measured = children.map {
+        if (bounded && width > 0) it.measure(Constraints(minWidth = cell, maxWidth = cell))
+        else it.measure(Constraints(maxWidth = width.coerceAtLeast(0)))
+    }
+    val placed = if (bounded && width > 0) measured.chunked(count) else measured.map { listOf(it) }
+    val contentWidth = if (bounded) width else (measured.maxOfOrNull { it.width } ?: 0)
+    val height = placed.sumOf { row -> row.maxOf { it.height } } + gap * (placed.size - 1).coerceAtLeast(0)
+    return layout(contentWidth, constraints.constrainHeight(height)) {
+        var y = 0
+        for (row in placed) {
+            row.forEachIndexed { index, child -> child.placeRelative(index * (cell + gap), y) }
+            y += row.maxOf { it.height } + gap
         }
     }
+}
+
+/** The theme geometry one declared gap token names. */
+private fun GapToken.distance(): Dp = when (this) {
+    GapToken.TIGHT -> PackTheme.tightGap
+    GapToken.GROUP -> PackTheme.groupGap
+    GapToken.SCREEN -> PackTheme.screenGap
+}
+
+private fun Horizontal.alignment(): Alignment.Horizontal = when (this) {
+    Horizontal.CENTER -> Alignment.CenterHorizontally
+    Horizontal.END -> Alignment.End
+    Horizontal.START -> Alignment.Start
+}
+
+/** A declared Column mode: its gap, its horizontal placement and its declared surface tone. */
+@Composable private fun ColumnBody(mode: ColumnMode, content: @Composable () -> Unit) {
+    val gap = mode.gap.distance()
+    val align = mode.align.alignment()
+    when (mode.tone) {
+        Tone.NONE -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap), horizontalAlignment = align) { content() }
+        Tone.SURFACE, Tone.ACCENT -> Surface(
+            Modifier.fillMaxWidth(), shape = RoundedCornerShape(PackTheme.surfaceRadius),
+            color = if (mode.tone == Tone.SURFACE) PackTheme.surface else PackTheme.accent.copy(alpha = .12f)) {
+            Column(Modifier.fillMaxWidth().padding(PackTheme.surfaceInset), verticalArrangement = Arrangement.spacedBy(gap), horizontalAlignment = align) { content() }
+        }
+    }
+}
+
+/** A declared Row mode: the adaptive wrap for the plain values, one anchored row for center and end,
+ *  and the row-only split (spread to the edges) and joined (no gap) arrangements. */
+@Composable private fun RowBody(mode: RowMode, minimumChildWidth: Int, content: @Composable () -> Unit) {
+    val gap = mode.gap.distance()
+    val body: @Composable () -> Unit = {
+        if (mode.arrangement == RowArrangement.WRAP) {
+            AdaptiveRow(minimumChildWidth, gap) { content() }
+        } else {
+            val arrangement = when (mode.arrangement) {
+                RowArrangement.CENTER -> Arrangement.spacedBy(gap, Alignment.CenterHorizontally)
+                RowArrangement.END -> Arrangement.spacedBy(gap, Alignment.End)
+                RowArrangement.SPLIT -> Arrangement.SpaceBetween
+                RowArrangement.JOINED -> Arrangement.spacedBy(0.dp)
+                RowArrangement.WRAP -> Arrangement.spacedBy(gap)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = arrangement) { content() }
+        }
+    }
+    when (mode.tone) {
+        Tone.NONE -> body()
+        Tone.SURFACE, Tone.ACCENT -> Surface(
+            Modifier.fillMaxWidth(), shape = RoundedCornerShape(PackTheme.surfaceRadius),
+            color = if (mode.tone == Tone.SURFACE) PackTheme.surface else PackTheme.accent.copy(alpha = .12f)) {
+            Box(Modifier.fillMaxWidth().padding(PackTheme.surfaceInset)) { body() }
+        }
+    }
+}
+
+/** The painted tone of the second chart series, from its declared common-family value. */
+@Composable private fun ChartTone(name: String): Color = when (name) {
+    "accent" -> PackTheme.accent
+    "success" -> MaterialTheme.colorScheme.secondary
+    "warning" -> MaterialTheme.colorScheme.tertiary
+    "danger" -> MaterialTheme.colorScheme.error
+    else -> PackTheme.muted
+}
+
+/** The painted stroke of a declared Path style: the common family's own tone. The empty and default
+ *  values paint the theme accent, which is the renderer's own primary, so a host theme decides it. */
+@Composable private fun PathTone(name: String): Color = when (StyleFamilies.resolve("Path", name)) {
+    "success" -> MaterialTheme.colorScheme.secondary
+    "warning" -> MaterialTheme.colorScheme.tertiary
+    "danger" -> MaterialTheme.colorScheme.error
+    "muted" -> PackTheme.muted
+    else -> PackTheme.accent
+}
+
+/** The platform keys a declared keyboardType asks for; the hint never restricts the typed value. */
+private fun keyboardType(name: String): KeyboardType = when (TextFieldRules.keyboard(name)) {
+    KeyboardHint.NUMBER -> KeyboardType.Number
+    KeyboardHint.DECIMAL -> KeyboardType.Decimal
+    KeyboardHint.EMAIL -> KeyboardType.Email
+    KeyboardHint.PHONE -> KeyboardType.Phone
+    KeyboardHint.URI -> KeyboardType.Uri
+    KeyboardHint.PASSWORD -> KeyboardType.Password
+    KeyboardHint.TEXT -> KeyboardType.Text
+}
+
+/** A Stage child's declared pose, resolved exactly as its own Transform painter resolves it. */
+private fun declaredPose(node: UiNode): List<Double> {
+    val resolved = (PropResolution.resolve(node.component, node.props) as? Resolution.Resolved)?.values
+        ?: return PoseMotion.IDENTITY
+    val entries = ((resolved["pose"] as? UiValue.Json)?.value as? JsonValue.Arr)?.items.orEmpty()
+    return PoseMotion.normalised(entries.mapNotNull { (it as? JsonValue.Num)?.value })
 }
 
 @Composable private fun ProgressBar(fraction: Double) {
@@ -196,22 +336,30 @@ private val DraftSaver = listSaver<Draft, String>(
     }
 }
 
-@Composable private fun SparklinePicture(series: List<Double>, second: List<Double>, maximum: Double, minimum: Double) {
+@Composable private fun SparklinePicture(series: List<Double>, second: List<Double>, count: Int, maximum: Double, minimum: Double, mode: ChartMode) {
     val accent = PackTheme.accent
-    val muted = PackTheme.muted
+    val secondTone = ChartTone(mode.tone)
     Canvas(Modifier.fillMaxWidth().height(120.dp)) {
-        fun plot(points: List<Double>, color: Color) {
-            if (points.isEmpty() || maximum <= minimum) return
-            val path = Path()
-            points.forEachIndexed { index, value ->
-                val x = size.width * index / (points.size - 1).coerceAtLeast(1)
-                val y = size.height * (1f - ((value - minimum) / (maximum - minimum)).toFloat())
-                if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        if (!ChartModes.plottable(minimum, maximum)) return@Canvas
+        if (mode.bars) {
+            fun bars(values: List<Double>, color: Color) {
+                for (bar in ChartModes.bars(values, count, minimum, maximum, size.width, size.height)) {
+                    drawRect(color, topLeft = Offset(bar.left, bar.top), size = Size(bar.right - bar.left, bar.bottom - bar.top))
+                }
             }
-            drawPath(path, color, style = Stroke(width = 2.dp.toPx()))
+            bars(series, accent)
+            bars(second, secondTone)
+        } else {
+            fun plot(values: List<Double>, color: Color) {
+                val points = ChartModes.points(values, count, minimum, maximum, size.width, size.height)
+                if (points.isEmpty()) return
+                val path = Path()
+                points.forEachIndexed { index, point -> if (index == 0) path.moveTo(point.x, point.y) else path.lineTo(point.x, point.y) }
+                drawPath(path, color, style = Stroke(width = 2.dp.toPx()))
+            }
+            plot(series, accent)
+            plot(second, secondTone)
         }
-        plot(series, accent)
-        plot(second, muted)
     }
 }
 
@@ -240,7 +388,7 @@ private val DraftSaver = listSaver<Draft, String>(
 
 /** Frame and pointer delivery for a Surface; the frame-target rule decides whether frames subscribe. */
 @Composable private fun FramedGraphicsSurface(width: Double, height: Double, shapes: JsonValue?, pointerSlot: Int?, frameSlot: Int?,
-                                             dispatch: (Int, String?) -> Unit) {
+                                             label: String, dispatch: (Int, String?) -> Unit) {
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(frameSlot) {
         // A node without a declared onFrame is a static drawing: no frames are consumed or dispatched.
@@ -259,16 +407,16 @@ private val DraftSaver = listSaver<Draft, String>(
             }
         }
     }
-    GraphicsSurface(width, height, shapes, pointerSlot, dispatch)
+    GraphicsSurface(width, height, shapes, pointerSlot, label, dispatch)
 }
 
 @Composable private fun GraphicsSurface(width: Double, height: Double, shapes: JsonValue?, pointerSlot: Int?,
-                                        dispatch: (Int, String?) -> Unit) {
+                                        label: String, dispatch: (Int, String?) -> Unit) {
     val encoded = androidx.compose.runtime.remember(shapes) { JSONArray(NeutralJson.render(shapes ?: JsonValue.Arr(emptyList()))) }
     val emit by rememberUpdatedState(dispatch)
     val slot by rememberUpdatedState(pointerSlot)
     val card = LocalCardTarget.current
-    Canvas(Modifier.size(width.dp, height.dp).pointerInput(width, height) {
+    Canvas(Modifier.size(width.dp, height.dp).semantics { contentDescription = label }.pointerInput(width, height) {
         awaitPointerEventScope {
             var down = emptyList<Long>()
             try {
@@ -340,8 +488,8 @@ private val DraftSaver = listSaver<Draft, String>(
     val children: @Composable () -> Unit = { ChildNodes(node, dispatch) }
     val styleName = values.text("style")
     when (component) {
-        RenderComponent.Column -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) { children() }
-        RenderComponent.Row -> AdaptiveRow(PackTheme.inputMinimumWidth.value.toInt().coerceAtLeast(160)) { children() }
+        RenderComponent.Column -> ColumnBody(ContainerModes.column(styleName)) { children() }
+        RenderComponent.Row -> RowBody(ContainerModes.row(styleName), PackTheme.inputMinimumWidth.value.toInt().coerceAtLeast(160)) { children() }
         RenderComponent.Card -> {
             if (LocalFramed.current) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
             else Surface(shape = RoundedCornerShape(PackTheme.surfaceRadius), color = PackTheme.surface) {
@@ -352,14 +500,24 @@ private val DraftSaver = listSaver<Draft, String>(
         }
         RenderComponent.Scroll -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) { children() }
         RenderComponent.ActionBar -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PackTheme.tightGap), verticalAlignment = Alignment.CenterVertically) { children() }
-        RenderComponent.TileGrid -> AdaptiveRow(PackTheme.metricMinimumWidth.value.toInt()) { children() }
+        RenderComponent.TileGrid -> AdaptiveRow(PackTheme.metricMinimumWidth.value.toInt(), PackTheme.groupGap) { children() }
         RenderComponent.Canvas -> Box(Modifier.fillMaxWidth()) { children() }
         RenderComponent.Layers -> Box(Modifier.size(values.number("width").dp, values.number("height").dp)) { children() }
         RenderComponent.AppTheme -> Column(Modifier.fillMaxWidth()) { children() }
-        RenderComponent.Grid -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) { children() }
-        RenderComponent.MetricGroup -> AdaptiveRow(PackTheme.metricMinimumWidth.value.toInt()) { children() }
-        RenderComponent.KeyValueGroup -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) { children() }
-        RenderComponent.AdaptiveColumns -> AdaptiveRow(values.number("minimumWidth", 240.0).toInt()) { children() }
+        RenderComponent.Grid -> ColumnGrid(ContainerModes.columns(values.number("columns", 1.0)), ContainerModes.gridGap("Grid", styleName).distance()) { children() }
+        RenderComponent.MetricGroup -> ColumnGrid(ContainerModes.columns(values.number("columns", 1.0)), ContainerModes.gridGap("MetricGroup", styleName).distance()) { children() }
+        RenderComponent.KeyValueGroup -> ColumnGrid(ContainerModes.columns(values.number("columns", 1.0)), ContainerModes.gridGap("KeyValueGroup", styleName).distance()) { children() }
+        RenderComponent.AdaptiveColumns -> BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val density = LocalDensity.current
+            val widthPx = if (constraints.hasBoundedWidth) constraints.maxWidth else 0
+            // The minimum is a font-scaled text width, so a scaled font never overflows its column.
+            val minimumPx = with(density) {
+                (values.number("minimumWidth", 240.0).dp.toPx() * density.fontScale.coerceAtLeast(1f)).toInt()
+            }
+            val gap = ContainerModes.gridGap("AdaptiveColumns", styleName).distance()
+            val gapPx = with(density) { gap.roundToPx() }
+            ColumnGrid(ContainerModes.adaptiveColumns(widthPx, minimumPx, gapPx), gap) { children() }
+        }
         RenderComponent.Section -> {
             if (LocalFramed.current) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.groupGap)) {
                 if (values.text("title").isNotEmpty()) Text(values.text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
@@ -472,12 +630,32 @@ private val DraftSaver = listSaver<Draft, String>(
         }
         RenderComponent.TextField -> {
             val authoritative = values.text("value")
-            val multiline = styleName == "multiline"
+            val multiline = StyleFamilies.resolve("TextField", styleName) == "multiline"
             var draft by draftOf(authoritative, authoritative)
-            OutlinedTextField(value = DraftText.shown(draft, authoritative, authoritative),
+            val shown = DraftText.shown(draft, authoritative, authoritative)
+            // Declared feedback explains a violated rule; it never replaces DEAL validation and never
+            // suppresses input, so the typed text stays the field's value and is always dispatched.
+            val feedback = TextFieldRules.feedback(
+                shown,
+                required = values.flag("required"),
+                email = values.flag("email"),
+                minLength = values.number("minLength"),
+                maxLength = values.number("maxLength"),
+                pattern = values.text("pattern"),
+                requiredMessage = values.text("requiredMessage"),
+                emailMessage = values.text("emailMessage"),
+                minLengthMessage = values.text("minLengthMessage"),
+                maxLengthMessage = values.text("maxLengthMessage"),
+                patternMessage = values.text("patternMessage"),
+            )
+            val message = feedback?.message ?: ""
+            val supporting: (@Composable () -> Unit)? = if (message.isEmpty()) null else ({ Text(message) })
+            OutlinedTextField(value = shown,
                 onValueChange = { next -> draft = Draft(next, authoritative); emit("onChange", next) },
                 label = { Text(values.text("label")) }, singleLine = !multiline,
-                minLines = if (multiline) 2 else 1,
+                minLines = if (multiline) 2 else 1, isError = feedback != null,
+                supportingText = supporting,
+                keyboardOptions = KeyboardOptions(keyboardType = keyboardType(values.text("keyboardType"))),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel") },
                 shape = RoundedCornerShape(16.dp))
         }
@@ -492,21 +670,27 @@ private val DraftSaver = listSaver<Draft, String>(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(value = DraftText.shown(draft, identity, authoritative), onValueChange = { raw ->
                     draft = Draft(raw, identity)
-                    raw.toDoubleOrNull()?.takeIf { it.isFinite() && it in lower..upper }?.let { emit("onChange", it.toString()) }
+                    // The checked decimal spelling, inside the declared bounds; every other spelling
+                    // stays visible and uncommitted.
+                    DraftConversion.decimal(raw)?.takeIf { it in lower..upper }?.let { emit("onChange", it.toString()) }
                 }, label = { Text(values.text("label")) }, singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f).semantics { contentDescription = values.text("accessibilityLabel").ifEmpty { values.text("label") } })
                 Text("\u00b1" + NumericPresentation.format(step, "", "", 1, 0), style = PackTheme.caption)
             }
         }
         RenderComponent.TimeField, RenderComponent.DateField -> {
+            val time = component == RenderComponent.TimeField
             val value = values.number("value")
-            val text = if (component == RenderComponent.TimeField) NumericPresentation.format(kotlin.math.floor(value / 60), "", "", 2, 0) + ":" +
-                NumericPresentation.format(value % 60, "", "", 2, 0) else NumericPresentation.format(value, "", "", 1, 0)
+            val text = if (time) DraftConversion.timeText(value) else DraftConversion.dayText(value)
             val identity = DraftText.identity(value)
             var draft by draftOf(identity, text)
             OutlinedTextField(value = DraftText.shown(draft, identity, text),
-                onValueChange = { raw -> draft = Draft(raw, identity); raw.toDoubleOrNull()?.let { emit("onChange", it.toString()) } },
+                onValueChange = { raw ->
+                    draft = Draft(raw, identity)
+                    // The shared temporal domain: minute-of-day 0-1439 or an integral local epoch-day.
+                    (if (time) DraftConversion.timeOfDay(raw) else DraftConversion.day(raw))?.let { emit("onChange", it.toString()) }
+                },
                 label = { Text(values.text("label")) }, singleLine = true,
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel").ifEmpty { values.text("label") } })
         }
@@ -519,7 +703,8 @@ private val DraftSaver = listSaver<Draft, String>(
         RenderComponent.Slider -> Column(Modifier.fillMaxWidth()) {
             Text(values.text("label"), style = PackTheme.caption)
             Slider(value = values.number("value").toFloat(), valueRange = values.number("minimum").toFloat()..values.number("maximum").toFloat(),
-                onValueChange = { next -> emit("onChange", next.toString()) })
+                onValueChange = { next -> emit("onChange", next.toString()) },
+                modifier = Modifier.semantics { contentDescription = values.text("accessibilityLabel") })
         }
         RenderComponent.Select -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) {
             val selected = values.number("selected", -1.0).toInt()
@@ -546,8 +731,9 @@ private val DraftSaver = listSaver<Draft, String>(
                 }
             }
         }
-        RenderComponent.InsetBanner, RenderComponent.EmptyState -> Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
+        RenderComponent.InsetBanner, RenderComponent.EmptyState -> Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel") }) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (values.text("icon").isNotEmpty()) PackIcon(values.text("icon"))
                 Text(values.text("title"), style = PackTheme.heading, fontWeight = FontWeight.SemiBold)
                 Text(values.text("message"), style = PackTheme.body)
                 if (values.text("actionText").isNotEmpty()) TextButton(onClick = { emit("onAction", null) }) { Text(values.text("actionText")) }
@@ -573,7 +759,7 @@ private val DraftSaver = listSaver<Draft, String>(
             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
             Text(values.text("label"), style = PackTheme.caption)
         }
-        RenderComponent.Snackbar -> Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+        RenderComponent.Snackbar -> Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel") }) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(values.text("message"), Modifier.weight(1f), style = PackTheme.body)
                 if (values.text("actionText").isNotEmpty()) TextButton(onClick = { emit("onAction", null) }) { Text(values.text("actionText")) }
@@ -592,44 +778,162 @@ private val DraftSaver = listSaver<Draft, String>(
         RenderComponent.BackHandler -> BackHandler(enabled = true) { emit("onBack", null) }
         RenderComponent.Path -> {
             val commands = values.text("commands")
-            Canvas(Modifier.fillMaxWidth().height(160.dp).clickable { emit("onTap", null) }) {
-                drawIntoCanvas { draw ->
-                    val parsed = runCatching { androidx.core.graphics.PathParser.createPathFromPathData(commands) }.getOrNull() ?: return@drawIntoCanvas
-                    draw.nativeCanvas.drawPath(parsed, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = 2.dp.toPx()
-                        color = android.graphics.Color.parseColor("#6540a1")
-                    })
+            // The declared path is parsed once per command string, never once per frame.
+            val parsed = remember(commands) {
+                runCatching { androidx.core.graphics.PathParser.createPathFromPathData(commands) }.getOrNull()
+            }
+            val stroke = remember { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE } }
+            val spinPeriod = values.number("spinPeriodMs")
+            val tone = PathTone(styleName)
+            // A card Path cannot rotate, so it paints still; ingress refuses the declared rotation
+            // before activation, and the painter never animates one on the card target.
+            val spins = !LocalCardTarget.current && spinPeriod > 0
+            val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+            var rotation by remember(spinPeriod, spins) { mutableStateOf(0f) }
+            LaunchedEffect(spinPeriod, spins, lifecycle) {
+                if (!spins) return@LaunchedEffect
+                // Only visible frames advance the declared rotation: the phase the covered page
+                // skipped is never replayed, and a resume continues from the visible time so far.
+                var visible = 0L
+                lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+                    var resumedAt: Long? = null
+                    var last = 0L
+                    try {
+                        while (true) {
+                            withFrameMillis { now ->
+                                val start = resumedAt ?: now.also { resumedAt = it }
+                                last = now
+                                rotation = PathSpin.rotationDegrees(spinPeriod, visible + (now - start))
+                            }
+                        }
+                    } finally {
+                        resumedAt?.let { start -> visible += (last - start).coerceAtLeast(0L) }
+                    }
+                }
+            }
+            Canvas(Modifier.fillMaxWidth().height(160.dp).clickable { emit("onTap", null) }.semantics { contentDescription = values.text("accessibilityLabel") }) {
+                val path = parsed ?: return@Canvas
+                rotate(rotation) {
+                    drawIntoCanvas { draw ->
+                        stroke.strokeWidth = 2.dp.toPx()
+                        stroke.color = tone.toArgb()
+                        draw.nativeCanvas.drawPath(path, stroke)
+                    }
                 }
             }
         }
         RenderComponent.Motion -> {
             val trigger = values.number("trigger")
-            val animated = remember { Animatable(1f) }
-            LaunchedEffect(trigger) { animated.snapTo(0f); animated.animateTo(1f) }
-            Column(Modifier.fillMaxWidth().graphicsLayer { alpha = animated.value }) { children() }
-        }
-        RenderComponent.Transform -> {
-            val pose = values.numbers("pose")
-            Column(Modifier.fillMaxWidth().graphicsLayer {
-                if (pose.size == 8) {
-                    rotationX = pose[0].toFloat(); rotationY = pose[1].toFloat(); rotationZ = pose[2].toFloat()
-                    translationX = pose[3].toFloat(); translationY = pose[4].toFloat(); scaleX = pose[6].toFloat(); scaleY = pose[6].toFloat()
-                    alpha = pose[7].toFloat()
+            val frames = MotionPresets.preset(StyleFamilies.resolve("Motion", styleName))
+            // The trigger decides when a preset plays, never whether the first render animates.
+            var seen by remember { mutableStateOf<Double?>(null) }
+            val progress = remember { Animatable(1f) }
+            LaunchedEffect(trigger) {
+                val animate = MotionPresets.animates(seen, trigger)
+                seen = trigger
+                if (animate) {
+                    progress.snapTo(0f)
+                    progress.animateTo(1f, tween(MOTION_MILLIS))
                 }
+            }
+            Column(Modifier.fillMaxWidth().graphicsLayer {
+                val frame = MotionPresets.sample(frames, progress.value)
+                scaleX = frame.scale
+                scaleY = frame.scale
+                rotationZ = frame.rotate
+                translationX = frame.moveX * density
+                translationY = frame.moveY * density
+                alpha = frame.alpha
             }) { children() }
         }
-        RenderComponent.Stage -> Box(Modifier.fillMaxWidth().heightIn(min = values.number("height").dp)) { children() }
+        RenderComponent.Transform -> {
+            val pose = PoseMotion.normalised(values.numbers("pose"))
+            val duration = values.number("durationMs")
+            val size = values.number("size")
+            val solid = StyleFamilies.resolve("Transform", styleName) == "solid"
+            val perspective = LocalPerspective.current
+            val density = LocalDensity.current.density
+            // The committed pose is interpolated from the previous one over the declared duration;
+            // a first render paints the declared pose without animating it.
+            val applied = remember { mutableStateOf(pose) }
+            val progress = remember { Animatable(1f) }
+            LaunchedEffect(pose, duration) {
+                val start = applied.value
+                if (start == pose) return@LaunchedEffect
+                // The declared duration is the trajectory length: a zero duration applies the
+                // committed pose at once, so the declared pose is never dropped.
+                if (!PoseMotion.animates(duration)) { applied.value = pose; return@LaunchedEffect }
+                progress.snapTo(0f)
+                progress.animateTo(1f, tween(duration.toInt())) {
+                    applied.value = PoseMotion.interpolate(start, pose, value.toDouble())
+                }
+            }
+            val sizing = if (size > 0) Modifier.size(size.dp) else Modifier.fillMaxWidth()
+            Column(sizing.graphicsLayer {
+                val frame = applied.value
+                rotationX = frame[0].toFloat()
+                rotationY = frame[1].toFloat()
+                rotationZ = frame[2].toFloat()
+                translationX = frame[3].toFloat() * density
+                translationY = frame[4].toFloat() * density
+                scaleX = frame[6].toFloat()
+                scaleY = frame[6].toFloat()
+                cameraDistance = PoseMotion.cameraDistance(perspective, density)
+                // A solid Transform hides the backface it is turned to, never paints it mirrored.
+                alpha = if (solid && PoseMotion.backface(frame)) 0f else frame[7].toFloat()
+                // frame[5] is moveZ: the platform layer has no z translation, so the declared depth
+                // is the Stage's painting order, which reads the same pose through StageSort.
+            }) { children() }
+        }
+        RenderComponent.Stage -> {
+            val perspective = values.number("perspective", 900.0)
+            val order = StageSort.order(node.children.map(::declaredPose))
+            Box(Modifier.fillMaxWidth().heightIn(min = values.number("height").dp)) {
+                CompositionLocalProvider(LocalPerspective provides perspective) {
+                    Box(Modifier.fillMaxWidth()) {
+                        // Depth order decides the paint order: the farther Transform paints first.
+                        for (index in order) {
+                            val child = node.children[index]
+                            key(child.key.ifEmpty { child.component }, index) { PaintNode(child, dispatch) }
+                        }
+                    }
+                }
+            }
+        }
         RenderComponent.Surface ->
             FramedGraphicsSurface(values.number("width"), values.number("height"), values.json("shapes"),
-                values.slot("onPointer"), values.slot("onFrame"), dispatch)
+                values.slot("onPointer"), values.slot("onFrame"), values.text("accessibilityLabel"), dispatch)
         RenderComponent.Sparkline -> {
             val series = values.numbers("series")
             val second = values.numbers("series2")
-            if (series.isEmpty() && second.isEmpty()) Text("No chart data", style = PackTheme.caption, color = PackTheme.muted)
-            else Column {
-                if (values.text("label").isNotEmpty()) Text(values.text("label"), style = PackTheme.caption)
-                SparklinePicture(series, second, values.number("maximum"), values.number("minimum"))
+            val mode = ChartModes.mode(series, second, values.flag("bars"), values.text("series2Style"))
+            if (mode.explanation != null) Text(mode.explanation, style = PackTheme.caption, color = PackTheme.muted)
+            else {
+                val count = ChartModes.count(series, second)
+                // A declared category keeps its own position: a non-string item leaves its point
+                // unlabelled instead of moving every later label onto the wrong point.
+                val categories = ((values.json("categories") as? JsonValue.Arr)?.items ?: emptyList())
+                    .map { (it as? JsonValue.Str)?.value }
+                Column(verticalArrangement = Arrangement.spacedBy(PackTheme.tightGap)) {
+                    if (values.text("label").isNotEmpty()) Text(values.text("label"), style = PackTheme.caption)
+                    SparklinePicture(series, second, count, values.number("maximum"), values.number("minimum"), mode)
+                    if (categories.isNotEmpty()) {
+                        // One cell per point keeps every label under the point it names, even where the
+                        // tree declares no label for a point.
+                        Row(Modifier.fillMaxWidth()) {
+                            for (index in 0 until count) {
+                                val label = ChartModes.category(index, categories)
+                                Box(Modifier.weight(1f)) { if (label.isNotEmpty()) Text(label, style = PackTheme.caption, color = PackTheme.muted) }
+                            }
+                        }
+                    }
+                    if (values.text("seriesLabel").isNotEmpty() || values.text("series2Label").isNotEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(PackTheme.tightGap), verticalAlignment = Alignment.CenterVertically) {
+                            if (values.text("seriesLabel").isNotEmpty()) Text(values.text("seriesLabel"), style = PackTheme.caption, color = PackTheme.accent)
+                            if (values.text("series2Label").isNotEmpty()) Text(values.text("series2Label"), style = PackTheme.caption, color = ChartTone(mode.tone))
+                        }
+                    }
+                }
             }
         }
     }
