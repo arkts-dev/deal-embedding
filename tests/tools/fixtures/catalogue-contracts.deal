@@ -136,6 +136,9 @@ export async function rejectionMatrix(): Promise<number> {
   count = count+await rejects("metrics","{\"values\":[{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"},{\"label\":\"a\",\"value\":\"b\"}]}","thirteen metric rows");
   count = count+await rejects("key_facts","{\"items\":[{\"label\":\"a\",\"value\":true}]}","boolean key-fact value");
   count = count+await rejects("key_facts","{}","key facts without items");
+  // A spotlight message is a required text; a numeric or absent message is refused.
+  count = count+await rejects("spotlight","{\"message\":5}","numeric spotlight message");
+  count = count+await rejects("spotlight","{}","spotlight without its message");
   // The shared entry row refuses a non-boolean completion instead of emitting a cast value.
   count = count+await rejects("checklist","{\"items\":[{\"id\":\"a\",\"label\":\"b\",\"done\":\"yes\"}]}","text checklist completion");
   count = count+await rejects("checklist","{\"items\":[{\"id\":5,\"label\":\"b\"}]}","numeric checklist identity");
@@ -143,6 +146,23 @@ export async function rejectionMatrix(): Promise<number> {
   // A label list is an array of texts, not a text or a collection of other wire kinds.
   count = count+await rejects("actions","{\"labels\":5}","nonarray action labels");
   count = count+await rejects("actions","{\"labels\":[5]}","numeric action label");
+  count = count+1; await catalogue.decode(definition("actions"),JSON.parse("{\"labels\":[\"Only\"]}"));
+  count = count+1; await catalogue.decode(definition("actions"),JSON.parse("{\"labels\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\",\"j\",\"k\",\"l\"]}"));
+  count = count+await rejects("actions","{\"labels\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\",\"j\",\"k\",\"l\",\"m\"]}","thirteen action labels");
+  count = count+1; await catalogue.decode(definition("timer"),JSON.parse("{\"presets\":[{\"label\":\"a\",\"seconds\":1},{\"label\":\"b\",\"seconds\":2},{\"label\":\"c\",\"seconds\":3},{\"label\":\"d\",\"seconds\":4},{\"label\":\"e\",\"seconds\":5},{\"label\":\"f\",\"seconds\":6}]}"));
+  let stops: string = ""; let stopIndex: number = 0;
+  while (stopIndex < 12) { if (stopIndex > 0) { stops = stops+","; } stops = stops+"{\"id\":\"s"+String(stopIndex)+"\",\"label\":\"Stop\",\"minutes\":1}"; stopIndex = stopIndex+1; }
+  count = count+1; await catalogue.decode(definition("itinerary"),JSON.parse("{\"stops\":["+stops+"]}"));
+  count = count+await rejects("itinerary","{\"stops\":["+stops+",{\"id\":\"s12\",\"label\":\"Stop\",\"minutes\":1}]}","thirteen stops");
+  // The search and master lists decode the same disclosed entry rows under the same twelve-row bound.
+  let entries: string = ""; let entryIndex: number = 0;
+  while (entryIndex < 12) { if (entryIndex > 0) { entries = entries+","; } entries = entries+"{\"id\":\"e"+String(entryIndex)+"\",\"label\":\"Row\"}"; entryIndex = entryIndex+1; }
+  count = count+1; await catalogue.decode(definition("search_list"),JSON.parse("{\"items\":["+entries+"]}"));
+  count = count+await rejects("search_list","{\"items\":["+entries+",{\"id\":\"e12\",\"label\":\"Row\"}]}","thirteen search rows");
+  count = count+await rejects("search_list","{\"items\":[{\"id\":\"a\",\"label\":\"Row\",\"done\":\"yes\"}]}","text search completion");
+  count = count+1; await catalogue.decode(definition("master_list"),JSON.parse("{\"items\":["+entries+"]}"));
+  count = count+await rejects("master_list","{\"items\":["+entries+",{\"id\":\"e12\",\"label\":\"Row\"}]}","thirteen master rows");
+  count = count+await rejects("master_list","{\"items\":[{\"id\":\"a\",\"label\":\"Row\",\"extra\":1}]}","unknown master row field");
   return count;
 }
 
@@ -245,6 +265,49 @@ export async function disclosure(): Promise<number> {
   count = count+checked(admits(metrics,"","{\"facts\":[{\"label\":\"first\",\"value\":\"items\"}]}",true),"A user-owned fact section was refused");
   let facts_owned: catalogue.Configured = await configured("key_facts","{\"items\":[{\"label\":\"second\",\"value\":\"done\"}]}");
   count = count+checked(admits(facts_owned,"here: second done","",false),"Request-provenance fact refused");
+  // The search and master lists hold the same disclosed entry rows, so the one predicate decides their
+  // labels and details too, and the refusal locates the row and the field.
+  let search: catalogue.Configured = await configured("search_list","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\",\"detail\":\"first\"}]}");
+  count = count+checked(admits(search,"Show Alpha first","",false),"Disclosed search row refused");
+  let located_search: string = catalogue.disclosed(search,request,"",false);
+  count = count+checked(located_search.includes("search_list row 0 label"),"Unlocated search refusal: "+located_search);
+  let master: catalogue.Configured = await configured("master_list","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\"}]}");
+  let located_master: string = catalogue.disclosed(master,"","",false);
+  count = count+checked(located_master.includes(": master_list row 0 label"),"Unlocated master refusal: "+located_master);
+  // The refusal names the instance, not the kind: a need with its own identity is located by it.
+  let results: catalogue.Configured = {need:"results",definition:definition("search_list"),parameters:await accepts("search_list","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\"}]}"),accepted:true,reason:""};
+  let located_instance: string = catalogue.disclosed(results,"","",false);
+  count = count+checked(located_instance.includes(": results row 0 label"),"Unlocated instance refusal: "+located_instance);
+  // A stop's supplied coordinate pair is disclosed navigation content: the pair is admitted from
+  // evidence, and a fabricated latitude or longitude is refused with its stop and field.
+  let trip: string = "{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":10,\"latitude\":12.5,\"longitude\":34.5}]}";
+  let placed: catalogue.Configured = await configured("itinerary",trip);
+  count = count+checked(admits(placed,"","{\"start\":{\"label\":\"Home\"},\"hop\":{\"minutes\":10,\"lat\":12.5,\"lon\":34.5}}",false),"Disclosed stop coordinates refused");
+  let invented_latitude: catalogue.Configured = await configured("itinerary",trip);
+  let located_latitude: string = catalogue.disclosed(invented_latitude,"","{\"start\":{\"label\":\"Home\"},\"hop\":{\"minutes\":10,\"lon\":34.5}}",false);
+  count = count+checked(located_latitude.includes("itinerary stop 0 latitude"),"Unlocated stop latitude refusal: "+located_latitude);
+  let invented_longitude: catalogue.Configured = await configured("itinerary",trip);
+  let located_longitude: string = catalogue.disclosed(invented_longitude,"","{\"start\":{\"label\":\"Home\"},\"hop\":{\"minutes\":10,\"lat\":12.5}}",false);
+  count = count+checked(located_longitude.includes("itinerary stop 0 longitude"),"Unlocated stop longitude refusal: "+located_longitude);
+  // An absent coordinate pair supplies nothing, so a stop without coordinates needs no coordinate evidence.
+  let unplaced: catalogue.Configured = await configured("itinerary","{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":5}]}");
+  count = count+checked(admits(unplaced,"","{\"start\":{\"label\":\"Home\"},\"hop\":{\"minutes\":5}}",false),"A stop without coordinates demanded evidence");
+  // A one-shot reminder's day is a supplied fact like its minute; a daily reminder carries no day.
+  let once: catalogue.Configured = await configured("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":600,\"day\":99}]}");
+  count = count+checked(admits(once,"","{\"reminders\":[{\"title\":\"Pill\",\"minute\":600,\"day\":99}]}",false),"Disclosed one-shot reminder refused");
+  let invented_day: catalogue.Configured = await configured("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":600,\"day\":99}]}");
+  let located_day: string = catalogue.disclosed(invented_day,"","{\"reminders\":[{\"title\":\"Pill\",\"minute\":600}]}",false);
+  count = count+checked(located_day.includes("reminders reminder 0 day"),"Unlocated reminder day refusal: "+located_day);
+  let daily: catalogue.Configured = await configured("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":600,\"daily\":true}]}");
+  count = count+checked(admits(daily,"","{\"reminders\":[{\"title\":\"Pill\",\"minute\":600}]}",false),"A daily reminder demanded a day");
+  // The reminder title and minute are supplied content too, so each fabricated one is refused with its
+  // row and field rather than admitted beside the evidenced day.
+  let invented_reminder_title: catalogue.Configured = await configured("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Vitamins\",\"minute\":600,\"day\":99}]}");
+  let located_reminder_title: string = catalogue.disclosed(invented_reminder_title,"","{\"reminders\":[{\"title\":\"Pill\",\"minute\":600,\"day\":99}]}",false);
+  count = count+checked(located_reminder_title.includes("reminders reminder 0 title"),"Unlocated reminder title refusal: "+located_reminder_title);
+  let invented_reminder_minute: catalogue.Configured = await configured("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":601,\"day\":99}]}");
+  let located_reminder_minute: string = catalogue.disclosed(invented_reminder_minute,"","{\"reminders\":[{\"title\":\"Pill\",\"minute\":600,\"day\":99}]}",false);
+  count = count+checked(located_reminder_minute.includes("reminders reminder 0 minute"),"Unlocated reminder minute refusal: "+located_reminder_minute);
   return count;
 }
 
@@ -265,6 +328,7 @@ export async function initialization(): Promise<string> {
   result.metrics = s.encode(await catalogue.instantiate(await configured("metrics","{\"values\":[{\"label\":\"first\",\"value\":\"items\"},{\"label\":\"second\",\"value\":\"done\"}]}"),{contracts:[],sources:[],bindings:[],actions:[]}));
   result.key_facts = s.encode(await catalogue.instantiate(await configured("key_facts","{\"items\":[{\"label\":\"first\",\"value\":\"items\"}]}"),{contracts:[],sources:[],bindings:[],actions:[]}));
   result.empty_facts = s.encode(await catalogue.instantiate(await configured("metrics","{\"values\":[]}"),{contracts:[],sources:[],bindings:[],actions:[]}));
+  result.spotlight = s.encode(await catalogue.instantiate(await configured("spotlight","{\"message\":\"Shown\"}"),{contracts:[],sources:[],bindings:[],actions:[]}));
   return s.encode(result);
 }
 
@@ -279,25 +343,66 @@ export async function assembly(): Promise<string> {
   composition.screen.instances[4] = await catalogue.instantiate({need:"facts",definition:definition("metrics"),parameters:await accepts("metrics","{\"values\":[{\"label\":\"first\",\"value\":\"items\"}]}"),accepted:true,reason:""},registry);
   composition.screen.instances[5] = await catalogue.instantiate({need:"details",definition:definition("key_facts"),parameters:await accepts("key_facts","{\"items\":[{\"label\":\"second\",\"value\":\"done\"}]}"),accepted:true,reason:""},registry);
   composition.screen.instances[6] = await catalogue.instantiate({need:"empty",definition:definition("data_table"),parameters:await accepts("data_table","{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[]}"),accepted:true,reason:""},registry);
+  composition.screen.instances[7] = await catalogue.instantiate({need:"spot",definition:definition("spotlight"),parameters:await accepts("spotlight","{\"message\":\"Shown\"}"),accepted:true,reason:""},registry);
   let assembled: composer.Result = await composer.assemble(composition,[]);
   return s.encode(assembled.source);
+}
+// Initial generation applies no catalogue instance count and kinds stay unique: seven distinct kinds
+// instantiate and assemble in one composition, while a duplicate kind is refused at decode.
+export async function instanceCount(): Promise<string> {
+  let registry: bindings.Registry = bindings.create([]);
+  let seat: screens.Position = {id:"main",allowedKinds:["checklist","metrics","spotlight","data_table","timeline","bar_chart","key_facts"],minimum:0,maximum:7};
+  let composition: screens.Composition = {screen:{title:"Seven kinds",target:"screen",layout:{kind:"positions",positions:[seat]},slots:[],instances:[]},bindings:{},actions:{},connections:[]};
+  composition.screen.instances[0] = await catalogue.instantiate({need:"k0",definition:definition("checklist"),parameters:await accepts("checklist","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\"}]}"),accepted:true,reason:""},registry);
+  composition.screen.instances[1] = await catalogue.instantiate({need:"k1",definition:definition("metrics"),parameters:await accepts("metrics","{\"values\":[{\"label\":\"first\",\"value\":\"items\"}]}"),accepted:true,reason:""},registry);
+  composition.screen.instances[2] = await catalogue.instantiate({need:"k2",definition:definition("spotlight"),parameters:await accepts("spotlight","{\"message\":\"Shown\"}"),accepted:true,reason:""},registry);
+  composition.screen.instances[3] = await catalogue.instantiate({need:"k3",definition:definition("data_table"),parameters:await accepts("data_table","{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"paid\"]]}"),accepted:true,reason:""},registry);
+  composition.screen.instances[4] = await catalogue.instantiate({need:"k4",definition:definition("timeline"),parameters:await accepts("timeline","{\"rows\":[{\"minute\":570,\"title\":\"Standup\"}]}"),accepted:true,reason:""},registry);
+  composition.screen.instances[5] = await catalogue.instantiate({need:"k5",definition:definition("bar_chart"),parameters:await accepts("bar_chart","{\"points\":[{\"label\":\"Mon\",\"value\":1}],\"maximum\":10}"),accepted:true,reason:""},registry);
+  composition.screen.instances[6] = await catalogue.instantiate({need:"k6",definition:definition("key_facts"),parameters:await accepts("key_facts","{\"items\":[{\"label\":\"second\",\"value\":\"done\"}]}"),accepted:true,reason:""},registry);
+  let needIds: string[] = [];
+  for (let instance of composition.screen.instances) {
+    instance.position = "main";
+    let need: string = instance.fragment.covers[0]; needIds[needIds.length] = need;
+    composition.screen.slots[composition.screen.slots.length] = {id:instance.id,need:need,reads:[],writes:[],provider:false,allowedKinds:[],status:"filled",instance:instance.id,reason:""};
+  }
+  // The emitted composition is decoded again through the production composition decoder, so the
+  // no-count rule and the unique-kind rule are proved at the decode seam, not only in memory.
+  let projection: screens.Projection = screens.decode(s.encode(composition),"screen",needIds);
+  let decoded: screens.Composition = projection.composition;
+  let computations: composer.Computation[] = [];
+  for (let instance of decoded.screen.instances) { for (let entry of catalogue.computations(instance,decoded.connections,decoded.screen.instances)) { computations[computations.length] = entry; } }
+  let assembled: composer.Result = await composer.assemble(decoded,computations);
+  let kinds: string[] = []; for (let instance of decoded.screen.instances) { kinds[kinds.length] = instance.kind; }
+  let decodedCount: number = decoded.screen.instances.length;
+  // A second instance of an already selected kind is refused before any source is emitted.
+  let duplicateRefused: boolean = false;
+  let raw: string = "{\"screen\":{\"title\":\"Duplicate\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[],\"instances\":["+
+    "{\"id\":\"a\",\"kind\":\"spotlight\",\"origin\":\"catalogue\",\"parameters\":{},\"bodies\":{},\"fragment\":{\"declarations\":\"\",\"fields\":[],\"updates\":[],\"effects\":[],\"helpers\":\"\",\"view\":\"v\",\"options\":[],\"content\":[],\"ports\":[],\"holes\":[],\"covers\":[],\"owns\":[]}},"+
+    "{\"id\":\"b\",\"kind\":\"spotlight\",\"origin\":\"catalogue\",\"parameters\":{},\"bodies\":{},\"fragment\":{\"declarations\":\"\",\"fields\":[],\"updates\":[],\"effects\":[],\"helpers\":\"\",\"view\":\"v\",\"options\":[],\"content\":[],\"ports\":[],\"holes\":[],\"covers\":[],\"owns\":[]}}]},\"bindings\":{},\"actions\":{},\"connections\":[]}";
+  try { screens.decode(raw,"screen",[]); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } duplicateRefused = error.message.includes("Duplicate identity: spotlight"); }
+  return s.encode({instances:decodedCount,kinds:kinds,duplicate:duplicateRefused,deal:assembled.source.deal,dealui:assembled.source.dealui});
 }
 
 // The production fill: one real model answer decodes every issued section at the one call site
 // construction uses, so an empty table, a fabricated cell and a short row are decided as at runtime.
 export async function fillPath(): Promise<string> {
   let context: selecting.Context = {original:"Show what I paid",facts:"{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"row\":{\"item\":\"Rent\",\"amount\":\"40\"}}",contracts:"[]",specification:"specification"};
-  let plan: plans.Plan = {title:"Table",eyebrow:"",subtitle:"",inputs:[],constants:[],requirements:[],needs:[{id:"empty",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"unanswered",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"fabricated",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"short",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"nulled",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}}],questions:[]};
+  let plan: plans.Plan = {title:"Table",eyebrow:"",subtitle:"",inputs:[],constants:[],requirements:[],needs:[{id:"empty",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"unanswered",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"fabricated",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"short",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"nulled",type:"content",words:"Show the disclosed table",quote:"",reads:[],required:true,spec:{}},{id:"measured",type:"content",words:"Show my measurement",quote:"",reads:[],required:true,spec:{}}],questions:[]};
   let empty: catalogue.Configured = {need:"empty",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
   let fabricated: catalogue.Configured = {need:"fabricated",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
   let unanswered: catalogue.Configured = {need:"unanswered",definition:definition("data_table"),parameters:{},accepted:false,reason:catalogue.notFilled()};
   let short: catalogue.Configured = {need:"short",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
   let nulled: catalogue.Configured = {need:"nulled",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
-  await catalogue.fill(context,plan,[empty,unanswered,fabricated,short,nulled]);
+  // The numeric-presentation domain is applied by the fill decoder, and its refusal locates the instance
+  // whose parameters kept their defaults.
+  let measured: catalogue.Configured = {need:"measured",definition:definition("reading_status"),parameters:{},accepted:false,reason:catalogue.notFilled()};
+  await catalogue.fill(context,plan,[empty,unanswered,fabricated,short,nulled,measured]);
   // Construction applies the one predicate after an accepted fill; a rejected decode never reaches it.
   let admittedEmpty: boolean = catalogue.disclosed(empty,context.original,context.facts,false) === "";
   let locatedFabricated: string = catalogue.disclosed(fabricated,context.original,context.facts,false);
-  return s.encode({empty:empty,unanswered:unanswered,fabricated:fabricated,short:short,nulled:nulled,admittedEmpty:admittedEmpty,locatedFabricated:locatedFabricated});
+  return s.encode({empty:empty,unanswered:unanswered,fabricated:fabricated,short:short,nulled:nulled,measured:measured,admittedEmpty:admittedEmpty,locatedFabricated:locatedFabricated});
 }
 
 // The two Select batches and alignment issue reader kinds only for a need that requests a dependency
@@ -314,4 +419,153 @@ export async function alternatives(): Promise<string> {
   return s.encode(offered);
 }
 
+// A supplied composition registry reference must name an issued binding, and a resolvable reference
+// still has no executable navigation/calendar producer in this build: both refusals locate the need
+// and reject before any fragment is emitted.
+export async function registryRefusals(): Promise<number> {
+  let count: number = 0;
+  let navigation: string = "{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":5}],\"navigationBinding\":\"nav_1\"}";
+  let calendar: string = "{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":5}],\"calendarBinding\":\"nav_1\"}";
+  let supplied: string[] = ["navigationBinding","calendarBinding"];
+  let wire: string[] = [navigation,calendar];
+  let index: number = 0;
+  while (index < supplied.length) {
+    let issued: bindings.Registry = bindings.create([]);
+    issued.bindings[0] = {id:"nav_1",module:"host/navigation",function:"open",arguments:{},parameterOrder:[],owner:"host"};
+    let entry: catalogue.Configured = {need:"trip",definition:definition("itinerary"),parameters:await accepts("itinerary",wire[index]),accepted:true,reason:""};
+    let located: boolean = false;
+    try { await catalogue.instantiate(entry,issued); }
+    catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } located = error.message.includes("trip") && error.message.includes("is not executable"); }
+    insist(located,"Itinerary binding was admitted or unlocated: "+supplied[index]);
+    count = count+1;
+    index = index+1;
+  }
+  // A reference the composition never issued rejects as an unresolved registry reference instead.
+  let bare: bindings.Registry = bindings.create([]);
+  let unissued: catalogue.Configured = {need:"trip",definition:definition("itinerary"),parameters:await accepts("itinerary",navigation),accepted:true,reason:""};
+  let unresolved: boolean = false;
+  try { await catalogue.instantiate(unissued,bare); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } unresolved = error.message.includes("Unresolved catalogue registry reference: nav_1"); }
+  insist(unresolved,"Unissued itinerary binding admitted or unlocated");
+  count = count+1;
+  return count;
+}
+
+// The declared kind table facts: parameter ownership, ports, holes and eligibility. Every expectation
+// is read from the specification row, never from the table under test.
+export async function ownership(): Promise<string> {
+  let result: Record<string, unknown> = {};
+  let kinds: string[] = []; let executable: string[] = []; let live: string[] = [];
+  for (let entry of catalogue.definitions()) { kinds[kinds.length] = entry.kind; if (entry.executable) { executable[executable.length] = entry.kind; } }
+  result.kinds = kinds; result.count = kinds.length; result.executable = executable;
+  let decimals: catalogue.Definition = definition("reading_status");
+  let parameter: catalogue.Parameter = decimals.parameters[2];
+  result.decimals = {name:parameter.name,type:parameter.type,required:parameter.required,origin:parameter.origin,owner:parameter.owner,fallback:parameter.fallback};
+  result.facts = catalogue.facts(decimals);
+  result.readerFacts = catalogue.facts(definition("search_list"));
+  result.listFacts = catalogue.facts(definition("checklist"));
+  // A declaration without an origin is refused before any instance can be instantiated from it.
+  let unowned: catalogue.Definition = {kind:"note",criteria:"x",parameters:[{name:"text",type:"string",required:false,fallback:"",maximum:512,origin:"",owner:"fill"}],mutable:true,publishes:[],reads:[],holes:[],requirements:[],executable:true};
+  let refused: boolean = false;
+  try { catalogue.validate(unowned); } catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } refused = error.message.includes("without an origin"); }
+  result.unowned = refused;
+  // A required parameter whose owner is a provider and no frozen contract is available cannot be
+  // instantiated, and the refusal locates the kind and the parameter.
+  let provider: catalogue.Definition = {kind:"note",criteria:"x",parameters:[{name:"text",type:"string",required:true,fallback:"",maximum:512,origin:"live",owner:"provider"}],mutable:true,publishes:[],reads:[],holes:[],requirements:[],executable:true};
+  let located: string = "";
+  try { await catalogue.instantiate({need:"probe",definition:provider,parameters:{title:"",subtitle:"",text:"x"},accepted:true,reason:""},bindings.create([])); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } located = error.message; }
+  result.located = located;
+  // Eligibility facts are offered for the executable kinds only; a kind without an implementation
+  // stays open and is never offered with a substitute definition.
+  let offeredKinds: string[] = [];
+  for (let entry of catalogue.definitions()) { if (catalogue.offered(entry)) { offeredKinds[offeredKinds.length] = entry.kind; } }
+  result.offered = offeredKinds;
+  let plan: plans.Plan = {title:"T",eyebrow:"",subtitle:"",inputs:[],constants:[],requirements:[],needs:[{id:"earn",type:"content",words:"Track the points I earn and redeem",quote:"",reads:[],required:true,spec:{}},{id:"measure",type:"content",words:"Record my weight measurement",quote:"",reads:[],required:true,spec:{}},{id:"tap",type:"content",words:"One-tap logging of a glass of water",quote:"",reads:[],required:true,spec:{}}],questions:[]};
+  let alternatives: selecting.Alternative[] = catalogue.alternatives(plan);
+  let selected: string[] = [];
+  for (let alternative of alternatives) { for (let need of plan.needs) { if (alternative.need === need.id && (alternative.kind === "points_ledger" || alternative.kind === "reading_status" || alternative.kind === "quick_log")) { selected[selected.length] = need.id+"/"+alternative.kind; } } }
+  result.preference = selected;
+  // Reader optionality is published exactly as the specification row declares it: only the query,
+  // currency, itinerary start and deadline readers are optional; every other reader is required, so
+  // an unconnected one leaves its need unfilled instead of substituting a factual fallback.
+  let optionalReaders: Record<string, unknown> = {"search_list":["query"],"master_list":["query"],"number_strip":["currency"],"breakdown_table":["currency"],"settle_up":["currency"],"itinerary":["start","deadline"]};
+  let readerMismatch: string = "";
+  for (let entry of catalogue.definitions()) {
+    let expected: string[] = []; if (Object.hasOwn(optionalReaders,entry.kind)) { expected = optionalReaders[entry.kind] as string[]; }
+    for (let port of entry.reads) {
+      let optional: boolean = false; for (let name of expected) { if (name === port.name) { optional = true; } }
+      if (port.optional !== optional) { readerMismatch = readerMismatch+entry.kind+"."+port.name+" "; }
+    }
+    for (let name of expected) {
+      let found: boolean = false; for (let port of entry.reads) { if (port.name === name) { found = true; } }
+      if (!found) { readerMismatch = readerMismatch+"missing "+entry.kind+"."+name+" "; }
+    }
+  }
+  result.readers = readerMismatch;
+  return s.encode(result);
+}
+// Decode acceptance and rejection for the rows and domains the full table declares.
+export async function strictness(): Promise<number> {
+  let count: number = 0;
+  // Shared decimals at the reading_status parameter: -1 and 6 are admitted, -2, 7 and 1.5 reject.
+  let bands: string = "\"bands\":[{\"upper\":5,\"label\":\"Low\",\"level\":0},{\"upper\":null,\"label\":\"High\",\"level\":2}]}";
+  let minusOne: catalogue.Definition = definition("reading_status");
+  count = count+1; await catalogue.decode(minusOne,JSON.parse("{\"unit\":\"kg\",\"decimals\":-1," + bands));
+  count = count+1; await catalogue.decode(minusOne,JSON.parse("{\"unit\":\"kg\",\"decimals\":6," + bands));
+  count = count+await rejects("reading_status","{\"unit\":\"kg\",\"decimals\":-2," + bands,"decimals -2");
+  count = count+await rejects("reading_status","{\"unit\":\"kg\",\"decimals\":7," + bands,"decimals 7");
+  count = count+await rejects("reading_status","{\"unit\":\"kg\",\"decimals\":1.5," + bands,"decimals 1.5");
+  count = count+await rejects("reading_status","{\"unit\":\"kg\",\"bands\":[]}","empty reading bands");
+  // A single unbounded band is the degenerate but valid nonempty band list: every reading is final.
+  count = count+1; await catalogue.decode(definition("reading_status"),JSON.parse("{\"unit\":\"kg\",\"bands\":[{\"upper\":null,\"label\":\"Low\",\"level\":0}]}"));
+  count = count+await rejects("reading_status","{\"unit\":\"kg\",\"bands\":[{\"upper\":5,\"label\":\"Low\",\"level\":0},{\"upper\":4,\"label\":\"High\",\"level\":2}]}","decreasing reading bands");
+  count = count+await rejects("reading_status","{\"unit\":\"kg\",\"bands\":[{\"upper\":5,\"label\":\"Low\",\"level\":3},{\"upper\":null,\"label\":\"High\",\"level\":2}]}","reading level outside the status mapping");
+  // Timer presets: one to six, positive durations, no empty list.
+  count = count+1; await catalogue.decode(definition("timer"),JSON.parse("{\"presets\":[{\"label\":\"Timer\",\"seconds\":1500}]}"));
+  count = count+await rejects("timer","{\"presets\":[]}","empty preset list");
+  count = count+await rejects("timer","{\"presets\":[{\"label\":\"Timer\",\"seconds\":0}]}","nonpositive preset duration");
+  count = count+await rejects("timer","{\"presets\":[{\"label\":\"a\",\"seconds\":1},{\"label\":\"b\",\"seconds\":1},{\"label\":\"c\",\"seconds\":1},{\"label\":\"d\",\"seconds\":1},{\"label\":\"e\",\"seconds\":1},{\"label\":\"f\",\"seconds\":1},{\"label\":\"g\",\"seconds\":1}]}","seven presets");
+  // Stops: nonnegative integral minutes, paired coordinates inside their domains.
+  count = count+1; await catalogue.decode(definition("itinerary"),JSON.parse("{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":0,\"latitude\":-90,\"longitude\":180}]}"));
+  count = count+await rejects("itinerary","{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":-1}]}","negative stop minutes");
+  count = count+await rejects("itinerary","{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":1.5}]}","fractional stop minutes");
+  count = count+await rejects("itinerary","{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":1,\"latitude\":10}]}","unpaired coordinates");
+  count = count+await rejects("itinerary","{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":1,\"latitude\":91,\"longitude\":0}]}","latitude outside its domain");
+  count = count+await rejects("itinerary","{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":1},{\"id\":\"a\",\"label\":\"Work\",\"minutes\":2}]}","duplicate stop identity");
+  // Reminders: a one-shot row requires its day and a daily row omits it.
+  count = count+1; await catalogue.decode(definition("reminders"),JSON.parse("{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":600,\"daily\":true},{\"id\":\"b\",\"title\":\"Appointment\",\"minute\":600,\"day\":4}]}"));
+  count = count+await rejects("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":600,\"daily\":true,\"day\":4}]}","daily reminder with a day");
+  count = count+await rejects("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":600}]}","one-shot reminder without a day");
+  count = count+await rejects("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":1440}]}","minute outside the shared domain");
+  count = count+await rejects("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":1,\"day\":1.5}]}","fractional day");
+  // Task and reward points are positive; people are unique.
+  count = count+await rejects("points_ledger","{\"people\":[\"Ada\"],\"tasks\":[{\"id\":\"t\",\"label\":\"Chores\",\"points\":0}]}","nonpositive task points");
+  count = count+await rejects("points_ledger","{\"people\":[\"Ada\",\"Ada\"]}","duplicate people");
+  count = count+await rejects("points_ledger","{\"people\":[]}","empty people");
+  count = count+await rejects("points_ledger","{\"people\":[\"a\",\"b\",\"c\",\"d\",\"e\"]}","five people");
+  // Live figure and source: one to three figures, HTTPS only, RFC 6901 pointers and api|search mode.
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"Temperature\",\"path\":\"/current/temp\"}],\"source\":{\"url\":\"https://example.com/data.json\",\"mode\":\"api\",\"asofPath\":\"/updated\"}}"));
+  count = count+await rejects("live_figure","{\"figures\":[],\"source\":{\"url\":\"https://example.com/a.json\",\"mode\":\"api\"}}","no live figures");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"http://example.com/a.json\",\"mode\":\"api\"}}","plain HTTP live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"a\"}],\"source\":{\"url\":\"https://example.com/a.json\",\"mode\":\"api\"}}","JSON Pointer without a leading slash");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a~2b\"}],\"source\":{\"url\":\"https://example.com/a.json\",\"mode\":\"api\"}}","invalid JSON Pointer escape");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com/a.json\",\"mode\":\"browser\"}}","unknown live source mode");
+  // The shared numeric and text domains of the remaining rows.
+  count = count+await rejects("rating","{\"initial\":0}","rating below one");
+  count = count+await rejects("rating","{\"initial\":11}","rating above ten");
+  count = count+await rejects("progress_goal","{\"goal\":0,\"step\":1}","nonpositive goal");
+  count = count+await rejects("progress_goal","{\"goal\":1,\"step\":0}","nonpositive step");
+  count = count+await rejects("quick_log","{\"amount\":0,\"unit\":\"glass\",\"goal\":8}","nonpositive log amount");
+  count = count+await rejects("interval_timer","{\"workSeconds\":5,\"restSeconds\":2,\"rounds\":0}","zero rounds");
+  count = count+await rejects("interval_timer","{\"workSeconds\":5,\"restSeconds\":2,\"rounds\":1.5}","fractional rounds");
+  count = count+await rejects("series_chart","{\"mode\":\"everything\"}","unknown series mode");
+  count = count+await rejects("record_log","{\"labels\":[],\"currency\":\"EUR\"}","no log labels");
+  count = count+await rejects("record_log","{\"labels\":[\"a\",\"a\"],\"currency\":\"EUR\"}","duplicate log labels");
+  count = count+await rejects("record_log","{\"labels\":[\"a\"],\"currency\":\"\"}","empty currency");
+  count = count+await rejects("idea_deck","{\"ideas\":[{\"id\":\"a\",\"title\":\"Walk\",\"level\":\"easy\",\"instructions\":\"\",\"minutes\":0}]}","nonpositive idea duration");
+  count = count+await rejects("due_items","{\"rows\":[{\"id\":\"a\",\"name\":\"Tax\",\"day\":1.5}]}","fractional due day");
+  count = count+await rejects("dose_schedule","{\"rows\":[{\"id\":\"a\",\"name\":\"Dose\",\"minute\":-1}]}","negative dose minute");
+  return count;
+}
 export function main(): void { return; }

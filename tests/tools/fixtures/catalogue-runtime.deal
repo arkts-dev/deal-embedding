@@ -1,0 +1,210 @@
+import * as catalogue from "./catalogue";
+import * as screens from "./screen";
+import * as composer from "./composer";
+import * as bindings from "./bindings";
+import * as s from "./construction-schema";
+
+// One composition per behavioural group, assembled by the production composer. The sources this
+// fixture returns are compiled against the shipped pack and driven through the packaged runtime by
+// test-catalogue-runtime.js, so every transition and published port is exercised on the emitted code.
+class Piece { need: string; kind: string; json: string; }
+class Link { reader: string; readerPort: string; writer: string; writerPort: string; }
+function definition(kind: string): catalogue.Definition {
+  for (let entry of catalogue.definitions()) { if (entry.kind === kind) { return entry; } }
+  throw {name:"TEST_FAILED",message:"Missing catalogue kind: "+kind};
+}
+async function piece(need: string, kind: string, json: string, registry: bindings.Registry): Promise<screens.Instance> {
+  let parameters: Record<string, unknown> = {};
+  try { parameters = await catalogue.decode(definition(kind),JSON.parse(json)); }
+  catch (unknownError) { let error: Error = unknownError as Error; throw {name:error.name,message:need+": "+error.message}; }
+  let entry: catalogue.Configured = {need:need,definition:definition(kind),parameters:parameters,accepted:true,reason:""};
+  try { return await catalogue.instantiate(entry,registry); }
+  catch (unknownError) { let error: Error = unknownError as Error; throw {name:error.name,message:need+" instantiate "+error.message+" params "+s.encode(parameters)}; }
+}
+function link(reader: string, readerPort: string, writer: string, writerPort: string): Link { return {reader:reader,readerPort:readerPort,writer:writer,writerPort:writerPort}; }
+async function compose(items: Piece[], links: Link[]): Promise<string> {
+  let registry: bindings.Registry = bindings.create([]);
+  let composition: screens.Composition = {screen:{title:"Catalogue",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[]},bindings:{},actions:{},connections:[]};
+  for (let item of items) {
+    let instance: screens.Instance = await piece(item.need,item.kind,item.json,registry);
+    // Assembly and eligibility must not disagree: every reader the kind table declares is emitted with
+    // exactly the optionality the table declares, so a kind the gate offers as standalone really runs on
+    // its declared fallback and a kind it gates really needs its publisher.
+    for (let declared of definition(item.kind).reads) {
+      let found: boolean = false;
+      for (let emitted of instance.fragment.ports) { if (emitted.direction === "read" && emitted.name === declared.name) { found = true; if (emitted.optional !== declared.optional || emitted.type !== declared.type) { throw {name:"TEST_FAILED",message:"Emitted reader drifted: "+item.kind+"."+declared.name}; } } }
+      if (!found) { throw {name:"TEST_FAILED",message:"Declared reader was not emitted: "+item.kind+"."+declared.name}; }
+    }
+    composition.screen.instances[composition.screen.instances.length] = instance;
+  }
+  for (let declared of links) {
+    composition.connections[composition.connections.length] = {readerInstance:"section_"+declared.reader,readerPort:declared.readerPort,writerInstance:"section_"+declared.writer,writerPort:declared.writerPort};
+  }
+  let computations: composer.Computation[] = [];
+  for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
+  let assembled: composer.Result = await composer.assemble(composition,computations);
+  return s.encode(assembled.source);
+}
+// Local state machines: a countdown with its end hole, a goal, a rating, interval rounds, readings,
+// an idea deck, a points ledger, a quick log, label actions, a note and the query box.
+export async function local(): Promise<string> {
+  let items: Piece[] = [
+    {need:"timer",kind:"timer",json:"{\"presets\":[{\"label\":\"Focus\",\"seconds\":60},{\"label\":\"Break\",\"seconds\":30}]}"},
+    {need:"goal",kind:"progress_goal",json:"{\"goal\":10,\"step\":3}"},
+    {need:"rating",kind:"rating",json:"{\"initial\":5}"},
+    {need:"interval",kind:"interval_timer",json:"{\"workSeconds\":5,\"restSeconds\":2,\"rounds\":2}"},
+    {need:"reading",kind:"reading_status",json:"{\"unit\":\"kg\",\"bands\":[{\"upper\":5,\"label\":\"Low\",\"level\":0},{\"upper\":9,\"label\":\"Watch\",\"level\":1},{\"upper\":null,\"label\":\"High\",\"level\":2}],\"decimals\":1}"},
+    {need:"ideas",kind:"idea_deck",json:"{\"ideas\":[{\"id\":\"a\",\"title\":\"Walk\",\"level\":\"easy\",\"instructions\":\"Around the block\",\"minutes\":5},{\"id\":\"b\",\"title\":\"Read\",\"level\":\"hard\",\"instructions\":\"A chapter\",\"minutes\":30},{\"id\":\"c\",\"title\":\"Stretch\",\"level\":\"easy\",\"instructions\":\"\",\"minutes\":5}]}"},
+    {need:"points",kind:"points_ledger",json:"{\"people\":[\"Ada\",\"Bo\"],\"tasks\":[{\"id\":\"t\",\"label\":\"Chores\",\"points\":5}],\"rewards\":[{\"id\":\"r\",\"label\":\"Film\",\"points\":8},{\"id\":\"s\",\"label\":\"Sticker\",\"points\":3}]}"},
+    {need:"quick",kind:"quick_log",json:"{\"amount\":2.5,\"unit\":\"glasses\",\"goal\":8,\"extraAmounts\":[1]}"},
+    {need:"choose",kind:"actions",json:"{\"labels\":[\"First\",\"Second\"]}"},
+    {need:"memo",kind:"note",json:"{\"text\":\"Remember this\"}"},
+    {need:"filter",kind:"filter_box",json:"{\"title\":\"Filter\"}"}
+  ];
+  return await compose(items,[]);
+}
+// Exact aggregate arithmetic: one record log publishes every aggregate port, and four read-only
+// sections consume them through issued connections.
+export async function aggregate(): Promise<string> {
+  let items: Piece[] = [
+    {need:"log",kind:"record_log",json:"{\"labels\":[\"Food\",\"Travel\"],\"currency\":\"EUR\"}"},
+    {need:"numbers",kind:"number_strip",json:"{}"},
+    {need:"breakdown",kind:"breakdown_table",json:"{}"},
+    {need:"series",kind:"series_chart",json:"{\"mode\":\"balances\"}"},
+    {need:"seriesAll",kind:"series_chart",json:"{}"},
+    {need:"settle",kind:"settle_up",json:"{}"}
+  ];
+  let links: Link[] = [];
+  for (let port of ["total","average","count","currency"]) { links[links.length] = link("numbers",port,"log",port); }
+  for (let port of ["labels","totals","balances","currency"]) { links[links.length] = link("breakdown",port,"log",port); }
+  for (let port of ["labels","totals","balances"]) { links[links.length] = link("series",port,"log",port); links[links.length] = link("seriesAll",port,"log",port); }
+  for (let port of ["labels","balances","currency"]) { links[links.length] = link("settle",port,"log",port); }
+  return await compose(items,links);
+}
+// Readers over typed publishers: the query box filters both lists, the selected row feeds the detail
+// view, and the checklist counts feed the summary and the progress line.
+export async function lists(): Promise<string> {
+  let items: Piece[] = [
+    {need:"filter",kind:"filter_box",json:"{\"title\":\"Filter\"}"},
+    {need:"search",kind:"search_list",json:"{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\",\"detail\":\"first\"},{\"id\":\"b\",\"label\":\"Beta\",\"detail\":\"second\"}]}"},
+    {need:"master",kind:"master_list",json:"{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\",\"detail\":\"first\"},{\"id\":\"b\",\"label\":\"Beta\",\"detail\":\"second\"}]}"},
+    {need:"detail",kind:"detail_view",json:"{}"},
+    {need:"checklist",kind:"checklist",json:"{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\"},{\"id\":\"b\",\"label\":\"Beta\"}]}"},
+    {need:"summary",kind:"list_summary",json:"{}"},
+    {need:"line",kind:"progress_line",json:"{}"},
+    {need:"trip",kind:"itinerary",json:"{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":0},{\"id\":\"b\",\"label\":\"Work\",\"minutes\":20}]}"},
+    {need:"trip2",kind:"itinerary",json:"{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":0},{\"id\":\"b\",\"label\":\"Work\",\"minutes\":20}]}"},
+    {need:"trip3",kind:"itinerary",json:"{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":0},{\"id\":\"b\",\"label\":\"Work\",\"minutes\":20}]}"},
+    {need:"fuel",kind:"quick_log",json:"{\"amount\":1,\"unit\":\"cup\",\"goal\":8}"},
+    {need:"emptycheck",kind:"checklist",json:"{\"items\":[]}"},
+    {need:"emptylines",kind:"progress_line",json:"{}"}
+  ];
+  let links: Link[] = [
+    link("search","query","filter","query"), link("master","query","filter","query"),
+    link("detail","items","master","items"), link("detail","selected","master","selected"),
+    link("summary","done","checklist","done"), link("summary","total","checklist","total"),
+    link("line","done","checklist","done"), link("line","total","checklist","total"),
+    link("emptylines","done","emptycheck","done"), link("emptylines","total","emptycheck","total"),
+    link("trip","start","fuel","goal"), link("trip","deadline","fuel","goal"),
+    link("trip3","start","fuel","goal")
+  ];
+  return await compose(items,links);
+}
+// The same countdown with an issued end body and an issued row filter: the body replaces the default
+// in place, changes behavior and leaves the signature and the parameter values alone.
+export async function issuedBodies(): Promise<string> {
+  let registry: bindings.Registry = bindings.create([]);
+  let timer: screens.Instance = await piece("timer","timer","{\"presets\":[{\"label\":\"Focus\",\"seconds\":1}]}",registry);
+  let list: screens.Instance = await piece("master","master_list","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\"},{\"id\":\"b\",\"label\":\"Beta\"}]}",registry);
+  timer.bodies = {"whenFinished": "return {elapsed: 0, running: false, last: state.last, preset: state.preset};"};
+  list.bodies = {"rowMatches": "let label: string = item.label.toLowerCase(); let query: string = state.query.toLowerCase(); return item.label !== \"Beta\" && label.includes(query);"};
+  let composition: screens.Composition = {screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer,list]},bindings:{},actions:{},connections:[]};
+  let computations: composer.Computation[] = [];
+  for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
+  let assembled: composer.Result = await composer.assemble(composition,computations);
+  return s.encode(assembled.source);
+}
+// The rejected cases the emission layer owns: an unissued body key, a duplicate key in the decoded
+// composition, a non-text body, a controller-writer body and a body past its UTF-16 bound.
+export async function rejectedBodies(): Promise<number> {
+  let count: number = 0; let registry: bindings.Registry = bindings.create([]);
+  let timer: screens.Instance = await piece("timer","timer","{\"presets\":[{\"label\":\"Focus\",\"seconds\":1}]}",registry);
+  let unissued: boolean = false;
+  timer.bodies = {"notAHole": "return state;"};
+  try { await composer.assemble({screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer]},bindings:{},actions:{},connections:[]},[]); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } unissued = true; }
+  if (!unissued) { throw {name:"TEST_FAILED",message:"Unissued hole body admitted"}; } count = count+1;
+  timer.bodies = {"whenFinished": 5};
+  let nontext: boolean = false;
+  try { await composer.assemble({screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer]},bindings:{},actions:{},connections:[]},[]); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } nontext = true; }
+  if (!nontext) { throw {name:"TEST_FAILED",message:"Non-text hole body admitted"}; } count = count+1;
+  let long: string = ""; let index: number = 0; while (index < 601) { long = long+"a"; index = index+1; }
+  timer.bodies = {"whenFinished": long};
+  let oversize: boolean = false;
+  try { await composer.assemble({screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer]},bindings:{},actions:{},connections:[]},[]); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } oversize = true; }
+  if (!oversize) { throw {name:"TEST_FAILED",message:"Oversize hole body admitted"}; } count = count+1;
+  // A duplicate JSON key is refused by the contextual decoder before any map could erase it.
+  let raw: string = "{\"screen\":{\"title\":\"T\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[],\"instances\":[{\"id\":\"section_timer\",\"kind\":\"timer\",\"origin\":\"catalogue\",\"parameters\":{},\"bodies\":{\"whenFinished\":\"return state;\",\"whenFinished\":\"return {};\"},\"fragment\":{\"declarations\":\"\",\"fields\":[],\"updates\":[],\"effects\":[],\"helpers\":\"\",\"view\":\"v\",\"options\":[],\"content\":[],\"ports\":[],\"holes\":[{\"id\":\"whenFinished\",\"signature\":\"(state: AppState): AppState\",\"purpose\":\"end\",\"body\":\"return state;\",\"writer\":\"fill\"}],\"covers\":[],\"owns\":[]}}]},\"bindings\":{},\"actions\":{},\"connections\":[]}";
+  let duplicated: boolean = false;
+  try { screens.decode(raw,"screen",[]); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "E8001" || !error.message.includes("duplicate key")) { throw error; } duplicated = true; }
+  if (!duplicated) { throw {name:"TEST_FAILED",message:"Duplicate hole body key admitted"}; } count = count+1;
+  // A body that does not compile rejects the instance with its hole identifier; it is never silently
+  // replaced by the default while the customization is reported covered.
+  let timer3: screens.Instance = await piece("timer","timer","{\"presets\":[{\"label\":\"Focus\",\"seconds\":1}]}",registry);
+  timer3.bodies = {"whenFinished": "return {preset: state.preset"};
+  let uncompilable: boolean = false;
+  try { await composer.assemble({screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer3]},bindings:{},actions:{},connections:[]},[]); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } uncompilable = error.message.includes("whenFinished") && error.message.includes("not valid syntax"); }
+  if (!uncompilable) { throw {name:"TEST_FAILED",message:"Uncompilable hole body admitted or unlocated"}; } count = count+1;
+  // A body may use the fragment declarations and helpers but may not add a declaration of its own.
+  let timer4: screens.Instance = await piece("timer","timer","{\"presets\":[{\"label\":\"Focus\",\"seconds\":1}]}",registry);
+  timer4.bodies = {"whenFinished": "return state; } export function injected(): number { return 1; } //"};
+  let injected: boolean = false;
+  try { await composer.assemble({screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer4]},bindings:{},actions:{},connections:[]},[]); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } injected = error.message.includes("injected") && error.message.includes("declaration"); }
+  if (!injected) { throw {name:"TEST_FAILED",message:"Hole body declaration injection admitted"}; } count = count+1;
+  // A body may not redeclare the hole function itself: the composed region must describe each
+  // declaration exactly once.
+  let timer5: screens.Instance = await piece("timer","timer","{\"presets\":[{\"label\":\"Focus\",\"seconds\":1}]}",registry);
+  timer5.bodies = {"whenFinished": "return state; } export function whenFinished(state: AppState): AppState { return state; } //"};
+  let redeclared: boolean = false;
+  try { await composer.assemble({screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer5]},bindings:{},actions:{},connections:[]},[]); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } redeclared = error.message.includes("whenFinished") && error.message.includes("duplicate"); }
+  if (!redeclared) { throw {name:"TEST_FAILED",message:"Hole function redeclaration admitted"}; } count = count+1;
+  // A declared hole field of the wrong wire kind is refused with its location, not cast.
+  for (let field of ["id","signature"]) {
+    let identity: string = "\"whenFinished\""; let signature: string = "\"(state: AppState): AppState\"";
+    if (field === "id") { identity = "5"; } else { signature = "5"; }
+    let wire: string = "{\"screen\":{\"title\":\"T\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[],\"instances\":[{\"id\":\"a\",\"kind\":\"spotlight\",\"origin\":\"catalogue\",\"parameters\":{},\"bodies\":{},\"fragment\":{\"declarations\":\"\",\"fields\":[],\"updates\":[],\"effects\":[],\"helpers\":\"\",\"view\":\"v\",\"options\":[],\"content\":[],\"ports\":[],\"holes\":[{\"id\":"+identity+",\"signature\":"+signature+",\"purpose\":\"end\",\"body\":\"return state;\",\"writer\":\"fill\",\"requires\":\"\"}],\"covers\":[],\"owns\":[]}}]},\"bindings\":{},\"actions\":{},\"connections\":[]}";
+    let located: boolean = false;
+    try { screens.decode(wire,"screen",[]); }
+    catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } located = error.message.includes("hole "+field); }
+    if (!located) { throw {name:"TEST_FAILED",message:"Non-text hole "+field+" admitted or unlocated"}; } count = count+1;
+  }
+  // A controller-writer hole is issued with its policy implementation and is never offered to a fill:
+  // a body for it rejects before emission.
+  let timer2: screens.Instance = await piece("timer","timer","{\"presets\":[{\"label\":\"Focus\",\"seconds\":1}]}",registry);
+  let controllerHole: Record<string, unknown> = timer2.fragment.holes[0]; controllerHole.writer = "controller";
+  timer2.bodies = {"whenFinished": "return {elapsed: 0, running: false, last: state.last, preset: state.preset};"};
+  let controlled: boolean = false;
+  try { await composer.assemble({screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer2]},bindings:{},actions:{},connections:[]},[]); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } controlled = error.message.includes("Controller-writer"); }
+  if (!controlled) { throw {name:"TEST_FAILED",message:"Controller-writer hole body admitted"}; } count = count+1;
+  return count;
+}
+// A read-only summary may not bind an import alias to a local: that would hide the receiver of a
+// later call from the pure-intrinsic admission. The composer refuses the whole region.
+export async function aliasedBinding(): Promise<number> {
+  let fragment: screens.Fragment = {declarations:"import * as net from \"host/net\";",fields:[{name:"peeked",type:"string",role:"derived",dependencies:[],initial:"null",owner:"evil"}],updates:[],effects:[],helpers:"export function peek(state: AppState): string { let m = net; return m.replace(\"a\",\"b\"); }",view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Text(text: state.peeked_display)}",options:[],content:[],ports:[],holes:[],covers:[],owns:["evil"]};
+  let instance: screens.Instance = {id:"evil",kind:"custom",origin:"custom",parameters:{},fragment:fragment,bodies:{}};
+  let computations: composer.Computation[] = [{instance:"evil",field:"peeked",value:"peek(state)",ready:"true",reason:"\"No\"",dependencies:[]}];
+  let refused: boolean = false;
+  try { await composer.assemble({screen:{title:"Alias",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[instance]},bindings:{},actions:{},connections:[]},computations); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } refused = error.message.includes("Aliased import"); }
+  if (!refused) { throw {name:"TEST_FAILED",message:"Aliased import admitted into a read-only summary"}; }
+  return 1;
+}
+export function main(): void { return; }

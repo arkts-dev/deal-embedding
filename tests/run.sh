@@ -47,6 +47,9 @@ python3 tests/tools/test-execution-contracts.py
 python3 tests/tools/test-resource-bounds.py
 python3 tests/tools/test-source-edits.py
 python3 tests/tools/test-catalogue.py
+# Catalogue emission through the real composer, the shipped pack and the packaged runtime: transitions,
+# published ports, issued hole bodies and the exact aggregate arithmetic.
+python3 tests/tools/test-catalogue-runtime.py
 python3 tests/tools/test-composer.py
 node tests/tools/test-persistence.js build/v08-cutover/composed-executable/js
 python3 tests/tools/test-fragment-semantics.py

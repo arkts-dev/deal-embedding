@@ -410,7 +410,7 @@
       "requirement": "One Slot per need with reads, writes, trigger, provider flag and allowed kinds; connections resolve on exact nominal type with required-optional rules, alignment takes the first other exact-name and type publisher in screen order with required-missing publishers failing and empty optional fallbacks, and Layout stack or unique integral positions resolve instances, capacity and unknown references with no cycles.",
       "status": "partial",
       "test": "python3 tests/tools/test-catalogue.py",
-      "blocker": "The exercised fixtures assemble empty slots and connections (tests/tools/fixtures/catalogue-contracts.deal:274), so slot tampering, layout position resolution, capacity and cycle rejection have no production-seam proof. One aligned publisher pair is proven: the catalogue mode binds the checklist's done/total fields to the list_summary reader through construction.connect (core/construction.deal:33-51,129) and tests/tools/test-emitted-runtime.js asserts the bound summary. Unproven or absent: choice among several screen-order candidates and the plan-reads filter (core/construction.deal:39-41 skips a matching publisher whose covers name nothing the covering need reads), the required-reader rejection itself (core/construction.deal:47 drops the instance and leaves its slot open instead of failing the run, and core/screen.deal:136 is unreachable in production because screens.decode has no production caller), and any consumer of a declared optional fallback (core/screen.deal:63-65 only decodes and validates it, and core/composer.deal:85-102 binds a reader getter only from composition.connections, so an unconnected optional reader takes no fallback); owner ownership-slots-operations-and-assembly (ISSUE-0003)."
+      "blocker": "The exercised fixtures assemble empty slots and connections (tests/tools/fixtures/catalogue-contracts.deal:274), so slot tampering, layout position resolution, capacity and cycle rejection have no production-seam proof. Proven: one aligned publisher pair (the catalogue mode binds the checklist's done/total fields to the list_summary reader through construction.connect, core/construction.deal:38-56,183), and an unconnected optional reader now takes its declared assembly fallback (core/composer.deal:166-177; tests/tools/test-catalogue-runtime.js proves the itinerary without a start). Unproven or absent: choice among several screen-order candidates and the plan-reads filter (core/construction.deal:44-46 skips a matching publisher whose covers name nothing the covering need reads), and the required-reader rejection itself: core/construction.deal:51-56 drops the instance and leaves its slot open with a located reason instead of failing the run, no deterministic lane drives that refusal, and core/screen.deal:136 is unreachable in production because screens.decode has no production caller; owner ownership-slots-operations-and-assembly (ISSUE-0003)."
     },
     {
       "id": "publication",
@@ -507,8 +507,16 @@
       "family": "selection-alignment",
       "owner": "generation-recovery-and-source-editing",
       "requirement": "Alignment prefers points_ledger for earn or redeem behavior, reading_status for measurement behavior and quick_log for one-tap logging, and an alignment that replaces an accepted instance preserves every retained clock reader, countdown_end action, entry_added or row_tap trigger and required aggregate or is rejected with the prior instance kept.",
-      "status": "missing",
-      "blocker": "core/catalogue.deal issues twelve kinds and none of points_ledger, reading_status or quick_log exists, so no preferred kind can be offered and the preference order has no production path; the catalogue owner supplies those definitions. No alignment path replaces an accepted instance either: both Select batches settle every need alignment could re-decide, so a retained clock reader, end action, entry trigger or required aggregate can never be dropped by an alignment and the preservation rule has no reachable vector. One reader case also stays unproven: a need that requests a dependency no accepted publisher covers is refused by the connection step with the located 'Reader port is not a requested dependency' or 'Required reader port has no publisher' reason, and no deterministic lane drives that refusal."
+      "status": "partial",
+      "blocker": "The three preferred kinds are declared and offered: points_ledger, reading_status and quick_log are executable and test-catalogue.js asserts the earn/points_ledger, measure/reading_status and tap/quick_log pair for a matching need. Selection itself stays generation-owned. What has no production path is the replacement half: no alignment path replaces an accepted instance, because both Select batches settle every need alignment could re-decide, so a retained clock reader, countdown_end action, entry_added or row_tap trigger and required aggregate can never be dropped by an alignment and the preservation rule has no reachable vector. The connection step does leave a reader with no accepted publisher unfilled with a located reason, but no deterministic lane drives that refusal, so it is unproven here as well as in slots-connections.",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ],
+      "asserts": [
+        "the preferred kind is offered for its need"
+      ]
     },
     {
       "id": "questions",
@@ -535,7 +543,11 @@
       "requirement": "Coverage judgment against assembled behaviour, stage budgets and escalation, attempts counted per candidate check including failures, stop on repeated misses with the least-missing draft.",
       "status": "partial",
       "test": "node tests/tools/test-generation-cutover.js",
-      "blocker": "Stage budgets, exact repair, check accounting and repeated-miss stopping run, and the packaged entry asserts one attempt per completed candidate check across every mode (whole plus fallback, retained least-missing draft, rejected admission and accepted repair); catalogue body counters and the nested caps are absent."
+      "blocker": "Stage budgets, exact repair, check accounting and repeated-miss stopping run, and the packaged entry asserts one attempt per completed candidate check across every mode (whole plus fallback, retained least-missing draft, rejected admission and accepted repair); catalogue body counters and the nested caps are absent.",
+      "asserts": [
+        "the refused need stays open for its own section write",
+        "table: missing \u2014 Catalogue instance table: Catalogue columns match headers"
+      ]
     },
     {
       "id": "lookup-refusals",
@@ -550,8 +562,8 @@
       "family": "lookup-refusals",
       "owner": "catalogue-sections",
       "requirement": "Catalogue body fill: one ask per instance, two repairs, revert to default, per-instance abandonment, 600-character bound, independent counters.",
-      "status": "missing",
-      "blocker": "Catalogue instances still construct empty holes and bodies; no ask, counter, revert or abandonment path exists."
+      "status": "partial",
+      "blocker": "Hole definitions with compiling default bodies are issued and a body that replaces its default is proven (holes-bodies), so what is missing is the authorship half: no ask per instance, no two-repair budget, no revert-to-default and no per-instance abandonment path, and therefore no independent counter or coverage notice for a reverted or abandoned body."
     },
     {
       "id": "checking-admission",
@@ -955,8 +967,18 @@
       "family": "prop-predicates",
       "owner": "catalogue-sections",
       "requirement": "A reading_status catalogue parameter that issues the shared decimals field keeps the same -1 auto or integral 0-6 domain and rejects -2, 7 and 1.5 with the instance identifier (docs/spec-v0.8.md:186,457).",
-      "status": "missing",
-      "blocker": "The reading_status parameter site does not exist: core/catalogue.deal defines 12 kinds and no reading_status definition, so its optional decimals parameter is never decoded and no vector can reject 7, -2 or 1.5 at that site. The owning kind is the missing row catalogue-reading_status."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py",
+      "evidence": "The reading_status parameter issues the shared decimals field with default -1; -1 and 6 decode, while -2, 7 and 1.5 reject with the parameter name, and the fill refusal carries the instance identity so the located reason names the instance that kept its defaults. The component, figure and entry-field sites of the same domain stay owned by the prop and plan rows.",
+      "asserts": [
+        "the reading_status decimals parameter publishes its origin, owner and default",
+        "the decimals refusal locates the instance and the parameter",
+        "the strictness matrix runs every listed row and domain case exactly once"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
     },
     {
       "id": "card-profile",
@@ -1394,16 +1416,38 @@
       "owner": "catalogue-sections",
       "requirement": "All 36 catalogue kinds are declared once with their parameter schema, row schema, initialization, transitions, published and read ports and holes; coverage is measured against the spec, never against fixtures.",
       "status": "partial",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "blocker": "9 of 36 kinds have executable definitions and deterministic vectors, 3 have definitions without a deterministic vector and 24 have no definition; every kind is listed as its own row instead of being substituted. No vector drives a kind transition, a published port or a hole: the lane initializes only data_table, timeline, bar_chart, trend_chart, metrics and key_facts and asserts no mutable update, no effect, no port and no hole for those six (tests/tools/test-catalogue.js:115-118), while the mutable kinds that do issue them in production - note core/catalogue.deal:237, actions :288, checklist :294 and :308, filter_box :239, list_summary :311 - have no initialization, transition, port or assembly vector. Row-bound matrices exist only for data_table, timeline, bar_chart and metrics."
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "blocker": "All 36 kinds are declared once with their parameter/row schemas, ownership facts, ports and holes. Thirty have executable definitions: their decode, initialization, transitions, published ports and issued holes are driven through the composer, the shipped pack and the packaged runtime, except the daily projections noted below. Six remain without an executable definition and are therefore not offered: calendar_event, intent_panel and live_figure need provider/public-probe transports, while reminders, dose_schedule and due_items need the frozen host-timezone day and calendar reconciliation. The reading_status chart is unbounded by history, so a card-target instance over sixty readings exceeds the card picture bound and faults rather than truncating; no catalogue vector drives that renderer bound, so it stays a stated limitation, not proof here. quick_log and idea_deck retain timestamped tap and completion history, but their daily projections (today_total, today_count, done_today) stay declared with a null value and a published located reason: the issued section surface exposes only std/time.nowMillis(), no host-timezone adapter day, and a recomputation may not read a clock at all, so an adapter day alone would not unlock the projection - the day has to arrive through an action into authoritative state. No UTC epoch-day or lifetime count stands in for the daily value, which is why both rows are partial. No vector drives a structural addition, and hole authoring/repair belongs to the generation rows. Every kind stays its own row instead of being substituted.",
+      "asserts": [
+        "the table declares all 36 specification kinds",
+        "the strictness matrix runs every listed row and domain case exactly once"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-instance-count",
       "family": "instance-count",
       "owner": "catalogue-sections",
-      "requirement": "Initial generation applies no catalogue instance count: a composition with more than six distinct catalogue instances decodes and assembles while a duplicate kind rejects, and the six-instance refusal belongs to a structural addition only.",
+      "requirement": "Initial generation applies no catalogue instance count: a composition with more than six distinct catalogue instances decodes, instantiates and assembles while a duplicate kind rejects, and the six-instance refusal belongs to a structural addition only.",
       "status": "partial",
-      "blocker": "Duplicate-kind rejection is implemented in core/screen.deal and no vector composes more than the fixture instance set, so the more-than-six assertion for initial generation is unproven; the six-instance refusal of a structural addition has no production path because no structural edit exists."
+      "test": "python3 tests/tools/test-catalogue.py",
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ],
+      "evidence": "Seven distinct kinds (checklist, metrics, spotlight, data_table, timeline, bar_chart, key_facts) instantiate, issue their computations, are re-decoded by the production composition decoder and assemble in one initial composition through the production composer; a second instance of an already selected kind is refused by core/screen.deal with the duplicated identity. The six-instance bound is never applied at decode.",
+      "blocker": "Initial generation applies no catalogue instance count: seven distinct kinds instantiate, are re-decoded by the production composition decoder and assemble in one initial composition, and a duplicate kind rejects at decode. The six-instance refusal belongs to a structural addition, and no structural edit exists yet: the structural-edits row is missing and owns that clause, so this row cannot exercise it.",
+      "asserts": [
+        "an initial composition with seven catalogue instances assembles",
+        "the seven instances are seven distinct kinds",
+        "a duplicate catalogue kind rejects at decode",
+        "the checklist publishes its done computation"
+      ]
     },
     {
       "id": "catalogue-note",
@@ -1411,28 +1455,37 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind note: parameter decode and the shared disclosure predicate, where a user-owned note's invented text is refused and the same note not marked user-owned is admitted.",
       "status": "covered",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "evidence": "The executable definition of note decodes its text parameter and the shared disclosure predicate refuses invented user-owned content while admitting the same note unowned. Note's editable Change transition (core/catalogue.deal:237) and every port, hole and assembly vector remain the gaps recorded by catalogue-kind-table and holes-bodies.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "note decodes its text parameter, refuses invented user-owned content and keeps the edited text in its Change transition through the packaged runtime.",
       "asserts": [
         "Unlocated user-owned note refusal",
-        "A note that is not user-owned was refused"
+        "A note that is not user-owned was refused",
+        "the note retains the edited text"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
-        "tests/tools/test-catalogue.js"
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
       ]
     },
     {
       "id": "catalogue-actions",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
-      "requirement": "Catalogue kind actions: an accepted parameter decode with its one-to-twelve label bound, the shared disclosure predicate, the Select transition and the assembled section.",
-      "status": "partial",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "blocker": "actions has an executable definition and two decode refusals only (tests/tools/fixtures/catalogue-contracts.deal:144-145, nonarray and numeric labels): no accepted decode, no labels-bound vector, no disclosure case and no initialization, transition, port or assembly vector exercises it, so its Select transition in core/catalogue.deal:288 stays unproven.",
+      "requirement": "Catalogue kind actions: an accepted parameter decode with its one-to-twelve label bound, the local Select transition and the assembled section.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
-        "tests/tools/test-catalogue.js"
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ],
+      "evidence": "actions decodes one to twelve labels, starts at the first label, refuses thirteen and keeps the last tapped label; no external operation is bound.",
+      "asserts": [
+        "f_section_choose_selected",
+        "thirteen action labels"
       ]
     },
     {
@@ -1441,8 +1494,8 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind metrics: parameter decode with its twelve-row bound (a thirteenth row rejects), the shared disclosure predicate, immutable initialized facts and the assembled section.",
       "status": "covered",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "evidence": "The executable definition of metrics refuses a thirteenth row, refuses an invented fact value and label, initializes an immutable MetricGroup and joins the assembled root.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "metrics decodes disclosed facts, refuses invented labels and values with their row location and renders one read-only Stat per fact.",
       "asserts": [
         "thirteen metric rows",
         "twelve metric rows decode",
@@ -1453,7 +1506,9 @@
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
-        "tests/tools/test-catalogue.js"
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
       ]
     },
     {
@@ -1462,8 +1517,8 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind key_facts: parameter decode, the shared disclosure predicate, immutable initialized facts and the assembled section.",
       "status": "covered",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "evidence": "The executable definition of key_facts decodes its items, refuses a boolean value and a missing item list, admits a request-provenanced fact, initializes an immutable MetricGroup and joins the assembled root.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "key_facts decodes disclosed facts, refuses a boolean value and renders read-only labelled facts.",
       "asserts": [
         "boolean key-fact value",
         "Request-provenance fact refused",
@@ -1472,7 +1527,9 @@
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
-        "tests/tools/test-catalogue.js"
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
       ]
     },
     {
@@ -1481,16 +1538,20 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind checklist: parameter decode and the shared disclosure predicate for an invented row label, an invented row detail and a text completion.",
       "status": "covered",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "evidence": "The executable definition of checklist decodes its items and the shared disclosure predicate refuses an invented label and an invented detail while a text completion rejects at decode. Its done and total ports (core/catalogue.deal:308), Toggle transition (:294) and every initialization, port, hole and assembly vector remain the gaps recorded by catalogue-kind-table and holes-bodies.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "checklist decodes its disclosed entries, toggles by key and publishes done/total, read by list_summary and progress_line through issued connections.",
       "asserts": [
         "Unlocated checklist refusal",
         "Unlocated checklist detail refusal",
-        "text checklist completion"
+        "text checklist completion",
+        "f_section_checklist_done",
+        "1 / 2; remaining: 1"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
-        "tests/tools/test-catalogue.js"
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
       ]
     },
     {
@@ -1499,8 +1560,8 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind data_table: parameter decode with its cell, row and column bounds, the shared disclosure predicate, immutable initialized rows and the assembled section.",
       "status": "covered",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "evidence": "The executable definition of data_table decodes the bounded cell, row and column matrix, refuses invented cells, headers and rows, initializes immutable declared rows and joins the assembled root.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "data_table decodes three exact headers with one cell per header, refuses short and long rows, keeps exact cell text and renders the table.",
       "asserts": [
         "literal(tableInstance,'headers')",
         "thirteen table rows",
@@ -1508,11 +1569,15 @@
         "four-column headers",
         "Unlocated table refusal",
         "Unlocated header refusal",
-        "f_section_table_headers: string[];"
+        "f_section_table_headers: string[];",
+        "the table headers are a typed state field",
+        "the root keeps the declaration order"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
-        "tests/tools/test-catalogue.js"
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
       ]
     },
     {
@@ -1521,8 +1586,8 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind timeline: parameter decode with its shared minute domain and nondecreasing row bound, the shared disclosure predicate, immutable initialized rail and the assembled section.",
       "status": "covered",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "evidence": "The executable definition of timeline decodes the minute domain and the rail row bound, refuses invented minutes, titles and details, initializes an immutable rail and joins the assembled root.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "timeline decodes nondecreasing minute-ordered rows, keeps the supplied order and renders the chronological rail.",
       "asserts": [
         "timelineInstance.fragment.view.includes('ui.Timeline()",
         "thirteen rail rows",
@@ -1531,11 +1596,14 @@
         "decreasing timeline minutes",
         "Disclosed rail refused",
         "Unlocated rail minute refusal",
-        "every section view joins the root"
+        "every section view joins the root",
+        "the supplied rail order is preserved"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
-        "tests/tools/test-catalogue.js"
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
       ]
     },
     {
@@ -1544,8 +1612,8 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind bar_chart: parameter decode with its point count, maximum and value bounds, the shared disclosure predicate, immutable initialized series and the assembled section.",
       "status": "covered",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "evidence": "The executable definition of bar_chart decodes the point count, maximum and value bounds, refuses invented points, initializes immutable series in supplied order and joins the assembled root.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "bar_chart decodes a positive maximum with zero-based values inside the scale, refuses values outside it and renders the labelled bars.",
       "asserts": [
         "series(bars,'series')",
         "thirteen chart points",
@@ -1553,11 +1621,14 @@
         "positive maximum rule",
         "Disclosed bar points refused",
         "Unlocated chart refusal",
-        "f_section_bars_series: [0.0, 2.5]"
+        "f_section_bars_series: [0.0, 2.5]",
+        "chart values are not rounded or reordered"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
-        "tests/tools/test-catalogue.js"
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
       ]
     },
     {
@@ -1566,19 +1637,22 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind trend_chart: parameter decode with its scale and value bounds, the shared disclosure predicate, immutable initialized series and the assembled section.",
       "status": "covered",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "evidence": "The executable definition of trend_chart decodes the scale and value bounds, refuses a single point, an empty or reversed scale and out-of-scale values, initializes immutable series in supplied order and joins the assembled root.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "trend_chart decodes two to twelve points with minimum < maximum and all values inside the scale and renders the ordered line.",
       "asserts": [
         "series(trend,'series')",
         "empty trend scale",
         "trend value above maximum",
         "Disclosed trend points refused",
         "Unlocated trend refusal",
-        "f_section_trend_series: [(-2.0), 0.25]"
+        "f_section_trend_series: [(-2.0), 0.25]",
+        "trend points keep their supplied order"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
-        "tests/tools/test-catalogue.js"
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
       ]
     },
     {
@@ -1587,34 +1661,74 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind spotlight: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
       "status": "partial",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "blocker": "spotlight has an executable definition, but no deterministic decode, row-bound, transition or port vector exercises it in this lane."
+      "blocker": "spotlight decodes its required 512-unit message, refuses an absent or numeric message and issues no state, transition, port or hole, so the message renders read-only. The row's \"highlighted\" presentation is not issued: the pack banner component that would highlight it is outside the frozen card profile, and the portable text component has no highlight style, so a highlighted rendering waits on a card-portable presentation.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "asserts": [
+        "the spotlight content is emitted source, not state"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-filter_box",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind filter_box: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "partial",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "blocker": "filter_box has an executable definition, but no deterministic decode, row-bound, transition or port vector exercises it in this lane."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "filter_box publishes the edited query; the query reaches search_list and master_list through issued connections in the lists composition.",
+      "asserts": [
+        "the filter box publishes its edited query"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-list_summary",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind list_summary: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "partial",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "blocker": "list_summary has an executable definition, but no deterministic decode, row-bound, transition or port vector exercises it in this lane."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "list_summary reads done and total and renders done / total with the remaining count. The readers of this kind are issued with the required/optional flag of the specification row.",
+      "asserts": [
+        "1 / 2; remaining: 1",
+        "every reader port carries the optionality of its specification row"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-timer",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind timer: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for timer: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "timer decodes one to six presets, pauses at zero, selects a preset, starts/pauses/resets, reports elapsed from tick deltas and runs the whenFinished end body once at the preset.",
+      "asserts": [
+        "pause stops the timer",
+        "reset clears the elapsed time while paused",
+        "the end body runs once and does not refire"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-calendar_event",
@@ -1622,103 +1736,256 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind calendar_event: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
       "status": "missing",
-      "blocker": "No executable definition exists for calendar_event: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "blocker": "calendar_event decodes its disclosed event fields, but no executable transition is issued: the explicit Add and its pending/result reconciliation need the disclosed calendar operation and the provider workflow seam, neither of which this build issues. The kind is not offered."
     },
     {
       "id": "catalogue-progress_goal",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind progress_goal: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for progress_goal: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "progress_goal starts at zero, increments by the declared step, resets and never clamps the stored value while the displayed ratio stays bounded.",
+      "asserts": [
+        "the stored value exceeds the goal"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-rating",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind rating: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for rating: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "rating starts at its declared initial value beneath the 1-10 range and refuses an out-of-range change.",
+      "asserts": [
+        "an out-of-range rating is refused"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-search_list",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind search_list: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for search_list: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "search_list seeds its disclosed rows and filters them by the Unicode simple-case-insensitive substring of the published query.",
+      "asserts": [
+        "thirteen search rows",
+        "text search completion",
+        "Unlocated search refusal",
+        "the search list filters by the published query"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-master_list",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind master_list: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for master_list: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "master_list seeds rows and items, publishes items and selected, filters through the rowMatches hole and keeps the original row index of a keyed tap.",
+      "asserts": [
+        "thirteen master rows",
+        "unknown master row field",
+        "Unlocated master refusal",
+        "a keyed tap selects the original row index",
+        "the issued rowMatches replaced the default body"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-detail_view",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind detail_view: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for detail_view: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "detail_view reads the published items and selected ports, renders the selected row and explains the no-selection state. The readers of this kind are issued with the required/optional flag of the specification row.",
+      "asserts": [
+        "the detail view reads the selected row",
+        "every reader port carries the optionality of its specification row"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-record_log",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind record_log: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for record_log: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "record_log starts its category draft at the first declared label, keeps the category when an addition clears only the text drafts, parses positive decimals into exact integer cents with half-up excess places, refuses nonpositive, grouped, exponent and unsafe drafts, and publishes labels, currency, totals, balances, total, average and count.",
+      "asserts": [
+        "excess places round half up to exact cents",
+        "a grouped draft is outside the decimal grammar",
+        "an unsafe minor-unit amount is refused instead of stored",
+        "removal is last-only",
+        "an addition after clear is admitted against the kept configuration",
+        "the addition after clear lands in the still-selected category"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-number_strip",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind number_strip: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for number_strip: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "number_strip reads the published total, average, count and currency and renders the numeric summary with the currency kept separate. The readers of this kind are issued with the required/optional flag of the specification row.",
+      "asserts": [
+        "the number strip reads the published total",
+        "every reader port carries the optionality of its specification row"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-breakdown_table",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind breakdown_table: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for breakdown_table: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "breakdown_table renders equal-length label rows from the published labels, totals and balances in label order. The readers of this kind are issued with the required/optional flag of the specification row.",
+      "asserts": [
+        "the breakdown keeps equal-length label rows",
+        "every reader port carries the optionality of its specification row"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-series_chart",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind series_chart: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for series_chart: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "series_chart decodes the declared totals/balances mode and refuses any other value; with the mode absent it reads the published totals, with mode balances it reads the published balances, and the section issues the pack chart with labelled bars over those values and their published labels, a zero-based scale derived from them, and a zero dataset rendered as its explanation. The chart painter itself is owned by the renderer row of the UI vocabulary page, not by this section.",
+      "asserts": [
+        "unknown series mode",
+        "an absent mode selects the totals by default",
+        "the balances chart is zero-based from the smallest balance",
+        "the series chart declares labelled bars",
+        "the chart labels its bars with the published labels",
+        "an absent mode plots the totals",
+        "a zero dataset plots nothing",
+        "every reader port carries the optionality of its specification row"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-settle_up",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind settle_up: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for settle_up: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "settle_up restores checked integer cents from the published balances and repeatedly transfers the minimum of debt and credit choosing the first debtor and creditor in label order, bounded by the row count it can settle. The readers of this kind are issued with the required/optional flag of the specification row.",
+      "asserts": [
+        "Travel pays Food 5.17 EUR",
+        "every reader port carries the optionality of its specification row"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-itinerary",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind itinerary: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for itinerary: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "partial",
+      "blocker": "Per-stop reached flags, advance/reset, the reached markers, cumulative minutes from the published start, a missing start as unavailable and the deadline comparison all run through the packaged runtime. A supplied navigationBinding or calendarBinding is refused before emission - a resolvable reference names that missing seam and an unissued one is an unresolved registry reference - because the disclosed navigation/calendar operation has no executable producer/consumer seam in this build.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "asserts": [
+        "the schedule accumulates from the published start",
+        "a missing start leaves times unavailable",
+        "advance reaches the first stop",
+        "Disclosed stop coordinates refused",
+        "Unlocated stop latitude refusal",
+        "Unlocated stop longitude refusal",
+        "Itinerary binding was admitted or unlocated",
+        "Unissued itinerary binding admitted or unlocated"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-progress_line",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind progress_line: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for progress_line: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "progress_line reads the published done and total, renders the completion text and the displayed ratio for a positive total, and reports an invalid total as unavailable instead of dividing by it: an empty checklist publishing total 0 leaves the line unready with its explanation. The readers of this kind are issued with the required/optional flag of the specification row.",
+      "asserts": [
+        "an invalid total is unavailable",
+        "the unavailable completion explains itself",
+        "f_section_emptylines_line_ready",
+        "every reader port carries the optionality of its specification row"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-intent_panel",
@@ -1726,15 +1993,30 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind intent_panel: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
       "status": "missing",
-      "blocker": "No executable definition exists for intent_panel: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "blocker": "intent_panel decodes its unique actionIds but emits no transition or view and never resolves those ids against the issued descriptor registry, so the action-descriptor workflow (label, binding and draft issuance) has no executable path. The kind is not offered."
     },
     {
       "id": "catalogue-quick_log",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind quick_log: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for quick_log: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "partial",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "quick_log captures the instant of each declared amount tap, keeps one instant per logged amount, undoes only the last tap with its instant and publishes the configured goal; today's total and count stay declared with a null value and a located reason instead of an invented day.",
+      "asserts": [
+        "the declared amount is logged",
+        "the tap keeps the epoch instant it captured",
+        "the daily total is unavailable without a local-day clock",
+        "the unavailable count keeps its located reason",
+        "the configured goal is published"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ],
+      "blocker": "The tap history is timestamped, but today_total and today_count cannot be projected: the daily projection runs under the frozen host timezone and the checked adapter day (spec 358/414), the issued section surface exposes only std/time.nowMillis(), and a recomputation may not read a clock, so the day would have to arrive through an action into authoritative state. Both ports stay declared with a null value and the reason naming the missing local-day clock, rendered by the view, instead of substituting a UTC epoch-day or the latest recorded day."
     },
     {
       "id": "catalogue-reminders",
@@ -1742,7 +2024,21 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind reminders: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
       "status": "missing",
-      "blocker": "No executable definition exists for reminders: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "blocker": "reminders decodes its daily and one-shot rows (one-shot requires a day, daily omits it) and admits each supplied title, minute and one-shot day only from evidence, locating a fabricated one, but no executable transition is issued: completion marks, completed/scheduled counts and per-row calendar reconciliation need the frozen host-timezone day and the disclosed calendar operation. The kind is not offered.",
+      "asserts": [
+        "Disclosed one-shot reminder refused",
+        "Unlocated reminder day refusal",
+        "Unlocated reminder title refusal",
+        "Unlocated reminder minute refusal",
+        "A daily reminder demanded a day",
+        "one-shot reminder without a day",
+        "daily reminder with a day"
+      ],
+      "test": "python3 tests/tools/test-catalogue.py",
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js"
+      ]
     },
     {
       "id": "catalogue-dose_schedule",
@@ -1750,7 +2046,7 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind dose_schedule: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
       "status": "missing",
-      "blocker": "No executable definition exists for dose_schedule: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "blocker": "dose_schedule decodes its doses, but no executable transition is issued: daily taken marks, the streak over fully completed scheduled days and calendar reply reconciliation need the frozen host-timezone day and the calendar workflow. The kind is not offered."
     },
     {
       "id": "catalogue-due_items",
@@ -1758,39 +2054,99 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind due_items: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
       "status": "missing",
-      "blocker": "No executable definition exists for due_items: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "blocker": "due_items decodes its rows and soonDays, but no executable transition is issued: the expired/soon classification needs the frozen host-timezone day from the adapter. The kind is not offered."
     },
     {
       "id": "catalogue-points_ledger",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind points_ledger: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for points_ledger: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "partial",
+      "blocker": "The selected person, signed award history, insufficient-balance refusal, an affordable redemption, undo and the published balance ports run through the packaged runtime, with one initial balance per person. The published labels and count carry the configured people and the recorded entries, but no reader consumes them in this build. The row's \"add tasks/rewards\" behavior has no emitted control: the shipped pack view is static source, so an appended task or reward could not be offered for award or redeem.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "asserts": [
+        "the ledger publishes balances per person",
+        "8 points cannot be spent from a 5 point balance"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-idea_deck",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind idea_deck: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for idea_deck: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "partial",
+      "blocker": "The time and level filters, wrapping Another, the match re-seek and the Done mark run through the packaged runtime, and each mark keeps the instant it happened, once per idea. \"Done marks today\" needs the frozen host-timezone adapter day: no adapter day is issued and a recomputation may not read a clock, so done_today stays declared with a null value and that located reason, rendered by the view, instead of the lifetime number of marks. The kind stays offered with that daily projection visibly missing.",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "asserts": [
+        "Done marks the idea it showed",
+        "each mark keeps one instant",
+        "done today is unavailable without a local-day clock",
+        "Another advances to the next unfinished match",
+        "a narrowed time filter re-seeks an unfinished matching idea"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-interval_timer",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind interval_timer: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for interval_timer: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "interval_timer runs work and rest rounds, credits completed work seconds, has no final rest, carries a long tick across phase boundaries, completes a single tick that spans the whole interval, keeps completion terminal so a later tick cannot restart work or publish a round past the configured rounds, and implements start/pause/skip/reset including skipping work to rest, skipping rest to the next round and skipping the final work phase to completion.",
+      "asserts": [
+        "the final round finishes without a final rest",
+        "a completed work phase credits its seconds",
+        "a long tick completes the whole interval",
+        "completion never advances past the configured rounds",
+        "a later tick does not restart work",
+        "pause stops the interval",
+        "skipping work reaches the rest phase",
+        "skipping the final round completes without a rest"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-reading_status",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind reading_status: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "No executable definition exists for reading_status: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "reading_status decodes its bands and the shared decimals parameter, keeps a control draft and commits it only through the explicit add, stores timestamped readings with the band domain (including negative values) under the safe number range, publishes latest/status_level/count, maps the first exclusive upper band to 0, 1 or 2, removes the last reading, and charts the stored readings with a scale derived from them so a single distinct value still leaves a nonempty range. On the frozen card target the profile's sixty-shape picture bound would reject a chart of more than sixty readings with CARD_FAULT rather than truncating it; no catalogue vector drives a sixty-first reading, so that bound is a stated limitation, not proof here, and the screen target carries no such picture bound.",
+      "asserts": [
+        "the draft holds the entered reading without committing it",
+        "an uncommitted draft is not a stored reading",
+        "a negative reading is stored",
+        "the chart low is the smallest stored reading",
+        "the reading section renders one chart",
+        "every reader port carries the optionality of its specification row",
+        "every stored reading can be removed",
+        "a single distinct value still leaves a nonempty range",
+        "the reading chart plots the stored readings"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-live_figure",
@@ -1798,15 +2154,31 @@
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind live_figure: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
       "status": "missing",
-      "blocker": "No executable definition exists for live_figure: core/catalogue.deal definitions() issues 12 kinds only, so the kind stays open and is never substituted."
+      "blocker": "live_figure decodes one to three figures plus a credential-free public HTTPS source and validates JSON Pointers, but no probe is issued: the public-probe transport, connected-destination/media-type/encoding/bounds validation and the observation timestamp from asofPath need the native probe adapter. The kind is not offered and no value is fabricated."
     },
     {
       "id": "aggregates",
       "family": "aggregates",
       "owner": "catalogue-sections",
       "requirement": "Exact integer-cent aggregates: record_log parse and half-up rounding, safe-cent overflow rejection, totals/balances averages in major units, equal-share remainder order and settlement transfer order.",
-      "status": "missing",
-      "blocker": "record_log, number_strip, breakdown_table, series_chart and settle_up are undefined, so no cent-exact aggregate, average, share or settlement exists."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "record_log publishes one aggregate entry per label from its initial state, parses positive decimal drafts into exact integer cents with half-up excess places, accumulates label-order sums, allocates the equal-share remainder to the earliest label, refuses unsafe cents, and settlement restores checked integer cents and transfers the minimum debt and credit in label order; a zero dataset renders its explanation instead of fabricated rows.",
+      "asserts": [
+        "the remainder cent goes to the earliest label",
+        "Travel pays Food 5.17 EUR",
+        "a grouped draft is outside the decimal grammar",
+        "an unsafe minor-unit amount is refused instead of stored",
+        "a fresh log publishes one zero aggregate per label",
+        "the published balance array has the label length",
+        "a zero breakdown explains itself"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "constructive-calculations",
@@ -1822,8 +2194,20 @@
       "owner": "catalogue-sections",
       "requirement": "Issued hole definitions with compiling default bodies; an issued body replaces only its hole body at emission; unissued IDs, duplicate or over-bound bodies reject without partial commit.",
       "status": "partial",
-      "test": "python3 tests/tools/test-catalogue.py",
-      "blocker": "Only the negative decode is exercised: instances construct empty holes and the body map is asserted empty. Default bodies, insertion and rejection have no production path."
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "blocker": "Decode and emission reject an unissued hole id, a duplicate body key, a non-text hole id, signature, purpose, requires or body, a controller-writer body and a body over the 600 UTF-16 bound. An authored body that is not valid syntax rejects with its hole identifier, and a body that adds a declaration or redeclares the hole function rejects with the instance and the offending name; a read-only summary that binds an import alias to a local is refused so the receiver of an effectful call cannot be hidden. Semantic errors of the assembled pair stay with the whole-source checker diagnostics. Ask/counter/repair-budget authorship and the reverted-or-abandoned coverage report belong to the generation catalogue-fill contract and have no vector here.",
+      "evidence": "Hole definitions are issued with the instance (id, fixed signature, purpose, compiling default body and writer); the composer emits the default body, an issued body replaces it in place, and an unissued body key, a non-text body, an over-bound body, a controller-writer body and a duplicate JSON key all reject before emission. Timer whenFinished and master_list rowMatches defaults run, and an issued whenFinished/rowMatches changes behaviour through the packaged runtime.",
+      "asserts": [
+        "the issued end body ran",
+        "every rejected body case ran, none silently dropped",
+        "an import alias bound to a local is refused as a read-only summary"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "pins",

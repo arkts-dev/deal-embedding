@@ -32,21 +32,28 @@ async function step(name){
      {need:'empty',parameters:{title:'Disclosed table',headers:['Item','Amount','Note'],rows:[]}},
      {need:'fabricated',parameters:{headers:['Item','Amount','Note'],rows:[['Rent','40','invented']]}},
      {need:'short',parameters:{headers:['Item','Amount','Note'],rows:[['Rent','40']]}},
-     {need:'nulled',parameters:null}
+     {need:'nulled',parameters:null},
+     // A reading_status parameter declaring 7 is outside the shared decimals domain -1..6, so the fill
+     // decoder rejects it and the instance keeps its defaults under its own identity.
+     {need:'measured',parameters:{unit:'kg',bands:[{upper:null,label:'High',level:2}],decimals:7}}
     ]:[];
     context.reply={id:request.id,ok:true,value:{content:JSON.stringify({sections}),finish:'stop',refusal:''}};
    }
    else {
     assert.equal(request.module,'embedding/fragment-syntax','unissued mechanism reached: '+request.module);
     const output=cp.spawnSync('java',['-cp',classpath,'FragmentMechanisms',request.function],{input:request.args[0],encoding:'utf8'});
-    if(output.status!==0)throw Error(output.stderr);
-    context.reply={id:request.id,ok:true,value:output.stdout};
+    // A rejected fragment is a capability failure the compiled policy can catch, exactly as the
+    // production generation bridge reports it; a toolchain fault is never reported as a rejection.
+    if(output.error||output.status===null)throw Error('Fragment mechanism did not run: '+String(output.error||'no exit status'));
+    // The bridge reports every typed syntax diagnostic as FRAGMENT_SYNTAX; anything else is a fault.
+    if(output.status!==0&&!/java\.lang\.IllegalArgumentException|deal\.ui\.UiDiagnostic/.test(String(output.stderr)))throw Error('Fragment mechanism failed: '+output.stderr);
+    context.reply=output.status===0?{id:request.id,ok:true,value:output.stdout}:{id:request.id,ok:false,error:{code:'FRAGMENT_SYNTAX',message:String(output.stderr).slice(0,4000)}};
    }
    vm.runInContext('dealCapabilities.deliver([reply])',context);
   }
   if(vm.runInContext('steps.finished',context)){
    const finished=vm.runInContext('steps',context);
-   assert.equal(finished.failure,null,finished.failure&&(finished.failure.name+": "+finished.failure.message+"\n"+finished.failure.stack));
+   assert.equal(finished.failure,null,'step '+name+': '+(finished.failure&&(finished.failure.name+': '+finished.failure.message+'\n'+finished.failure.stack)));
    return finished.value;
   }
  }
@@ -58,8 +65,10 @@ results.rejections=await step('rejectionMatrix');
 results.disclosure=await step('disclosure');
 results.initialization=JSON.parse(await step('initialization'));
 results.assembly=JSON.parse(await step('assembly'));
+results.instanceCount=JSON.parse(await step('instanceCount'));
 results.fillPath=JSON.parse(await step('fillPath'));
 results.alternatives=JSON.parse(await step('alternatives'));
+results.registryRefusals=await step('registryRefusals');
 const decoded=results.decoding;
 const table=(decoded.data_table.rows);
 const astral='😀';
@@ -101,8 +110,8 @@ assert.equal(decoded.bounds.rows[1][0].length,4,'astral text counts UTF-16 units
 assert.equal(decoded.max_rail.rows[0].detail.length,512,'512 UTF-16 units fit a rail detail');
 
 // --- reject matrix: every bound and wrong type refuses the whole parameter record.
-assert.strictEqual(results.rejections,67,'every rejection case ran, none silently dropped');
-assert.strictEqual(results.disclosure,29,'every disclosure case ran, none silently dropped');
+assert.strictEqual(results.rejections,81,'every rejection and acceptance case ran, none silently dropped');
+assert.strictEqual(results.disclosure,42,'every disclosure case ran, none silently dropped');
 
 // --- initialized fragments: display-only, immutable, seeded through the compiler mechanism.
 const instances=Object.fromEntries(Object.entries(results.initialization).map(([kind,value])=>[kind,typeof value==='string'?JSON.parse(value):value]));
@@ -168,6 +177,9 @@ assert(metrics.fragment.view.includes('ui.MetricGroup() {ui.Stat(label: "first",
 const facts=instances.key_facts;
 assert(facts.fragment.view.includes('ui.MetricGroup() {ui.Stat(label: "first", value: "items")}'),facts.fragment.view);
 assert(instances.empty_facts.fragment.view.includes('ui.Text(text: "No disclosed facts", style: "muted")'),instances.empty_facts.fragment.view);
+// The spotlight is one highlighted read-only message with no state of its own.
+assert.deepEqual(instances.spotlight.fragment.fields,[],'the spotlight content is emitted source, not state');
+assert(instances.spotlight.fragment.view.includes('ui.Text(text: "Shown")'),instances.spotlight.fragment.view);
 // --- assembly: the emitted sections compose without a computation and keep declaration order.
 const assembled=results.assembly;
 assert(assembled.deal.includes('f_section_table_headers: string[];'),'the table headers are a typed state field');
@@ -175,9 +187,18 @@ assert(assembled.deal.includes('f_section_bars_series: [0.0, 2.5]'),assembled.de
 assert(assembled.deal.includes('f_section_trend_series: [(-2.0), 0.25]'),assembled.deal);
 assert(!assembled.deal.includes('@ui-update')&&!assembled.deal.includes('@ui-effect'),'a read-only section issues no update or effect');
 assert(!/\bready\b/.test(assembled.deal),'a read-only section issues no derived readiness');
-const panels=['table','bars','trend','rail','facts','details'].map(name=>assembled.dealui.indexOf('f_section_'+name+'_Panel(state: state)'));
+const panels=['table','bars','trend','rail','facts','details','spot'].map(name=>assembled.dealui.indexOf('f_section_'+name+'_Panel(state: state)'));
 assert(panels.every(index=>index>0),'every section view joins the root');
 assert.deepEqual(panels,[...panels].sort((left,right)=>left-right),'the root keeps the declaration order');
+// --- instance count: seven distinct kinds assemble in one initial composition, and a duplicate kind
+// is refused at decode instead of being silently merged.
+const count=results.instanceCount;
+assert.equal(count.instances,7,'an initial composition with seven catalogue instances assembles');
+assert.equal(new Set(count.kinds).size,7,'the seven instances are seven distinct kinds');
+assert.equal(count.duplicate,true,'a duplicate catalogue kind rejects at decode');
+for(let index=0;index<count.kinds.length;index++) assert.ok(count.dealui.includes('f_section_k'+index+'_Panel(state: state)'),'kind '+count.kinds[index]+' assembled');
+assert.ok(count.deal.includes('f_section_k0_done'),'the checklist publishes its done computation in the seven-kind composition');
+assert.ok(count.deal.includes('f_section_k6_count')===false,'the read-only fact section issues no count field');
 // --- the production fill call site: the empty section fills, a fabricated row is decoded and then
 // refused by the one predicate, and a short row is refused atomically by the real fill.
 const fill=results.fillPath;
@@ -194,6 +215,10 @@ assert(fill.short.reason.includes('Catalogue columns match headers'),'the reject
 assert.equal(fill.nulled.accepted,false,'a null parameter record leaves its instance unfilled');
 assert.deepEqual(fill.nulled.parameters,{},'a null parameter record installs no parameters');
 assert(fill.nulled.reason.includes('Catalogue parameters required'),'a null parameter record keeps its reason: '+fill.nulled.reason);
+// The shared decimals domain is applied by the fill decoder under the instance identifier.
+assert.equal(fill.measured.accepted,false,'a reading_status parameter declaring 7 leaves its instance unfilled');
+assert.deepEqual(fill.measured.parameters,{},'a refused decimals parameter installs no parameters');
+assert(fill.measured.reason.includes('measured')&&fill.measured.reason.includes('decimals'),'the decimals refusal locates the instance and the parameter: '+fill.measured.reason);
 // --- an entry the fill never answered keeps the production placeholder as its located reason.
 assert.equal(fill.unanswered.accepted,false);
 assert.equal(fill.unanswered.reason,'Catalogue parameters were not filled','an unanswered fill keeps the placeholder reason: '+fill.unanswered.reason);
@@ -204,5 +229,38 @@ assert(!offered.items.includes('list_summary'),'a need that reads nothing is off
 assert(!offered.seeded.includes('list_summary'),'a need that reads only an input is offered a reader kind: '+JSON.stringify(offered.seeded));
 assert(offered.summary.includes('list_summary'),'a need that reads a publisher is refused its reader kind: '+JSON.stringify(offered.summary));
 assert(offered.items.includes('checklist'),'the standalone kinds stay issued: '+JSON.stringify(offered.items));
-console.log('catalogue sections: closed decode, row bounds, exact order and UTF-16 text, shared disclosure, reader eligibility, immutable initialization, empty states and computation-free assembly passed');
+// --- a supplied navigation/calendar reference is refused before emission: a resolvable reference has no
+// executable seam in this build and an unissued reference is unresolved, each locating the need.
+assert.strictEqual(results.registryRefusals,3,'every itinerary registry refusal ran, none silently dropped');
+// A kind whose readers are all optional takes its declared assembly fallbacks, so it is issued for a
+// standalone need too; a kind with a required reader waits for the publisher the need requests.
+assert(offered.items.includes('search_list')&&offered.items.includes('master_list')&&offered.items.includes('itinerary'),'an optional-reader kind is offered for a standalone need: '+JSON.stringify(offered.items));
+assert(offered.seeded.includes('search_list')&&offered.seeded.includes('master_list'),'an optional-reader kind stays offered for a need that reads only an input: '+JSON.stringify(offered.seeded));
+assert(!offered.items.includes('list_summary')&&!offered.items.includes('progress_line'),'a required reader is never offered before its publisher: '+JSON.stringify(offered.items));
+// --- the declared kind table: every specification kind is declared once, the executable ones are
+// the only ones issued, and each parameter publishes its origin, owner, required flag and default.
+results.ownership=JSON.parse(await step('ownership'));
+const owned=results.ownership;
+const required=['note','spotlight','metrics','timer','calendar_event','actions','progress_goal','key_facts','trend_chart','rating','search_list','master_list','filter_box','detail_view','list_summary','record_log','number_strip','breakdown_table','series_chart','settle_up','itinerary','progress_line','intent_panel','data_table','timeline','bar_chart','quick_log','reminders','dose_schedule','due_items','points_ledger','idea_deck','interval_timer','reading_status','live_figure','checklist'];
+assert.equal(owned.count,36,'the table declares all 36 specification kinds');
+assert.deepEqual([...owned.kinds].sort(),[...required].sort(),'the declared kinds are exactly the specification table');
+assert.ok(owned.executable.includes('timer')&&owned.executable.includes('record_log')&&owned.executable.includes('reading_status'),'the implemented kinds issue executable definitions');
+assert.ok(!owned.executable.includes('live_figure')&&!owned.executable.includes('calendar_event'),'a kind without an implementation stays open and is never substituted');
+assert.deepEqual(owned.decimals,{name:'decimals',type:'decimals',required:false,origin:'configuration',owner:'host',fallback:-1},'the reading_status decimals parameter publishes its origin, owner and default');
+assert.ok(owned.facts.includes('count:number')&&owned.facts.includes('status_level:number'),'the eligibility facts publish the ports of the kind: '+owned.facts);
+assert.ok(owned.facts.includes('decimals:decimals optional origin configuration default -1'),'the eligibility facts publish a parameter with its required flag, origin and default: '+owned.facts);
+assert.ok(owned.facts.includes('unit:string required origin configuration no default'),'the eligibility facts publish a required parameter as having no default: '+owned.facts);
+assert.ok(owned.readerFacts.includes('items:entries required origin disclosed'),'the eligibility facts publish a required parameter with its origin: '+owned.readerFacts);
+assert.ok(owned.listFacts.includes('items:entries optional origin disclosed default []'),'the eligibility facts publish an optional collection with the default the decoder applies: '+owned.listFacts);
+assert.ok(owned.readerFacts.includes('query:string optional'),'the eligibility facts publish an optional reader as optional: '+owned.readerFacts);
+assert.ok(owned.facts.includes('requires [clock'),'the eligibility facts publish the capability requirements of the kind: '+owned.facts);
+assert.strictEqual(owned.readers,'','every reader port carries the optionality of its specification row: '+owned.readers);
+assert.equal(owned.unowned,true,'a parameter declaration without an origin rejects');
+assert.ok(owned.located.includes('probe')&&owned.located.includes('text'),'an unachievable required owner locates the need, kind and parameter: '+owned.located);
+assert.ok(owned.offered.length>0&&!owned.offered.includes('live_figure'),'only executable kinds are offered');
+for (const pair of ['earn/points_ledger','measure/reading_status','tap/quick_log']) assert.ok(owned.preference.includes(pair),'the preferred kind is offered for its need: '+pair+' in '+JSON.stringify(owned.preference));
+// --- decode strictness over the full row and domain table, including the shared decimals field.
+const strict=await step('strictness');
+assert.equal(strict,48,'the strictness matrix runs every listed row and domain case exactly once');
+console.log('catalogue sections: closed decode, row bounds, exact order and UTF-16 text, shared disclosure, reader eligibility, immutable initialization, empty states, kind-table ownership facts, eligibility facts, row/domain strictness and computation-free assembly passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

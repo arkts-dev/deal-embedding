@@ -81,8 +81,30 @@ function screen(raw: WireScreen, frozenTarget: string, needIds: string[]): Scree
     let entry: Instance = {id:id,kind:s.nonblank(value.kind),origin:s.oneOf(value.origin,["part","catalogue","custom","notice"]),parameters:value.parameters as Record<string, unknown>,fragment:fragment(value.fragment,id),bodies:value.bodies as Record<string, unknown>};
     if (Object.hasOwn(value,"position")) { entry.position = s.identifier(value.position); }
     if (entry.origin === "catalogue") { s.oneOf(entry.kind,catalogueKinds()); s.unique(catalogue,entry.kind); }
-    let holes: string[] = []; for (let hole of entry.fragment.holes) { s.unique(holes,s.identifier(hole.id)); }
-    for (let holeId of tables.keys(entry.bodies)) { if (!s.contains(holes,holeId)) { s.reject("Unissued body: "+holeId); } s.text(entry.bodies[holeId]); }
+    let holes: Record<string, unknown>[] = []; let holeIds: string[] = [];
+    for (let declared of entry.fragment.holes) {
+      let hole: Record<string, unknown> = declared as Record<string, unknown>; s.closed(hole,["id","signature","purpose","body","writer","requires"],[]);
+      if (!s.encode(hole.id).startsWith("\"")) { s.reject("Catalogue hole id must be text"); }
+      if (!s.encode(hole.signature).startsWith("\"")) { s.reject("Catalogue hole signature must be text: "+s.text(hole.id)); }
+      let holeIdentity: string = s.identifier(hole.id); s.unique(holeIds,holeIdentity); s.nonblank(hole.signature); s.oneOf(hole.writer,["fill","controller"]);
+      if (!s.encode(hole.purpose).startsWith("\"")) { s.reject("Catalogue hole purpose must be text: "+holeIdentity); }
+      if (!s.encode(hole.requires).startsWith("\"")) { s.reject("Catalogue hole requires must be text: "+holeIdentity); }
+      s.nonblank(hole.purpose); s.text(hole.requires);
+      // The declared default body is JSON text, never a value of another wire kind that a later
+      // string cast would silently coerce.
+      if (!s.encode(hole.body).startsWith("\"")) { s.reject("Catalogue hole body must be text: "+holeIdentity); }
+      if ((hole.body as string).length > 600) { s.reject("Catalogue hole body bound: "+holeIdentity); }
+      holes[holes.length] = hole;
+    }
+    // Bodies are keyed by issued hole identity. A body for an unissued hole, a non-text body and a
+    // body for a controller-writer hole reject before any source is emitted; duplicate JSON keys were
+    // already refused when the composition was decoded.
+    for (let holeId of tables.keys(entry.bodies)) {
+      if (!s.contains(holeIds,holeId)) { s.reject("Unissued body: "+holeId); }
+      let body: unknown = entry.bodies[holeId]; if (!(JSON.stringify(body) as string).startsWith("\"")) { s.reject("Catalogue hole body must be text: "+holeId); }
+      if ((s.text(body)).length > 600) { s.reject("Catalogue hole body bound: "+holeId); }
+      for (let declared of holes) { if ((declared.id as string) === holeId) { if ((declared.writer as string) !== "fill") { s.reject("Controller-writer hole body: "+holeId); } } }
+    }
     for (let cover of entry.fragment.covers) { if (!s.contains(needIds,cover)) { s.reject("Unissued fragment coverage"); } }
     result.instances[result.instances.length] = entry;
   }

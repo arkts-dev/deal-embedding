@@ -63,19 +63,81 @@ async function expression(value: string, expected: string, instance: Prepared, n
   let variables: Record<string, unknown> = {}; if (variable !== "") { variables[variable] = "AppState"; }
   return await syntax.expression(s.encode({source:value,expected:expected,names:names,fields:fields,types:types,variables:variables}));
 }
+function describedNames(raw: Record<string, unknown>, category: string): string[] { let result: string[] = []; for (let entry of decoded.records(raw[category])) { result[result.length] = s.text(entry.name); } return result; }
+function describedImports(raw: Record<string, unknown>): string[] { let result: string[] = []; for (let entry of decoded.records(raw.imports)) { result[result.length] = s.text(entry.module)+" as "+s.text(entry.alias); } return result; }
+// A hole body replaces only the body of its own hole function: it may use the fragment declarations,
+// helpers and imports, but it may not add one. A body that smuggles a declaration or an import past
+// the textual splice rejects here with the instance identity instead of widening the fragment.
+function checkBodySurfaces(instance: string, baseline: Record<string, unknown>, composed: Record<string, unknown>, holeIds: string[]): void {
+  for (let category of ["classes","functions","views"]) {
+    let before: string[] = describedNames(baseline,category);
+    let after: string[] = describedNames(composed,category);
+    for (let name of after) {
+      // A redeclaration is caught even when it reuses a name the fragment or a hole already has:
+      // the composed region must describe every declaration exactly once.
+      let occurrences: number = 0; for (let other of after) { if (other === name) { occurrences = occurrences+1; } }
+      if (occurrences > 1) { s.reject("Catalogue hole body declaration: "+instance+" duplicate "+category+" "+name); }
+      if (s.contains(before,name)) { continue; }
+      if (category === "functions" && s.contains(holeIds,name)) { continue; }
+      s.reject("Catalogue hole body declaration: "+instance+" "+category+" "+name);
+    }
+  }
+  let before: string[] = describedImports(baseline); let after: string[] = describedImports(composed);
+  if (before.length !== after.length) { s.reject("Catalogue hole body import: "+instance); }
+  for (let entry of after) { if (!s.contains(before,entry)) { s.reject("Catalogue hole body import: "+instance+" "+entry); } }
+}
 export async function assemble(composition: screens.Composition, computations: Computation[]): Promise<Result> {
   let imports: Import[] = [{module:"std/time",alias:"embeddingClock"}];
-  let prepared: Prepared[] = []; let allFields: Field[] = []; let namesByInstance: Record<string, unknown> = {}; let fieldsByInstance: Record<string, unknown> = {}; let typesByInstance: Record<string, unknown> = {}; let factsByInstance: Record<string, unknown> = {};
+  let prepared: Prepared[] = []; let allFields: Field[] = []; let namesByInstance: Record<string, unknown> = {}; let fieldsByInstance: Record<string, unknown> = {}; let typesByInstance: Record<string, unknown> = {}; let factsByInstance: Record<string, unknown> = {}; let declarationsByInstance: Record<string, unknown> = {}; let helpersByInstance: Record<string, unknown> = {};
   let instances: string[] = []; let owners: string[] = []; let storageNames: string[] = [];
   for (let instance of composition.screen.instances) {
     s.unique(instances,s.identifier(instance.id));
     for (let resource of instance.fragment.owns) { s.unique(owners,resource); }
-    let raw: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
+    // Hole bodies are keyed by the hole identities the instance issues. A body for an unissued hole,
+    // a duplicate key (refused by the JSON decoder before this point), a non-text body, a body over
+    // the 600 UTF-16 bound and any body for a controller-writer hole reject before emission; an
+    // issued body replaces the compiling default in place and never changes the signature or a
+    // parameter value.
+    let sourceDeclarations: string = instance.fragment.declarations; let sourceHelpers: string = instance.fragment.helpers;
+    let holeIds: string[] = [];
+    // The instance declarations, helpers and imports the default bodies already compile against are
+    // the baseline a body may use; nothing the body adds may survive into the emitted fragment.
+    let baseline: Record<string, unknown> | null = null;
+    if (instance.fragment.holes.length > 0) { baseline = JSON.parse(await syntax.describe(s.encode({classes:sourceDeclarations,fields:"",functions:sourceHelpers,view:instance.fragment.view}))); }
+    for (let declared of instance.fragment.holes) {
+      let holeId: string = s.identifier(declared.id); s.unique(holeIds,holeId);
+      let signature: string = s.nonblank(declared.signature); let writer: string = s.oneOf(declared.writer,["fill","controller"]); s.text(declared.requires);
+      let bodyText: string = s.text(declared.body);
+      if (!(JSON.stringify(bodyText) as string).startsWith("\"")) { s.reject("Catalogue hole body must be text: "+holeId); }
+      if (Object.hasOwn(instance.bodies,holeId)) {
+        if (writer !== "fill") { s.reject("Controller-writer hole body: "+holeId); }
+        let issued: unknown = instance.bodies[holeId];
+        if (!(JSON.stringify(issued) as string).startsWith("\"")) { s.reject("Catalogue hole body must be text: "+holeId); }
+        bodyText = s.text(issued);
+        if (bodyText.length > 600) { s.reject("Catalogue hole body bound: "+holeId); }
+        // A body is parsed with the fragment declarations, helpers and checked imports before commit;
+        // an authored body that is not valid syntax rejects the instance with its hole identifier
+        // instead of silently keeping the default and reporting the customization covered. Semantic
+        // resolution of the emitted pair stays with the whole-source checker, which reports source
+        // diagnostics for the assembled candidate.
+        let parsed: boolean = true;
+        try { await syntax.describe(s.encode({classes:sourceDeclarations,fields:"",functions:sourceHelpers+" export function "+holeId+signature+" { "+bodyText+" }",view:instance.fragment.view})); }
+        catch (unknownError) { parsed = false; }
+        if (!parsed) { s.reject("Catalogue hole body is not valid syntax: "+holeId); }
+      }
+      // A hole is a versioned helper: its issued body replaces the compiling default in place and
+      // keeps its signature, so a later computation or reducer calls the same read-only function.
+      sourceHelpers = sourceHelpers+" export function "+holeId+signature+" { "+bodyText+" }";
+    }
+    for (let issued of tables.keys(instance.bodies)) { if (!s.contains(holeIds,issued)) { s.reject("Unissued body: "+issued); } }
+    let raw: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:sourceDeclarations,fields:"",functions:sourceHelpers,view:instance.fragment.view})));
+    if (baseline !== null) { checkBodySurfaces(instance.id,baseline as Record<string, unknown>,raw,holeIds); }
+    declarationsByInstance[instance.id] = sourceDeclarations; helpersByInstance[instance.id] = sourceHelpers;
     let names: Record<string, unknown> = {}; let fieldNames: Record<string, unknown> = {}; let types: Record<string, unknown> = {};
     for (let category of ["classes","functions","views"]) {
-      for (let declaration of decoded.records(raw[category])) { let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent" || name === "bridgePersistedState" || name === "bridgeRestoredState") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
+      for (let declaration of decoded.records(raw[category])) { if (s.text(declaration.name) === "") { s.reject("Empty fragment declaration name in "+instance.id); } let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent" || name === "bridgePersistedState" || name === "bridgeRestoredState") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
     }
-    for (let item of decoded.records(raw.imports)) { let alias: string = s.identifier(item.alias); if (Object.hasOwn(names,alias)) { s.reject("Import/declaration conflict"); } let bound: string = qualified(instance.id,alias); names[alias] = bound; addImport(imports,s.nonblank(item.module),bound); }
+    for (let item of decoded.records(raw.imports)) { if (s.text(item.alias) === "") { s.reject("Empty fragment import alias in "+instance.id); } let alias: string = s.identifier(item.alias); if (Object.hasOwn(names,alias)) { s.reject("Import/declaration conflict"); } let bound: string = qualified(instance.id,alias); names[alias] = bound; addImport(imports,s.nonblank(item.module),bound); }
     let views: Record<string, unknown>[] = decoded.records(raw.views);
     if (views.length !== 1 || !(views[0].exported as boolean) || (views[0].root as boolean)) { s.reject("Fragment requires one exported nonroot view"); }
     let parameters: Record<string, unknown>[] = decoded.records(views[0].parameters);
@@ -101,10 +163,22 @@ export async function assemble(composition: screens.Composition, computations: C
       }
     } }
     let importModules: Record<string, unknown> = {}; for (let item of decoded.records(raw.imports)) { let alias: string = item.alias as string; importModules[alias] = item.module; }
-    factsByInstance[instance.id] = await policy.inspect(instance.fragment.helpers,importModules);
+    // An unconnected optional reader takes its assembly fallback: the emitted field is the declared
+    // fallback source value of the port's own type, so a section that reads an optional query still
+    // compiles and runs without inventing a publisher.
+    let fallbackNames: string[] = []; let fallbackTypes: string[] = []; let fallbackSources: string[] = [];
+    for (let port of instance.fragment.ports) { if (port.direction === "read" && port.optional) {
+      let connected: boolean = false; for (let connection of composition.connections) { if (connection.readerInstance === instance.id && connection.readerPort === port.name) { connected = true; } }
+      if (connected) { continue; }
+      if (Object.hasOwn(fieldNames,port.getter)) { s.reject("Reader field conflicts with owner field"); }
+      let fallback: string = ""; if (Object.hasOwn(port,"fallback")) { fallback = s.nonblank(port.fallback); }
+      fieldNames[port.getter] = qualified(instance.id,port.getter); types[port.getter] = port.type;
+      fallbackNames[fallbackNames.length] = port.getter; fallbackTypes[fallbackTypes.length] = port.type; fallbackSources[fallbackSources.length] = fallback;
+    } }
+    factsByInstance[instance.id] = await policy.inspect(sourceHelpers,importModules);
     namesByInstance[instance.id] = names; fieldsByInstance[instance.id] = fieldNames; typesByInstance[instance.id] = types;
     let writable: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { writable[writable.length] = field.name; } }
-    let qualifiedSource: Record<string, unknown> = JSON.parse(await syntax.qualify(s.encode({declarations:instance.fragment.declarations,helpers:instance.fragment.helpers,view:instance.fragment.view,names:names,fields:fieldNames,types:types,writable:writable})));
+    let qualifiedSource: Record<string, unknown> = JSON.parse(await syntax.qualify(s.encode({declarations:sourceDeclarations,helpers:sourceHelpers,view:instance.fragment.view,names:names,fields:fieldNames,types:types,writable:writable})));
     let resolvedTypes: Record<string, unknown> = qualifiedSource.types as Record<string, unknown>;
     let item: Prepared = {id:instance.id,declarations:qualifiedSource.declarations as string,helpers:qualifiedSource.helpers as string,view:qualifiedSource.view as string,fields:[],updates:instance.fragment.updates,effects:instance.fragment.effects,viewName:qualified(instance.id,views[0].name as string)};
     for (let source of instance.fragment.fields) {
@@ -112,6 +186,14 @@ export async function assemble(composition: screens.Composition, computations: C
       let current: Field = {instance:instance.id,local:source.name,name:qualified(instance.id,source.name),type:resolvedTypes[source.name] as string,role:source.role,initial:initial};
       s.unique(storageNames,current.name);
       if (current.role === "derived") { s.unique(storageNames,current.name+"_ready"); s.unique(storageNames,current.name+"_reason"); if (primitive(current.type)) { s.unique(storageNames,current.name+"_display"); } }
+      item.fields[item.fields.length] = current; allFields[allFields.length] = current;
+    }
+    let fallback: number = 0;
+    while (fallback < fallbackNames.length) {
+      let local: string = fallbackNames[fallback]; let type: string = fallbackTypes[fallback]; let source: string = fallbackSources[fallback]; fallback = fallback+1;
+      let initial: string = await expression(source,type,item,names,fieldNames,types,"");
+      let current: Field = {instance:instance.id,local:local,name:qualified(instance.id,local),type:resolvedTypes[local] as string,role:"authoritative",initial:initial};
+      s.unique(storageNames,current.name);
       item.fields[item.fields.length] = current; allFields[allFields.length] = current;
     }
     prepared[prepared.length] = item;
@@ -122,7 +204,7 @@ export async function assemble(composition: screens.Composition, computations: C
   for (let item of prepared) {
     for (let instance of composition.screen.instances) { if (instance.id === item.id) {
       let writable: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { writable[writable.length] = field.name; } }
-      let projection: Record<string, unknown> = JSON.parse(await syntax.qualify(s.encode({declarations:instance.fragment.declarations,helpers:instance.fragment.helpers,view:instance.fragment.view,names:namesByInstance[item.id],fields:fieldsByInstance[item.id],types:typesByInstance[item.id],preserved:preserved,writable:writable})));
+      let projection: Record<string, unknown> = JSON.parse(await syntax.qualify(s.encode({declarations:declarationsByInstance[item.id] as string,helpers:helpersByInstance[item.id] as string,view:instance.fragment.view,names:namesByInstance[item.id],fields:fieldsByInstance[item.id],types:typesByInstance[item.id],preserved:preserved,writable:writable})));
       item.declarations = projection.declarations as string; item.helpers = projection.helpers as string; item.view = projection.view as string;
     } }
   }
@@ -181,7 +263,7 @@ export async function assemble(composition: screens.Composition, computations: C
                 } } } }
               } }
               if (!connected) { s.reject("Cross-owner calculation requires issued port binding"); }
-            } else { allowedReads[allowedReads.length] = item.local; } if (item.role === "derived") { allowedReads[allowedReads.length] = item.local+"_ready"; allowedReads[allowedReads.length] = item.local+"_reason"; } } }
+            } else { allowedReads[allowedReads.length] = item.local; } if (item.role === "derived") { allowedReads[allowedReads.length] = item.local+"_ready"; allowedReads[allowedReads.length] = item.local+"_reason"; if (primitive(item.type)) { allowedReads[allowedReads.length] = item.local+"_display"; } } } }
             if (!found) { s.reject("Unissued computation dependency"); }
           }
           let purity: policy.Facts = factsByInstance[instance.id] as policy.Facts;
@@ -198,9 +280,11 @@ export async function assemble(composition: screens.Composition, computations: C
             requests[requests.length] = {function:"expression",input:s.encode({source:sources[index],expected:expected[index],names:names,fields:fields,types:types,variables:variables})};
           }
           let results: SyntaxResult[] = JSON.parse(await syntax.batch(s.encode({requests:requests})));
-          policy.checkedExpression(syntaxValue(results[0]),purity,allowedReads);
-          policy.checkedExpression(syntaxValue(results[1]),purity,allowedReads);
-          policy.checkedExpression(syntaxValue(results[2]),purity,allowedReads);
+          // A purity rejection names the derived value it refuses, so a computation defect is located.
+          for (let index of [0,1,2]) {
+            try { policy.checkedExpression(syntaxValue(results[index]),purity,allowedReads); }
+            catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } s.reject("Computation "+computation.instance+"."+computation.field+": "+error.message); }
+          }
           let ready: string = syntaxValue(results[3]);
           // Readiness is a composer dependency guard, not an optional writer predicate.
           // Short-circuit before any getter when an upstream derived value is unavailable.

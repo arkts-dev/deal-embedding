@@ -72,21 +72,29 @@ function ownership(plan: plans.Plan, alternatives: selecting.Alternative[]): sel
 // content and other needs are issued kinds today, which is what keeps a scene need out of alignment: the
 // scene is written by the ordinary writing operation (generation-recovery-and-source-editing
 // "Alignment"). Kind eligibility for the remaining need types is catalogue-owned and missing.
+// A declared port reaches alignment as the `name:type` identity assembly resolves, so a reader meets
+// its publisher only on the exact nominal port and never on a display name.
+function portNames(ports: catalogue.PortDecl[]): string[] {
+  let result: string[] = [];
+  for (let port of ports) { result[result.length] = port.name+":"+port.type; }
+  return result;
+}
 function alignmentCandidates(plan: plans.Plan, settled: string[]): alignment.Candidate[] {
   let result: alignment.Candidate[] = [];
   for (let need of plan.needs) {
     if (s.contains(settled,need.id)) { continue; }
     if (need.type !== "content" && need.type !== "other") { continue; }
     for (let definition of catalogue.definitions()) {
-      if (definition.reads.length > 0 && !catalogue.carriesReaders(plan,need)) { continue; }
-      result[result.length] = {need:need.id,id:"cat_"+need.id+"_"+definition.kind,kind:definition.kind,criteria:definition.criteria,reads:definition.reads,publishes:definition.publishes};
+      if (!catalogue.offered(definition)) { continue; }
+      if (catalogue.requiresPublishers(definition) && !catalogue.carriesReaders(plan,need)) { continue; }
+      result[result.length] = {need:need.id,id:"cat_"+need.id+"_"+definition.kind,kind:definition.kind,criteria:definition.criteria,reads:portNames(catalogue.requiredReaders(definition)),publishes:portNames(definition.publishes)};
     }
   }
   return result;
 }
 function published(entries: catalogue.Configured[]): string[] {
   let result: string[] = [];
-  for (let entry of entries) { for (let port of entry.definition.publishes) { if (!s.contains(result,port)) { result[result.length] = port; } } }
+  for (let entry of entries) { for (let port of portNames(entry.definition.publishes)) { if (!s.contains(result,port)) { result[result.length] = port; } } }
   return result;
 }
 function usedKinds(entries: catalogue.Configured[]): string[] {
@@ -150,8 +158,11 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   }
   for (let need of aligned.open) { locate(composition,need,alignment.reason(aligned,need)); }
   await catalogue.fill(context,plan,entries);
-  // Ownership is checked independently of the winning option, at the user threshold.
+  // Ownership is checked independently of the winning option, at the user threshold. An instance the
+  // fill already refused keeps the located reason that refusal recorded: an unfilled instance has no
+  // content to own, and the later verdict must not replace the parameter, row or field the fill named.
   for (let entry of entries) {
+    if (!entry.accepted) { continue; }
     let userOwned: boolean = false; let ownershipChecked: boolean = false;
     for (let answer of first.answers) { if (answer.id === "ownership_"+entry.need && answer.accepted) {
       ownershipChecked = true;
@@ -170,9 +181,9 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   // Publishers first; typed reader resolution is deterministic and never model-issued.
   let pending: screens.Instance[] = [];
   for (let entry of entries) { if (entry.accepted) { let instance: screens.Instance = await catalogue.instantiate(entry,registry); let reader: boolean = false; for (let port of instance.fragment.ports) { if (port.direction === "read") { reader = true; } }
-    if (reader) { pending[pending.length] = instance; } else { mark(composition.screen,instance); issueSources(registry,instance); for (let computation of catalogue.computations(instance,[])) { computations[computations.length] = computation; } }
+    if (reader) { pending[pending.length] = instance; } else { mark(composition.screen,instance); issueSources(registry,instance); for (let computation of catalogue.computations(instance,[],composition.screen.instances)) { computations[computations.length] = computation; } }
   } }
-  for (let instance of pending) { let failure: string = connect(composition,instance,registry,plan); if (failure === "") { mark(composition.screen,instance); for (let computation of catalogue.computations(instance,composition.connections)) { computations[computations.length] = computation; } } else { for (let need of instance.fragment.covers) { locate(composition,need,failure); } } }
+  for (let instance of pending) { let failure: string = connect(composition,instance,registry,plan); if (failure === "") { mark(composition.screen,instance); for (let computation of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = computation; } } else { for (let need of instance.fragment.covers) { locate(composition,need,failure); } } }
   if (composition.screen.instances.length === 0) { return {candidateId:"",attempts:0,diagnostics:"No runnable ordinary implementation",runnable:false}; }
   // The composition is admitted before emission: an import outside the issued surface or a storage
   // call outside an effect position is an authority verdict, not source feedback, so it authorizes no

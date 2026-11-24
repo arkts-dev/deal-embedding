@@ -63,8 +63,8 @@ SEAMS = [
     # The command names that one mode: the unbounded matrix of the packaged entry would otherwise make
     # the control's own timeout, not the broken rule, decide the outcome.
     {'id': 'attempts', 'family': 'checking-admission', 'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'old': '$s84628 = ($rt.numOf($s84622) + $rt.numOf($s84625));',
-     'new': '$s84628 = ($rt.numOf($s84622) * $rt.numOf($s84625));',
+     'old': '$s88863 = ($rt.numOf($s88857) + $rt.numOf($s88860));',
+     'new': '$s88863 = ($rt.numOf($s88857) * $rt.numOf($s88860));',
      'expect': 'candidate checks are counted as attempts',
      'command': ['node', 'tests/tools/test-generation-cutover.js', '--mode=success']},
     {'id': 'vocabulary-inventory', 'family': 'prop-predicates', 'path': 'ui/platform.dealui-pack',

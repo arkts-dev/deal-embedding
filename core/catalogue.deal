@@ -8,35 +8,127 @@ import * as bindings from "./bindings";
 import * as composer from "./composer";
 import * as s from "./construction-schema";
 
-// Only executable definitions are issued. Unsupported kinds remain open for custom sections.
-export class Parameter { name: string; type: string; required: boolean; fallback: unknown; maximum: number; }
+// One kind table declares every specification kind once. Schemas, validators, initialization and
+// eligibility facts are derived from it; `executable` records whether this build issues a runnable
+// definition, and a kind with no implementation stays open for custom sections instead of being
+// substituted by a compiling default. Only executable definitions are issued.
+export class Parameter { name: string; type: string; required: boolean; fallback: unknown; maximum: number; origin: string; owner: string; }
 // A kind's declared ports are eligibility facts: alignment offers a kind only when the composition can
-// satisfy every declared reader. Each entry spells the port as `name:type`, so a reader and a publisher
-// meet only on the exact nominal identity assembly resolves (ownership-slots-operations-and-assembly
+// satisfy every declared reader. Each port keeps its nominal type, so a reader and a publisher meet
+// only on the exact nominal identity assembly resolves (ownership-slots-operations-and-assembly
 // "Connection and layout").
-export class Definition { kind: string; criteria: string; parameters: Parameter[]; mutable: boolean; reads: string[]; publishes: string[]; }
+export class PortDecl { name: string; type: string; optional: boolean; }
+export class HoleDecl { id: string; signature: string; purpose: string; body: string; writer: string; requires: string; }
+export class Definition { kind: string; criteria: string; parameters: Parameter[]; mutable: boolean; publishes: PortDecl[]; reads: PortDecl[]; holes: HoleDecl[]; requirements: string[]; executable: boolean; }
 // The one placeholder a configured instance carries until the fill decodes it, and the located reason
 // an instance keeps when the fill never answered for it.
 export function notFilled(): string { return "Catalogue parameters were not filled"; }
+// A daily projection runs under the frozen host timezone and the checked adapter day
+// (`docs/spec-v0.8.md:358,414`). This build issues `std/time.nowMillis()` only and no host-timezone day,
+// so a captured instant cannot be projected onto the host's current day: a UTC epoch-day or a lifetime
+// count would publish a daily value no adapter produced. The projection stays unavailable and its
+// reason names the missing clock instead of presenting a substitute as a daily value.
+function dailyProjection(what: string): string { return what+" is unavailable: the local-day clock is not available in this build"; }
 export class Configured { need: string; definition: Definition; parameters: Record<string, unknown>; accepted: boolean; reason: string; }
+// AC-02 ownership facts: every parameter carries where its value comes from (`origin`) and the owner
+// stage that may supply it (`owner`). `owner` is derived from `origin` so the two can never drift.
+function param(name: string, type: string, required: boolean, fallback: unknown, maximum: number, origin: string): Parameter {
+  let owner: string = "fill";
+  if (origin === "disclosed") { owner = "request"; } else if (origin === "live") { owner = "provider"; } else if (origin === "configuration") { owner = "host"; }
+  return {name:name,type:type,required:required,fallback:fallback,maximum:maximum,origin:origin,owner:owner};
+}
+function publish(name: string, type: string): PortDecl { return {name:name,type:type,optional:false}; }
+// A reader port is required unless the specification row names it optional (only the query, currency,
+// itinerary start and deadline readers are). A required reader with no publisher leaves its need
+// unfilled instead of substituting a fallback value the section would present as a real result.
+function reads(name: string, type: string): PortDecl { return {name:name,type:type,optional:false}; }
+function optionalRead(name: string, type: string): PortDecl { return {name:name,type:type,optional:true}; }
+function hole(id: string, signature: string, purpose: string, body: string, writer: string, requires: string): HoleDecl { return {id:id,signature:signature,purpose:purpose,body:body,writer:writer,requires:requires}; }
+function kind(kindName: string, criteria: string, mutable: boolean, parameters: Parameter[], publishes: PortDecl[], readPorts: PortDecl[], holes: HoleDecl[], requirements: string[], executable: boolean): Definition {
+  return {kind:kindName,criteria:criteria,parameters:parameters,mutable:mutable,publishes:publishes,reads:readPorts,holes:holes,requirements:requirements,executable:executable};
+}
+function whenFinished(): HoleDecl { return hole("whenFinished","(state: AppState): AppState","Runs once when the selected timer reaches its preset.","return state;","fill","clock"); }
+function rowMatches(): HoleDecl { return hole("rowMatches","(state: AppState, item: Entry): boolean","Unicode simple-case-insensitive query substring match against the label.","let label: string = item.label.toLowerCase(); let query: string = state.query.toLowerCase(); return label.includes(query);","fill",""); }
 // `maximum` is the row/text bound of a list or text parameter and the exact column count of
 // `headers`; a heading itself decodes with the label bound of the shared row contract. Numeric
 // parameters keep 0 there because their domains are declared by the spec row, not by a count.
+// Personal-record arrays carry the supplied rows themselves, so 0 keeps them outside the 0-12
+// dataset bound while their identifiers, fields and values still decode under the row contract.
 export function definitions(): Definition[] {
-  return [
-    {kind:"note",criteria:"Editable retained text, not structured records, calculations or provider work.",parameters:[{name:"text",type:"string",required:false,fallback:"",maximum:512}],mutable:true,reads:[],publishes:[]},
-    {kind:"spotlight",criteria:"Highlighted read-only message; never a substitute for constructing or obtaining a result.",parameters:[{name:"message",type:"string",required:true,fallback:"",maximum:512}],mutable:false,reads:[],publishes:[]},
-    {kind:"metrics",criteria:"Read-only labelled facts from disclosed data, not generated estimates, calculations or provider records.",parameters:[{name:"values",type:"facts",required:true,fallback:null,maximum:12}],mutable:false,reads:[],publishes:[]},
-    {kind:"key_facts",criteria:"Read-only labelled facts from disclosed data; no calculation, timer, action or external data.",parameters:[{name:"items",type:"facts",required:true,fallback:null,maximum:12}],mutable:false,reads:[],publishes:[]},
-    {kind:"actions",criteria:"Local label selection and last-tapped label only. No external operation or completion claims.",parameters:[{name:"labels",type:"labels",required:true,fallback:null,maximum:12}],mutable:true,reads:[],publishes:[]},
-    {kind:"checklist",criteria:"Keyed toggles with checked and total counts; not records, assignments or external operations.",parameters:[{name:"items",type:"entries",required:false,fallback:null,maximum:12}],mutable:true,reads:[],publishes:["done:number","total:number"]},
-    {kind:"filter_box",criteria:"Editable query publishing query:string for an issued reader. No search provider or external effect.",parameters:[],mutable:true,reads:[],publishes:["query:string"]},
-    {kind:"list_summary",criteria:"Read-only done/total/remaining from exact typed publishers; cannot create or replace a publisher.",parameters:[],mutable:false,reads:["done:number","total:number"],publishes:[]},
-    {kind:"data_table",criteria:"Read-only disclosed cells in three columns whose rows match their headers; never calculations, estimates or provider data.",parameters:[{name:"headers",type:"headers",required:true,fallback:null,maximum:3},{name:"rows",type:"cells",required:true,fallback:null,maximum:12}],mutable:false,reads:[],publishes:[]},
-    {kind:"timeline",criteria:"Read-only chronological rail of disclosed minute-ordered rows in their supplied order; no records, actions or external data.",parameters:[{name:"rows",type:"timeline",required:true,fallback:null,maximum:12}],mutable:false,reads:[],publishes:[]},
-    {kind:"bar_chart",criteria:"Read-only zero-based labelled bars of disclosed values inside one declared positive scale; never an estimate or calculation.",parameters:[{name:"points",type:"points",required:true,fallback:null,maximum:12},{name:"maximum",type:"positive",required:true,fallback:null,maximum:0}],mutable:false,reads:[],publishes:[]},
-    {kind:"trend_chart",criteria:"Read-only ordered line chart of two to twelve grounded disclosed points inside one declared scale; never an estimate or calculation.",parameters:[{name:"points",type:"points",required:true,fallback:null,maximum:12},{name:"minimum",type:"number",required:true,fallback:null,maximum:0},{name:"maximum",type:"number",required:true,fallback:null,maximum:0}],mutable:false,reads:[],publishes:[]}
+  let table: Definition[] = [
+    kind("checklist","Keyed toggles with checked and total counts; not records, assignments or external operations.",true,[param("items","entries",false,null,12,"disclosed")],[publish("done","number"),publish("total","number")],[],[],[] ,true),
+    kind("metrics","Read-only summary of disclosed labelled facts, not generated estimates, calculations or provider records.",false,[param("values","facts",true,null,12,"disclosed")],[],[],[],[],true),
+    kind("timer","Countdown of one to six duration presets with selected preset, elapsed, running, start/pause/reset and one end action.",true,[param("presets","presets",false,[{label:"Timer",seconds:1500}],6,"configuration")],[],[],[whenFinished()],["clock"],true),
+    kind("calendar_event","Explicit add of one disclosed event through the bound calendar operation with pending and result.",true,[param("eventTitle","string",true,"",512,"disclosed"),param("description","string",false,"",512,"disclosed"),param("day","day",true,null,0,"configuration"),param("minute","minute",true,null,0,"configuration"),param("durationMinutes","duration",true,null,0,"configuration"),param("calendarBinding","binding",true,null,0,"configuration")],[],[],[],["calendar"],false),
+    kind("actions","Local label selection and last-tapped label only. No external operation or completion claims.",true,[param("labels","labels",true,null,12,"content")],[],[],[],[],true),
+    kind("progress_goal","Goal progress with start at zero, increment/reset and a displayed ratio clamped only in display.",true,[param("goal","positive",true,null,0,"configuration"),param("step","positive",true,null,0,"configuration")],[],[],[],[],true),
+    kind("key_facts","Read-only labelled facts from disclosed data; no calculation, timer, action or external data.",false,[param("items","facts",true,null,12,"disclosed")],[],[],[],[],true),
+    kind("trend_chart","Read-only ordered line chart of two to twelve grounded disclosed points inside one declared scale; never an estimate or calculation.",false,[param("points","points",true,null,12,"disclosed"),param("minimum","number",true,null,0,"configuration"),param("maximum","number",true,null,0,"configuration")],[],[],[],[],true),
+    kind("note","Editable retained text, not structured records, calculations or provider work.",true,[param("text","string",false,"",512,"content")],[],[],[],[],true),
+    kind("rating","Slider and readout of one rating in the 1-10 range.",true,[param("initial","rating",false,5,10,"configuration")],[],[],[],[],true),
+    kind("spotlight","Highlighted read-only message; never a substitute for constructing or obtaining a result.",false,[param("message","string",true,"",512,"content")],[],[],[],[],true),
+    kind("search_list","Label search over disclosed entries using a query initialized from the reader fallback.",true,[param("items","entries",true,null,12,"disclosed")],[], [optionalRead("query","string")],[],[],true),
+    kind("master_list","Keyed selectable list filtered by the rowMatches hole; selection starts -1.",true,[param("items","entries",true,null,12,"disclosed")],[publish("items","unknown[]"),publish("selected","number")],[optionalRead("query","string")],[rowMatches()],[],true),
+    kind("filter_box","Editable query publishing query:string for an issued reader. No search provider or external effect.",true,[],[publish("query","string")],[],[],[],true),
+    kind("detail_view","Bounds-checked detail of the selected publisher row; otherwise the no-selection notice.",false,[],[], [reads("items","unknown[]"),reads("selected","number")],[],[],true),
+    kind("list_summary","Read-only done/total/remaining from exact typed publishers; cannot create or replace a publisher.",false,[],[], [reads("done","number"),reads("total","number")],[],[],true),
+    kind("record_log","Category/amount/note drafts with checked additions, remove-last/clear and exact aggregate by label.",true,[param("labels","categories",true,null,8,"content"),param("currency","currency",true,null,32,"configuration")],[publish("labels","string[]"),publish("currency","string"),publish("totals","number[]"),publish("balances","number[]"),publish("total","number"),publish("average","number"),publish("count","number")],[],[],["money"],true),
+    kind("number_strip","Read-only numeric summary of total, average and count with optional currency.",false,[],[], [reads("total","number"),reads("average","number"),reads("count","number"),optionalRead("currency","string")],[],[],true),
+    kind("breakdown_table","Read-only equal-length aggregate rows of labels with totals and balances.",false,[],[], [reads("labels","string[]"),reads("totals","number[]"),reads("balances","number[]"),optionalRead("currency","string")],[],[],true),
+    kind("series_chart","Labelled bars of the aggregate totals or balances in label order.",false,[param("mode","mode",false,"totals",0,"configuration")],[], [reads("labels","string[]"),reads("totals","number[]"),reads("balances","number[]")],[],[],true),
+    kind("settle_up","Cent-exact debtor/creditor transfers in label order from published balances.",false,[],[], [reads("labels","string[]"),reads("balances","number[]"),optionalRead("currency","string")],[],[],true),
+    kind("itinerary","Reached flags, advance/reset and cumulative schedule over disclosed stops from an optional start.",true,[param("stops","stops",true,null,12,"disclosed"),param("navigationBinding","binding",false,"",0,"configuration"),param("calendarBinding","binding",false,"",0,"configuration")],[publish("done","number"),publish("total","number")],[optionalRead("start","number"),optionalRead("deadline","number")],[],["clock"],true),
+    kind("progress_line","Completion text and bar of the published done/total; an invalid total is unavailable.",false,[],[], [reads("done","number"),reads("total","number")],[],[],true),
+    kind("intent_panel","Action-descriptor workflow over unique controller-issued descriptor identities.",true,[param("actionIds","actionIds",true,null,0,"configuration")],[],[],[],["descriptor"],false),
+    kind("data_table","Read-only disclosed cells in three columns whose rows match their headers; never calculations, estimates or provider data.",false,[param("headers","headers",true,null,3,"content"),param("rows","cells",true,null,12,"disclosed")],[],[],[],[],true),
+    kind("timeline","Read-only chronological rail of disclosed minute-ordered rows in their supplied order; no records, actions or external data.",false,[param("rows","timeline",true,null,12,"disclosed")],[],[],[],[],true),
+    kind("bar_chart","Read-only zero-based labelled bars of disclosed values inside one declared positive scale; never an estimate or calculation.",false,[param("points","points",true,null,12,"disclosed"),param("maximum","positive",true,null,0,"configuration")],[],[],[],[],true),
+    kind("quick_log","Timestamped one-tap amount logging with undo/remove and today's total and count.",true,[param("amount","positive",true,null,0,"configuration"),param("unit","string",true,"",32,"configuration"),param("goal","positive",true,null,0,"configuration"),param("extraAmounts","numbers",false,null,0,"configuration")],[publish("goal","number"),publish("today_total","number"),publish("today_count","number")],[],[],["clock"],true),
+    kind("reminders","Add/edit/remove/complete with daily or retained one-shot marks and completed/scheduled counts.",true,[param("rows","reminders",false,null,0,"disclosed"),param("scheduleBinding","binding",false,"",0,"configuration")],[publish("done","number"),publish("total","number"),publish("scheduled","number")],[],[],["calendar"],false),
+    kind("dose_schedule","Add/remove doses, daily taken marks and history with taken_today, doses and streak.",true,[param("rows","doses",false,null,0,"disclosed"),param("calendarBinding","binding",false,"",0,"configuration")],[publish("taken_today","number"),publish("doses","number"),publish("streak","number")],[],[],["calendar"],false),
+    kind("due_items","Add/remove/change item dates with expired/soon/count and soon names.",true,[param("rows","due",false,null,0,"disclosed"),param("soonDays","count",false,7,0,"configuration")],[publish("count","number"),publish("soon_count","number"),publish("expired_count","number"),publish("soon_names","string")],[],[],["clock"],false),
+    kind("points_ledger","Selected person with signed award/redeem/undo history over the configured tasks and rewards, insufficient balance blocks spending.",true,[param("people","people",true,null,4,"disclosed"),param("tasks","tasks",false,null,0,"disclosed"),param("rewards","tasks",false,null,0,"disclosed")],[publish("labels","string[]"),publish("totals","number[]"),publish("total","number"),publish("count","number")],[],[],["money"],true),
+    kind("idea_deck","Time and level filtered idea deck whose Another wraps and Done marks today.",true,[param("ideas","ideas",true,null,12,"disclosed")],[publish("done_today","number")],[],[],["clock"],true),
+    kind("interval_timer","Work/rest/complete interval rounds with elapsed, running, start/pause/skip/reset and once-only signals.",true,[param("workSeconds","seconds",true,null,0,"configuration"),param("restSeconds","seconds",true,null,0,"configuration"),param("rounds","rounds",true,null,0,"configuration")],[publish("round","number"),publish("focus_seconds_done","number")],[],[],["clock"],true),
+    kind("reading_status","Timestamped readings with latest/status/history/chart and the shared decimals presentation field.",true,[param("unit","string",true,"",32,"configuration"),param("bands","bands",true,null,0,"configuration"),param("decimals","decimals",false,-1,6,"configuration")],[publish("count","number"),publish("latest","number"),publish("status_level","number")],[],[],["clock"],true),
+    kind("live_figure","Authorized public-probe figures refreshed explicitly; initially unavailable.",false,[param("figures","figures",true,null,3,"live"),param("source","source",true,null,0,"live")],[publish("live1","number"),publish("live2","number"),publish("live3","number"),publish("live_source","string"),publish("live_asof","string")],[],[],["probe"],false)
   ];
+  for (let definition of table) { checkDefinition(definition); }
+  return table;
+}
+// A declaration without an origin, an unknown owner stage or a non-fill writer on a body-bearing
+// hole rejects the table instead of issuing an unusable ownership fact.
+export function validate(definition: Definition): void { checkDefinition(definition); }
+function checkDefinition(definition: Definition): void {
+  s.nonblank(definition.kind); let names: string[] = [];
+  for (let parameter of definition.parameters) {
+    s.unique(names,s.identifier(parameter.name)); s.nonblank(parameter.type);
+    if (parameter.origin !== "disclosed" && parameter.origin !== "live" && parameter.origin !== "content" && parameter.origin !== "configuration") { s.reject("Catalogue parameter without an origin: "+definition.kind+" "+parameter.name); }
+    if (parameter.owner !== "request" && parameter.owner !== "provider" && parameter.owner !== "fill" && parameter.owner !== "host") { s.reject("Catalogue parameter without an owner: "+definition.kind+" "+parameter.name); }
+  }
+  let ports: string[] = [];
+  for (let port of definition.publishes) { s.unique(ports,s.identifier(port.name)); s.nonblank(port.type); if (port.optional) { s.reject("Publisher cannot be optional: "+definition.kind+" "+port.name); } }
+  // A reader is required unless the specification row names it optional, so the table never
+  // flattens a required publisher into a fallback the section would present as a real result.
+  for (let port of definition.reads) { s.identifier(port.name); s.nonblank(port.type); }
+  for (let requirement of definition.requirements) { s.identifier(requirement); }
+  let holes: string[] = [];
+  for (let declared of definition.holes) {
+    s.unique(holes,s.identifier(declared.id)); s.nonblank(declared.signature); s.nonblank(declared.purpose);
+    if (declared.writer !== "fill" && declared.writer !== "controller") { s.reject("Catalogue hole writer: "+definition.kind+" "+declared.id); }
+    if (declared.body.length > 600) { s.reject("Catalogue hole body bound: "+definition.kind+" "+declared.id); } s.text(declared.requires);
+  }
+}
+export function definitionOf(name: string): Definition { for (let entry of definitions()) { if (entry.kind === name) { return entry; } } s.reject("Unknown catalogue kind: "+name); throw {name:"CONSTRUCTION_SCHEMA",message:"Unknown catalogue kind"}; }
+// Eligibility facts published for the generation consumer: the parameter requirements, ports and
+// holes this build issues for a kind. Selection itself stays generation's decision.
+export function eligibility(name: string): Definition { return definitionOf(name); }
+export function offered(definition: Definition): boolean {
+  if (!definition.executable) { return false; }
+  // A required live parameter needs a frozen provider contract; without one the owner is unachievable
+  // and the kind is never offered, so no default silently stands in for missing grounded data.
+  for (let parameter of definition.parameters) { if (parameter.required && parameter.owner === "provider") { return false; } }
+  return true;
 }
 // A reader kind can only be wired when the need requests a dependency another need publishes: a plan
 // read that names an input or constant asks for a seed, never for a publisher's value, so issuing a
@@ -46,16 +138,49 @@ export function carriesReaders(plan: plans.Plan, need: plans.Need): boolean {
   for (let other of plan.needs) { if (other.id !== need.id && s.contains(need.reads,other.id)) { return true; } }
   return false;
 }
+// A kind is a reader kind only when the specification row makes one of its readers required. A kind
+// whose readers are all optional takes each assembly fallback and runs standalone, so it stays offered
+// for a need that requests no publisher (`search_list`, `master_list`, `itinerary`).
+export function requiresPublishers(definition: Definition): boolean {
+  for (let port of definition.reads) { if (!port.optional) { return true; } }
+  return false;
+}
+// The readers that must meet a publisher, as issued eligibility facts. Alignment joins only these, so an
+// optional reader never blocks a candidate the composition can run with its declared fallback.
+export function requiredReaders(definition: Definition): PortDecl[] {
+  let result: PortDecl[] = [];
+  for (let port of definition.reads) { if (!port.optional) { result[result.length] = port; } }
+  return result;
+}
 export function alternatives(plan: plans.Plan): selecting.Alternative[] {
   let result: selecting.Alternative[] = [];
   for (let need of plan.needs) { if (need.type === "content" || need.type === "other") {
     let readers: boolean = carriesReaders(plan,need);
     for (let definition of definitions()) {
-      if (definition.reads.length > 0 && !readers) { continue; }
-      result[result.length] = {id:"cat_"+need.id+"_"+definition.kind,need:need.id,origin:"catalogue",kind:definition.kind,criteria:definition.criteria,eligible:true,reason:""};
+      if (!offered(definition)) { continue; }
+      if (requiresPublishers(definition) && !readers) { continue; }
+      result[result.length] = {id:"cat_"+need.id+"_"+definition.kind,need:need.id,origin:"catalogue",kind:definition.kind,criteria:definition.criteria+" "+facts(definition),eligible:true,reason:""};
     }
   } }
   return result;
+}
+// The published eligibility facts in one sentence: the parameters this kind needs and the ports and
+// holes it issues. Generation reads these facts; it decides selection.
+export function facts(definition: Definition): string {
+  let parameters: string[] = [];
+  for (let parameter of definition.parameters) { let required: string = "optional"; if (parameter.required) { required = "required"; }
+    // The published default is the value the decoder actually applies: a required parameter has none, and a
+    // collection whose fallback is null starts empty instead of carrying a null element list.
+    let fallback: string = "no default";
+    if (!parameter.required) { if (s.encode(parameter.fallback) === "null") { fallback = "default []"; } else { fallback = "default "+s.encode(parameter.fallback); } }
+    parameters[parameters.length] = parameter.name+":"+parameter.type+" "+required+" origin "+parameter.origin+" "+fallback; }
+  let publishes: string[] = []; for (let port of definition.publishes) { publishes[publishes.length] = port.name+":"+port.type; }
+  let readPorts: string[] = []; for (let port of definition.reads) { let optionality: string = "optional"; if (!port.optional) { optionality = "required"; } readPorts[readPorts.length] = port.name+":"+port.type+" "+optionality; }
+  let holes: string[] = []; for (let declared of definition.holes) { holes[holes.length] = declared.id+" ("+declared.writer+")"+(declared.requires === "" ? "" : " requires "+declared.requires); }
+  // The capability requirements a kind states (clock, calendar, money, descriptor, probe) are
+  // eligibility facts too: generation reads them instead of inferring them from the emitted source.
+  let requirements: string[] = []; for (let requirement of definition.requirements) { requirements[requirements.length] = requirement; }
+  return "Parameters ["+parameters.join("; ")+"]; publishes ["+publishes.join("; ")+"]; readers ["+readPorts.join("; ")+"]; holes ["+holes.join("; ")+"]; requires ["+requirements.join("; ")+"].";
 }
 // Decoded values carry real JSON kinds, so their wire spelling identifies the type: a text begins
 // with a quote, an array with a bracket and a row with a brace. A wrong-typed field or collection of
@@ -87,6 +212,112 @@ function flag(owner: Record<string, unknown>, name: string, fallback: boolean): 
 // Timeline minutes are the shared minute-of-day domain; the rail keeps the supplied order and shows
 // the minute as zero-padded 24-hour text, because the pack's rail item carries display text only.
 function clock(minute: number): string { let hours: number = Math.floor(minute/60); let rest: number = minute-hours*60; let text: string = String(hours); if (hours < 10) { text = "0"+text; } let minutes: string = String(rest); if (rest < 10) { minutes = "0"+minutes; } return text+":"+minutes; }
+// A positive duration is a real quantity of its stated unit: sign and finiteness are checked here
+// and no unit conversion is implied by the value.
+function positiveNumber(value: unknown, name: string): number { let result: number = number(value,name); if (result <= 0) { s.reject("Catalogue positive bound: "+name); } return result; }
+function nonnegative(value: unknown, name: string): number { let result: number = number(value,name); if (result < 0) { s.reject("Catalogue nonnegative bound: "+name); } return result; }
+// Shared temporal domains: minute-of-day is integral 0-1439 and a day is an integral local epoch-day.
+function minuteOfDay(value: unknown, name: string): number { let result: number = integer(value,name); if (result < 0 || result > 1439) { s.reject("Catalogue minute domain: "+name); } return result; }
+function dayOf(value: unknown, name: string): number { return integer(value,name); }
+// A zero maximum states "no dataset bound", which is how personal-record arrays keep the rows the
+// user supplied instead of being trimmed to a fixture-shaped size.
+function within(entries: unknown[], minimum: number, maximum: number, name: string): void {
+  if (entries.length < minimum) { s.reject("Catalogue array minimum: "+name); }
+  if (maximum > 0 && entries.length > maximum) { s.reject("Catalogue array bound: "+name); }
+}
+function modeValue(value: unknown, name: string, allowed: string[]): string { if (!s.encode(value).startsWith("\"")) { s.reject("Catalogue text required: "+name); } return s.oneOf(value,allowed); }
+function coordinate(latitude: unknown, longitude: unknown, name: string): void {
+  let absentLatitude: boolean = s.encode(latitude) === "null"; let absentLongitude: boolean = s.encode(longitude) === "null";
+  if (absentLatitude !== absentLongitude) { s.reject("Catalogue coordinates must both be null or present: "+name); }
+  if (absentLatitude) { return; }
+  let lat: number = number(latitude,"latitude"); let lon: number = number(longitude,"longitude");
+  if (lat < -90 || lat > 90) { s.reject("Catalogue latitude domain: "+name); }
+  if (lon < -180 || lon > 180) { s.reject("Catalogue longitude domain: "+name); }
+}
+// RFC 6901 JSON Pointer: empty is the whole document, otherwise every reference token begins with "/"
+// and escapes "~" as "~0" and "/" as "~1". No percent escapes or array shorthand are admitted.
+// A live source is credential-free HTTPS on a public host: userinfo, loopback, link-local and the
+// private IPv4 ranges are refused before any probe can be issued.
+function publicHttps(url: string): boolean {
+  if (!url.startsWith("https://")) { return false; }
+  let rest: string = url.substring(8); let end: number = rest.length; let slash: number = rest.indexOf("/"); if (slash >= 0) { end = slash; }
+  let authority: string = rest.substring(0,end); if (authority === "" || authority.includes("@")) { return false; }
+  let host: string = authority; let colon: number = authority.indexOf(":"); if (colon >= 0) { host = authority.substring(0,colon); }
+  if (host === "" ) { return false; }
+  let lowered: string = host.toLowerCase();
+  if (lowered === "localhost" || lowered === "[::1]" || lowered === "::1") { return false; }
+  if (lowered.startsWith("127.") || lowered.startsWith("10.") || lowered.startsWith("192.168.") || lowered.startsWith("169.254.")) { return false; }
+  if (lowered.startsWith("172.")) { let second: string = lowered.substring(4,5); if (second === "1" || second === "2" || second === "3") { let value: number = Number(lowered.substring(4,6)); if (value >= 16 && value <= 31) { return false; } } }
+  return true;
+}
+function pointer(value: string, name: string): void {
+  if (value === "") { return; }
+  if (!value.startsWith("/")) { s.reject("Catalogue live path is not a JSON Pointer: "+name); }
+  for (let token of value.substring(1).split("/")) {
+    let cursor: number = 0;
+    while (cursor < token.length) { let ch: string = token.substring(cursor,cursor+1); if (ch === "~") { let next: string = token.substring(cursor+1,cursor+2); if (next !== "0" && next !== "1") { s.reject("Catalogue live path escape: "+name); } cursor = cursor+2; } else { cursor = cursor+1; } }
+  }
+}
+// One row schema per declared type. A type with no schema rejects, so a kind-table typo cannot decode
+// some other row shape silently.
+async function row(type: string, entry: unknown, ids: string[], name: string): Promise<Record<string, unknown>> {
+  record(entry,name); let value: Record<string, unknown> = entry as Record<string, unknown>;
+  if (type === "facts") { s.closed(value,["label","value"],[]); return {label:await text(value.label,32,true),value:await text(value.value,512,false)}; }
+  if (type === "timeline") {
+    s.closed(value,["minute","title"],["detail"]); let minute: number = integer(value.minute,"minute");
+    if (minute < 0 || minute > 1439) { s.reject("Catalogue timeline minute domain"); }
+    return {minute:minute,title:await text(value.title,32,true),detail:await text(optionalValue(value,"detail"),512,false)};
+  }
+  if (type === "points") { s.closed(value,["label","value"],[]); return {label:await text(value.label,32,true),value:number(value.value,"value")}; }
+  if (type === "entries") { s.closed(value,["id","label"],["detail","done"]); let id: string = rowIdentity(value.id,"id"); s.unique(ids,id); return {id:id,label:await text(value.label,32,true),detail:await text(optionalValue(value,"detail"),512,false),done:flag(value,"done",false)}; }
+  if (type === "presets") { s.closed(value,["label","seconds"],[]); return {label:await text(value.label,32,true),seconds:positiveNumber(value.seconds,"seconds")}; }
+  if (type === "stops") {
+    s.closed(value,["id","label","minutes"],["latitude","longitude"]); let id: string = rowIdentity(value.id,"id"); s.unique(ids,id);
+    let minutes: number = integer(value.minutes,"minutes"); if (minutes < 0) { s.reject("Catalogue stop minutes must be nonnegative"); }
+    // An absent key and an explicit null both mean "no coordinates"; only a supplied pair is checked.
+    let latitude: unknown = null; let longitude: unknown = null;
+    if (Object.hasOwn(value,"latitude")) { latitude = value.latitude; }
+    if (Object.hasOwn(value,"longitude")) { longitude = value.longitude; }
+    coordinate(latitude,longitude,name);
+    let result: Record<string, unknown> = {id:id,label:await text(value.label,32,true),minutes:minutes,latitude:null,longitude:null};
+    if (s.encode(latitude) !== "null") { result.latitude = number(latitude,"latitude"); result.longitude = number(longitude,"longitude"); }
+    return result;
+  }
+  if (type === "reminders") {
+    s.closed(value,["id","title","minute"],["daily","day"]); let id: string = rowIdentity(value.id,"id"); s.unique(ids,id);
+    let daily: boolean = flag(value,"daily",false); let minute: number = minuteOfDay(value.minute,"minute");
+    let result: Record<string, unknown> = {id:id,title:await text(value.title,32,true),minute:minute,daily:daily};
+    if (daily) { if (Object.hasOwn(value,"day")) { s.reject("Catalogue daily reminder omits its day"); } }
+    else { if (!Object.hasOwn(value,"day")) { s.reject("Catalogue one-shot reminder requires a day"); } result.day = dayOf(value.day,"day"); }
+    return result;
+  }
+  if (type === "doses") { s.closed(value,["id","name","minute"],[]); let id: string = rowIdentity(value.id,"id"); s.unique(ids,id); return {id:id,name:await text(value.name,32,true),minute:minuteOfDay(value.minute,"minute")}; }
+  if (type === "due") { s.closed(value,["id","name","day"],[]); let id: string = rowIdentity(value.id,"id"); s.unique(ids,id); return {id:id,name:await text(value.name,32,true),day:dayOf(value.day,"day")}; }
+  if (type === "tasks") { s.closed(value,["id","label","points"],[]); let id: string = rowIdentity(value.id,"id"); s.unique(ids,id); return {id:id,label:await text(value.label,32,true),points:positiveNumber(value.points,"points")}; }
+  if (type === "ideas") {
+    s.closed(value,["id","title","level","instructions","minutes"],[]); let id: string = rowIdentity(value.id,"id"); s.unique(ids,id);
+    let minutes: number = integer(value.minutes,"minutes"); if (minutes <= 0) { s.reject("Catalogue idea duration must be positive"); }
+    return {id:id,title:await text(value.title,32,true),level:await text(value.level,32,true),instructions:await text(value.instructions,512,false),minutes:minutes};
+  }
+  if (type === "bands") {
+    s.closed(value,["upper","label","level"],[]); let level: number = integer(value.level,"level");
+    // Reading levels are the integral status mapping: default/success 0, warning 1 and danger 2.
+    if (level < 0 || level > 2) { s.reject("Catalogue reading level domain"); }
+    let upper: number | null = null; if (s.encode(value.upper) !== "null") { upper = number(value.upper,"upper"); }
+    return {upper:upper,label:await text(value.label,32,true),level:level};
+  }
+  if (type === "figures") {
+    s.closed(value,["id","label","path"],["unit"]); let id: string = rowIdentity(value.id,"id"); s.unique(ids,id);
+    let unit: string = await text(optionalValue(value,"unit"),32,false); let path: string = await text(value.path,2048,false); pointer(path,"path");
+    return {id:id,label:await text(value.label,32,true),unit:unit,path:path};
+  }
+  s.reject("Catalogue parameter row type: "+type); throw {name:"CONSTRUCTION_SCHEMA",message:"Catalogue parameter row type"};
+}
+async function rowList(parameter: Parameter, value: unknown, minimum: number, ids: string[]): Promise<Record<string, unknown>[]> {
+  list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,minimum,parameter.maximum,parameter.name); let checked: Record<string, unknown>[] = [];
+  for (let entry of entries) { checked[checked.length] = await row(parameter.type,entry,ids,parameter.name); }
+  return checked;
+}
 // The parameter record arrives as dynamic JSON, so a null or scalar answer reaches the guard here
 // and rejects like any row instead of raising a runtime type error at the call boundary.
 export async function decode(definition: Definition, raw: unknown): Promise<Record<string, unknown>> {
@@ -100,17 +331,53 @@ export async function decode(definition: Definition, raw: unknown): Promise<Reco
   let minimum: number = 0; let maximum: number = 0;
   for (let key of ["title","subtitle"]) { if (Object.hasOwn(given,key)) { result[key] = await text(given[key],512,false); } }
   for (let parameter of definition.parameters) {
-    let value: unknown = parameter.fallback; if (value === null) { let empty: Record<string, unknown>[] = []; value = empty; } if (Object.hasOwn(given,parameter.name)) { value = given[parameter.name]; }
+    // A list parameter with no declared default starts empty. The replacement is an untyped element
+    // array because each consuming branch performs its own element decode; a typed empty array would
+    // reach the branch cast with a narrower element tag.
+    let value: unknown = parameter.fallback; if (s.encode(value) === "null") { let empty: unknown[] = []; value = empty; } if (Object.hasOwn(given,parameter.name)) { value = given[parameter.name]; }
     if (parameter.type === "string") { result[parameter.name] = await text(value,parameter.maximum,false); }
+    else if (parameter.type === "currency") { result[parameter.name] = await text(value,32,true); }
     else if (parameter.type === "number" || parameter.type === "positive") {
       let checked: number = number(value,parameter.name); if (parameter.type === "positive" && checked <= 0) { s.reject("Catalogue positive bound: "+parameter.name); } result[parameter.name] = checked;
       if (parameter.name === "minimum") { minimum = checked; } else if (parameter.name === "maximum") { maximum = checked; }
     }
+    else if (parameter.type === "count") { let checked: number = integer(value,parameter.name); if (checked < 0) { s.reject("Catalogue nonnegative count: "+parameter.name); } result[parameter.name] = checked; }
+    else if (parameter.type === "rounds") { let checked: number = integer(value,parameter.name); if (checked <= 0) { s.reject("Catalogue positive rounds: "+parameter.name); } result[parameter.name] = checked; }
+    else if (parameter.type === "seconds") { let checked: number = integer(value,parameter.name); if (checked <= 0) { s.reject("Catalogue positive seconds: "+parameter.name); } result[parameter.name] = checked; }
+    else if (parameter.type === "duration") { let checked: number = integer(value,parameter.name); if (checked <= 0) { s.reject("Catalogue positive duration: "+parameter.name); } result[parameter.name] = checked; }
+    else if (parameter.type === "minute") { result[parameter.name] = minuteOfDay(value,parameter.name); }
+    else if (parameter.type === "day") { result[parameter.name] = dayOf(value,parameter.name); }
+    else if (parameter.type === "rating") { let checked: number = integer(value,parameter.name); if (checked < 1 || checked > 10) { s.reject("Catalogue rating domain: "+parameter.name); } result[parameter.name] = checked; }
+    // The shared decimals field: -1 automatic or a fixed integral 0-6. Any other value, such as -2,
+    // 7 or 1.5, rejects with the instance identifier the caller supplies.
+    else if (parameter.type === "decimals") { let checked: number = integer(value,parameter.name); if (checked < -1 || checked > 6) { s.reject("Catalogue decimals domain: "+parameter.name); } result[parameter.name] = checked; }
+    else if (parameter.type === "mode") { result[parameter.name] = modeValue(value,parameter.name,["totals","balances"]); }
+    else if (parameter.type === "binding") {
+      if (!s.encode(value).startsWith("\"")) { s.reject("Catalogue text required: "+parameter.name); }
+      // An absent registry reference is the empty default; a supplied one must be a plan identifier.
+      let referenced: string = s.text(value); result[parameter.name] = ""; if (referenced !== "") { result[parameter.name] = s.identifier(value); }
+    }
     else if (parameter.type === "labels") {
-      list(value,parameter.name); let entries: unknown[] = value as unknown[]; if (entries.length < 1 || entries.length > parameter.maximum) { s.reject("Catalogue labels bound"); }
-      let labels: string[] = [];
-      for (let label of entries) { labels[labels.length] = await text(label,32,true); }
+      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,1,parameter.maximum,parameter.name);
+      let labels: string[] = []; for (let label of entries) { labels[labels.length] = await text(label,32,true); }
       result[parameter.name] = labels;
+    }
+    else if (parameter.type === "categories") {
+      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,1,parameter.maximum,parameter.name);
+      let labels: string[] = []; let ids: string[] = [];
+      for (let label of entries) { let checked: string = await text(label,32,true); s.unique(ids,checked); labels[labels.length] = checked; }
+      result[parameter.name] = labels;
+    }
+    else if (parameter.type === "people") {
+      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,1,parameter.maximum,parameter.name);
+      let people: string[] = []; let ids: string[] = [];
+      for (let person of entries) { let checked: string = await text(person,32,true); s.unique(ids,checked); people[people.length] = checked; }
+      result[parameter.name] = people;
+    }
+    else if (parameter.type === "actionIds") {
+      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,1,parameter.maximum,parameter.name);
+      let issued: string[] = []; for (let entry of entries) { let id: string = rowIdentity(entry,"actionIds"); s.unique(issued,id); issued[issued.length] = id; }
+      result[parameter.name] = issued;
     }
     else if (parameter.type === "headers") {
       list(value,parameter.name); let entries: unknown[] = value as unknown[]; if (entries.length !== parameter.maximum) { s.reject("Catalogue headers bound"); }
@@ -118,42 +385,60 @@ export async function decode(definition: Definition, raw: unknown): Promise<Reco
       for (let name of entries) { names[names.length] = await text(name,32,true); }
       headers = names; result[parameter.name] = names;
     } else if (parameter.type === "cells") {
-      list(value,parameter.name); let entries: unknown[] = value as unknown[]; if (entries.length > parameter.maximum) { s.reject("Catalogue rows bound"); }
-      for (let row of entries) {
-        list(row,"cells"); let cells: string[] = [];
-        for (let cell of row as unknown[]) { cells[cells.length] = await text(cell,512,false); }
+      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,0,parameter.maximum,parameter.name);
+      for (let entry of entries) {
+        list(entry,"cells"); let cells: string[] = [];
+        for (let cell of entry as unknown[]) { cells[cells.length] = await text(cell,512,false); }
         table[table.length] = cells;
       }
       result[parameter.name] = table;
+    } else if (parameter.type === "numbers") {
+      list(value,parameter.name); let entries: unknown[] = value as unknown[]; within(entries,0,parameter.maximum,parameter.name);
+      let amounts: number[] = []; for (let entry of entries) { amounts[amounts.length] = positiveNumber(entry,"amount"); }
+      result[parameter.name] = amounts;
+    } else if (parameter.type === "source") {
+      record(value,parameter.name); let source: Record<string, unknown> = value as Record<string, unknown>;
+      s.closed(source,["url","mode"],["asofPath"]);
+      let url: string = await text(source.url,2048,true); if (!publicHttps(url)) { s.reject("Catalogue live source requires credential-free public HTTPS"); }
+      let asofPath: string = ""; if (Object.hasOwn(source,"asofPath")) { asofPath = await text(source.asofPath,2048,false); pointer(asofPath,"asofPath"); }
+      result[parameter.name] = {url:url,mode:modeValue(source.mode,"mode",["api","search"]),asofPath:asofPath};
     } else {
-      list(value,parameter.name); let entries: unknown[] = value as unknown[]; if (entries.length > parameter.maximum) { s.reject("Catalogue rows bound"); }
-      let checked: Record<string, unknown>[] = []; let ids: string[] = [];
-      let previous: number = -1;
-      for (let entry of entries) {
-        record(entry,parameter.name); let row: Record<string, unknown> = entry as Record<string, unknown>;
-        if (parameter.type === "facts") { s.closed(row,["label","value"],[]); checked[checked.length] = {label:await text(row.label,32,true),value:await text(row.value,512,false)}; }
-        else if (parameter.type === "timeline") {
-          s.closed(row,["minute","title"],["detail"]); let minute: number = integer(row.minute,"minute");
-          if (minute < 0 || minute > 1439) { s.reject("Catalogue timeline minute domain"); }
-          if (minute < previous) { s.reject("Catalogue timeline order"); } previous = minute;
-          checked[checked.length] = {minute:minute,title:await text(row.title,32,true),detail:await text(optionalValue(row,"detail"),512,false)};
-        }
-        else if (parameter.type === "points") { s.closed(row,["label","value"],[]); checked[checked.length] = {label:await text(row.label,32,true),value:number(row.value,"value")}; }
-        else if (parameter.type === "entries") { s.closed(row,["id","label"],["detail","done"]); let id: string = rowIdentity(row.id,"id"); s.unique(ids,id); checked[checked.length] = {id:id,label:await text(row.label,32,true),detail:await text(optionalValue(row,"detail"),512,false),done:flag(row,"done",false)}; }
-        // A kind table typo must reject instead of decoding another row schema silently.
-        else { s.reject("Catalogue parameter row type: "+parameter.type); }
+      let ids: string[] = []; let minimumRows: number = 0;
+      if (parameter.type === "presets") { minimumRows = 1; } else if (parameter.type === "figures") { minimumRows = 1; }
+      let checked: Record<string, unknown>[] = await rowList(parameter,value,minimumRows,ids);
+      if (parameter.type === "presets") {
+        // A preset list always has a selection: the first declared preset unless the assembly
+        // overrides it, which is why an empty list is refused instead of inventing a duration.
+        if (checked.length === 0) { s.reject("Catalogue presets bound"); }
       }
       if (parameter.type === "points") { points = checked; }
       result[parameter.name] = checked;
     }
   }
+  if (definition.kind === "timeline") {
+    // The rail keeps the supplied order, which must already be chronological: a decreasing minute
+    // is a wrong row, never something this decoder silently reorders.
+    let previous: number = -1;
+    for (let railRow of s.records(result,"rows")) { let minute: number = s.integral(railRow.minute); if (minute < previous) { s.reject("Catalogue timeline order"); } previous = minute; }
+  }
   // Relations that no single parameter can check are decided once every row is decoded.
   if (definition.kind === "data_table") {
     // Every row carries exactly one cell per declared header.
-    for (let row of table) { if (row.length !== headers.length) { s.reject("Catalogue columns match headers"); } }
+    for (let cellsRow of table) { if (cellsRow.length !== headers.length) { s.reject("Catalogue columns match headers"); } }
   } else if (definition.kind === "bar_chart" || definition.kind === "trend_chart") {
     if (definition.kind === "trend_chart") { if (minimum >= maximum) { s.reject("Catalogue chart scale"); } if (points.length < 2) { s.reject("Catalogue chart points bound"); } }
     for (let point of points) { let value: number = s.finite(point.value); if (value < minimum || value > maximum) { s.reject("Catalogue chart value outside scale"); } }
+  } else if (definition.kind === "reading_status") {    // Nonempty bands with strictly increasing finite upper bounds followed by one required final
+    // unbounded band: the first exclusive upper match is then well defined for every reading.
+    let bands: Record<string, unknown>[] = s.records(result,"bands"); if (bands.length < 1) { s.reject("Catalogue reading bands required"); }
+    let previous: number = 0; let first: boolean = true; let unbounded: boolean = false; let index: number = 0;
+    for (let band of bands) {
+      if (index === bands.length-1) { if (s.encode(band.upper) !== "null") { s.reject("Catalogue final reading band must be unbounded"); } }
+      if (s.encode(band.upper) === "null" && index !== bands.length-1) { s.reject("Catalogue only the final reading band is unbounded"); }
+      if (s.encode(band.upper) !== "null") { let upper: number = s.finite(band.upper); if (!unbounded && !first && upper <= previous) { s.reject("Catalogue reading bands must increase"); } previous = upper; first = false; }
+      if (s.encode(band.upper) === "null") { unbounded = true; }
+      index = index+1;
+    }
   }
   return result;
 }
@@ -217,6 +502,91 @@ export function disclosed(entry: Configured, original: string, facts: string, us
   }
   // The chart scale is a declared configuration of the picture, like the section title, and not a
   // supplied value: only the plotted labels and values must be evidenced.
+  if (entry.definition.kind === "search_list" || entry.definition.kind === "master_list") {
+    let index: number = 0;
+    for (let row of s.records(entry.parameters,"items")) {
+      if (!supplied(s.text(row.label),data)) { return refusal(entry,"row "+String(index)+" label"); }
+      if (!supplied(s.text(row.detail),data)) { return refusal(entry,"row "+String(index)+" detail"); }
+      index = index+1;
+    }
+  }
+  if (entry.definition.kind === "calendar_event") {
+    if (!supplied(s.text(entry.parameters.eventTitle),data)) { return refusal(entry,"eventTitle"); }
+    if (!supplied(s.text(entry.parameters.description),data)) { return refusal(entry,"description"); }
+  }
+  // A supplied coordinate value is disclosed navigation content like the stop label: each supplied
+  // value needs evidence, and an absent pair (both null) supplies nothing to admit.
+  if (entry.definition.kind === "itinerary") {
+    let index: number = 0;
+    for (let row of s.records(entry.parameters,"stops")) {
+      if (!supplied(s.text(row.label),data)) { return refusal(entry,"stop "+String(index)+" label"); }
+      if (!numeric(s.finite(row.minutes),data)) { return refusal(entry,"stop "+String(index)+" minutes"); }
+      if (Object.hasOwn(row,"latitude") && s.encode(row.latitude) !== "null" && !numeric(s.finite(row.latitude),data)) { return refusal(entry,"stop "+String(index)+" latitude"); }
+      if (Object.hasOwn(row,"longitude") && s.encode(row.longitude) !== "null" && !numeric(s.finite(row.longitude),data)) { return refusal(entry,"stop "+String(index)+" longitude"); }
+      index = index+1;
+    }
+  }
+  // A one-shot reminder carries the day it is due on, which is a supplied fact like its minute; a daily
+  // reminder has no day to evidence.
+  if (entry.definition.kind === "reminders") {
+    let index: number = 0;
+    for (let row of s.records(entry.parameters,"rows")) {
+      if (!supplied(s.text(row.title),data)) { return refusal(entry,"reminder "+String(index)+" title"); }
+      if (!numeric(s.finite(row.minute),data)) { return refusal(entry,"reminder "+String(index)+" minute"); }
+      if (Object.hasOwn(row,"day") && !numeric(s.finite(row.day),data)) { return refusal(entry,"reminder "+String(index)+" day"); }
+      index = index+1;
+    }
+  }
+  if (entry.definition.kind === "points_ledger" && Object.hasOwn(entry.parameters,"people")) {
+    let index: number = 0;
+    for (let person of s.stringArray(entry.parameters.people)) { if (!supplied(person,data)) { return refusal(entry,"person "+String(index)); } index = index+1; }
+  }
+  if (entry.definition.kind === "dose_schedule") {
+    let index: number = 0;
+    for (let row of s.records(entry.parameters,"rows")) { if (!supplied(s.text(row.name),data)) { return refusal(entry,"dose "+String(index)+" name"); } if (!numeric(s.finite(row.minute),data)) { return refusal(entry,"dose "+String(index)+" minute"); } index = index+1; }
+  }
+  if (entry.definition.kind === "due_items") {
+    let index: number = 0;
+    for (let row of s.records(entry.parameters,"rows")) {
+      if (!supplied(s.text(row.name),data)) { return refusal(entry,"item "+String(index)+" name"); }
+      if (!numeric(s.finite(row.day),data)) { return refusal(entry,"item "+String(index)+" day"); }
+      index = index+1;
+    }
+  }
+  // Reward and task rows are personal records: their labels and positive points are evidenced like
+  // any other supplied fact.
+  if (entry.definition.kind === "points_ledger") {
+    for (let key of ["tasks","rewards"]) {
+      let index: number = 0;
+      for (let row of s.records(entry.parameters,key)) {
+        if (!supplied(s.text(row.label),data)) { return refusal(entry,key+" "+String(index)+" label"); }
+        if (!numeric(s.finite(row.points),data)) { return refusal(entry,key+" "+String(index)+" points"); }
+        index = index+1;
+      }
+    }
+  }
+  if (entry.definition.kind === "idea_deck") {
+    let index: number = 0;
+    for (let row of s.records(entry.parameters,"ideas")) {
+      if (!supplied(s.text(row.title),data)) { return refusal(entry,"idea "+String(index)+" title"); }
+      if (!supplied(s.text(row.level),data)) { return refusal(entry,"idea "+String(index)+" level"); }
+      if (!supplied(s.text(row.instructions),data)) { return refusal(entry,"idea "+String(index)+" instructions"); }
+      if (!numeric(s.finite(row.minutes),data)) { return refusal(entry,"idea "+String(index)+" minutes"); }
+      index = index+1;
+    }
+  }
+  if (entry.definition.kind === "live_figure") {
+    let index: number = 0;
+    for (let row of s.records(entry.parameters,"figures")) {
+      if (!supplied(s.text(row.label),data)) { return refusal(entry,"figure "+String(index)+" label"); }
+      if (!supplied(s.text(row.unit),data)) { return refusal(entry,"figure "+String(index)+" unit"); }
+      index = index+1;
+    }
+  }
+  // Under a user-owned answer the supplied title and subtitle are user content too: invented ones are
+  // refused like invented row text. Authored presentation of a non-owned section is not evidence.
+  if (userOwned && !supplied(s.text(entry.parameters.title),data)) { return refusal(entry,"title"); }
+  if (userOwned && !supplied(s.text(entry.parameters.subtitle),data)) { return refusal(entry,"subtitle"); }
   if (userOwned && entry.definition.kind === "note" && !supplied(s.text(entry.parameters.text),data)) { return refusal(entry,"note text"); }
   return "";
 }
@@ -235,7 +605,9 @@ export async function fill(context: selecting.Context, plan: plans.Plan, entries
     for (let row of rows) { s.closed(row,["need","parameters"],[]); let need: string = s.identifier(row.need); s.unique(ids,need); let issued: boolean = false; for (let entry of entries) { if (entry.need === need) { issued = true; } } if (!issued) { s.reject("Unissued catalogue fill"); } }
     for (let entry of entries) { for (let row of rows) { if ((row.need as string) === entry.need) {
       try { entry.parameters = await decode(entry.definition,row.parameters); entry.accepted = true; entry.reason = ""; }
-      catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } entry.reason = error.message; }
+      // A rejected fill locates the instance: the need identity prefixes every parameter refusal, the
+      // numeric-presentation domain included, so the reader knows which instance kept its defaults.
+      catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } entry.reason = "Catalogue instance "+entry.need+": "+error.message; }
     } } }
   } catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8007"],error.name)) { throw error; } }
 }
@@ -244,10 +616,41 @@ async function literal(value: unknown, type: string): Promise<string> {
   let empty: Record<string, unknown> = {};
   return await syntax.expression(s.encode({source:s.encode(value),expected:type,names:empty,fields:empty,types:empty,variables:empty}));
 }
+// Each kind issues its own fragment from the one table above. These helpers keep field, port and
+// action identities uniform so a kind cannot drift into a second convention.
+function authoredField(id: string, name: string, type: string, initial: string): screens.Field { return {name:name,type:type,role:"authoritative",dependencies:[],initial:initial,owner:id}; }
+function derivedField(id: string, name: string, type: string): screens.Field { return {name:name,type:type,role:"derived",dependencies:[],initial:"null",owner:id}; }
+function publishPort(name: string, type: string): screens.Port { return {name:name,type:type,direction:"publish",getter:name,optional:false}; }
+// An optional reader takes the assembly fallback the specification row names; a required reader has
+// no fallback and leaves its need unfilled while no publisher exists.
+function readerPort(name: string, type: string, fallback: string): screens.Port { return {name:name,type:type,direction:"read",getter:name,optional:true,fallback:fallback}; }
+function requiredReader(name: string, type: string): screens.Port { return {name:name,type:type,direction:"read",getter:name,optional:false}; }
+function handler(action: string, name: string): screens.Handler { return {action:action,function:name}; }
+// A hole definition is issued with the instance as plain record data, so the assembly boundary can
+// read its identity, signature, default body and writer without a second nominal class.
+function holeRecord(declared: HoleDecl): Record<string, unknown> { return {id:declared.id,signature:declared.signature,purpose:declared.purpose,body:declared.body,writer:declared.writer,requires:declared.requires}; }
+// A declared composition registry reference must name an issued binding or descriptor; an unresolved
+// reference rejects the instance instead of emitting a call to nothing.
+function resolve(registry: bindings.Registry, name: string): void {
+  if (name === "") { return; }
+  for (let action of registry.actions) { if (action.id === name) { return; } }
+  for (let binding of registry.bindings) { if (binding.id === name) { return; } }
+  s.reject("Unresolved catalogue registry reference: "+name);
+}
+// The level filter offers each declared idea level once, in first-seen order.
+function distinctLevels(values: string[]): string[] { let result: string[] = []; for (let value of values) { if (!s.contains(result,value)) { result[result.length] = value; } } return result; }
+function numberArray(values: number[]): string { let result: string = "["; let separator: string = ""; for (let value of values) { result = result+separator+String(value); separator = ", "; } return result+"]"; }
 export async function instantiate(entry: Configured, registry: bindings.Registry): Promise<screens.Instance> {
   if (!entry.accepted) { s.reject("Unfilled catalogue instance"); }
   let id: string = "section_"+entry.need; let kind: string = entry.definition.kind; let parameters: Record<string, unknown> = entry.parameters;
-  let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let ports: screens.Port[] = []; let helpers: string = ""; let declarations: string = "";
+  // AC-02: an instantiation whose required parameter has no achievable owner is refused before any
+  // fragment is emitted, and the refusal locates the need, kind and parameter.
+  for (let parameter of entry.definition.parameters) {
+    if (!parameter.required) { continue; }
+    if (parameter.owner === "provider" && registry.contracts.length === 0) { s.reject("Unachievable required owner: "+entry.need+" "+kind+" "+parameter.name); }
+    if (!Object.hasOwn(parameters,parameter.name)) { s.reject("Missing required owner value: "+entry.need+" "+kind+" "+parameter.name); }
+  }
+  let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let ports: screens.Port[] = []; let holes: Record<string, unknown>[] = []; let helpers: string = ""; let declarations: string = "";
   let body: string = ""; let title: string = s.text(parameters.title); if (title !== "") { body = body+"ui.Text(text: "+await literal(title,"string")+")"; }
   let subtitle: string = s.text(parameters.subtitle); if (subtitle !== "") { body = body+"ui.Text(text: "+await literal(subtitle,"string")+")"; }
   if (kind === "note" || kind === "filter_box") {
@@ -304,9 +707,10 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     if (points.length === 0) { body = body+"ui.Text(text: \"No disclosed points\", style: \"muted\")"; }
     else if (zero) { body = body+"ui.Text(text: \"All values are zero\", style: \"muted\")"; }
   } else if (kind === "actions") {
-    fields[0] = {name:"selected",type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:id}; declarations = "export class Select { value: string; rank: number; }"; updates[0] = {action:"Select",function:"select"};
+    let labels: string[] = s.stringArray(parameters.labels); let first: string = ""; if (labels.length > 0) { first = labels[0]; }
+    fields[0] = {name:"selected",type:"string",role:"authoritative",dependencies:[],initial:await literal(first,"string"),owner:id}; declarations = "export class Select { value: string; rank: number; }"; updates[0] = {action:"Select",function:"select"};
     helpers = "export function select(state: AppState, action: Select): AppState { return {selected:action.value}; }";
-    for (let label of s.stringArray(parameters.labels)) { body = body+"ui.Button(text: "+await literal(label,"string")+", onClick: action app.Select {value: "+await literal(label,"string")+", rank: payload})"; } body = body+"ui.Text(text: state.selected)";
+    for (let label of labels) { body = body+"ui.Button(text: "+await literal(label,"string")+", onClick: action app.Select {value: "+await literal(label,"string")+", rank: payload})"; } body = body+"ui.Text(text: state.selected)";
   } else if (kind === "checklist") {
     let rows: Record<string, unknown>[] = s.records(parameters,"items"); let index: number = 0; let sum: string = "0";
     // An empty disclosed checklist binds no toggle control, so its action class and update stay unissued.
@@ -332,20 +736,483 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     declarations = "";
     helpers = "export function summarize(state: AppState): string { let done: number = state.done as number; let total: number = state.total as number; let remaining: number = total-done; return String(done)+\" / \"+String(total)+\"; remaining: \"+String(remaining); }";
     body = body+"When(state.summary_ready) {ui.Text(text: state.summary_display)} When(!state.summary_ready) {ui.Text(text: state.summary_reason, style: \"muted\")}";
+  } else if (kind === "timer") {
+    let presets: Record<string, unknown>[] = s.records(parameters,"presets"); if (presets.length === 0) { s.reject("Catalogue timer presets"); }
+    let labels: string[] = []; let durations: number[] = [];
+    for (let preset of presets) { labels[labels.length] = s.text(preset.label); let millis: number = s.finite(preset.seconds)*1000; if (!Number.isFinite(millis) || millis <= 0) { s.reject("Catalogue timer preset duration"); } durations[durations.length] = millis; }
+    fields[fields.length] = authoredField(id,"preset_labels","string[]",await literal(labels,"string[]"));
+    fields[fields.length] = authoredField(id,"durations","number[]",numberArray(durations));
+    fields[fields.length] = authoredField(id,"preset","number","0");
+    fields[fields.length] = authoredField(id,"elapsed","number","0");
+    fields[fields.length] = authoredField(id,"running","boolean","false");
+    fields[fields.length] = authoredField(id,"last","number","0");
+    fields[fields.length] = derivedField(id,"seconds","number");
+    declarations = declarations+"export class Choose { index: number; } export class Start { value: number; } export class Pause { value: number; } export class Reset { value: number; } export class Tick { now: number; }";    updates[updates.length] = handler("Choose","choose"); updates[updates.length] = handler("Start","start"); updates[updates.length] = handler("Pause","pause"); updates[updates.length] = handler("Reset","reset"); updates[updates.length] = handler("Tick","tick");
+    helpers = helpers+"export function choose(state: AppState, action: Choose): AppState { if (state.running) { return state; } if (action.index < 0 || action.index >= state.preset_labels.length) { return state; } return {preset: action.index, elapsed: 0, last: 0}; }";
+    helpers = helpers+"export function start(state: AppState, action: Start): AppState { if (state.running) { return state; } if (state.elapsed >= state.durations[state.preset]) { return {running: true, elapsed: 0, last: embeddingClock.nowMillis()}; } return {running: true, last: embeddingClock.nowMillis()}; }";
+    helpers = helpers+"export function pause(state: AppState, action: Pause): AppState { if (!state.running) { return state; } return {running: false, last: 0}; }";
+    helpers = helpers+"export function reset(state: AppState, action: Reset): AppState { if (state.running) { return state; } return {elapsed: 0, last: 0}; }";
+    // Completion pauses at the preset and runs the end body once: the state handed to the hole is
+    // already stopped, so the default body leaves a paused timer that cannot fire again.
+    helpers = helpers+"export function stopped(state: AppState): AppState { return {running: false, elapsed: state.durations[state.preset], last: state.last}; }";
+    helpers = helpers+"export function tick(state: AppState, action: Tick): AppState { if (!state.running) { return state; } if (!(action.now >= state.last)) { return state; } let delta: number = action.now-state.last; let elapsed: number = state.elapsed+delta; if (!(elapsed >= state.elapsed)) { return state; } if (elapsed < state.durations[state.preset]) { return {elapsed: elapsed, last: action.now}; } return whenFinished(stopped(state)); }";
+    body = body+"ui.Select(labels: state.preset_labels, selected: state.preset, onChange: action app.Choose {index: payload}) ui.NumberText(value: state.seconds_display) ui.Button(text: \"Start\", enabled: !state.running, onClick: action app.Start {value: payload}) ui.Button(text: \"Pause\", enabled: state.running, onClick: action app.Pause {value: payload}) ui.Button(text: \"Reset\", enabled: !state.running, onClick: action app.Reset {value: payload}) ui.Ticker(id: \"timer\", intervalMs: 250, running: state.running, onTick: action app.Tick {now: payload})";
+    holes[holes.length] = holeRecord(whenFinished());
+  } else if (kind === "progress_goal") {
+    let goal: number = s.finite(parameters.goal); let step: number = s.finite(parameters.step);
+    fields[fields.length] = authoredField(id,"value","number","0");
+    declarations = declarations+"export class Add { value: number; } export class ResetGoal { value: number; }";
+    updates[updates.length] = handler("Add","add"); updates[updates.length] = handler("ResetGoal","resetGoal");
+    helpers = helpers+"export function add(state: AppState, action: Add): AppState { let next: number = state.value+"+String(step)+"; if (!(next >= state.value) || next > 9007199254740991) { return state; } return {value: next}; }";
+    helpers = helpers+"export function resetGoal(state: AppState, action: ResetGoal): AppState { return {value: 0}; }";
+    // The stored value is never clamped: only the displayed ratio is bounded by the Progress maximum.
+    body = body+"ui.Progress(label: \"Goal\", value: state.value, maximum: "+String(goal)+") ui.NumberText(value: state.value) ui.Button(text: \"Add goal\", onClick: action app.Add {value: payload}) ui.Button(text: \"Reset goal\", onClick: action app.ResetGoal {value: payload})";
+  } else if (kind === "rating") {
+    let initial: number = s.integral(parameters.initial);
+    fields[fields.length] = authoredField(id,"value","number",String(initial));
+    declarations = declarations+"export class Rate { value: number; }";
+    updates[updates.length] = handler("Rate","rate");
+    helpers = helpers+"export function rate(state: AppState, action: Rate): AppState { if (!(action.value >= 1) || action.value > 10) { return state; } return {value: action.value}; }";
+    body = body+"ui.Slider(label: \"Rating\", value: state.value, minimum: 1, maximum: 10, onChange: action app.Rate {value: payload}) ui.NumberText(value: state.value)";
+  } else if (kind === "search_list") {
+    let rows: Record<string, unknown>[] = s.records(parameters,"items");
+    declarations = declarations+"export class Entry { id: string; label: string; detail: string; done: boolean; }";
+    fields[fields.length] = authoredField(id,"rows","Entry[]",await literal(rows,"Entry[]"));
+    fields[fields.length] = derivedField(id,"result","string");
+    ports[ports.length] = readerPort("query","string","\"\"");
+    // Unicode simple-case-insensitive label substring matching is the shared row-match rule; the
+    // query arrives from its publisher or from the declared reader fallback.
+    helpers = helpers+"export function matched(state: AppState): string { let count: number = 0; let result: string = \"\"; for (let item of state.rows) { let label: string = item.label.toLowerCase(); let query: string = state.query.toLowerCase(); if (label.includes(query)) { count = count+1; if (result !== \"\") { result = result+\", \"; } result = result+item.label; } } if (count === 0) { return \"No matching entries\"; } return result; }";
+    body = body+"When(state.result_ready) {ui.Text(text: state.result_display)} When(!state.result_ready) {ui.Text(text: state.result_reason, style: \"muted\")}";
+  } else if (kind === "master_list") {
+    let rows: Record<string, unknown>[] = s.records(parameters,"items");
+    declarations = declarations+"export class Entry { id: string; label: string; detail: string; done: boolean; } export class Pick { index: number; }";
+    fields[fields.length] = authoredField(id,"rows","Entry[]",await literal(rows,"Entry[]"));
+    fields[fields.length] = authoredField(id,"items","unknown[]",await literal(rows,"unknown[]"));
+    fields[fields.length] = authoredField(id,"selected","number","-1");
+    ports[ports.length] = publishPort("items","unknown[]"); ports[ports.length] = publishPort("selected","number");
+    ports[ports.length] = readerPort("query","string","\"\"");
+    updates[updates.length] = handler("Pick","pick");
+    // Keyed taps retain the original row index: the counter is the row position, not the position in
+    // the filtered view, so reordering or filtering never rebinds a tap.
+    helpers = helpers+"export function pick(state: AppState, action: Pick): AppState { if (action.index < 0 || action.index >= state.rows.length) { return state; } return {selected: action.index}; }";
+    holes[holes.length] = holeRecord(rowMatches());
+    let rowIndex: number = 0;
+    for (let row of rows) {
+      let shown: string = "shown_"+String(rowIndex);
+      fields[fields.length] = derivedField(id,shown,"boolean");
+      body = body+"When(state."+shown+"_ready && state."+shown+"_display) {ui.ListItem(title: "+await literal(s.text(row.label),"string")+", subtitle: "+await literal(s.text(row.detail),"string")+", onTap: action app.Pick {index: payload}, eventValue: "+String(rowIndex)+", accessibilityLabel: "+await literal(s.text(row.label),"string")+")}";
+      rowIndex = rowIndex+1;
+    }
+    if (rows.length === 0) { body = body+"ui.Text(text: \"No disclosed rows\", style: \"muted\")"; }
+  } else if (kind === "detail_view") {
+    fields[fields.length] = derivedField(id,"detail","string");
+    ports[ports.length] = requiredReader("items","unknown[]"); ports[ports.length] = requiredReader("selected","number");
+    helpers = helpers+"export function detailOf(state: AppState): string { if (!(state.selected >= 0) || state.selected >= state.items.length) { return \"No row selected\"; } let item: Record<string, unknown> = state.items[state.selected] as Record<string, unknown>; let label: string = item.label as string; let detail: string = item.detail as string; if (detail === \"\") { return label; } return label+\": \"+detail; }";
+    body = body+"When(state.detail_ready) {ui.Text(text: state.detail_display)} When(!state.detail_ready) {ui.Text(text: state.detail_reason, style: \"muted\")}";
+  } else if (kind === "record_log") {
+    let categories: string[] = s.stringArray(parameters.labels); let currency: string = s.text(parameters.currency);
+    fields[fields.length] = authoredField(id,"categories","string[]",await literal(categories,"string[]"));
+    fields[fields.length] = authoredField(id,"currency","string",await literal(currency,"string"));
+    fields[fields.length] = authoredField(id,"category","number","0");
+    fields[fields.length] = authoredField(id,"category_draft","string",await literal(categories[0],"string"));
+    fields[fields.length] = authoredField(id,"amount_draft","string","\"\"");
+    fields[fields.length] = authoredField(id,"note_draft","string","\"\"");
+    fields[fields.length] = authoredField(id,"log_labels","string[]","[]");
+    fields[fields.length] = authoredField(id,"log_cents","number[]","[]");
+    fields[fields.length] = authoredField(id,"log_notes","string[]","[]");
+    // The published aggregate arrays always have one entry per label, from the initial state onward;
+    // a fresh log therefore publishes zero totals and balances rather than unequal-length arrays.
+    let zeroTotals: number[] = []; let zeroIndex: number = 0; while (zeroIndex < categories.length) { zeroTotals[zeroTotals.length] = 0; zeroIndex = zeroIndex+1; }
+    fields[fields.length] = authoredField(id,"totals","number[]",numberArray(zeroTotals));
+    fields[fields.length] = authoredField(id,"balances","number[]",numberArray(zeroTotals));
+    fields[fields.length] = authoredField(id,"total","number","0");
+    fields[fields.length] = authoredField(id,"average","number","0");
+    fields[fields.length] = authoredField(id,"count","number","0");
+    ports[ports.length] = {name:"labels",type:"string[]",direction:"publish",getter:"categories",optional:false};
+    ports[ports.length] = {name:"currency",type:"string",direction:"publish",getter:"currency",optional:false};
+    ports[ports.length] = publishPort("totals","number[]"); ports[ports.length] = publishPort("balances","number[]");
+    ports[ports.length] = publishPort("total","number"); ports[ports.length] = publishPort("average","number"); ports[ports.length] = publishPort("count","number");
+    declarations = declarations+"export class SelectCategory { index: number; } export class DraftAmount { value: string; } export class DraftNote { value: string; } export class AddEntry { value: number; } export class RemoveLast { value: number; } export class ClearLog { value: number; }";
+    updates[updates.length] = handler("SelectCategory","selectCategory"); updates[updates.length] = handler("DraftAmount","draftAmount"); updates[updates.length] = handler("DraftNote","draftNote");
+    updates[updates.length] = handler("AddEntry","addEntry"); updates[updates.length] = handler("RemoveLast","removeLast"); updates[updates.length] = handler("ClearLog","clearLog");
+    helpers = helpers+"export function selectCategory(state: AppState, action: SelectCategory): AppState { if (action.index < 0 || action.index >= state.categories.length) { return state; } return {category: action.index, category_draft: state.categories[action.index]}; }";
+    helpers = helpers+"export function draftAmount(state: AppState, action: DraftAmount): AppState { return {amount_draft: action.value}; }";
+    helpers = helpers+"export function draftNote(state: AppState, action: DraftNote): AppState { return {note_draft: action.value}; }";
+    // A positive decimal draft becomes exact integer cents with half-up rounding beyond two places;
+    // grouping, exponents and whitespace are outside the grammar and an unsafe result is refused.
+    helpers = helpers+"export function centsOf(text: string): number { if (text === \"\") { return -1; } let index: number = 0; let sign: string = \"\"; let first: string = text.substring(0,1); if (first === \"+\") { index = 1; } else if (first === \"-\") { return -1; } let dot: number = text.indexOf(\".\"); let whole: string = \"\"; let fraction: string = \"\"; if (dot < 0) { whole = text.substring(index); } else { whole = text.substring(index,dot); fraction = text.substring(dot+1); } if (whole === \"\" && fraction === \"\") { return -1; } let integer: number = 0; for (let ch of whole) { if (ch < \"0\" || ch > \"9\") { return -1; } integer = integer*10+Number(ch); if (!(integer <= 900719925474099)) { return -1; } } for (let ch of fraction) { if (ch < \"0\" || ch > \"9\") { return -1; } } let cents: number = integer*100; if (fraction.length > 0) { let tenths: number = Number(fraction.substring(0,1)); cents = cents+tenths*10; } if (fraction.length > 1) { cents = cents+Number(fraction.substring(1,2)); } if (fraction.length > 2) { if (Number(fraction.substring(2,3)) >= 5) { cents = cents+1; } } if (!(cents >= 1) || cents > 9007199254740991) { return -1; } return cents; }";
+    // Every record mutation recomputes the aggregates from the actual records: exact integer cents,
+    // label-order sums, the equal-share remainder on the earliest labels, and an unsafe sum refused
+    // instead of stored.
+    helpers = helpers+"export function rebuild(state: AppState, labels: string[], cents: number[], notes: string[], categoryDraft: string, amountDraft: string, noteDraft: string): AppState { let total: number = 0; for (let amount of cents) { total = total+amount; if (!(total >= 0) || total > 9007199254740991) { return state; } } let totals: number[] = []; let base: number = 0; let extra: number = 0; if (state.categories.length > 0) { base = Math.floor(total/state.categories.length); extra = total-base*state.categories.length; } let index: number = 0; while (index < state.categories.length) { let sum: number = 0; let cursor: number = 0; while (cursor < labels.length) { if (labels[cursor] === state.categories[index]) { sum = sum+cents[cursor]; } cursor = cursor+1; } totals[totals.length] = sum/100; index = index+1; } let balances: number[] = []; index = 0; while (index < state.categories.length) { let sum: number = 0; let cursor: number = 0; while (cursor < labels.length) { if (labels[cursor] === state.categories[index]) { sum = sum+cents[cursor]; } cursor = cursor+1; } let share: number = base; if (index < extra) { share = share+1; } balances[balances.length] = (sum-share)/100; index = index+1; } let average: number = 0; if (state.categories.length > 0) { average = total/(100*state.categories.length); } return {log_labels: labels, log_cents: cents, log_notes: notes, totals: totals, balances: balances, total: total/100, average: average, count: labels.length, category_draft: categoryDraft, amount_draft: amountDraft, note_draft: noteDraft}; }";
+    helpers = helpers+"export function addEntry(state: AppState, action: AddEntry): AppState { let known: boolean = false; for (let label of state.categories) { if (label === state.category_draft) { known = true; } } if (!known) { return state; } let cents: number = centsOf(state.amount_draft); if (cents < 1) { return state; } let labels: string[] = []; for (let label of state.log_labels) { labels[labels.length] = label; } let amounts: number[] = []; for (let amount of state.log_cents) { amounts[amounts.length] = amount; } let notes: string[] = []; for (let note of state.log_notes) { notes[notes.length] = note; } labels[labels.length] = state.category_draft; amounts[amounts.length] = cents; notes[notes.length] = state.note_draft; return rebuild(state, labels, amounts, notes, state.category_draft, \"\", \"\"); }";
+    helpers = helpers+"export function removeLast(state: AppState, action: RemoveLast): AppState { let size: number = state.log_labels.length; if (size === 0) { return state; } return rebuild(state, state.log_labels.slice(0,size-1), state.log_cents.slice(0,size-1), state.log_notes.slice(0,size-1), state.category_draft, state.amount_draft, state.note_draft); }";
+    // Clear resets the records and their drafts, never the configuration: the selected category keeps
+    // its label in the draft, so the next Add is admitted against the configuration the user still sees.
+    helpers = helpers+"export function clearLog(state: AppState, action: ClearLog): AppState { let draft: string = state.category_draft; if (state.category >= 0 && state.category < state.categories.length) { draft = state.categories[state.category]; } return rebuild(state, [], [], [], draft, \"\", \"\"); }";
+    // The category selection, amount and note drafts are always visible; the amounts are checked
+    // before they enter the records.
+    body = body+"ui.Select(labels: state.categories, selected: state.category, onChange: action app.SelectCategory {index: payload})";
+    body = body+"ui.TextField(label: \"Amount\", value: state.amount_draft, onChange: action app.DraftAmount {value: payload}) ui.TextField(label: \"Note\", value: state.note_draft, onChange: action app.DraftNote {value: payload})";
+    body = body+"ui.Button(text: \"Add\", onClick: action app.AddEntry {value: payload}) ui.Button(text: \"Remove last\", onClick: action app.RemoveLast {value: payload}) ui.Button(text: \"Clear\", onClick: action app.ClearLog {value: payload})";
+    body = body+"ui.NumberStat(label: \"Total\", value: state.total, suffix: state.currency) ui.NumberStat(label: \"Average\", value: state.average, suffix: state.currency) ui.NumberStat(label: \"Records\", value: state.count)";
+
+  } else if (kind === "number_strip" || kind === "breakdown_table" || kind === "series_chart" || kind === "settle_up") {
+    if (kind === "number_strip") {
+      ports[ports.length] = requiredReader("total","number"); ports[ports.length] = requiredReader("average","number");
+      ports[ports.length] = requiredReader("count","number"); ports[ports.length] = readerPort("currency","string","\"\"");
+      fields[fields.length] = derivedField(id,"summary","string");
+      helpers = helpers+"export function summaryText(state: AppState): string { let total: number = state.total as number; let average: number = state.average as number; let count: number = state.count as number; let currency: string = state.currency as string; if (count === 0) { return \"No records\"; } let suffix: string = \"\"; if (currency !== \"\") { suffix = \" \"+currency; } return String(total)+suffix+\" total; \"+String(average)+suffix+\" average; \"+String(count)+\" records\"; }";
+      body = body+"When(state.summary_ready) {ui.Text(text: state.summary_display)} When(!state.summary_ready) {ui.Text(text: state.summary_reason, style: \"muted\")}";
+    } else if (kind === "series_chart") {
+      ports[ports.length] = requiredReader("labels","string[]"); ports[ports.length] = requiredReader("totals","number[]"); ports[ports.length] = requiredReader("balances","number[]");
+      let mode: string = s.text(parameters.mode); if (mode === "") { mode = "totals"; }
+      // The row's owned behavior is labelled bars of the selected aggregate: the chart binds the
+      // published values and labels, and its scale is derived from those actual values.
+      let valuesField: string = "totals"; if (mode === "balances") { valuesField = "balances"; }
+      fields[fields.length] = derivedField(id,"chart","string");
+      fields[fields.length] = derivedField(id,"chart_min","number"); fields[fields.length] = derivedField(id,"chart_max","number"); fields[fields.length] = derivedField(id,"chart_nonzero","boolean");
+      helpers = helpers+"export function chartText(state: AppState): string { let labels: string[] = state.labels as string[]; let totals: number[] = state.totals as number[]; let balances: number[] = state.balances as number[]; let values: number[] = totals; if (\""+mode+"\" === \"balances\") { values = balances; } if (values.length !== labels.length) { return \"Aggregate rows differ in length\"; } let result: string = \"\"; let nonzero: boolean = false; let index: number = 0; while (index < labels.length) { if (values[index] !== 0) { nonzero = true; } if (result !== \"\") { result = result+\"\\n\"; } result = result+labels[index]+\": \"+String(values[index]); index = index+1; } if (result === \"\") { return \"No aggregate rows\"; } if (!nonzero) { return \"All values are zero\"; } return result; }";
+      helpers = helpers+"export function seriesLow(state: AppState): number { let values: number[] = state."+valuesField+" as number[]; let result: number = 0; let index: number = 0; while (index < values.length) { if (values[index] < result) { result = values[index]; } index = index+1; } return result; }";
+      helpers = helpers+"export function seriesHigh(state: AppState): number { let values: number[] = state."+valuesField+" as number[]; let low: number = seriesLow(state); let result: number = low; let index: number = 0; while (index < values.length) { if (values[index] > result) { result = values[index]; } index = index+1; } if (!(result > low)) { return low+1; } return result; }";
+      // A zero dataset renders its explanation instead of an all-zero plot.
+      helpers = helpers+"export function seriesNonzero(state: AppState): boolean { let values: number[] = state."+valuesField+" as number[]; let index: number = 0; while (index < values.length) { if (values[index] !== 0) { return true; } index = index+1; } return false; }";
+      body = body+"When(state.chart_max_ready) {ui.Sparkline(series: state."+valuesField+", minimum: state.chart_min_display, maximum: state.chart_max_display, categories: state.labels, bars: true)} When(!state.chart_max_ready) {ui.Text(text: state.chart_display)}";
+    } else if (kind === "breakdown_table") {
+      ports[ports.length] = requiredReader("labels","string[]"); ports[ports.length] = requiredReader("totals","number[]");
+      ports[ports.length] = requiredReader("balances","number[]"); ports[ports.length] = readerPort("currency","string","\"\"");
+      fields[fields.length] = derivedField(id,"breakdown","string");
+      helpers = helpers+"export function breakdownText(state: AppState): string { let labels: string[] = state.labels as string[]; let totals: number[] = state.totals as number[]; let balances: number[] = state.balances as number[]; let currency: string = state.currency as string; if (totals.length !== labels.length || balances.length !== labels.length) { return \"Aggregate rows differ in length\"; } let suffix: string = \"\"; if (currency !== \"\") { suffix = \" \"+currency; } let result: string = \"\"; let nonzero: boolean = false; let index: number = 0; while (index < labels.length) { if (totals[index] !== 0 || balances[index] !== 0) { nonzero = true; } if (result !== \"\") { result = result+\"\\n\"; } result = result+labels[index]+\": \"+String(totals[index])+suffix+\" (\"+String(balances[index])+suffix+\")\"; index = index+1; } if (result === \"\" || !nonzero) { return \"No aggregate rows\"; } return result; }";
+      body = body+"When(state.breakdown_ready) {ui.Text(text: state.breakdown_display)} When(!state.breakdown_ready) {ui.Text(text: state.breakdown_reason, style: \"muted\")}";
+    } else {
+      ports[ports.length] = requiredReader("labels","string[]"); ports[ports.length] = requiredReader("balances","number[]"); ports[ports.length] = readerPort("currency","string","\"\"");
+      fields[fields.length] = derivedField(id,"transfers","string");
+      // Settlement restores checked integer cents from the published major units, then repeatedly
+      // transfers the minimum of debt and credit choosing the first debtor and creditor in label order.
+    // Settlement restores checked integer cents from the published major units and repeatedly
+    // transfers the minimum of debt and credit, choosing the first debtor and the first creditor in
+    // label order. The walk keeps only scalar accumulators, so the computation is a read-only summary.
+    helpers = helpers+"export function transfersText(state: AppState): string { let labels: string[] = state.labels as string[]; let balances: number[] = state.balances as number[]; let currency: string = state.currency as string; if (balances.length !== labels.length) { return \"Aggregate rows differ in length\"; } let suffix: string = \"\"; if (currency !== \"\") { suffix = \" \"+currency; } let debtor: number = 0; let creditor: number = 0; let debt: number = 0; let credit: number = 0; let result: string = \"\"; let guard: number = 0; while (guard < labels.length*2+1) { guard = guard+1; if (!(debt > 0)) { let found: boolean = false; while (debtor < balances.length && !found) { let cents: number = Math.round(balances[debtor]*100); if (Math.abs(balances[debtor]*100-cents) > 0.000001) { return \"Unsafe aggregate amount\"; } if (cents < 0) { debt = -cents; found = true; } debtor = debtor+1; } if (!found) { break; } } if (!(credit > 0)) { let found: boolean = false; while (creditor < balances.length && !found) { let cents: number = Math.round(balances[creditor]*100); if (Math.abs(balances[creditor]*100-cents) > 0.000001) { return \"Unsafe aggregate amount\"; } if (cents > 0) { credit = cents; found = true; } creditor = creditor+1; } if (!found) { break; } } let amount: number = debt; if (credit < amount) { amount = credit; } debt = debt-amount; credit = credit-amount; if (result !== \"\") { result = result+\"\\n\"; } result = result+labels[debtor-1]+\" pays \"+labels[creditor-1]+\" \"+String(amount/100)+suffix; } if (result === \"\") { return \"All balances settled\"; } return result; }";
+      body = body+"When(state.transfers_ready) {ui.Text(text: state.transfers_display)} When(!state.transfers_ready) {ui.Text(text: state.transfers_reason, style: \"muted\")}";
+    }
+  } else if (kind === "itinerary") {
+    let stops: Record<string, unknown>[] = s.records(parameters,"stops");
+    let labels2: string[] = []; let minutes: number[] = [];
+    for (let stop of stops) { labels2[labels2.length] = s.text(stop.label); minutes[minutes.length] = s.integral(stop.minutes); }
+    resolve(registry,s.text(parameters.navigationBinding)); resolve(registry,s.text(parameters.calendarBinding));
+    if (s.text(parameters.navigationBinding) !== "" || s.text(parameters.calendarBinding) !== "") { s.reject("Catalogue itinerary navigation/calendar binding is not executable: "+entry.need); }
+    fields[fields.length] = authoredField(id,"stop_labels","string[]",await literal(labels2,"string[]"));
+    fields[fields.length] = authoredField(id,"stop_minutes","number[]",numberArray(minutes));
+    // Reached is one flag per stop, advanced in supplied order and cleared by reset.
+    let flagIndex: number = 0; while (flagIndex < labels2.length) { fields[fields.length] = authoredField(id,"reached_"+String(flagIndex),"boolean","false"); flagIndex = flagIndex+1; }
+    fields[fields.length] = derivedField(id,"schedule","string");
+    fields[fields.length] = derivedField(id,"done","number");
+    fields[fields.length] = derivedField(id,"total","number");
+    ports[ports.length] = publishPort("done","number"); ports[ports.length] = publishPort("total","number");
+    ports[ports.length] = readerPort("start","number","-1"); ports[ports.length] = readerPort("deadline","number","-1");
+    declarations = declarations+"export class Advance { value: number; } export class ResetItinerary { value: number; }";
+    updates[updates.length] = handler("Advance","advance"); updates[updates.length] = handler("ResetItinerary","resetItinerary");
+    let advanceBody: string = "export function advance(state: AppState, action: Advance): AppState {";
+    let resetBody: string = "export function resetItinerary(state: AppState, action: ResetItinerary): AppState { return {";
+    let countBody: string = "export function countReached(state: AppState): number { let total: number = 0;";
+    let reachedIndex: number = 0; let resetSeparator: string = "";
+    while (reachedIndex < labels2.length) {
+      let flag: string = "reached_"+String(reachedIndex);
+      advanceBody = advanceBody+"if (!state."+flag+") { return {";
+      let copyIndex: number = 0; let copySeparator: string = "";
+      while (copyIndex < labels2.length) {
+        let other: string = "reached_"+String(copyIndex);
+        advanceBody = advanceBody+copySeparator+other+": ";
+        if (copyIndex === reachedIndex) { advanceBody = advanceBody+"true"; } else { advanceBody = advanceBody+"state."+other; }
+        copySeparator = ", "; copyIndex = copyIndex+1;
+      }
+      advanceBody = advanceBody+"}; }";
+      countBody = countBody+"if (state."+flag+") { total = total+1; }";
+      resetBody = resetBody+resetSeparator+flag+": false"; resetSeparator = ", ";
+      reachedIndex = reachedIndex+1;
+    }
+    let reachedBody: string = "export function isReached(state: AppState, index: number): boolean {";
+    reachedIndex = 0;
+    while (reachedIndex < labels2.length) { reachedBody = reachedBody+"if (index === "+String(reachedIndex)+") { return state.reached_"+String(reachedIndex)+"; }"; reachedIndex = reachedIndex+1; }
+    helpers = helpers+advanceBody+"return state; }";
+    helpers = helpers+resetBody+"}; }";
+    helpers = helpers+countBody+"return total; }";
+    helpers = helpers+reachedBody+"return false; }";
+    // Cumulative minutes accumulate in the supplied stop order from the reader start. A missing start
+    // leaves every time unavailable and an absent deadline compares nothing; an unsafe sum is shown
+    // as unavailable instead of wrapping.
+    helpers = helpers+"export function scheduleText(state: AppState): string { let start: number = state.start as number; let deadline: number = state.deadline as number; let total: number = 0; let result: string = \"\"; let index: number = 0; while (index < state.stop_minutes.length) { let next: number = total+state.stop_minutes[index]; if (!(next >= total)) { return \"Schedule unavailable: total overflow\"; } total = next; if (result !== \"\") { result = result+\"\\n\"; } result = result+state.stop_labels[index]; if (isReached(state,index)) { result = result+\" (reached)\"; } if (start >= 0) { let at: number = start+total; if (!(at >= start)) { return \"Schedule unavailable: total overflow\"; } result = result+\" at \"+String(at); } index = index+1; } if (result === \"\") { return \"No stops\"; } if (start < 0) { return result+\"\\nTimes unavailable without a start\"; } if (deadline >= 0 && start+total > deadline) { return result+\"\\nAfter the deadline\"; } return result; }";
+    body = body+"When(state.schedule_ready) {ui.Text(text: state.schedule_display)} When(!state.schedule_ready) {ui.Text(text: state.schedule_reason, style: \"muted\")}";
+    body = body+"When(state.done_ready) {ui.NumberText(value: state.done_display)} ui.Button(text: \"Advance\", onClick: action app.Advance {value: payload}) ui.Button(text: \"Reset trip\", onClick: action app.ResetItinerary {value: payload})";
+  } else if (kind === "progress_line") {
+    ports[ports.length] = requiredReader("done","number"); ports[ports.length] = requiredReader("total","number");
+    fields[fields.length] = derivedField(id,"line","string"); fields[fields.length] = derivedField(id,"percent","number");
+    helpers = helpers+"export function lineText(state: AppState): string { let total: number = state.total as number; let done: number = state.done as number; if (!(total > 0)) { return \"Unavailable\"; } return String(done)+\" of \"+String(total); }";
+    helpers = helpers+"export function percentOf(state: AppState): number { let total: number = state.total as number; let done: number = state.done as number; return done*100/total; }";
+    body = body+"When(state.line_ready) {ui.Progress(label: \"Completion\", value: state.percent_display, maximum: 100) ui.Text(text: state.line_display)} When(!state.line_ready) {ui.Text(text: state.line_reason, style: \"muted\")}";
+  } else if (kind === "quick_log") {
+    let amount: number = s.finite(parameters.amount); let goal: number = s.finite(parameters.goal); let unit: string = s.text(parameters.unit);
+    let extras: number[] = []; for (let extra of parameters.extraAmounts as number[]) { extras[extras.length] = s.finite(extra); }
+    fields[fields.length] = authoredField(id,"amounts","number[]","[]");
+    fields[fields.length] = authoredField(id,"stamps","number[]","[]");
+    fields[fields.length] = derivedField(id,"goal_value","number");
+    fields[fields.length] = derivedField(id,"today_total","number");
+    fields[fields.length] = derivedField(id,"today_count","number");
+    ports[ports.length] = {name:"goal",type:"number",direction:"publish",getter:"goal_value",optional:false};
+    ports[ports.length] = publishPort("today_total","number"); ports[ports.length] = publishPort("today_count","number");
+    // The extra-amount action exists only when a declared extra binds it, so no unreachable update
+    // action is issued for a quick log without extra amounts.
+    declarations = declarations+"export class Log { value: number; } export class UndoLog { value: number; }";
+    if (extras.length > 0) { declarations = declarations+" export class LogExtra { amount: number; rank: number; }"; }
+    updates[updates.length] = handler("Log","logTap"); if (extras.length > 0) { updates[updates.length] = handler("LogExtra","logExtra"); } updates[updates.length] = handler("UndoLog","undoLog");
+    // A tap captures its own instant once in the action, and the tap history keeps that instant, so the
+    // daily projection has the timestamped history it needs. The day itself comes from the frozen
+    // host-timezone adapter this build does not issue, so no epoch day is derived here.
+    helpers = helpers+"export function appendTap(state: AppState, value: number, now: number): AppState { if (!(now >= 0) || !(value > 0)) { return state; } let amounts: number[] = []; for (let amount of state.amounts) { amounts[amounts.length] = amount; } let stamps: number[] = []; for (let stamp of state.stamps) { stamps[stamps.length] = stamp; } amounts[amounts.length] = value; stamps[stamps.length] = now; return {amounts: amounts, stamps: stamps}; }";
+    helpers = helpers+"export function logTap(state: AppState, action: Log): AppState { return appendTap(state, "+String(amount)+", embeddingClock.nowMillis()); }";
+    if (extras.length > 0) { helpers = helpers+"export function logExtra(state: AppState, action: LogExtra): AppState { return appendTap(state, action.amount, embeddingClock.nowMillis()); }"; }
+    helpers = helpers+"export function undoLog(state: AppState, action: UndoLog): AppState { let size: number = state.amounts.length; if (size === 0) { return state; } return {amounts: state.amounts.slice(0,size-1), stamps: state.stamps.slice(0,size-1)}; }";
+    body = body+"ui.Text(text: "+await literal("Log "+String(amount)+" "+unit,"string")+")";
+    body = body+"ui.Button(text: \"Log\", onClick: action app.Log {value: payload}) ui.Button(text: \"Undo log\", onClick: action app.UndoLog {value: payload})";
+    // The daily total and count render their located reason while the adapter day is not issued, and
+    // the configured goal is published like any other ready projection.
+    body = body+"When(state.today_total_ready) {ui.NumberStat(label: \"Today\", value: state.today_total_display, suffix: "+await literal(unit,"string")+")} When(!state.today_total_ready) {ui.Text(text: state.today_total_reason, style: \"muted\")}";
+    body = body+"When(state.today_count_ready) {ui.NumberText(value: state.today_count_display)} When(!state.today_count_ready) {ui.Text(text: state.today_count_reason, style: \"muted\")} When(state.goal_value_ready) {ui.NumberText(value: state.goal_value_display)}";
+    for (let extra of extras) { body = body+"ui.Button(text: "+await literal("Log +"+String(extra),"string")+", onClick: action app.LogExtra {amount: "+String(extra)+", rank: payload})"; }
+  } else if (kind === "reading_status") {
+    let bands: Record<string, unknown>[] = s.records(parameters,"bands");
+    let uppers: number[] = []; let bandNames: string[] = []; let levels: number[] = [];
+    for (let band of bands) {
+      if (s.encode(band.upper) === "null") { uppers[uppers.length] = 9007199254740991; } else { uppers[uppers.length] = s.finite(band.upper); }
+      bandNames[bandNames.length] = s.text(band.label); levels[levels.length] = s.integral(band.level);
+    }
+    let decimals: number = s.integral(parameters.decimals);
+    fields[fields.length] = authoredField(id,"band_uppers","number[]",numberArray(uppers));
+    fields[fields.length] = authoredField(id,"band_labels","string[]",await literal(bandNames,"string[]"));
+    fields[fields.length] = authoredField(id,"band_levels","number[]",numberArray(levels));
+    fields[fields.length] = authoredField(id,"readings","number[]","[]");
+    fields[fields.length] = authoredField(id,"stamps","number[]","[]");
+    fields[fields.length] = authoredField(id,"draft","number","0");
+    fields[fields.length] = derivedField(id,"latest","number"); fields[fields.length] = derivedField(id,"status_level","number"); fields[fields.length] = derivedField(id,"status","string"); fields[fields.length] = derivedField(id,"history","string");
+    fields[fields.length] = derivedField(id,"count","number");
+    // The history chart is a declared own behavior of this kind: its scale is derived from the actual
+    // readings, and a single distinct value still yields a nonempty range because the pack admits a
+    // chart only when maximum is strictly greater than minimum.
+    fields[fields.length] = derivedField(id,"chart_min","number"); fields[fields.length] = derivedField(id,"chart_max","number");
+    ports[ports.length] = publishPort("count","number"); ports[ports.length] = publishPort("latest","number"); ports[ports.length] = publishPort("status_level","number");
+    declarations = declarations+"export class DraftReading { value: number; } export class Read { value: number; } export class RemoveReading { value: number; }";
+    updates[updates.length] = handler("DraftReading","draftReading"); updates[updates.length] = handler("Read","read"); updates[updates.length] = handler("RemoveReading","removeReading");
+    // The reading domain is the safe finite number range the row declares: the sign is not restricted,
+    // because a measured value and its band bounds may be negative. The draft is the control value and
+    // is committed only when the explicit add runs.
+    helpers = helpers+"export function draftReading(state: AppState, action: DraftReading): AppState { if (!(action.value > -9007199254740992) || !(action.value < 9007199254740992)) { return state; } return {draft: action.value}; }";
+    helpers = helpers+"export function read(state: AppState, action: Read): AppState { if (!(state.draft > -9007199254740992) || !(state.draft < 9007199254740992)) { return state; } let values: number[] = []; for (let value of state.readings) { values[values.length] = value; } let stamps: number[] = []; for (let stamp of state.stamps) { stamps[stamps.length] = stamp; } values[values.length] = state.draft; stamps[stamps.length] = embeddingClock.nowMillis(); return {readings: values, stamps: stamps}; }";
+    helpers = helpers+"export function removeReading(state: AppState, action: RemoveReading): AppState { let size: number = state.readings.length; if (size === 0) { return state; } return {readings: state.readings.slice(0,size-1), stamps: state.stamps.slice(0,size-1)}; }";
+    helpers = helpers+"export function latestOf(state: AppState): number { if (state.readings.length === 0) { return -1; } return state.readings[state.readings.length-1]; }";
+    // The first exclusive upper match decides the level; the final declared band is unbounded.
+    helpers = helpers+"export function levelOf(state: AppState, value: number): number { let index: number = 0; while (index < state.band_uppers.length) { if (value < state.band_uppers[index]) { return state.band_levels[index]; } index = index+1; } if (state.band_levels.length === 0) { return 0; } return state.band_levels[state.band_levels.length-1]; }";
+    helpers = helpers+"export function historyOf(state: AppState): string { if (state.readings.length === 0) { return \"No readings\"; } let result: string = \"\"; let index: number = 0; while (index < state.readings.length) { if (result !== \"\") { result = result+\"\\n\"; } result = result+String(state.readings[index]); index = index+1; } return result; }";
+    helpers = helpers+"export function statusOf(state: AppState, value: number): string { let index: number = 0; while (index < state.band_uppers.length) { if (value < state.band_uppers[index]) { return state.band_labels[index]; } index = index+1; } if (state.band_labels.length === 0) { return \"\"; } return state.band_labels[state.band_labels.length-1]; }";
+    helpers = helpers+"export function chartLow(state: AppState): number { let result: number = 0; let index: number = 0; while (index < state.readings.length) { if (index === 0) { result = state.readings[index]; } else if (state.readings[index] < result) { result = state.readings[index]; } index = index+1; } return result; }";
+    helpers = helpers+"export function chartHigh(state: AppState): number { let low: number = chartLow(state); let result: number = low; let index: number = 0; while (index < state.readings.length) { if (state.readings[index] > result) { result = state.readings[index]; } index = index+1; } if (!(result > low)) { return low+1; } return result; }";
+    body = body+"ui.NumberField(label: \"Reading\", value: state.draft, minimum: -1000000, maximum: 1000000, onChange: action app.DraftReading {value: payload}) ui.Button(text: \"Add reading\", onClick: action app.Read {value: payload}) ui.Button(text: \"Remove reading\", onClick: action app.RemoveReading {value: payload})";
+    body = body+"When(state.latest_ready) {ui.NumberStat(label: "+await literal(s.text(parameters.unit),"string")+", value: state.latest_display, decimals: "+String(decimals)+")}";
+    body = body+"When(!state.latest_ready) {ui.Text(text: state.latest_reason, style: \"muted\")} When(state.status_ready) {ui.Text(text: state.status_display)}";
+    body = body+"When(state.status_level_ready) {ui.NumberText(value: state.status_level_display)} When(state.count_ready) {ui.NumberText(value: state.count_display)} When(state.history_ready) {ui.Text(text: state.history_display)} When(!state.history_ready) {ui.Text(text: state.history_reason, style: \"muted\")}";
+    body = body+"When(state.chart_min_ready && state.chart_max_ready) {ui.Sparkline(series: state.readings, minimum: state.chart_min_display, maximum: state.chart_max_display)} When(!state.chart_min_ready) {ui.Text(text: \"No readings to chart\", style: \"muted\")}";
+  } else if (kind === "points_ledger") {
+    let people: string[] = s.stringArray(parameters.people);
+    let tasks: Record<string, unknown>[] = s.records(parameters,"tasks"); let rewards: Record<string, unknown>[] = s.records(parameters,"rewards");
+    fields[fields.length] = authoredField(id,"people","string[]",await literal(people,"string[]"));
+    fields[fields.length] = authoredField(id,"selected","number","0");
+    fields[fields.length] = authoredField(id,"history_people","string[]","[]");
+    fields[fields.length] = authoredField(id,"history_points","number[]","[]");
+    let zeroTotals: number[] = []; let zeroIndex: number = 0; while (zeroIndex < people.length) { zeroTotals[zeroTotals.length] = 0; zeroIndex = zeroIndex+1; }
+    fields[fields.length] = authoredField(id,"labels","string[]",await literal(people,"string[]")); fields[fields.length] = authoredField(id,"totals","number[]",numberArray(zeroTotals));
+    fields[fields.length] = authoredField(id,"total","number","0"); fields[fields.length] = authoredField(id,"count","number","0");
+    ports[ports.length] = publishPort("labels","string[]"); ports[ports.length] = publishPort("totals","number[]");
+    ports[ports.length] = publishPort("total","number"); ports[ports.length] = publishPort("count","number");
+    declarations = declarations+"export class SelectPerson { index: number; } export class Award { points: number; rank: number; } export class Redeem { points: number; rank: number; } export class UndoPoints { value: number; }";
+    updates[updates.length] = handler("SelectPerson","selectPerson"); updates[updates.length] = handler("Award","award");
+    updates[updates.length] = handler("Redeem","redeem"); updates[updates.length] = handler("UndoPoints","undoPoints");
+    helpers = helpers+"export function selectPerson(state: AppState, action: SelectPerson): AppState { if (action.index < 0 || action.index >= state.people.length) { return state; } return {selected: action.index}; }";
+    helpers = helpers+"export function balanceOf(state: AppState, person: string): number { let total: number = 0; let index: number = 0; while (index < state.history_people.length) { if (state.history_people[index] === person) { total = total+state.history_points[index]; } index = index+1; } return total; }";
+    // One signed-history post also recomputes the per-person balances and the totals from the actual
+    // records, so a redeemed balance can never be recomputed from a stale copy.
+    helpers = helpers+"export function post(state: AppState, person: string, points: number): AppState { let names: string[] = []; for (let name of state.history_people) { names[names.length] = name; } let values: number[] = []; for (let value of state.history_points) { values[values.length] = value; } names[names.length] = person; values[values.length] = points; let totals: number[] = []; let total: number = 0; for (let name of state.people) { let sum: number = 0; let index: number = 0; while (index < names.length) { if (names[index] === name) { sum = sum+values[index]; } index = index+1; } totals[totals.length] = sum; total = total+sum; } return {history_people: names, history_points: values, totals: totals, total: total, count: names.length}; }";
+    helpers = helpers+"export function award(state: AppState, action: Award): AppState { if (!(action.points > 0) || Math.floor(action.points) !== action.points) { return state; } if (state.selected < 0 || state.selected >= state.people.length) { return state; } return post(state, state.people[state.selected], action.points); }";
+    // Insufficient balance blocks spending: nothing is posted and no history is rewritten.
+    helpers = helpers+"export function redeem(state: AppState, action: Redeem): AppState { if (!(action.points > 0) || Math.floor(action.points) !== action.points) { return state; } if (state.selected < 0 || state.selected >= state.people.length) { return state; } let person: string = state.people[state.selected]; if (balanceOf(state, person) < action.points) { return state; } return post(state, person, -action.points); }";
+    helpers = helpers+"export function undoPoints(state: AppState, action: UndoPoints): AppState { if (state.selected < 0 || state.selected >= state.people.length) { return state; } let person: string = state.people[state.selected]; let found: number = -1; let index: number = 0; while (index < state.history_people.length) { if (state.history_people[index] === person) { found = index; } index = index+1; } if (found < 0) { return state; } let names: string[] = []; let values: number[] = []; index = 0; while (index < state.history_people.length) { if (index !== found) { names[names.length] = state.history_people[index]; values[values.length] = state.history_points[index]; } index = index+1; } let totals: number[] = []; let total: number = 0; for (let name of state.people) { let sum: number = 0; let cursor: number = 0; while (cursor < names.length) { if (names[cursor] === name) { sum = sum+values[cursor]; } cursor = cursor+1; } totals[totals.length] = sum; total = total+sum; } return {history_people: names, history_points: values, totals: totals, total: total, count: names.length}; }";
+    body = body+"ui.Select(labels: state.people, selected: state.selected, onChange: action app.SelectPerson {index: payload})";
+    for (let task of tasks) { body = body+"ui.Button(text: "+await literal("Award "+s.text(task.label),"string")+", onClick: action app.Award {points: "+String(s.finite(task.points))+", rank: payload})"; }
+    for (let reward of rewards) { body = body+"ui.Button(text: "+await literal("Redeem "+s.text(reward.label),"string")+", onClick: action app.Redeem {points: "+String(s.finite(reward.points))+", rank: payload})"; }
+    body = body+"ui.Button(text: \"Undo\", onClick: action app.UndoPoints {value: payload})";
+    body = body+"ui.NumberText(value: state.total) ui.NumberText(value: state.count)";
+  } else if (kind === "idea_deck") {
+    let ideas: Record<string, unknown>[] = s.records(parameters,"ideas");
+    let titles: string[] = []; let levels2: string[] = []; let minutes2: number[] = []; let instructions: string[] = []; let ids2: string[] = [];
+    for (let idea of ideas) { ids2[ids2.length] = s.text(idea.id); titles[titles.length] = s.text(idea.title); levels2[levels2.length] = s.text(idea.level); minutes2[minutes2.length] = s.integral(idea.minutes); instructions[instructions.length] = s.text(idea.instructions); }
+    fields[fields.length] = authoredField(id,"idea_ids","string[]",await literal(ids2,"string[]"));
+    fields[fields.length] = authoredField(id,"idea_titles","string[]",await literal(titles,"string[]"));
+    fields[fields.length] = authoredField(id,"idea_levels","string[]",await literal(levels2,"string[]"));
+    fields[fields.length] = authoredField(id,"idea_minutes","number[]",numberArray(minutes2));
+    fields[fields.length] = authoredField(id,"idea_instructions","string[]",await literal(instructions,"string[]"));
+    fields[fields.length] = authoredField(id,"time_filter","number","0");
+    fields[fields.length] = authoredField(id,"level_filter","string","\"\"");
+    fields[fields.length] = authoredField(id,"cursor","number","0");
+    fields[fields.length] = authoredField(id,"done_ids","string[]","[]");
+    // Each mark keeps the instant it happened, so the completion history is timestamped while the
+    // day-scoped projection waits for the host-timezone adapter day.
+    fields[fields.length] = authoredField(id,"done_stamps","number[]","[]");
+    fields[fields.length] = derivedField(id,"current","string"); fields[fields.length] = derivedField(id,"done_today","number");
+    ports[ports.length] = publishPort("done_today","number");
+    declarations = declarations+"export class FilterTime { value: number; rank: number; } export class FilterLevel { value: string; rank: number; } export class Another { value: number; } export class DoneIdea { value: number; }";
+    updates[updates.length] = handler("FilterTime","filterTime"); updates[updates.length] = handler("FilterLevel","filterLevel");
+    updates[updates.length] = handler("Another","another"); updates[updates.length] = handler("DoneIdea","doneIdea");
+    helpers = helpers+"export function matchesIdea(state: AppState, index: number, time: number, level: string): boolean { if (time > 0 && state.idea_minutes[index] > time) { return false; } if (level !== \"\" && state.idea_levels[index] !== level) { return false; } return true; }";
+    helpers = helpers+"export function doneBefore(state: AppState, index: number): boolean { for (let id of state.done_ids) { if (id === state.idea_ids[index]) { return true; } } return false; }";
+    // Another wraps forward to the next matching idea, preferring unfinished matches before it
+    // repeats a completed one in the same pass; a filter change starts from the filtered cursor.
+    helpers = helpers+"export function nextCursor(state: AppState, from: number, time: number, level: string): number { let total: number = state.idea_ids.length; if (total === 0) { return 0; } let step: number = 0; while (step < total) { let index: number = (from+step) % total; if (matchesIdea(state,index,time,level) && !doneBefore(state,index)) { return index; } step = step+1; } step = 0; while (step < total) { let index: number = (from+step) % total; if (matchesIdea(state,index,time,level)) { return index; } step = step+1; } return -1; }";
+    helpers = helpers+"export function filterTime(state: AppState, action: FilterTime): AppState { if (action.value !== 0 && action.value !== 5 && action.value !== 15 && action.value !== 30) { return state; } return {time_filter: action.value, cursor: nextCursor(state,0,action.value,state.level_filter)}; }";
+    helpers = helpers+"export function filterLevel(state: AppState, action: FilterLevel): AppState { return {level_filter: action.value, cursor: nextCursor(state,0,state.time_filter,action.value)}; }";
+    helpers = helpers+"export function another(state: AppState, action: Another): AppState { let total: number = state.idea_ids.length; if (total === 0) { return state; } let next: number = nextCursor(state,(state.cursor+1) % total,state.time_filter,state.level_filter); return {cursor: next}; }";
+    helpers = helpers+"export function doneIdea(state: AppState, action: DoneIdea): AppState { if (state.cursor < 0 || state.cursor >= state.idea_ids.length) { return state; } let ids: string[] = []; for (let id of state.done_ids) { ids[ids.length] = id; } let stamps: number[] = []; for (let stamp of state.done_stamps) { stamps[stamps.length] = stamp; } if (!doneBefore(state,state.cursor)) { ids[ids.length] = state.idea_ids[state.cursor]; stamps[stamps.length] = embeddingClock.nowMillis(); } let total: number = state.idea_ids.length; return {done_ids: ids, done_stamps: stamps, cursor: nextCursor(state,(state.cursor+1) % total,state.time_filter,state.level_filter)}; }";
+    helpers = helpers+"export function currentIdea(state: AppState): string { if (state.idea_ids.length === 0) { return \"No ideas\"; } if (state.cursor < 0 || state.cursor >= state.idea_ids.length) { return \"No idea matches the current filter\"; } let result: string = state.idea_titles[state.cursor]+\" (\"+String(state.idea_minutes[state.cursor])+\" min, \"+state.idea_levels[state.cursor]+\")\"; if (state.idea_instructions[state.cursor] !== \"\") { result = result+\"\\n\"+state.idea_instructions[state.cursor]; } if (doneBefore(state,state.cursor)) { result = result+\"\\nDone\"; } return result; }";
+    body = body+"When(state.current_ready) {ui.Text(text: state.current_display)} When(!state.current_ready) {ui.Text(text: state.current_reason, style: \"muted\")}";
+    body = body+"ui.Button(text: \"5 min\", onClick: action app.FilterTime {value: 5, rank: payload}) ui.Button(text: \"15 min\", onClick: action app.FilterTime {value: 15, rank: payload}) ui.Button(text: \"30 min\", onClick: action app.FilterTime {value: 30, rank: payload}) ui.Button(text: \"Any\", onClick: action app.FilterTime {value: 0, rank: payload})";
+    for (let level of distinctLevels(levels2)) { body = body+"ui.Button(text: "+await literal("Level "+level,"string")+", onClick: action app.FilterLevel {value: "+await literal(level,"string")+", rank: payload})"; }
+    body = body+"ui.Button(text: \"Any level\", onClick: action app.FilterLevel {value: \"\", rank: payload})";
+    body = body+"ui.Button(text: \"Another\", onClick: action app.Another {value: payload}) ui.Button(text: \"Done\", onClick: action app.DoneIdea {value: payload})";
+    body = body+"When(state.done_today_ready) {ui.NumberText(value: state.done_today_display)} When(!state.done_today_ready) {ui.Text(text: state.done_today_reason, style: \"muted\")}";
+  } else if (kind === "interval_timer") {
+    let workSeconds: number = s.integral(parameters.workSeconds); let restSeconds: number = s.integral(parameters.restSeconds); let roundsValue: number = s.integral(parameters.rounds);
+    if (workSeconds <= 0 || restSeconds <= 0 || roundsValue <= 0) { s.reject("Catalogue interval bounds"); }
+    fields[fields.length] = authoredField(id,"phase","string","\"work\""); fields[fields.length] = authoredField(id,"round_value","number","1");
+    fields[fields.length] = authoredField(id,"elapsed","number","0"); fields[fields.length] = authoredField(id,"running","boolean","false");
+    fields[fields.length] = authoredField(id,"last","number","0");
+    fields[fields.length] = authoredField(id,"focus_done","number","0");
+    fields[fields.length] = derivedField(id,"round","number"); fields[fields.length] = derivedField(id,"focus_seconds_done","number"); fields[fields.length] = derivedField(id,"seconds","number");
+    ports[ports.length] = publishPort("round","number"); ports[ports.length] = publishPort("focus_seconds_done","number");
+    declarations = declarations+"export class StartInterval { value: number; } export class PauseInterval { value: number; } export class SkipInterval { value: number; } export class ResetInterval { value: number; } export class IntervalTick { now: number; }";
+    updates[updates.length] = handler("StartInterval","startInterval"); updates[updates.length] = handler("PauseInterval","pauseInterval");
+    updates[updates.length] = handler("SkipInterval","skipInterval"); updates[updates.length] = handler("ResetInterval","resetInterval");
+    updates[updates.length] = handler("IntervalTick","intervalTick");
+    helpers = helpers+"export function startInterval(state: AppState, action: StartInterval): AppState { if (state.running) { return state; } return {running: true, last: embeddingClock.nowMillis()}; }";
+    helpers = helpers+"export function pauseInterval(state: AppState, action: PauseInterval): AppState { if (!state.running) { return state; } return {running: false, last: 0}; }";
+    helpers = helpers+"export function resetInterval(state: AppState, action: ResetInterval): AppState { if (state.running) { return state; } return {phase: \"work\", round_value: 1, elapsed: 0, last: 0, focus_done: 0}; }";
+    helpers = helpers+"export function skipInterval(state: AppState, action: SkipInterval): AppState { if (state.phase === \"work\") { if (state.round_value >= "+String(roundsValue)+") { return {phase: \"done\", elapsed: 0, running: false}; } return {phase: \"rest\", elapsed: 0}; } if (state.phase === \"rest\") { return {phase: \"work\", round_value: state.round_value+1, elapsed: 0}; } return state; }";
+    // A tick carries elapsed milliseconds across phase boundaries: work then rest per round, no final
+    // rest, and each completed phase is counted once even when the carried time spans several.
+    // A tick that spans several phases carries the overflow: work then rest per round, no final rest,
+    // and completion is terminal, so a late tick can never restart work past the configured rounds.
+    // The walk is bounded by the configured rounds, not by a fixed guard that could drop a long tick.
+    helpers = helpers+"export function intervalTick(state: AppState, action: IntervalTick): AppState { if (!state.running) { return state; } if (!(action.now >= state.last)) { return state; } let remaining: number = action.now-state.last; let phase: string = state.phase; let roundValue: number = state.round_value; let elapsed: number = state.elapsed; let focus: number = state.focus_done; let guard: number = 0; while (remaining > 0 && phase !== \"done\" && guard < "+String(roundsValue*2+2)+") { guard = guard+1; let length: number = "+String(workSeconds)+"*1000; if (phase === \"rest\") { length = "+String(restSeconds)+"*1000; } let left: number = length-elapsed; if (!(left > 0)) { left = length; } if (remaining < left) { elapsed = elapsed+remaining; remaining = 0; } else { remaining = remaining-left; elapsed = 0; if (phase === \"work\") { focus = focus+"+String(workSeconds)+"; if (roundValue >= "+String(roundsValue)+") { phase = \"done\"; } else { phase = \"rest\"; } } else { roundValue = roundValue+1; phase = \"work\"; } } } if (phase === \"done\") { return {phase: phase, round_value: roundValue, elapsed: 0, focus_done: focus, running: false, last: action.now}; } if (remaining > 0) { return state; } return {phase: phase, round_value: roundValue, elapsed: elapsed, focus_done: focus, last: action.now}; }";
+    body = body+"ui.Text(text: state.phase) ui.NumberText(value: state.seconds_display)";
+    body = body+"ui.Button(text: \"Start interval\", enabled: !state.running && state.phase !== \"done\", onClick: action app.StartInterval {value: payload}) ui.Button(text: \"Pause interval\", enabled: state.running, onClick: action app.PauseInterval {value: payload}) ui.Button(text: \"Skip interval\", enabled: state.phase !== \"done\", onClick: action app.SkipInterval {value: payload}) ui.Button(text: \"Reset interval\", enabled: !state.running, onClick: action app.ResetInterval {value: payload})";
+    body = body+"ui.Ticker(id: \"intervals\", intervalMs: 250, running: state.running, onTick: action app.IntervalTick {now: payload})";
+  } else if (kind === "reminders" || kind === "dose_schedule" || kind === "due_items") {
+    s.reject("Unsupported catalogue kind: "+kind);
+  } else {
+    s.reject("Unsupported catalogue kind: "+kind);
   }
   let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){"+body+"}}";
-  return {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:[],helpers:helpers,view:view,options:[],content:[],ports:ports,holes:[],covers:[entry.need],owns:[id]},bodies:{}};
+  return {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:[],helpers:helpers,view:view,options:[],content:[],ports:ports,holes:holes,covers:[entry.need],owns:[id]},bodies:{}};
 }
-export function computations(instance: screens.Instance, connections: screens.Connection[]): composer.Computation[] {
+// The field a reader port is bound to: the writer's port getter field when this composition issues a
+// connection, otherwise the fallback field the composer emits for the unconnected optional reader.
+function portDependency(instance: screens.Instance, name: string, connections: screens.Connection[], instances: screens.Instance[]): string {
+  for (let connection of connections) { if (connection.readerInstance === instance.id && connection.readerPort === name) {
+    for (let writer of instances) { if (writer.id === connection.writerInstance) { for (let port of writer.fragment.ports) { if (port.name === connection.writerPort && port.direction === "publish") { return "f_"+writer.id+"_"+port.getter; } } } }
+    s.reject("Unissued port connection");
+  } }
+  return "f_"+instance.id+"_"+name;
+}
+function computation(instance: screens.Instance, field: string, value: string, ready: string, reason: string, dependencies: string[]): composer.Computation {
+  return {instance:instance.id,field:field,value:value,ready:ready,reason:reason,dependencies:dependencies};
+}
+export function computations(instance: screens.Instance, connections: screens.Connection[], instances: screens.Instance[]): composer.Computation[] {
   let result: composer.Computation[] = [];
   if (instance.kind === "checklist") {
     let dependencies: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { dependencies[dependencies.length] = "f_"+instance.id+"_"+field.name; } }
-    result[result.length] = {instance:instance.id,field:"done",value:"countDone(state)",ready:"true",reason:"\"Unavailable\"",dependencies:dependencies};
-    result[result.length] = {instance:instance.id,field:"total",value:s.encode(s.records(instance.parameters,"items").length),ready:"true",reason:"\"Unavailable\"",dependencies:[]};
+    result[result.length] = computation(instance,"done","countDone(state)","true","\"Unavailable\"",dependencies);
+    result[result.length] = computation(instance,"total",s.encode(s.records(instance.parameters,"items").length),"true","\"Unavailable\"",[]);
   } else if (instance.kind === "list_summary") {
-    let dependencies: string[] = [];
-    for (let connection of connections) { if (connection.readerInstance === instance.id) { dependencies[dependencies.length] = "f_"+connection.writerInstance+"_"+connection.writerPort; } }
-    result[0] = {instance:instance.id,field:"summary",value:"summarize(state)",ready:"true",reason:"\"Publisher unavailable\"",dependencies:dependencies};
+    result[0] = computation(instance,"summary","summarize(state)","true","\"Publisher unavailable\"",[portDependency(instance,"done",connections,instances),portDependency(instance,"total",connections,instances)]);
+  } else if (instance.kind === "search_list") {
+    result[0] = computation(instance,"result","matched(state)","true","\"Unavailable\"",["f_"+instance.id+"_rows",portDependency(instance,"query",connections,instances)]);
+  } else if (instance.kind === "master_list") {
+    let rows: Record<string, unknown>[] = s.records(instance.parameters,"items"); let index: number = 0;
+    while (index < rows.length) {
+      result[result.length] = computation(instance,"shown_"+String(index),"rowMatches(state, state.rows["+String(index)+"])","true","\"Unavailable\"",["f_"+instance.id+"_rows",portDependency(instance,"query",connections,instances)]);
+      index = index+1;
+    }
+  } else if (instance.kind === "detail_view") {
+    result[0] = computation(instance,"detail","detailOf(state)","true","\"No publisher\"",[portDependency(instance,"items",connections,instances),portDependency(instance,"selected",connections,instances)]);
+  } else if (instance.kind === "number_strip") {
+    result[0] = computation(instance,"summary","summaryText(state)","true","\"Publisher unavailable\"",[portDependency(instance,"total",connections,instances),portDependency(instance,"average",connections,instances),portDependency(instance,"count",connections,instances),portDependency(instance,"currency",connections,instances)]);
+  } else if (instance.kind === "breakdown_table") {
+    result[0] = computation(instance,"breakdown","breakdownText(state)","true","\"Publisher unavailable\"",[portDependency(instance,"labels",connections,instances),portDependency(instance,"totals",connections,instances),portDependency(instance,"balances",connections,instances),portDependency(instance,"currency",connections,instances)]);
+  } else if (instance.kind === "series_chart") {
+    let valuesField: string = "totals"; if (s.text(instance.parameters.mode) === "balances") { valuesField = "balances"; }
+    let sources: string[] = [portDependency(instance,"labels",connections,instances),portDependency(instance,"totals",connections,instances),portDependency(instance,"balances",connections,instances)];
+    result[result.length] = computation(instance,"chart","chartText(state)","true","\"Publisher unavailable\"",sources);
+    let scaleSources: string[] = [portDependency(instance,"labels",connections,instances),portDependency(instance,valuesField,connections,instances)];
+    // The published fields carry their declared array types, so the guard reads them directly; a cast
+    // would make the guard an indirect expression the read-only computation policy refuses.
+    let scaleReady: string = "state."+valuesField+".length > 0 && state."+valuesField+".length === state.labels.length && state.chart_nonzero_display";
+    result[result.length] = computation(instance,"chart_nonzero","seriesNonzero(state)","true","\"No aggregate rows\"",[portDependency(instance,valuesField,connections,instances)]);
+    result[result.length] = computation(instance,"chart_min","seriesLow(state)",scaleReady,"\"No aggregate rows\"",scaleSources.concat(["f_"+instance.id+"_chart_nonzero"]));
+    result[result.length] = computation(instance,"chart_max","seriesHigh(state)",scaleReady,"\"No aggregate rows\"",scaleSources.concat(["f_"+instance.id+"_chart_nonzero"]));
+  } else if (instance.kind === "settle_up") {
+    result[0] = computation(instance,"transfers","transfersText(state)","true","\"Publisher unavailable\"",[portDependency(instance,"labels",connections,instances),portDependency(instance,"balances",connections,instances),portDependency(instance,"currency",connections,instances)]);
+  } else if (instance.kind === "itinerary") {
+    let sources: string[] = ["f_"+instance.id+"_stop_labels","f_"+instance.id+"_stop_minutes"];
+    sources[sources.length] = portDependency(instance,"start",connections,instances); sources[sources.length] = portDependency(instance,"deadline",connections,instances);
+    // The per-stop reached flags are read by the schedule text and the done count, so both name them.
+    let flagDependencies: string[] = []; let flagCount: number = s.records(instance.parameters,"stops").length; let flagIndex: number = 0;
+    while (flagIndex < flagCount) { flagDependencies[flagDependencies.length] = "f_"+instance.id+"_reached_"+String(flagIndex); flagIndex = flagIndex+1; }
+    for (let flag of flagDependencies) { sources[sources.length] = flag; }
+    result[result.length] = computation(instance,"schedule","scheduleText(state)","true","\"Schedule unavailable\"",sources);
+    result[result.length] = computation(instance,"done","countReached(state)","true","\"Unavailable\"",flagDependencies);
+    result[result.length] = computation(instance,"total",s.encode(s.records(instance.parameters,"stops").length),"true","\"Unavailable\"",[]);
+  } else if (instance.kind === "progress_line") {
+    let sources: string[] = [portDependency(instance,"done",connections,instances),portDependency(instance,"total",connections,instances)];
+    result[result.length] = computation(instance,"line","lineText(state)","(state.total as number) > 0 && (state.done as number) >= 0","\"Total unavailable\"",sources);
+    result[result.length] = computation(instance,"percent","percentOf(state)","(state.total as number) > 0 && (state.done as number) >= 0","\"Total unavailable\"",sources);
+  } else if (instance.kind === "quick_log") {
+    result[result.length] = computation(instance,"goal_value",s.encode(s.finite(instance.parameters.goal)),"true","\"Unavailable\"",[]);
+    // The tap history is retained, but today's total and count stay unavailable with their located
+    // reason: no host-timezone adapter day is issued to project the captured instants onto. The value
+    // expression is deliberately unreachable because the readiness is the literal `false`, so no
+    // computed daily number can reach a consumer either.
+    let history: string[] = ["f_"+instance.id+"_amounts","f_"+instance.id+"_stamps"];
+    result[result.length] = computation(instance,"today_total","0","false",s.encode(dailyProjection("Today's total")),history);
+    result[result.length] = computation(instance,"today_count","0","false",s.encode(dailyProjection("Today's count")),history);
+  } else if (instance.kind === "reading_status") {
+    let sources: string[] = ["f_"+instance.id+"_readings","f_"+instance.id+"_band_uppers","f_"+instance.id+"_band_labels","f_"+instance.id+"_band_levels"];
+    result[result.length] = computation(instance,"latest","latestOf(state)","state.readings.length > 0","\"No reading\"",sources);
+    result[result.length] = computation(instance,"status_level","levelOf(state, latestOf(state))","state.readings.length > 0","\"No reading\"",sources);
+    result[result.length] = computation(instance,"status","statusOf(state, latestOf(state))","state.readings.length > 0","\"No reading\"",sources);
+    result[result.length] = computation(instance,"history","historyOf(state)","true","\"Unavailable\"",["f_"+instance.id+"_readings"]);
+    result[result.length] = computation(instance,"count","state.readings.length","true","\"Unavailable\"",["f_"+instance.id+"_readings"]);
+    result[result.length] = computation(instance,"chart_min","chartLow(state)","state.readings.length > 0","\"No readings\"",["f_"+instance.id+"_readings"]);
+    result[result.length] = computation(instance,"chart_max","chartHigh(state)","state.readings.length > 0","\"No readings\"",["f_"+instance.id+"_readings"]);
+  } else if (instance.kind === "idea_deck") {
+    let sources: string[] = ["f_"+instance.id+"_idea_ids","f_"+instance.id+"_idea_titles","f_"+instance.id+"_idea_levels","f_"+instance.id+"_idea_minutes","f_"+instance.id+"_idea_instructions","f_"+instance.id+"_time_filter","f_"+instance.id+"_level_filter","f_"+instance.id+"_cursor","f_"+instance.id+"_done_ids"];
+    result[result.length] = computation(instance,"current","currentIdea(state)","true","\"Unavailable\"",sources);
+    // The recorded marks keep their instants; the count of the marks made today stays unavailable with
+    // its located reason because no host-timezone adapter day is issued to scope them. The value
+    // expression is deliberately unreachable behind the literal `false` readiness.
+    result[result.length] = computation(instance,"done_today","0","false",s.encode(dailyProjection("Done today")),["f_"+instance.id+"_done_ids","f_"+instance.id+"_done_stamps"]);
+  } else if (instance.kind === "interval_timer") {
+    result[result.length] = computation(instance,"round","state.round_value","true","\"Unavailable\"",["f_"+instance.id+"_round_value"]);
+    result[result.length] = computation(instance,"focus_seconds_done","state.focus_done","true","\"Unavailable\"",["f_"+instance.id+"_focus_done"]);
+    result[result.length] = computation(instance,"seconds","state.elapsed/1000","true","\"Unavailable\"",["f_"+instance.id+"_elapsed"]);
+  } else if (instance.kind === "timer") {
+    result[result.length] = computation(instance,"seconds","state.elapsed/1000","true","\"Unavailable\"",["f_"+instance.id+"_elapsed"]);
   }
   return result;
 }
