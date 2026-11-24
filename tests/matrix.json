@@ -267,35 +267,50 @@
       "requirement": "Typed plan values: a number for amount, percent and count inputs, a string for text, a boolean for toggle, an integral count, an in-range choice index, and a value inside its declared min and max all decode; a wrong-typed value, a fractional count, an out-of-range choice index and a value outside its declared bounds each reject at the decode boundary.",
       "status": "covered",
       "test": "python3 tests/tools/test-construction-contracts.py",
-      "evidence": "The real plan decoder is compiled and executed: it accepts an amount, a percent, a text, a toggle, a count, a choice index and a bounded amount declaring their own kinds and rejects the same inputs with a wrong kind, a fractional count, an out-of-range choice index and a value above its maximum or below its minimum.",
+      "evidence": "The real plan decoder is compiled and executed: it accepts an amount, a percent, a text, a toggle, a count, a choice index and a bounded amount declaring their own kinds and rejects the same inputs with a wrong kind, a fractional count, an out-of-range choice index and a value above its maximum or below its minimum, each naming its own field.",
       "sources": [
         "tests/tools/fixtures/construction-contracts.deal"
       ],
       "asserts": [
-        "Typed inputs decode with their declared kinds",
-        "Wrong-typed amount input admitted",
-        "Wrong-typed text input admitted",
-        "Wrong-typed toggle input admitted",
-        "Fractional count input admitted",
-        "Choice index outside its options admitted",
-        "Input above its declared maximum admitted",
-        "Input below its declared minimum admitted"
+        "Checked input kinds did not decode",
+        "Checked text and toggle values lost",
+        "Checked count bounds lost",
+        "Unbounded count gained a bound",
+        "Percent input value lost",
+        "Amount input value lost",
+        "Bounded amount input inside its declared bounds was refused",
+        "input note: expected text",
+        "input spent: expected a finite number",
+        "input flag: expected a boolean",
+        "input items: expected an integral number",
+        "input items.min: expected an integral number",
+        "input pick: choice index outside its options",
+        "input limit: value above its maximum",
+        "input limit: value below its minimum"
       ]
     },
     {
       "id": "typed-collections-utf16",
       "family": "typed-values",
       "owner": "plan-schemas-values-and-parts",
-      "requirement": "DEAL v1.6 typed collections keep their invariant element types and array identity, dynamic JSON arrays convert into the same UTF-16 units including an unpaired surrogate and astral pairs, and emitted source literals round-trip the tested astral, unpaired-surrogate, control, quote, backslash and newline spellings.",
+      "requirement": "plan-schemas-values-and-parts \"JSON and wire decoding\": a typed collection decodes by checking that the value is an array and each element matches the element schema, and the result is a new invariant T[] (no cast and no try/catch fallback). A non-array, a wrong element kind and an array carrying a hole reject; the same UTF-16 units survive (including an unpaired surrogate and astral pairs); dynamic JSON arrays convert into the same units and emitted source literals round-trip the tested astral, unpaired-surrogate, control, quote, backslash and newline spellings.",
       "status": "covered",
       "test": "python3 tests/tools/test-construction-contracts.py",
-      "evidence": "The compiled decoder and source-literal helpers are exercised directly: a typed string array keeps its identity, a dynamic array converts to the same UTF-16 units and the emitted literal parses back to the original text.",
+      "evidence": "The compiled decoder and source-literal helpers are exercised directly: a typed string array decodes into a fresh array with the same units (the fresh T[] the contract requires, not the caller's array), a dynamic array converts to the same UTF-16 units, a non-array and a wrong element kind are refused with their index, an array that carries a hole is refused by both checked decoders, and the emitted literal parses back to the original text.",
       "sources": [
-        "tests/tools/fixtures/construction-contracts.deal"
+        "tests/tools/fixtures/construction-contracts.deal",
+        "tests/tools/test-construction-contracts.js"
       ],
       "asserts": [
-        "Typed invariant array identity lost",
+        "Checked collection changed UTF-16 units",
+        "Checked collection aliased its input",
         "Dynamic array conversion lost UTF-16 units",
+        "Wrong element kind admitted to a typed collection",
+        "Hole in a typed text collection admitted",
+        "Hole in a typed record collection admitted",
+        "Dense text collection refused",
+        "Non-array admitted as a typed collection",
+        "Collection rejection is not located",
         "Source literal escape round-trip"
       ]
     },
@@ -319,17 +334,46 @@
       "id": "durations",
       "family": "durations-parts",
       "owner": "plan-schemas-values-and-parts",
-      "requirement": "countdown.length resolves seconds inputs and minutes constants with checked millisecond conversion; unissued, money, percent, count and nonfinite sources reject.",
-      "status": "missing",
-      "blocker": "Duration resolution does not exist: core/plan.deal:52 accepts countdown.length as an identifier only, with no unit lookup, checked millisecond conversion or rejection of unissued, money, percent, count and nonfinite sources, and no construction contract drives a duration. The clock/entry part behaviours (start/pause boundaries, completion once, entry keys, timestamps, totals) also have no deterministic vector; owner plan-schemas-values-and-parts (ISSUE-0003)."
+      "requirement": "countdown.length resolves seconds inputs and minutes constants with checked millisecond conversion; an unissued source, a source of a non-duration measure (money, percent, count) and a negative or nonfinite value reject.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-construction-contracts.py python3 tests/tools/test-composer.py",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal",
+        "tests/tools/test-clock-part.js",
+        "tests/tools/test-clock-input.js"
+      ],
+      "evidence": "plan.decode resolves countdown.length through its duration-source resolution (core/plan.deal:281) and keeps the source's measure and unit; the clock part converts that source by the checked millisecond rule (plans.milliseconds for a constant, the same scale and readiness checks for a decoded input), so a decoded seconds source converts to 90000 ms and a minutes constant to 300000 ms while a money source - the same measure test that refuses a percent, count or number measure - an unissued identifier, a negative value, a nonfinite value and an overflowing value reject with the need identifier; the clock part that conversion feeds is driven at its emitted runtime by the composer item (private driver press/tick readings, completion once, restart and clamped remaining), and the same composer item mounts the emitted clock pair with an edited minutes input.",
+      "asserts": [
+        "milliseconds(seconds,90,\"cook\") === 90000",
+        "cook: length source is not a duration",
+        "cook: unissued duration source timer",
+        "duration value is negative",
+        "duration value is not finite",
+        "duration conversion overflowed",
+        "assert.strictEqual(driver.intervalMs,1000,'the driver interval is host configuration')"
+      ]
     },
     {
       "id": "clock-entries-parts",
       "family": "durations-parts",
       "owner": "plan-schemas-values-and-parts",
       "requirement": "Clock parts start/pause/complete once and restore paused; entry parts add typed values with stable keys, timestamps, undo and totals.",
-      "status": "missing",
-      "blocker": "No emitted clock or entries part is exercised end to end; construction contracts assert the part alternative only, and no test drives add/remove/undo, timestamps or totals."
+      "status": "covered",
+      "test": "python3 tests/tools/test-composer.py",
+      "sources": [
+        "tests/tools/test-clock-part.js",
+        "tests/tools/test-entries-part.js"
+      ],
+      "asserts": [
+        "clock starts paused",
+        "pause counts the delta through its admitted reading",
+        "completion records exactly one end event",
+        "cold restore resumes the clock paused",
+        "the seed gets a stable key",
+        "the disclosed timestamp is preserved",
+        "the pending undo records the removed index",
+        "the total sums the first numeric non-time field"
+      ]
     },
     {
       "id": "formula",
@@ -337,11 +381,12 @@
       "owner": "plan-schemas-values-and-parts",
       "requirement": "Well-typed formula and written formula evaluate with DEAL precedence, unary minus and not, comparison and lazy choose, zero ties and the floor/ceil/sqrt/abs/round/min/max calls; unknown identifiers, assignment, indexing, unavailable calls and mismatched branches reject.",
       "status": "covered",
-      "test": "python3 tests/tools/test-construction-contracts.py",
+      "test": "python3 tests/tools/test-construction-contracts.py python3 tests/tools/test-composer.py",
       "seam": "formula",
-      "evidence": "Formula evaluation and located rejections run through compiled policy; the seam probe changes an operator and this test fails.",
+      "evidence": "Formula evaluation and located rejections run through compiled policy; the seam probe disables `choose`, the construction item fails on it, and the composer item proves the written formula is lowered over the issued operands.",
       "sources": [
-        "tests/tools/fixtures/construction-contracts.deal"
+        "tests/tools/fixtures/construction-contracts.deal",
+        "tests/tools/fixtures/composer-contracts.deal"
       ],
       "asserts": [
         "Lazy choose lowering/value",
@@ -361,7 +406,9 @@
         "round below a tie is not a ceiling",
         "(ceiled.number as number) === 2",
         "(absolute.number as number) === 2",
-        "Exclusion formula"
+        "Exclusion formula",
+        "the written formula did not replace the original expression",
+        "a legal written formula over an issued operand outside the example was refused"
       ]
     },
     {
@@ -369,17 +416,28 @@
       "family": "figure-formula",
       "owner": "plan-schemas-values-and-parts",
       "requirement": "Boolean operands short-circuit and the written-formula call set includes pow.",
-      "status": "missing",
-      "test": "python3 tests/tools/test-construction-contracts.py",
-      "blocker": "core/formula.deal parses and evaluates both boolean operands eagerly and its call set omits pow, so neither short-circuit evaluation nor the pow call exists in the compiled formula policy; owner plan-schemas-values-and-parts (ISSUE-0003)."
+      "status": "covered",
+      "test": "python3 tests/tools/test-construction-contracts.py python3 tests/tools/test-composer.py",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal",
+        "tests/tools/fixtures/composer-contracts.deal"
+      ],
+      "evidence": "core/formula.deal issues pow in its written-formula call set and folds it through the host Math.pow, so the emitted source carries Math.pow rather than a hand-written helper; a boolean operator over issued boolean operands is lowered to the host && / || operator over those operands, so the emitted policy keeps the host short-circuit rather than evaluating both operands eagerly. The composer item compiles the pow figure through the production compiler, and exercises the written-formula helper set and its bounds in the same item.",
+      "asserts": [
+        "Boolean && was not lowered to the short-circuiting host operator",
+        "Boolean || was not lowered to the short-circuiting host operator",
+        "the lowered formula emitted no host pow call",
+        "the emitted pair still carries a hand-written pow helper",
+        "pow(9, 0.5) is not exactly 3"
+      ]
     },
     {
       "id": "figure-display",
       "family": "figure-formula",
       "owner": "plan-schemas-values-and-parts",
       "requirement": "A figure with the shared decimals field issues spec numeric presentation (NumberText/ClockText), a yes_no figure publishes a boolean and a written-formula figure shows its written form.",
-      "status": "missing",
-      "blocker": "core/parts.deal still emits a figure as ui.Text label + number + unit; no ui.NumberText or ui.ClockText is issued, so typed numeric presentation at the figure site has no production path."
+      "status": "partial",
+      "blocker": "The figure site issues ui.NumberText with the prepared value, the declared suffix and the shared decimals field, and ui.ClockText with prepared minutes for time_of_day: node tests/tools/test-emitted-runtime.js asserts that a numeric figure binds its prepared value and renders it through NumberText, and python3 tests/tools/test-composer.py compiles a yes_no figure that publishes a boolean. Missing: no item asserts the shown form of a written-formula figure or a device-visible rendering of the issued presentation, so the row is not claimed covered."
     },
     {
       "id": "bindings-descriptors",
@@ -417,8 +475,8 @@
       "family": "slots-connections-publication",
       "owner": "ownership-slots-operations-and-assembly",
       "requirement": "Every filled slot output issues its publish_/ready_ pair with the declared type; unfilled outputs stay open and unready with signature-correct getters.",
-      "status": "missing",
-      "blocker": "No publish_/ready_ pair is emitted by core/composer.deal, so publication and readiness have no production path to prove."
+      "status": "partial",
+      "blocker": "core/composer.deal emits publish_<output> and ready_<output> for every filled slot output with the declared type, a signature-correct derived getter that throws EMPTY_SLOT with the publisher's reason, and an unready getter for an open need; python3 tests/tools/test-composer.py compiles and asserts those emitted pairs through the production compiler. The AC-06 seam list names no production seam control for this family, so a covered row is refused and the row stays partial."
     },
     {
       "id": "ownership",
@@ -443,8 +501,8 @@
       "family": "chat-construction",
       "owner": "generation-recovery-and-source-editing",
       "requirement": "A chat target retains the first five visible needs with their hidden dependencies, removes orphan dependents to a fixpoint, discloses every omission as missing, rejects a header or three-section custom draft, and wraps multiple fragments in labelled Tabs with a retained selection.",
-      "status": "missing",
-      "blocker": "Screen.target is decoded and carried as a host-frozen compile input (core/generation.deal; android/src/EmbeddingConfig.kt:12-19; android/src/bindings/ExperienceGenerator.kt:44), but core/screen.deal rejects a promotion and no chat projection, five-need cut, omission disclosure, compact draft bound, header/three-section rejection or Tabs wrapper exists to exercise; tests/tools/fixtures/construction-contracts.deal only reserves an explicitly issued chat target. Owner generation-recovery-and-source-editing (ISSUE-0005)."
+      "status": "partial",
+      "blocker": "Screen.target is decoded and carried as a host-frozen compile input (core/generation.deal; android/src/EmbeddingConfig.kt:12-19; android/src/bindings/ExperienceGenerator.kt:44), core/screen.deal rejects a promotion, and the composer emits the labelled Tabs root with its authoritative selection over the placed fragments (core/composer.deal; proved by tests/tools/fixtures/composer-contracts.deal and tests/tools/test-composer.py, which compiles a chat-target pair). Still missing: nothing produces the chat projection, the five-need cut, the orphan-dependent fixpoint, the omission disclosure, the compact draft bound or the header/three-section custom-draft rejection, and no seam probe controls this family. Owner generation-recovery-and-source-editing (ISSUE-0005)."
     },
     {
       "id": "scenes",
@@ -546,7 +604,7 @@
       "blocker": "Stage budgets, exact repair, check accounting and repeated-miss stopping run, and the packaged entry asserts one attempt per completed candidate check across every mode (whole plus fallback, retained least-missing draft, rejected admission and accepted repair); catalogue body counters and the nested caps are absent.",
       "asserts": [
         "the refused need stays open for its own section write",
-        "table: missing \u2014 Catalogue instance table: Catalogue columns match headers"
+        "table: missing — Catalogue instance table: Catalogue columns match headers"
       ]
     },
     {
@@ -935,7 +993,7 @@
         "NumericPresentation.format(32.0, \"\", \"\", 4, -1) == \"0032\"",
         "NumericPresentation.format(1.0, \"\", \"\", 1, 6) == \"1.000000\"",
         "NumericPresentation.format(1.0 / 3.0, \"\", \"\", 1, -1) == \"0.3333333333333333\"",
-        "NumericPresentation.format(3.0, \"\u20ac\", \" kg\", 2, 0) == \"\u20ac03 kg\"",
+        "NumericPresentation.format(3.0, \"€\", \" kg\", 2, 0) == \"€03 kg\"",
         "\"PROP_FAULT\", \"NumberText\", \"decimals\"",
         "\"PROP_FAULT\", \"NumberText\", \"minimumDigits\""
       ]
@@ -955,10 +1013,11 @@
         "Figure decimals -1 accepted",
         "Figure decimals 6 accepted",
         "Declared defaults",
-        "Entry-field decimals 6 accepted",
-        "Entry-field decimals -1 accepted",
-        "Invalid figure decimals admitted",
-        "Invalid entry-field decimals admitted"
+        "Entry field decimals -1 accepted",
+        "Text entry field decimals 6 accepted",
+        "need total.decimals",
+        "need log: field amount.decimals",
+        "need log: field what.decimals"
       ]
     },
     {
@@ -1182,8 +1241,8 @@
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "Issued dependency sets and one authoritative revision_<operationId> field per operation; only downstream operations invalidate; invocationCurrent compares the live revision.",
       "status": "partial",
-      "blocker": "core/execution.deal issues the dependency set of an operation, advances exactly the revisions whose set contains a committed semantic change (resources or readiness), retires a pending operation to stale/unknown and keeps a completed value displayable only; an invalidated record authorizes no reply while an explicit retry is admitted at the live revision under the call identity the caller supplies for the new invocation, so an edited part reloads instead of staying stale forever. core/scalar-read.deal issues and consumes that set when it emits a live part, so the emitted part declares the resources it reads; that call site derives the set from the same field list it validates, so it guards a future caller rather than exercising a caller that could name an unissued field. The emitted runtime still carries one sequence counter rather than an emitted revision_<operationId> field, and no composer emits invocationCurrent: assembly-side issuance of operation dependency sets and the emitted revision field belongs to the ownership/slots assembly contract and is not delivered here.",
-      "test": "python3 tests/tools/test-execution-contracts.py python3 tests/tools/test-construction-contracts.py",
+      "blocker": "core/execution.deal issues the dependency set of an operation, advances exactly the revisions whose set contains a committed semantic change (resources or readiness), retires a pending operation to stale/unknown and keeps a completed value displayable only; an invalidated record authorizes no reply while an explicit retry is admitted at the live revision under the call identity the caller supplies for the new invocation, so an edited part reloads instead of staying stale forever. core/scalar-read.deal issues and consumes that set when it emits a live part, so the emitted part declares the resources it reads. This candidate's composer delivers the assembly side: every emitted operation carries its authoritative revision_<operationId>, status, sequence, phase and expiry prerequisites, the assembly emits invocationCurrent, expireOperations and recordExpiry, and the emitted pair proves downstream-only invalidation (an equivalent buffer spelling advances nothing while a changed value or an invalid draft advances exactly the dependent revisions). Missing: no Session adapter dispatches those emitted transitions, so no production admission captures the emitted revision before a send or reply and no committed update is driven through the serialized Session lane.",
+      "test": "python3 tests/tools/test-execution-contracts.py python3 tests/tools/test-construction-contracts.py node tests/tools/test-draft-revision.js build/v08-cutover/composed-executable/js",
       "sources": [
         "tests/tools/fixtures/execution-contracts.deal"
       ],
@@ -1196,7 +1255,10 @@
         "Readiness change did not advance a reader revision",
         "Stale result lost its displayable value",
         "The retried invocation presented the invalidated value as its admitted result",
-        "The retried invocation was not current"
+        "The retried invocation was not current",
+        "an equivalent draft spelling advanced an operation revision",
+        "a changed argument value did not advance every dependent revision once",
+        "an invalid draft did not advance the dependent revisions"
       ]
     },
     {
@@ -1205,8 +1267,8 @@
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "Relative expiry from request admission, absolute expiry as given, expiry displayable stale but never satisfying a calculation or action, and pause/resume or uncertain time invalidating trust.",
       "status": "partial",
-      "blocker": "Relative expiry from admission, absolute expiry as given (and surviving a pause as an instant), the double-supplied, unknown-field and already-expired rejections, retirement to stale on expiry, and trust loss by pause, by a retreating clock and by a period change are implemented and proven in core/execution.deal; an expiry that cannot be decided is treated as expired. An expired or untrusted result stays display-only and never blocks the next invocation: an explicit retry is admitted with its own admitted instant and expiry, so a part whose evidence expired can be refreshed. No adapter supplies the clock-trust facts or schedules the expiry transition, and no emitted operation carries admittedAt/expiresAt, so the Session driver obligation (an expiry transition independent of next/published polling) stays open.",
-      "test": "python3 tests/tools/test-execution-contracts.py python3 tests/tools/test-construction-contracts.py",
+      "blocker": "Relative expiry from admission, absolute expiry as given (and surviving a pause as an instant), the double-supplied, unknown-field and already-expired rejections, retirement to stale on expiry, and trust loss by pause, by a retreating clock and by a period change are implemented and proven in core/execution.deal; an expiry that cannot be decided is treated as expired. An expired or untrusted result stays display-only and never blocks the next invocation: an explicit retry is admitted with its own admitted instant and expiry, so a part whose evidence expired can be refreshed. This candidate's composer emits the operation's own recorded instant and its unexpired prerequisite (expires_<operationId> and expired_<operationId>), the currentness hook requires that prerequisite, expireOperations decides it from an admitted reading while recordExpiry records an invocation deadline and refuses one its own reading already passed, and the emitted pair proves that an operation past its expiry is not current, is not re-trusted by a later matched reading and does not restore current. Missing: no Session adapter supplies the clock-trust facts or schedules the expiry transition, so the Session driver obligation (an expiry transition independent of next/published polling) and restore-time revalidation stay open.",
+      "test": "python3 tests/tools/test-execution-contracts.py python3 tests/tools/test-construction-contracts.py node tests/tools/test-assembly.js build/v08-cutover/composed-executable/js",
       "sources": [
         "tests/tools/fixtures/execution-contracts.deal"
       ],
@@ -1223,7 +1285,10 @@
         "A retry admitted under an uncertain clock stayed operational",
         "A relative window was trusted under an undecidable clock",
         "An undecidable window authorized its reply",
-        "An invocation without an expiry lost trust it never took"
+        "An invocation without an expiry lost trust it never took",
+        "an operation past its expiry is still current",
+        "an expired operation was re-trusted by a later matched reading",
+        "a saved expired operation restored current"
       ]
     },
     {

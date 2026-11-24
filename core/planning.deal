@@ -22,7 +22,7 @@ function prompt(input: Input): string {
 }
 function decode(response: host.Response, input: Input): plans.Plan {
   if (response.refusal !== "") { s.reject("Planner refused: "+response.refusal); }
-  return plans.decode(response.content,input.factIds,input.sourceIds);
+  return plans.decode(response.content,input.factIds,input.sourceIds,input.request,input.facts);
 }
 export async function run(input: Input): Promise<Result> {
   s.oneOf(input.target,["screen","chat","card"]);

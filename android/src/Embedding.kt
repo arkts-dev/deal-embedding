@@ -19,7 +19,8 @@ class Embedding internal constructor(private val context: Context, internal val 
             var mechanisms: Embedding? = null
             try {
                 val owner = Embedding(application,registry,model,RuntimeConfig("experience",emptyList(),config.storageName,
-                    retainState=config.retainState,execution=config.execution,target=config.target))
+                    retainState=config.retainState,execution=config.execution,target=config.target,
+                    clockIntervalMs=config.clockIntervalMs,clockToleranceMs=config.clockToleranceMs))
                 mechanisms = owner
                 return ApplicationProtocol(application,owner,config.discovery,config.updateWaits)
             } catch (error: Throwable) {

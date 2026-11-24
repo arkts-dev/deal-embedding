@@ -7,6 +7,8 @@ import * as syntax from "embedding/fragment-syntax";
 import * as bindings from "./bindings";
 import * as composer from "./composer";
 import * as s from "./construction-schema";
+import * as disclosure from "./disclosure";
+import * as tables from "std/table";
 
 // One kind table declares every specification kind once. Schemas, validators, initialization and
 // eligibility facts are derived from it; `executable` records whether this build issues a runnable
@@ -196,7 +198,7 @@ function record(value: unknown, name: string): void { if (!s.encode(value).start
 function number(value: unknown, name: string): number { if (!Number.isFinite(value)) { s.reject("Catalogue number required: "+name); } return s.finite(value); }
 function integer(value: unknown, name: string): number { let result: number = number(value,name); if (Math.floor(result) !== result) { s.reject("Catalogue integral required: "+name); } return result; }
 // An empty text carries no content and needs no evidence; any supplied text must occur in it.
-function supplied(value: string, data: string): boolean { return value === "" || data.includes(value); }
+function supplied(value: string, data: string): boolean { return disclosure.admitsText(data,value); }
 // An optional row field returns its dynamic value so the wire-kind guard of `text` runs before any
 // typed cast; a typed accessor would raise the runtime type error instead of a schema rejection.
 function optionalValue(owner: Record<string, unknown>, name: string): unknown { if (!Object.hasOwn(owner,name)) { return ""; } return owner[name]; }
@@ -444,15 +446,15 @@ export async function decode(definition: Definition, raw: unknown): Promise<Reco
 }
 // The empty string admits the instance; a refusal names the need and the supplied row or field that
 // no evidence admits, so a rejected instance keeps its located reason instead of a bare verdict.
-function refusal(entry: Configured, where: string): string { return "Undisclosed personal or factual content: "+entry.need+" "+where; }
+function refusal(entry: Configured, where: string): string { return "Undisclosed personal or factual content: section_"+entry.need+" ("+entry.definition.kind+"): "+where; }
 // A number value contributes its shortest round-trip decimal spelling, matched the way a text value is
 // matched: the spelling occurs in the evidence. The one predicate of
 // `plan-schemas-values-and-parts` "Seed disclosure" is deliberately string-based, so a label likewise
 // matches inside a longer word and a digit likewise matches inside a longer number. This domain
 // applies that predicate and never a second, stricter numeric rule of its own.
-function numeric(value: number, data: string): boolean { return data.includes(String(value)); }
+function numeric(value: number, data: string): boolean { return disclosure.admitsNumber(data,value); }
 export function disclosed(entry: Configured, original: string, facts: string, userOwned: boolean): string {
-  let data: string = original+"\n"+facts;
+  let data: string = disclosure.evidence(original,facts);
   if (entry.definition.kind === "metrics" || entry.definition.kind === "key_facts") {
     let key: string = "values"; if (entry.definition.kind === "key_facts") { key = "items"; }
     let index: number = 0;
@@ -588,6 +590,24 @@ export function disclosed(entry: Configured, original: string, facts: string, us
   if (userOwned && !supplied(s.text(entry.parameters.title),data)) { return refusal(entry,"title"); }
   if (userOwned && !supplied(s.text(entry.parameters.subtitle),data)) { return refusal(entry,"subtitle"); }
   if (userOwned && entry.definition.kind === "note" && !supplied(s.text(entry.parameters.text),data)) { return refusal(entry,"note text"); }
+  // Each configured row must trace to one source row or one request statement.
+  // Generated record IDs and interaction defaults are not factual values.
+  for (let parameter of entry.definition.parameters) { if (parameter.origin === "disclosed" && Object.hasOwn(entry.parameters,parameter.name)) {
+    let raw: unknown = entry.parameters[parameter.name];
+    if (!s.encode(raw).startsWith("[")) { continue; }
+    let index: number = 0;
+    let rows: unknown[] = JSON.parse(s.encode(raw));
+    for (let row of rows) {
+      let values: Record<string, unknown> = {};
+      if (typeof row === "string") { values.value = row; }
+      else if (typeof row === "object" && row !== null) {
+        if (s.encode(row).startsWith("[")) { let cell: number = 0; let cells: unknown[] = JSON.parse(s.encode(row)); for (let value of cells) { values["cell"+String(cell)] = value; cell = cell+1; } }
+        else { let record: Record<string, unknown> = row as Record<string, unknown>; for (let key of tables.keys(record)) { if (key !== "id" && key !== "done" && key !== "selected" && key !== "completed" && key !== "daily") { let value: unknown = record[key]; if (value !== null) { values[key] = value; } } } }
+      }
+      if (!disclosure.admitsRecord(data,values)) { return refusal(entry,parameter.name+" row "+String(index)+" fields are not one disclosed record"); }
+      index = index+1;
+    }
+  } }
   return "";
 }
 export function selected(plan: plans.Plan, choices: selecting.Choice[]): Configured[] {
@@ -1119,7 +1139,9 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     s.reject("Unsupported catalogue kind: "+kind);
   }
   let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){"+body+"}}";
-  return {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:[],helpers:helpers,view:view,options:[],content:[],ports:ports,holes:holes,covers:[entry.need],owns:[id]},bodies:{}};
+  let instance: screens.Instance = {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:[],helpers:helpers,view:view,options:[],content:[],ports:ports,holes:holes,covers:[entry.need],owns:[id]},bodies:{}};
+  instance.definition = screens.issueDefinition(instance.fragment);
+  return instance;
 }
 // The field a reader port is bound to: the writer's port getter field when this composition issues a
 // connection, otherwise the fallback field the composer emits for the unconnected optional reader.
@@ -1134,6 +1156,11 @@ function computation(instance: screens.Instance, field: string, value: string, r
   return {instance:instance.id,field:field,value:value,ready:ready,reason:reason,dependencies:dependencies};
 }
 export function computations(instance: screens.Instance, connections: screens.Connection[], instances: screens.Instance[]): composer.Computation[] {
+  for (let connection of connections) { if (connection.readerInstance === instance.id) {
+    let issued: boolean = false;
+    for (let publisher of instances) { if (publisher.id === connection.writerInstance) { for (let port of publisher.fragment.ports) { if (port.direction === "publish" && port.name === connection.writerPort) { issued = true; } } } }
+    if (!issued) { s.reject("Connection names an unissued publisher port: "+connection.writerInstance+"/"+connection.writerPort); }
+  } }
   let result: composer.Computation[] = [];
   if (instance.kind === "checklist") {
     let dependencies: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { dependencies[dependencies.length] = "f_"+instance.id+"_"+field.name; } }

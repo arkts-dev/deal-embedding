@@ -23,16 +23,27 @@ owning test records the digest of its emitted pairs only after every mode passed
 re-emitted keeps no source record, and every reader refuses such a pair instead of accepting it as
 produced by the packaged sources. A control may also edit a source file whose owning test recompiles it,
 which is how the Session cursor validator is broken.
+
+An artifact control names either the exact `old` text to replace with `new`, which must occur exactly
+once, or a substring of the statement's own source `after` attribution, with `match` for the statement's
+shape and `mutate` for the `(search, replacement)` pair applied once to it. A bundle compiled from a whole
+module graph numbers its statements globally, so an exact `old` moves off its statement whenever a module
+numbered in the same build changes how many statements precede it; an attribution does not move when
+another module does, and it has to name exactly one matching statement. An edit above the statement in
+its own source file does move it, and that needs a re-pin.
 """
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+# A control's bound only has to outlive its owning test. The cutover control runs one generation mode
+# (`--mode=success`), measured at 14-20 s here, so the default bound covers every control.
 TIMEOUT = 300
 BACKUP = ROOT / 'build/verification/seam-backup'
 JOURNAL = BACKUP / 'journal.json'
@@ -55,16 +66,20 @@ SEAMS = [
      'new': 'const val nativeTimers = 4',
      'command': ['bash', 'tests/tools/test-renderer-rules.sh']},
     # AC-06's "attempts": the packaged generation entry charges one attempt per candidate check. The
-    # anchor below is the compiler's global statement numbering inside the build artifact, so compiling a
-    # module the compiler numbers before core/custom-writing.deal (core/execution.deal included) renumbers
-    # it and the anchor has to be re-pinned; a shifted anchor fails loudly, and `expect` keeps a rebound
-    # anchor from passing on an unrelated assertion. The anchored statement is
-    # `custom-writing.deal:252 attempts = attempts+1`, the increment the counted-check mode executes.
-    # The command names that one mode: the unbounded matrix of the packaged entry would otherwise make
-    # the control's own timeout, not the broken rule, decide the outcome.
+    # anchored statement is `custom-writing.deal:287 attempts = attempts+1`, the increment the
+    # counted-check mode executes. That bundle is compiled from the whole generation module graph, so its
+    # statement numbers are a global counter over every module the compiler numbered in the same build and
+    # a hard-coded one moves off the increment whenever an earlier module changes; the compiler's own
+    # source attribution names the increment instead. The anchor names that source line, not its emitted
+    # column or statement number, so another module's change never re-pins it; only an edit of
+    # core/custom-writing.deal that moves the increment, or a change to the attribution the compiler emits
+    # for it, does. `expect` keeps a rebound anchor from passing on an unrelated assertion. The command
+    # names that one mode: the unbounded matrix of the packaged entry would otherwise let the control's own
+    # bound, not the broken rule, decide the outcome.
     {'id': 'attempts', 'family': 'checking-admission', 'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'old': '$s88863 = ($rt.numOf($s88857) + $rt.numOf($s88860));',
-     'new': '$s88863 = ($rt.numOf($s88857) * $rt.numOf($s88860));',
+     'after': 'custom-writing.deal:287:',
+     'match': r'\$s\d+ = \(\$rt\.numOf\(\$[sg]\d+\) \+ \$rt\.numOf\(\$[sg]\d+\)\);',
+     'mutate': (' + ', ' * '),
      'expect': 'candidate checks are counted as attempts',
      'command': ['node', 'tests/tools/test-generation-cutover.js', '--mode=success']},
     {'id': 'vocabulary-inventory', 'family': 'prop-predicates', 'path': 'ui/platform.dealui-pack',
@@ -91,8 +106,8 @@ SEAMS = [
      'new': 'actual.maximum >= expected.maximum',
      'command': ['python3', 'tests/tools/test-construction-contracts.py']},
     {'id': 'fill-disclosure', 'family': 'catalogue-kinds', 'path': 'core/catalogue.deal',
-     'old': 'if (!supplied(s.text(row.value),data)) { return refusal(entry,"row "+String(index)+" value"); }',
-     'new': 'if (false && !supplied(s.text(row.value),data)) { return refusal(entry,"row "+String(index)+" value"); }',
+     'old': 'if (!supplied(value,data)) { return refusal(entry,"row "+String(index)+" cell "+String(cell)); }',
+     'new': 'if (false && !supplied(value,data)) { return refusal(entry,"row "+String(index)+" cell "+String(cell)); }',
      'command': ['python3', 'tests/tools/test-catalogue.py']},
     {'id': 'edits', 'family': 'source-edits', 'path': 'core/source-revisions.deal',
      'old': 'if (source.indexOf(search,found+1) >= 0) { s.reject("Ambiguous edit search"); }',
@@ -111,14 +126,14 @@ SEAMS = [
      'expect': 'a tampered signature is refused',
      'command': ['python3', 'tests/tools/test-cursor.py']},
     {'id': 'discovery', 'family': 'discovery-handoff', 'path': 'build/embedding-library/aar/assets/discovery/discovery-policy.js',
-     'old': '$s1038 = 4096.0;',
-     'new': '$s1038 = 4095.0;',
+     'old': '$s1837 = 4096.0;',
+     'new': '$s1837 = 4095.0;',
      'expect': 'the brief bound is inclusive at 4096',
      'command': ['node', 'tests/tools/test-discovery.js']},
     # The compiled handoff's fact-id bound: the unit that replaces the Kotlin schema assembly.
     {'id': 'discovery-handoff', 'family': 'discovery-handoff', 'path': 'build/embedding-library/aar/assets/discovery/discovery-policy.js',
-     'old': '$s1719 = 64.0;',
-     'new': '$s1719 = 63.0;',
+     'old': '$s2518 = 64.0;',
+     'new': '$s2518 = 63.0;',
      'expect': 'the handoff fact id bound is 64',
      'command': ['node', 'tests/tools/test-discovery-handoff.js']},
     {'id': 'assistance', 'family': 'assistance-lifecycle', 'path': 'build/embedding-consumer/assets/assistance/experience.js',
@@ -273,17 +288,62 @@ def recover():
     print(f'verification seams: restored {entry["path"]} left mutated by an interrupted run')
 
 
+def anchor(seam, original):
+    """The exact bytes a control replaces and their replacement.
+
+    An exact `old` is taken as given. An `after` control names a substring of the attribution the compiler
+    writes on the line immediately above an emitted statement, so `<module>.deal:<line>:` alone keeps the
+    anchor independent of the emitted build path and column, and requires the one statement under that
+    attribution that matches `match`. `mutate` is the `(search, replacement)` pair applied once to it. A
+    moved attribution names nothing and fails loudly instead of mutating an unrelated statement.
+    """
+    if 'after' not in seam:
+        return seam['old'].encode(), seam['new'].encode()
+    lines = original.decode().splitlines()
+    pattern = re.compile(seam['match'])
+    found = [line.strip() for index, line in enumerate(lines)
+             if index > 0 and seam['after'] in lines[index - 1] and pattern.fullmatch(line.strip())]
+    if len(found) != 1:
+        raise AssertionError(f'{seam["id"]}: the attribution {seam["after"]} must name exactly one '
+                             f'matching statement in {seam["path"]}, found {len(found)}')
+    return found[0].encode(), found[0].replace(*seam['mutate'], 1).encode()
+
+
+def self_check():
+    """The resolver's own controls, run before any production artifact is mutated: an exact anchor is
+    taken as given, the attributed anchor resolves the one statement it names, and an attribution that
+    names none or several refuses to mutate anything. The shape and the mutation come from the attributed
+    seam itself, so a row that stops describing a supported statement is exercised here."""
+    seam = next(entry for entry in SEAMS if entry['id'] == 'attempts')
+    attributed = {'id': 'self', 'path': 'synthetic', 'match': seam['match'], 'mutate': seam['mutate']}
+    # Indented like an emitted statement, so the resolver's strip is exercised with it.
+    synthetic = ('x\n// m.deal:7:\n          $s1 = ($rt.numOf($s2) + $rt.numOf($s3));\n'
+                 '// m.deal:12:\n          $s4 = ($rt.numOf($s5) + $rt.numOf($s6));\n'
+                 '// m.deal:12:\n          $s7 = ($rt.numOf($s8) + $rt.numOf($s9));\n').encode()
+    if anchor({'id': 'self', 'path': 'synthetic', 'old': 'x', 'new': 'y'}, synthetic) != (b'x', b'y'):
+        raise AssertionError('an exact anchor must be taken as given')
+    if anchor({**attributed, 'after': 'm.deal:7:'}, synthetic) != (
+            b'$s1 = ($rt.numOf($s2) + $rt.numOf($s3));', b'$s1 = ($rt.numOf($s2) * $rt.numOf($s3));'):
+        raise AssertionError('an attributed anchor must resolve and mutate the one statement it names')
+    for refused in ('m.deal:5:', 'm.deal:12:'):
+        try:
+            anchor({**attributed, 'after': refused}, synthetic)
+        except AssertionError:
+            continue
+        raise AssertionError(f'anchor resolution accepted the attribution {refused} it must refuse')
+
+
 def observe(seam):
     path = ROOT / seam['path']
     if not path.is_file():
         raise AssertionError(f'{seam["id"]}: production seam is absent: {seam["path"]}')
     original = path.read_bytes()
     before = hashlib.sha256(original).hexdigest()
-    old = seam['old'].encode()
+    old, new = anchor(seam, original)
     if original.count(old) != 1:
         raise AssertionError(f'{seam["id"]}: seam text must occur exactly once in {seam["path"]}')
     track(seam['path'], original)
-    path.write_bytes(original.replace(old, seam['new'].encode(), 1))
+    path.write_bytes(original.replace(old, new, 1))
     try:
         if hashlib.sha256(path.read_bytes()).hexdigest() == before:
             raise AssertionError(f'{seam["id"]}: mutation changed nothing in {seam["path"]}')
@@ -294,7 +354,7 @@ def observe(seam):
         started = time.monotonic()
         try:
             result = subprocess.run(seam['command'], cwd=ROOT, capture_output=True, text=True,
-                                    timeout=TIMEOUT, env=environment)
+                                    timeout=seam.get('timeout', TIMEOUT), env=environment)
         finally:
             print(f'[seam] {seam["id"]} elapsed={time.monotonic()-started:.2f}s', flush=True)
         if result.returncode == 0:
@@ -317,6 +377,7 @@ def main():
         recover()
         return 0
     recover()
+    self_check()
     dirty = [seam['path'] for seam in SEAMS if not tracked_clean(seam['path'])]
     if dirty:
         print(f'verification seams: seam inputs already carry uncommitted changes: {dirty}', file=sys.stderr)

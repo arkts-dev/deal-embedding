@@ -47,7 +47,7 @@ async function compose(items: Piece[], links: Link[]): Promise<string> {
 }
 // Local state machines: a countdown with its end hole, a goal, a rating, interval rounds, readings,
 // an idea deck, a points ledger, a quick log, label actions, a note and the query box.
-export async function local(): Promise<string> {
+async function localGroup(group: string): Promise<string> {
   let items: Piece[] = [
     {need:"timer",kind:"timer",json:"{\"presets\":[{\"label\":\"Focus\",\"seconds\":60},{\"label\":\"Break\",\"seconds\":30}]}"},
     {need:"goal",kind:"progress_goal",json:"{\"goal\":10,\"step\":3}"},
@@ -61,8 +61,18 @@ export async function local(): Promise<string> {
     {need:"memo",kind:"note",json:"{\"text\":\"Remember this\"}"},
     {need:"filter",kind:"filter_box",json:"{\"title\":\"Filter\"}"}
   ];
-  return await compose(items,[]);
+  let selected: Piece[] = [];
+  for (let item of items) {
+    if ((group === "timers" && ["timer","goal","rating","interval"].includes(item.need)) || item.need === group || (group === "drafts" && ["choose","memo","filter"].includes(item.need))) { selected[selected.length] = item; }
+  }
+  return await compose(selected,[]);
 }
+export async function timers(): Promise<string> { return await localGroup("timers"); }
+export async function reading(): Promise<string> { return await localGroup("reading"); }
+export async function quick(): Promise<string> { return await localGroup("quick"); }
+export async function points(): Promise<string> { return await localGroup("points"); }
+export async function ideas(): Promise<string> { return await localGroup("ideas"); }
+export async function drafts(): Promise<string> { return await localGroup("drafts"); }
 // Exact aggregate arithmetic: one record log publishes every aggregate port, and four read-only
 // sections consume them through issued connections.
 export async function aggregate(): Promise<string> {
@@ -198,13 +208,13 @@ export async function rejectedBodies(): Promise<number> {
 // A read-only summary may not bind an import alias to a local: that would hide the receiver of a
 // later call from the pure-intrinsic admission. The composer refuses the whole region.
 export async function aliasedBinding(): Promise<number> {
-  let fragment: screens.Fragment = {declarations:"import * as net from \"host/net\";",fields:[{name:"peeked",type:"string",role:"derived",dependencies:[],initial:"null",owner:"evil"}],updates:[],effects:[],helpers:"export function peek(state: AppState): string { let m = net; return m.replace(\"a\",\"b\"); }",view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Text(text: state.peeked_display)}",options:[],content:[],ports:[],holes:[],covers:[],owns:["evil"]};
+  let fragment: screens.Fragment = {declarations:"import * as net from \"std/string\";",fields:[{name:"peeked",type:"string",role:"derived",dependencies:[],initial:"null",owner:"evil"}],updates:[],effects:[],helpers:"export function peek(state: AppState): string { let m = net; return m.replace(\"a\",\"b\"); }",view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Text(text: state.peeked_display)}",options:[],content:[],ports:[],holes:[],covers:[],owns:["evil"]};
   let instance: screens.Instance = {id:"evil",kind:"custom",origin:"custom",parameters:{},fragment:fragment,bodies:{}};
   let computations: composer.Computation[] = [{instance:"evil",field:"peeked",value:"peek(state)",ready:"true",reason:"\"No\"",dependencies:[]}];
-  let refused: boolean = false;
+  let refused: boolean = false; let reason: string = "";
   try { await composer.assemble({screen:{title:"Alias",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[instance]},bindings:{},actions:{},connections:[]},computations); }
-  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } refused = error.message.includes("Aliased import"); }
-  if (!refused) { throw {name:"TEST_FAILED",message:"Aliased import admitted into a read-only summary"}; }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } reason = error.message; refused = error.message.includes("Aliased import"); }
+  if (!refused) { throw {name:"TEST_FAILED",message:"Aliased import admitted into a read-only summary: "+reason}; }
   return 1;
 }
 export function main(): void { return; }

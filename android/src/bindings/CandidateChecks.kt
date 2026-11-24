@@ -12,9 +12,9 @@ internal class CandidateChecks(private val context:Context,private val config:Ru
     private class Candidate(val source:ExperienceSource,val output:File,var isolate:SandboxProgram?=null,val restored:String?=null,val ownsOutput:Boolean=true)
     private val candidates=mutableMapOf<String,Candidate>()
     /** The private host configuration supplies the target, not checker arguments or source. */
-    fun compile(source:ExperienceSource):JSONObject {
+    fun compile(source:ExperienceSource,composition:String,fresh:Boolean):JSONObject {
         return try {
-            val output=ExperienceCompiler(context,config,log).compile(source.deal,source.ui,config.target)
+            val output=ExperienceCompiler(context,config,log).compile(source.deal,source.ui,config.target,composition,fresh)
             val id=UUID.randomUUID().toString();candidates[id]=Candidate(source,output)
             JSONObject().put("accepted",true).put("candidateId",id).put("diagnostics","").put("manifest",JSONObject(File(output,"admission.json").readText()))
         } catch(error:CandidateRejected) {
@@ -94,7 +94,8 @@ internal class CandidateChecks(private val context:Context,private val config:Ru
                     val request=requests.getJSONObject(i);check(request.getString("module")=="embedding/checker")
                     val args=request.getJSONArray("args")
                     val value:Any=when(request.getString("function")) {
-                        "compile"->compile(ExperienceSource(args.getString(0),args.getString(1)))
+                        // A missing freshness argument is treated as a fresh generated candidate, never as a lax repaired one.
+                        "compile"->compile(ExperienceSource(args.getString(0),args.getString(1)),if(args.length()>2)args.getString(2) else "",if(args.length()>3)args.getBoolean(3) else true)
                         "step"->step(args.getString(0),args.getString(1),args.getInt(2),args.getString(3))
                         "discard"->{discard(args.getString(0));JSONObject.NULL}
                         "finish"->{finish(args.getString(0));JSONObject.NULL}

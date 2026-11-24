@@ -3,8 +3,10 @@
 // Compiled catalogue policy items: closed decoding, row bounds, the one disclosure predicate and
 // initialized fragments. Every assertion is taken from the specification row of the kind, not from
 // the implementation under test; the driver only forwards the real fragment-syntax mechanisms.
-const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('assert'),cp=require('child_process');
+const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('assert');
 const stage=path.resolve(process.argv[2]),base=path.join(stage,'js'),classpath=process.argv[3],sources={};
+// One long-lived syntax-mechanism process for the whole item; every call is still the one-invocation entry.
+const transport=require('./fixtures/syntax-transport.js')(classpath);
 function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(base,file)]=fs.readFileSync(file,'utf8');}}
 walk(base);
 const declarations={};
@@ -41,12 +43,14 @@ async function step(name){
    }
    else {
     assert.equal(request.module,'embedding/fragment-syntax','unissued mechanism reached: '+request.module);
-    const output=cp.spawnSync('java',['-cp',classpath,'FragmentMechanisms',request.function],{input:request.args[0],encoding:'utf8'});
+    let output;
+    try { output={status:0,stdout:await transport.invoke(request.function,request.args[0])}; }
+    catch(error) { if(!error.syntaxDiagnostic)throw error; output={status:1,stderr:String(error)}; }
     // A rejected fragment is a capability failure the compiled policy can catch, exactly as the
     // production generation bridge reports it; a toolchain fault is never reported as a rejection.
     if(output.error||output.status===null)throw Error('Fragment mechanism did not run: '+String(output.error||'no exit status'));
     // The bridge reports every typed syntax diagnostic as FRAGMENT_SYNTAX; anything else is a fault.
-    if(output.status!==0&&!/java\.lang\.IllegalArgumentException|deal\.ui\.UiDiagnostic/.test(String(output.stderr)))throw Error('Fragment mechanism failed: '+output.stderr);
+    if(output.status!==0&&!/IllegalArgumentException|UiDiagnostic/.test(String(output.stderr)))throw Error('Fragment mechanism failed: '+output.stderr);
     context.reply=output.status===0?{id:request.id,ok:true,value:output.stdout}:{id:request.id,ok:false,error:{code:'FRAGMENT_SYNTAX',message:String(output.stderr).slice(0,4000)}};
    }
    vm.runInContext('dealCapabilities.deliver([reply])',context);
@@ -208,7 +212,7 @@ assert.deepEqual(fill.empty.parameters.rows,[],'the empty row list is decoded as
 assert.equal(fill.admittedEmpty,true,'an empty section passes the one predicate');
 assert.equal(fill.fabricated.accepted,true,'the fabricated row decodes at the fill site');
 assert.deepEqual(fill.fabricated.parameters.rows,[['Rent','40','invented']],'the decoded row list reaches construction unchanged');
-assert(fill.locatedFabricated.includes('fabricated row 0 cell 2'),'the one predicate refuses the fabricated cell with its location: '+fill.locatedFabricated);
+assert(fill.locatedFabricated.includes('(data_table): row 0 cell 2'),'the one predicate refuses the fabricated cell with its location: '+fill.locatedFabricated);
 assert.equal(fill.short.accepted,false,'a short row leaves its instance unfilled');
 assert.deepEqual(fill.short.parameters,{},'a rejected row list installs no partial parameters');
 assert(fill.short.reason.includes('Catalogue columns match headers'),'the rejected row keeps its located reason: '+fill.short.reason);
@@ -262,5 +266,6 @@ for (const pair of ['earn/points_ledger','measure/reading_status','tap/quick_log
 // --- decode strictness over the full row and domain table, including the shared decimals field.
 const strict=await step('strictness');
 assert.equal(strict,48,'the strictness matrix runs every listed row and domain case exactly once');
+const transportExit=await transport.close();assert.equal(transportExit,0);
 console.log('catalogue sections: closed decode, row bounds, exact order and UTF-16 text, shared disclosure, reader eligibility, immutable initialization, empty states, kind-table ownership facts, eligibility facts, row/domain strictness and computation-free assembly passed');
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().catch(error=>{transport.close().catch(()=>{});console.error(error);process.exitCode=1;});

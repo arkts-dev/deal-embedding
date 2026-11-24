@@ -37,7 +37,15 @@ function texts(tree){const found=[];walk(tree,node=>{const p=props(node);if(node
 function savedState(context){vm.runInContext(`if(!globalThis.__state){const loaded=dealLoad(factories,'experience_entry.js','experience.js');
   globalThis.__state=createDealUiCheckpoint(loaded.rt,loaded.checkpointSchema,loaded.entry.bridgeSchemaDigest.$f()).decode(JSON.parse(dealUi.checkpoint()),loaded.entry.bridgeInitialState.$sig.substring(4));}''`,context);return name=>vm.runInContext('__state.'+name,context);}
 function projection(context){return JSON.parse(vm.runInContext('persistDealUi()',context));}
-const AUTHORITATIVE=['f_parts_scalar_0_sequence','f_parts_scalar_0_action','f_parts_scalar_0_pending','f_parts_scalar_0_code','f_parts_scalar_0_outcome','f_parts_scalar_0_argument','f_parts_scalar_0_valid','f_parts_scalar_0_value','f_parts_scalar_0_status'];
+// The issued authoritative fields of this pair: the admitted operation fields of the scalar-read part and
+// the frozen request literal its owner emits as issued data. A derived value, a closure, an admission
+// marker and an in-flight pending invocation are never persisted, while the operation's own authoritative
+// `pending` flag is; the request literal is authoritative state.
+const AUTHORITATIVE=['f_parts_scalar_0_sequence','f_parts_scalar_0_action','f_parts_scalar_0_pending','f_parts_scalar_0_code','f_parts_scalar_0_outcome','f_parts_scalar_0_argument','f_parts_scalar_0_valid','f_parts_scalar_0_value','f_parts_scalar_0_status','f_parts_request'];
+// The composition metadata the pair was admitted with declares the role of every emitted resource, so a
+// newly issued authoritative source names itself and the two artifacts instead of only a key mismatch.
+assert.ok(fs.existsSync(path.join(base,'admission.json')),'the emitted pair carries its composition metadata; run the generation cutover first');
+const issued=JSON.parse(fs.readFileSync(path.join(base,'admission.json'),'utf8')).composition.owners;
 
 (async()=>{
   // A completed read: the effect issues exactly one provider request and commits the result.
@@ -51,8 +59,10 @@ const AUTHORITATIVE=['f_parts_scalar_0_sequence','f_parts_scalar_0_action','f_pa
   assert.equal(liveState('f_parts_read'),42,'the live derived value follows the completed read');
   const completed=projection(live);
   const completedFields=new Map(completed.value[2]);
-  assert.deepEqual([...completedFields.keys()],AUTHORITATIVE,'the record holds the admitted operation fields only');
-  for(const derived of ['f_parts_read','f_parts_read_ready','f_parts_read_reason','f_parts_read_display','f_parts_scalar_0_text','f_parts_scalar_0_text_display'])assert.ok(!completedFields.has(derived),'derived field persisted: '+derived);
+  assert.deepEqual(issued.filter(owner=>owner.role==='authoritative').map(owner=>owner.name).sort(),[...AUTHORITATIVE].sort(),'the composition issues these authoritative resources');
+  assert.deepEqual([...completedFields.keys()],AUTHORITATIVE,'the record holds the issued authoritative fields only');
+  assert.deepEqual(completedFields.get('f_parts_request'),['string','Double the edited value'],'the record holds the request the generation harness issued');
+  for(const derived of ['f_parts_read','f_parts_read_ready','f_parts_read_reason','f_parts_read_display','f_parts_scalar_0_text','f_parts_scalar_0_text_ready','f_parts_scalar_0_text_reason','f_parts_scalar_0_text_display'])assert.ok(!completedFields.has(derived),'derived field persisted: '+derived);
 
   // Cold reopen shows the terminal result and recomputes the derived text without any call.
   const reopened=open(completed);
@@ -61,6 +71,15 @@ const AUTHORITATIVE=['f_parts_scalar_0_sequence','f_parts_scalar_0_action','f_pa
   assert.deepEqual(requests(reopened),[],'restore must not replay the provider read');
   assert.equal(savedState(reopened)('f_parts_read'),42,'the terminal result restores without a call');
   assert.ok(texts(tree(reopened)).includes('Scalar: 42 '),'the recomputed derived text renders after restore');
+  // An authoritative source is read back from the record, not re-seeded from the compiled initializer:
+  // the saved request literal comes back as the record spells it.
+  const edited=JSON.parse(JSON.stringify(completed));
+  assert.ok(edited.value[2].some(pair=>pair[0]==='f_parts_request'),'the record carries the issued request literal');
+  edited.value[2]=edited.value[2].map(pair=>pair[0]==='f_parts_request'?[pair[0],['string','Edited request literal']]:pair);
+  const savedLiteral=open(edited);
+  await quiet(savedLiteral,20);
+  assert.equal(savedState(savedLiteral)('f_parts_request'),'Edited request literal','the saved request literal is authoritative record data');
+  assert.deepEqual(requests(savedLiteral),[],'the edited record replays no provider call');
 
   // Interrupted work is not authoritative state: while the effect is in flight the Deal UI session
   // refuses a checkpoint, so no pending invocation or captured effect reaches the saved record.

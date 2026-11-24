@@ -3,6 +3,7 @@ import * as decoded from "./decoded";
 import * as s from "./construction-schema";
 import * as graphics from "./graphics";
 import * as admission from "./admission";
+import * as tables from "std/table";
 
 export class Result { accepted: boolean; candidateId: string; diagnostics: string; }
 function tree(report: Record<string, unknown>): Record<string, unknown> { return JSON.parse(report.tree as string); }
@@ -101,11 +102,370 @@ function manifestAdmission(manifest: Record<string, unknown>): string {
   for (let version of decoded.strings(manifest.packVersions)) { if (version !== (manifest.issuedPackVersion as string)) { return "ADMISSION_PACK: compiler pack version mismatch"; } }
   return "";
 }
-export async function run(deal: string, dealui: string): Promise<Result> {
-  let compiled: Record<string, unknown> = await host.compile(deal,dealui);
+// Checking admission re-derives the issued composition facts. The carried metadata is private compiler
+// metadata: a slot that writes an undeclared resource, an operation whose dependency set is empty
+// although it constructs arguments from state, a duplicated publication or a runtime name outside the
+// declared AppState all reject before the candidate is executed. Removing or changing a carried fact
+// therefore rejects instead of falling back to a source scan.
+export function admit(manifest: Record<string, unknown>, fresh: boolean): string {
+  // A malformed carried fact is a located rejection, never an operational failure of the checking lane.
+  try { return inspect(manifest,fresh); }
+  catch (unknownError) {
+    let error: Error = unknownError as Error;
+    if (!s.contains(["CONSTRUCTION_SCHEMA","E8001"],error.name)) { throw error; }
+    return "ADMISSION_OWNERSHIP: malformed carried composition fact: "+error.message;
+  }
+}
+function inspect(manifest: Record<string, unknown>, fresh: boolean): string {
+  // A supplied or saved source has no issued construction metadata, and an edited pair is no longer
+  // described by the issued assembly. A freshly generated candidate must carry it.
+  let carriedComposition: boolean = Object.hasOwn(manifest,"composition") && manifest.composition !== null;
+  if (!carriedComposition) {
+    if (fresh) { return "ADMISSION_OWNERSHIP: a generated candidate carries its issued composition metadata"; }
+    return "";
+  }
+  let composition: Record<string, unknown> = manifest.composition as Record<string, unknown>;
+  // Every section assembly issues is a carried fact: a composed pair that dropped one would silently
+  // lose what this admission validates, so every section the composer always writes must be present.
+  for (let section of ["declarations","slots","operations","runtime","publications","drivers","composites","chatRoot","clockDrivers","sessionClock","notices","owners","composerOwned","instances","sources"]) { if (!Object.hasOwn(composition,section)) { return "ADMISSION_OWNERSHIP: issued composition without its "+section; } }
+  let issuedSources: string[] = decoded.strings(composition.sources);
+  let issuedNeeds: string[] = [];
+  // A slot without a textual need is left to the slot loop, which rejects it with the slot identity
+  // instead of failing the whole carried composition as malformed.
+  for (let slot of decoded.records(composition.slots)) { let need: string = s.optionalText(slot,"need"); if (need !== "") { issuedNeeds[issuedNeeds.length] = need; } }
+  // The chat-root decision and the synchronous composite model are carried facts, not optional extras:
+  // a removed or malformed one rejects instead of admitting a composition that lost a dispatch route.
+  if (typeof composition.chatRoot !== "boolean") { return "ADMISSION_OWNERSHIP: chat root fact is not a boolean"; }
+  for (let value of decoded.records(composition.composites)) {
+    let action: string = s.text(value.action);
+    if (action.trim() === "") { return "ADMISSION_OWNERSHIP: composite without its action identity"; }
+    if (s.text(value.type) !== "Composite_"+action) { return "ADMISSION_OWNERSHIP: composite type differs from its action identity: "+action; }
+    if (s.text(value.update) !== "update_"+action) { return "ADMISSION_OWNERSHIP: composite dispatch identity differs from its action identity: "+action; }
+    let arms: string[] = decoded.strings(value.arms);
+    if (arms.length < 2) { return "ADMISSION_OWNERSHIP: composite without its ordered owner arms: "+action; }
+    let seenArms: string[] = [];
+    for (let arm of arms) {
+      let parts: string[] = arm.split(":");
+      if (parts.length !== 2 || (parts[0] as string).trim() === "" || (parts[1] as string).trim() === "") { return "ADMISSION_OWNERSHIP: composite arm without its owner and action identity: "+action; }
+      if (s.contains(seenArms,arm)) { return "ADMISSION_OWNERSHIP: duplicate composite arm: "+arm; }
+      seenArms[seenArms.length] = arm;
+    }
+  }
+  let declared: string[] = [];
+  if (Object.hasOwn(manifest,"declarations")) { declared = decoded.strings(manifest.declarations); }
+  // The carried instance facts are cross-checked against the compiled declarations before any slot is
+  // examined: a fabricated instance, an altered kind or a write outside the compiled AppState rejects.
+  let instanceIds: string[] = []; let instanceKinds: string[] = []; let instanceOrigins: string[] = []; let instanceKindsList: string[][] = []; let instanceWrites: string[][] = [];
+  for (let value of decoded.records(composition.instances)) {
+    let id: string = s.text(value.id);
+    if (id.trim() === "") { return "ADMISSION_OWNERSHIP: issued instance without its identity"; }
+    if (s.contains(instanceIds,id)) { return "ADMISSION_OWNERSHIP: duplicate issued instance: "+id; }
+    let kind: string = s.text(value.kind); let origin: string = s.text(value.origin);
+    // The composer owner token is reserved: no issued instance may claim it and speak with two owners.
+    if (id === "composer") { return "ADMISSION_OWNERSHIP: an issued instance claims the composer owner token: "+id; }
+    if (kind.trim() === "" || origin.trim() === "") { return "ADMISSION_OWNERSHIP: issued instance without its kind or origin: "+id; }
+    if (!s.contains(["catalogue","part","custom","notice"],origin)) { return "ADMISSION_OWNERSHIP: unknown instance origin: "+id+" "+origin; }
+    let implemented: string[] = []; if (Object.hasOwn(value,"kinds")) { implemented = decoded.strings(value.kinds); }
+    // A custom or notice implementation declares no issued kind. A part instance may carry issued data
+    // sources without implementing a part kind, so its kinds are re-derived where a filled slot names it.
+    if (origin === "custom" || origin === "notice") { if (implemented.length !== 0) { return "ADMISSION_OWNERSHIP: "+origin+" instance declares an implemented kind: "+id; } }
+    let written: string[] = decoded.strings(value.writes);
+    for (let resource of written) { if (!s.contains(declared,resource)) { return "ADMISSION_OWNERSHIP: instance writes a resource outside the compiled declarations: "+id+" "+resource; } }
+    instanceIds[instanceIds.length] = id; instanceKinds[instanceKinds.length] = kind; instanceOrigins[instanceOrigins.length] = origin; instanceKindsList[instanceKindsList.length] = implemented; instanceWrites[instanceWrites.length] = written;
+  }
+  // The issued ownership map is carried as metadata and re-derived against the compiled declarations: a
+  // removed resource, a resource owned by no issued instance or by the composer, and a twice-claimed
+  // resource reject. The runtime-only set is a second carried fact, so a role relabelled to or from
+  // runtime disagrees with it instead of certifying itself.
+  let runtimeNames: string[] = [];
+  if (Object.hasOwn(composition,"runtime")) { runtimeNames = decoded.strings(composition.runtime); }
+  let ownerNames: string[] = []; let composerNames: string[] = [];
+  let composerOwned: string[] = decoded.strings(composition.composerOwned);
+  for (let value of decoded.records(composition.owners)) {
+    let name: string = s.text(value.name); let owner: string = s.text(value.owner); let role: string = s.text(value.role);
+    if (name.trim() === "" || owner.trim() === "") { return "ADMISSION_OWNERSHIP: owned resource without its identity or owner"; }
+    if (s.contains(ownerNames,name)) { return "ADMISSION_OWNERSHIP: resource claimed by more than one owner: "+name; }
+    if (owner === "composer") {
+      // The composer owner is not a second authored assertion: a resource is composer-owned only when
+      // the issued composer-owned set names it, so relabelling an instance resource is admitted never.
+      if (!s.contains(composerOwned,name)) { return "ADMISSION_OWNERSHIP: resource claims the composer owner outside the issued composer-owned set: "+name; }
+      composerNames[composerNames.length] = name;
+    } else {
+      // Every other resource is owned by an issued instance and its qualified name names that owner, so
+      // a fabricated owner or a moved owner fact rejects instead of certifying itself.
+      if (!s.contains(instanceIds,owner)) { return "ADMISSION_OWNERSHIP: resource owner is not an issued instance: "+name; }
+      if (!name.startsWith("f_"+owner+"_")) { return "ADMISSION_OWNERSHIP: owned resource name does not name its owner: "+name; }
+    }
+    if (!s.contains(declared,name)) { return "ADMISSION_OWNERSHIP: owned resource outside the compiled declarations: "+name; }
+    if (!s.contains(["authoritative","derived","runtime"],role)) { return "ADMISSION_OWNERSHIP: owned resource without its role: "+name; }
+    if (role === "runtime" && !s.contains(runtimeNames,name)) { return "ADMISSION_OWNERSHIP: runtime resource outside the carried runtime set: "+name; }
+    if (role !== "runtime" && s.contains(runtimeNames,name)) { return "ADMISSION_OWNERSHIP: runtime resource carries another role: "+name; }
+    ownerNames[ownerNames.length] = name;
+  }
+  // The composer-owned set and the owner records agree in both directions.
+  for (let name of composerOwned) {
+    if (!s.contains(composerNames,name)) { return "ADMISSION_OWNERSHIP: composer-owned resource without its composer owner record: "+name; }
+    if (!s.contains(declared,name)) { return "ADMISSION_OWNERSHIP: composer-owned resource outside the compiled declarations: "+name; }
+  }
+  // A resource has one owner: an instance whose issued write set names a resource another instance owns
+  // is a moved write, not an additional claim, and a write with no owner record is not an instance write.
+  for (let value of decoded.records(composition.instances)) {
+    let id: string = s.text(value.id);
+    for (let resource of decoded.strings(value.writes)) {
+      if (!s.contains(ownerNames,resource)) { return "ADMISSION_OWNERSHIP: instance writes a resource with no owner: "+id+" "+resource; }
+      for (let owner of decoded.records(composition.owners)) { if (s.text(owner.name) === resource && s.text(owner.owner) !== id) { return "ADMISSION_OWNERSHIP: instance writes a resource another instance owns: "+id+" "+resource; } }
+      for (let owner of decoded.records(composition.owners)) { if (s.text(owner.name) === resource && s.text(owner.role) === "derived") { return "ADMISSION_OWNERSHIP: instance writes a derived resource: "+id+" "+resource; } }
+    }
+  }
+  let carried: string[] = [];
+  if (Object.hasOwn(composition,"declarations")) { carried = decoded.strings(composition.declarations); }
+  // A carried fact must never name an undeclared resource. Only a freshly assembled pair must also
+  // account for every compiled declaration; a repaired pair may legitimately add a field.
+  if (fresh) { for (let name of declared) { if (!s.contains(carried,name)) { return "ADMISSION_OWNERSHIP: undeclared resource in the issued composition: "+name; } } }
+  for (let name of carried) { if (!s.contains(declared,name)) { return "ADMISSION_OWNERSHIP: issued resource outside the compiled declarations: "+name; } }
+  // Every compiled declaration has exactly one owner: a removed owner record is a removed carried fact.
+  for (let name of carried) { if (!s.contains(ownerNames,name)) { return "ADMISSION_OWNERSHIP: declared resource without an owner: "+name; } }
+  // The publication set is exactly the issued outputs the slot records carry: a renamed, added or
+  // dropped identity disagrees with the slot that issues it and rejects.
+  let expectedPublications: string[] = [];
+  for (let slot of decoded.records(composition.slots)) {
+    let slotId: string = s.optionalText(slot,"id"); if (slotId === "") { continue; }
+    let slotStatus: string = s.optionalText(slot,"status");
+    if (!Object.hasOwn(slot,"outputs")) { return "ADMISSION_OWNERSHIP: slot record without its issued outputs: "+slotId; }
+    let slotInstance: string = s.optionalText(slot,"instance");
+    for (let name of decoded.strings(slot.outputs)) {
+      if (s.contains(expectedPublications,name)) { return "ADMISSION_OWNERSHIP: duplicate publication identity: "+name; }
+      if (slotStatus === "filled") { if (slotInstance !== "" && !name.startsWith("f_"+slotInstance+"_")) { return "ADMISSION_OWNERSHIP: filled slot publishes an identity outside its instance: "+slotId+" "+name; } }
+      else if (name !== "open_"+slotId) { return "ADMISSION_OWNERSHIP: an unfilled slot publishes no issued open value: "+slotId+" "+name; }
+      expectedPublications[expectedPublications.length] = name;
+    }
+  }
+  let publications: string[] = [];
+  if (Object.hasOwn(composition,"publications")) {
+    for (let name of decoded.strings(composition.publications)) {
+      if (s.contains(publications,name)) { return "ADMISSION_OWNERSHIP: duplicate publication: "+name; }
+      if (!s.contains(expectedPublications,name)) { return "ADMISSION_OWNERSHIP: publication names no issued output: "+name; }
+      publications[publications.length] = name;
+    }
+  }
+  for (let name of expectedPublications) { if (!s.contains(publications,name)) { return "ADMISSION_OWNERSHIP: issued output without its publication: "+name; } }
+  if (Object.hasOwn(composition,"runtime")) {
+    for (let name of decoded.strings(composition.runtime)) { if (!s.contains(declared,name)) { return "ADMISSION_OWNERSHIP: runtime field outside the compiled declarations: "+name; } }
+  }
+  if (Object.hasOwn(composition,"slots")) {
+    let slotNeeds: string[] = [];
+    for (let value of decoded.records(composition.slots)) {
+      // A slot's identity is its need and a composition issues one slot per need, so a relabelled or
+      // duplicated identity rejects even when the rest of the record still looks consistent.
+      let slotId: string = s.optionalText(value,"id");
+      let slotNeed: string = s.optionalText(value,"need");
+      if (slotId.trim() === "") { return "ADMISSION_OWNERSHIP: issued slot without its identity"; }
+      if (slotNeed.trim() === "") { return "ADMISSION_OWNERSHIP: issued slot without its need: "+slotId; }
+      if (slotId !== slotNeed) { return "ADMISSION_OWNERSHIP: slot identity differs from its need: "+slotId+" "+slotNeed; }
+      if (s.contains(slotNeeds,slotNeed)) { return "ADMISSION_OWNERSHIP: duplicate slot need: "+slotNeed; }
+      slotNeeds[slotNeeds.length] = slotNeed;
+      // Each slot record carries its event, trigger and action facts, empty when unused; a removed key
+      // is a removed fact and rejects like an altered value.
+      for (let key of ["event","trigger","action"]) { if (!Object.hasOwn(value,key)) { return "ADMISSION_OWNERSHIP: slot record without its "+key+" fact: "+s.text(value.id); } }
+      let status: string = s.text(value.status);
+      if (!s.contains(["open","filled","missing","unchecked"],status)) { return "ADMISSION_OWNERSHIP: unknown slot status: "+status; }
+      let writes: string[] = [];
+      if (Object.hasOwn(value,"writes")) { writes = decoded.strings(value.writes); }
+      if (status !== "filled" && writes.length !== 0) { return "ADMISSION_OWNERSHIP: a slot that is not filled claims written resources"; }
+      for (let resource of writes) { if (!s.contains(declared,resource)) { return "ADMISSION_OWNERSHIP: slot writes an undeclared resource: "+resource; } }
+      // A checked event slot carries one of the four triggers and the issued source it is raised from;
+      // an altered or dropped trigger fact rejects instead of leaving a route no consumer can resolve.
+      if (Object.hasOwn(value,"event")) {
+        let event: string = s.text(value.event);
+        if (!s.contains(["","countdown_end","entry_added","row_tap","time"],event)) { return "ADMISSION_OWNERSHIP: unknown slot trigger: "+event; }
+        let source: string = "";
+        if (Object.hasOwn(value,"trigger")) { source = s.text(value.trigger); }
+        if (event !== "" && source.trim() === "") { return "ADMISSION_OWNERSHIP: event slot without its trigger source: "+s.text(value.id); }
+        if (event === "" && source.trim() !== "") { return "ADMISSION_OWNERSHIP: trigger source without its event: "+s.text(value.id); }
+      }
+      // A slot action is an issued plan operation identity, never a label of its own, and it names the
+      // operation whose trigger is this slot's event.
+      if (Object.hasOwn(value,"action")) {
+        let action: string = s.text(value.action);
+        if (action !== "") {
+          let issued: boolean = false; let kind: string = ""; let owner: string = "";
+          if (Object.hasOwn(composition,"operations")) { for (let operation of decoded.records(composition.operations)) { if (s.text(operation.id) === action) { issued = true; if (Object.hasOwn(operation,"trigger")) { kind = s.text(operation.trigger); } if (Object.hasOwn(operation,"owner")) { owner = s.text(operation.owner); } } } }
+          if (!issued) { return "ADMISSION_OWNERSHIP: slot action names no issued operation: "+action; }
+          if (owner !== "") { return "ADMISSION_OWNERSHIP: slot action names an operation that is not a plan binding: "+action; }
+          if (Object.hasOwn(value,"event")) { if (kind !== s.text(value.event)) { return "ADMISSION_OWNERSHIP: slot action trigger differs from its event: "+action; } }
+          // The named implementation exists, so the slot cannot also report that it has none, and a
+          // filled slot still carries the instance identity that fills it.
+          if (status !== "unchecked" && status !== "filled") { return "ADMISSION_OWNERSHIP: slot operation identity on a slot that reports no implementation: "+s.text(value.id); }
+        }
+      }
+      // A trigger is the route to an operation, so an event slot names the operation it must reach.
+      if (s.text(value.event) !== "" && s.text(value.action) === "") { return "ADMISSION_OWNERSHIP: event slot without its operation identity: "+s.text(value.id); }
+      if (status === "filled") {
+        let identity: string = "";
+        if (Object.hasOwn(value,"instance")) { identity = s.text(value.instance); }
+        if (identity.trim() === "") { return "ADMISSION_OWNERSHIP: filled slot without its instance identity: "+s.text(value.id); }
+        // A filled slot names an issued instance and its contract is re-derived from that instance: the
+        // nonblank-string check alone is not ownership proof.
+        let position: number = -1; let index: number = 0;
+        while (index < instanceIds.length) { if (instanceIds[index] === identity) { position = index; } index = index+1; }
+        if (position < 0) { return "ADMISSION_OWNERSHIP: filled slot names no issued instance: "+s.text(value.id)+" "+identity; }
+        let expected: string[] = instanceWrites[position];
+        for (let resource of writes) { if (!s.contains(expected,resource)) { return "ADMISSION_OWNERSHIP: slot writes a resource its instance does not write: "+s.text(value.id)+" "+resource; } }
+        for (let resource of expected) { if (!s.contains(writes,resource)) { return "ADMISSION_OWNERSHIP: slot omits a resource its instance writes: "+s.text(value.id)+" "+resource; } }
+        let kinds: string[] = []; if (Object.hasOwn(value,"allowedKinds")) { kinds = decoded.strings(value.allowedKinds); }
+        let kind: string = instanceKinds[position]; let origin: string = instanceOrigins[position]; let implemented: string[] = instanceKindsList[position];
+        if (origin === "catalogue") { if (kinds.length !== 1 || (kinds[0] as string) !== kind) { return "ADMISSION_OWNERSHIP: filled catalogue slot kind differs from its instance: "+s.text(value.id); } }
+        else if (origin === "part") { if (kinds.length !== 1) { return "ADMISSION_OWNERSHIP: filled part slot does not carry its part kind: "+s.text(value.id); } }
+        else { if (kinds.length !== 0) { return "ADMISSION_OWNERSHIP: filled "+origin+" slot declares an allowed kind: "+s.text(value.id); } }
+        for (let allowed of kinds) { if (!s.contains(implemented,allowed)) { return "ADMISSION_OWNERSHIP: slot kind is not implemented by its instance: "+s.text(value.id)+" "+allowed; } }
+        for (let read of decoded.strings(value.reads)) { if (!s.contains(issuedSources,read) && !s.contains(issuedNeeds,read)) { return "ADMISSION_OWNERSHIP: slot reads an unissued source: "+s.text(value.id)+" "+read; } }
+      }
+    }
+  }
+  if (Object.hasOwn(composition,"operations")) {
+    for (let value of decoded.records(composition.operations)) {
+      let id: string = s.text(value.id);
+      if (id.trim() === "") { return "ADMISSION_OWNERSHIP: unissued operation identity"; }
+      let constructed: Record<string, unknown> = {};
+      if (Object.hasOwn(value,"arguments")) { constructed = value.arguments as Record<string, unknown>; }
+      let dependencies: string[] = [];
+      if (Object.hasOwn(value,"dependencies")) { dependencies = decoded.strings(value.dependencies); }
+      if (tables.keys(constructed).length > 0 && dependencies.length === 0) { return "ADMISSION_OWNERSHIP: operation without a dependency set constructs arguments from state: "+id; }
+      for (let dependency of dependencies) { if (!s.contains(declared,dependency)) { return "ADMISSION_OWNERSHIP: operation dependency outside the compiled declarations: "+id+" "+dependency; } }
+      // The expiry prerequisite is a carried fact derived from the operation identity: the recorded
+      // instant and the unexpired flag the currentness hook reads. A renamed, dropped or undeclared one
+      // rejects instead of leaving an invocation whose expiry nothing can ever decide.
+      if (!Object.hasOwn(value,"expires") || !Object.hasOwn(value,"expired")) { return "ADMISSION_OWNERSHIP: operation without its expiry prerequisites: "+id; }
+      let expires: string = s.text(value.expires); let expired: string = s.text(value.expired);
+      if (expires !== "expires_"+id) { return "ADMISSION_OWNERSHIP: operation expiry instant differs from its identity: "+id+" "+expires; }
+      if (expired !== "expired_"+id) { return "ADMISSION_OWNERSHIP: operation expiry prerequisite differs from its identity: "+id+" "+expired; }
+      if (!s.contains(declared,expires)) { return "ADMISSION_OWNERSHIP: operation expiry instant outside the compiled declarations: "+id+" "+expires; }
+      if (!s.contains(declared,expired)) { return "ADMISSION_OWNERSHIP: operation expiry prerequisite outside the compiled declarations: "+id+" "+expired; }
+      // A triggered operation is raised from exactly one issued event slot, and the resource it is
+      // raised from advances the revision of this operation: a dropped trigger resource would leave a
+      // stale invocation looking current, which is the fact this check exists to catch.
+      if (Object.hasOwn(value,"trigger")) {
+        let kind: string = s.text(value.trigger);
+        if (!s.contains(["","countdown_end","entry_added","row_tap","time"],kind)) { return "ADMISSION_OWNERSHIP: unknown operation trigger: "+kind; }
+        if (kind !== "") {
+          let carrying: Record<string, unknown> | null = null;
+          if (Object.hasOwn(composition,"slots")) { for (let slot of decoded.records(composition.slots)) { if (s.text(slot.action) === id && s.text(slot.event) === kind) { carrying = slot; } } }
+          if (carrying === null) { return "ADMISSION_OWNERSHIP: triggered operation is named by no event slot: "+id; }
+          let slot: Record<string, unknown> = carrying as Record<string, unknown>; let target: string = s.text(slot.trigger);
+          // The resource this trigger is raised from is derived from the target it names: the countdown
+          // completion counter, the records collection of the list, or the issued time source getter.
+          let derived: string = "";
+          if (kind === "countdown_end") { derived = "f_parts_triggered_"+target; }
+          if (kind === "entry_added") { derived = "f_parts_records_"+target; }
+          if (kind === "row_tap") {
+            // A row tap is raised from one captured row identity, never from the collection that
+            // contains it: the carried row-key fact and the resource both name that identity.
+            derived = "f_parts_rowKey_"+id;
+            if (!Object.hasOwn(value,"rowKey")) { return "ADMISSION_OWNERSHIP: row tap without its captured row identity: "+id; }
+            if (s.text(value.rowKey) !== derived) { return "ADMISSION_OWNERSHIP: row tap names a different captured row identity: "+id+" "+derived; }
+            if (!s.contains(declared,"f_parts_records_"+target)) { return "ADMISSION_OWNERSHIP: row tap names no issued record collection: "+id+" "+target; }
+          }
+          if (kind === "time") { derived = "f_parts_"+target; }
+          let resource: string = "";
+          if (Object.hasOwn(value,"triggerResource")) { resource = s.text(value.triggerResource); }
+          // The carried identity and the derived one must agree, and the resource must be in the
+          // dependency set that advances this operation's revision: a relabelled, swapped or dropped
+          // resource would leave a stale invocation looking current.
+          if (resource !== derived) { return "ADMISSION_OWNERSHIP: triggered operation names a different trigger resource: "+id+" "+derived; }
+          if (!s.contains(dependencies,derived)) { return "ADMISSION_OWNERSHIP: triggered operation without its trigger resource: "+id+" "+derived; }
+        }
+      }
+    }
+  }
+  // The private clock drivers are issued metadata too: one per need, with finite positive scheduling
+  // and runtime fields the compiled AppState declares. A missing or altered identity rejects instead of
+  // falling back to a source scan.
+  // Trigger drivers are issued metadata too: one per trigger target, each naming an issued event slot
+  // and its source, so a duplicated or relabelled driver rejects instead of scheduling nothing.
+  if (Object.hasOwn(composition,"drivers")) {
+    let issuedDrivers: string[] = decoded.strings(composition.drivers); let seenDrivers: string[] = [];
+    for (let driver of issuedDrivers) {
+      if (s.contains(seenDrivers,driver)) { return "ADMISSION_OWNERSHIP: duplicate trigger driver: "+driver; }
+      seenDrivers[seenDrivers.length] = driver;
+      let matched: boolean = false;
+      if (Object.hasOwn(composition,"slots")) { for (let slot of decoded.records(composition.slots)) {
+        if (Object.hasOwn(slot,"event") && Object.hasOwn(slot,"trigger")) { if (s.text(slot.event) !== "" && s.text(slot.event)+"_"+s.text(slot.trigger) === driver) { matched = true; } }
+      } }
+      if (!matched) { return "ADMISSION_OWNERSHIP: trigger driver names no issued event slot: "+driver; }
+    }
+    // A trigger that reaches an issued operation keeps its driver: a dropped driver would leave the
+    // operation unreachable while every remaining fact still looked valid.
+    if (Object.hasOwn(composition,"slots")) {
+      for (let slot of decoded.records(composition.slots)) {
+        if (Object.hasOwn(slot,"event") && Object.hasOwn(slot,"trigger") && Object.hasOwn(slot,"action")) {
+          let event: string = s.text(slot.event); let action: string = s.text(slot.action);
+          if (event !== "" && action !== "" && !s.contains(seenDrivers,event+"_"+s.text(slot.trigger))) { return "ADMISSION_OWNERSHIP: triggered operation without its issued driver: "+action; }
+        }
+      }
+    }
+  }
+  let driverNeeds: string[] = [];
+  // The Session clock trust identity is issued metadata: the expiry driver reads exactly these fields.
+  let clockSection: Record<string, unknown> = composition.sessionClock as Record<string, unknown>;
+  let sessionEpoch: string = s.text(clockSection.epoch); let sessionTrust: string = s.text(clockSection.trust); let sessionResume: string = s.optionalText(clockSection,"resume");
+  let runtime: string[] = [];
+  if (Object.hasOwn(composition,"runtime")) { runtime = decoded.strings(composition.runtime); }
+  if (Object.hasOwn(composition,"clockDrivers")) {
+    let identities: string[] = [];
+    for (let value of decoded.records(composition.clockDrivers)) {
+      let need: string = s.text(value.need);
+      if (need.trim() === "" || s.contains(driverNeeds,need)) { return "ADMISSION_OWNERSHIP: duplicate or unissued clock driver need: "+need; }
+      driverNeeds[driverNeeds.length] = need;
+      // Each issued driver names five distinct ticker identities: an altered, reused or missing one
+      // rejects instead of leaving the clock silently unscheduled.
+      for (let identity of [s.text(value.sample),s.text(value.tick),s.text(value.start),s.text(value.pause),s.text(value.reset)]) {
+        if (identity.trim() === "") { return "ADMISSION_OWNERSHIP: clock driver without its issued ticker identities: "+need; }
+        if (s.contains(identities,identity)) { return "ADMISSION_OWNERSHIP: duplicate clock driver identity: "+identity; }
+        identities[identities.length] = identity;
+      }
+      if (s.text(value.restore).trim() === "") { return "ADMISSION_OWNERSHIP: clock driver without its restore identity: "+need; }
+      // Every clock driver names the one issued Session resume carrier, so a renamed or cross-wired
+      // identity rejects instead of silently scheduling no resume. The resume identity is a view
+      // carrier, never one of the driver's own state, action or restore identities, so a coordinated
+      // rewrite cannot point it at a slot that is not a resume.
+      if (s.optionalText(value,"resume").trim() === "" || s.optionalText(value,"resume") !== sessionResume) { return "ADMISSION_OWNERSHIP: clock driver names a different Session resume identity: "+need; }
+      for (let other of [s.text(value.sample),s.text(value.tick),s.text(value.start),s.text(value.pause),s.text(value.reset),s.text(value.restore),s.text(value.request),s.text(value.running),s.text(value.epoch),s.text(value.trust)]) { if (sessionResume === other) { return "ADMISSION_OWNERSHIP: Session resume identity reuses a driver identity: "+need+" "+sessionResume; } }
+      if (s.contains(declared,sessionResume)) { return "ADMISSION_OWNERSHIP: Session resume identity is a declared state field: "+sessionResume; }
+      let interval: number = s.finite(value.intervalMs);
+      if (!(interval > 0)) { return "ADMISSION_OWNERSHIP: clock driver interval must be positive: "+need; }
+      for (let field of [s.text(value.request),s.text(value.running)]) { if (!s.contains(declared,field)) { return "ADMISSION_OWNERSHIP: clock driver field outside the compiled declarations: "+field; } }
+      // Every clock driver names the one Session epoch identity the composition issued.
+      if (s.text(value.epoch) !== sessionEpoch || s.text(value.trust) !== sessionTrust) { return "ADMISSION_OWNERSHIP: clock driver names a different Session epoch identity: "+need; }
+      if (s.text(value.epoch).trim() === "" || s.text(value.trust).trim() === "") { return "ADMISSION_OWNERSHIP: clock driver without its Session epoch fields: "+need; }
+      if (!s.contains(declared,s.text(value.epoch)) || !s.contains(declared,s.text(value.trust))) { return "ADMISSION_OWNERSHIP: clock driver epoch field outside the compiled declarations: "+need; }
+    }
+  }
+  // A clock implementation must carry its issued driver: a filled clock slot or a countdown-end
+  // trigger without one would admit a clock the Session can never schedule. A composition with any
+  // issued driver must also carry the one Session clock identity the expiry driver reads.
+  if (driverNeeds.length > 0) {
+    if (sessionEpoch.trim() === "" || sessionTrust.trim() === "" || sessionEpoch === sessionTrust) { return "ADMISSION_OWNERSHIP: issued composition without its Session clock identity"; }
+    if (!s.contains(runtime,sessionEpoch) || !s.contains(runtime,sessionTrust)) { return "ADMISSION_OWNERSHIP: Session clock identity is not emitted runtime state"; }
+    if (sessionResume.trim() === "") { return "ADMISSION_OWNERSHIP: a composition with clock drivers carries no Session resume identity"; }
+  } else if (sessionEpoch !== "" || sessionTrust !== "" || sessionResume !== "") { return "ADMISSION_OWNERSHIP: a composition without clock drivers carries a Session clock identity"; }
+  if (Object.hasOwn(composition,"slots")) {
+    for (let value of decoded.records(composition.slots)) {
+      if (s.text(value.status) !== "filled") { continue; }
+      let clock: boolean = false;
+      if (Object.hasOwn(value,"allowedKinds")) { if (s.contains(decoded.strings(value.allowedKinds),"clock")) { clock = true; } }
+      if (clock && !s.contains(driverNeeds,s.text(value.need))) { return "ADMISSION_OWNERSHIP: clock slot without an issued driver: "+s.text(value.need); }
+    }
+  }
+  return "";
+}
+export async function run(deal: string, dealui: string, composition: string, fresh: boolean): Promise<Result> {
+  let compiled: Record<string, unknown> = await host.compile(deal,dealui,composition,fresh);
   if (!(compiled.accepted as boolean)) { return {accepted:false,candidateId:"",diagnostics:compiled.diagnostics as string}; }
   let id: string = compiled.candidateId as string;
+  // The import surface and pack identity are one policy generation also applies before emission; the
+  // carried composition facts are re-derived against the compiled declarations behind it.
   let diagnostic: string = manifestAdmission(compiled.manifest as Record<string, unknown>);
+  if (diagnostic === "") { diagnostic = admit(compiled.manifest as Record<string, unknown>,fresh); }
   if (diagnostic !== "") { await host.discard(id); return {accepted:false,candidateId:"",diagnostics:diagnostic}; }
   // The host reclaims all outstanding isolates/staging on operational failure.
   let result: Result = await execute(id);

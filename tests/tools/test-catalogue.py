@@ -8,9 +8,13 @@ import json
 import os
 import pathlib
 import shutil
-import subprocess
+from host_check import prepare, run
+import time
+
+started = time.monotonic()
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+lock = prepare(ROOT)
 DEAL = pathlib.Path(os.environ.get('DEAL_ROOT', ROOT / 'dependencies/deal')).resolve()
 DEAL_UI = pathlib.Path(os.environ.get('DEAL_UI_ROOT', ROOT / 'dependencies/deal-ui')).resolve()
 STAGE = ROOT / 'build/v08-cutover/catalogue-tests'
@@ -31,12 +35,15 @@ for path in (ROOT / 'core/host').glob('*.d.deal'):
     externals[module] = {'declaration': path.name}
 (STAGE / 'deal.json').write_text(json.dumps({'languageVersion': '1.6', 'backend': 'js', 'moduleRoots': ['src', 'ui'], 'externals': externals}))
 classes = STAGE / 'classes'
+shutil.rmtree(classes, ignore_errors=True)
 classes.mkdir(exist_ok=True)
+shutil.rmtree(STAGE / 'js', ignore_errors=True)
 library = str(ROOT / 'build/embedding-library/classes')
 # The syntax mechanisms are the same tools the production compiler serves; they are compiled from
 # their tracked sources against the library classes so the fixture uses no private seam.
-subprocess.run(['javac', '--release', '21', '-proc:none', '-cp', library, '-d', str(classes),
-                *[str(ROOT / 'tools' / f'{name}.java') for name in ('FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentAnalysis', 'FragmentMechanisms')]], check=True)
-subprocess.run(['java', '-Ddeal.home=' + str(DEAL), '-cp', library, 'deal.Main', 'compile', str(source / 'checks.deal'),
-                '--backend', 'js', '--output', str(STAGE / 'js')], check=True)
-subprocess.run(['node', str(ROOT / 'tests/tools/test-catalogue.js'), str(STAGE), str(classes) + ':' + library], check=True)
+run(['javac', '--release', '21', '-proc:none', '-cp', library, '-d', str(classes),
+                *[str(ROOT / 'tools' / f'{name}.java') for name in ('FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentAnalysis', 'FragmentMechanisms')]], check=True, timeout=20)
+run(['java', '-Ddeal.home=' + str(DEAL), '-cp', library, 'deal.Main', 'compile', str(source / 'checks.deal'),
+                '--backend', 'js', '--output', str(STAGE / 'js')], check=True, timeout=45)
+run(['node', str(ROOT / 'tests/tools/test-catalogue.js'), str(STAGE), str(classes) + ':' + library], check=True, timeout=30)
+print(f'catalogue contracts: {time.monotonic() - started:.2f}s', flush=True)

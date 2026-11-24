@@ -5,6 +5,10 @@
 // the packaged Deal UI session. Every expected value comes from the specification row of the kind.
 const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('assert'),cp=require('child_process');
 const stage=path.resolve(process.argv[2]),base=path.join(stage,'js'),classpath=process.argv[3],root=process.cwd(),sources={};
+const transport=require('./fixtures/syntax-transport.js')(classpath);
+const group=process.argv[4]||'all';
+const localGroups=['timers','reading','quick','points','ideas','drafts'];
+assert(['all','contracts','local','aggregate','lists','issued-bodies',...localGroups].includes(group),'unknown catalogue group');
 function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(base,file)]=fs.readFileSync(file,'utf8');}}
 walk(base);
 const declarations={};
@@ -27,12 +31,14 @@ async function step(name){
    else if(request.module==='embedding/inference'){context.reply={id:request.id,ok:true,value:{content:'{}',finish:'stop',refusal:''}};}
    else {
     assert.equal(request.module,'embedding/fragment-syntax','unissued mechanism reached: '+request.module);
-    const output=cp.spawnSync('java',['-cp',classpath,'FragmentMechanisms',request.function],{input:request.args[0],encoding:'utf8'});
+    let output;
+    try { output={status:0,stdout:await transport.invoke(request.function,request.args[0])}; }
+    catch(error) { if(!error.syntaxDiagnostic)throw error; output={status:1,stderr:String(error)}; }
     // A rejected fragment is a capability failure the compiled policy can catch, exactly as the
     // production generation bridge reports it; a toolchain fault is never reported as a rejection.
     if(output.error||output.status===null)throw Error('Fragment mechanism did not run: '+String(output.error||'no exit status'));
     // The bridge reports every typed syntax diagnostic as FRAGMENT_SYNTAX; anything else is a fault.
-    if(output.status!==0&&!/java\.lang\.IllegalArgumentException|deal\.ui\.UiDiagnostic/.test(String(output.stderr)))throw Error('Fragment mechanism failed: '+output.stderr);
+    if(output.status!==0&&!/IllegalArgumentException|UiDiagnostic/.test(String(output.stderr)))throw Error('Fragment mechanism failed: '+output.stderr);
     context.reply=output.status===0?{id:request.id,ok:true,value:output.stdout}:{id:request.id,ok:false,error:{code:'FRAGMENT_SYNTAX',message:String(output.stderr).slice(0,4000)}};
    }
    vm.runInContext('dealCapabilities.deliver([reply])',context);
@@ -51,7 +57,9 @@ function open(mode,source){
   fs.rmSync(directory,{recursive:true,force:true});fs.mkdirSync(directory,{recursive:true});
   fs.writeFileSync(path.join(directory,'experience.deal'),source.deal);
   fs.writeFileSync(path.join(directory,'experience.dealui'),source.dealui);
-  const compiled=cp.spawnSync('java',['-Ddeal.home=dependencies/deal','-cp',classpath,'CompileComposer',root,directory,'screen'],{encoding:'utf8'});
+  fs.writeFileSync(path.join(directory,'metadata.json'),'{}');
+  const compiled=cp.spawnSync('java',['-Ddeal.home=dependencies/deal','-cp',classpath,'CompileComposer',root,directory,'screen',path.join(directory,'metadata.json'),'false'],{encoding:'utf8',timeout:30000});
+  if(compiled.error)throw Error('catalogue '+mode+' compile failed or exceeded 30s: '+compiled.error.message);
   assert.equal(compiled.status,0,compiled.stdout+compiled.stderr);
   const emitted=path.join(root,'build/v08-cutover/catalogue-runtime/composed-executable/js'),files={};
   (function visit(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())visit(file);else if(name.endsWith('.js'))files[path.relative(emitted,file)]=fs.readFileSync(file,'utf8');}})(emitted);
@@ -89,24 +97,24 @@ function open(mode,source){
 }
 function must(handle,message){assert.ok(Number.isInteger(handle),message);return handle;}
 (async()=>{
-const local=JSON.parse(await step('local'));
-const aggregate=JSON.parse(await step('aggregate'));
-const lists=JSON.parse(await step('lists'));
-const issued=JSON.parse(await step('issuedBodies'));
+const aggregate=(group==='all'||group==='aggregate')?JSON.parse(await step('aggregate')):null;
+const lists=(group==='all'||group==='lists')?JSON.parse(await step('lists')):null;
+const issued=(group==='all'||group==='issued-bodies')?JSON.parse(await step('issuedBodies')):null;
 const rejected=await step('rejectedBodies');
 assert.strictEqual(rejected,10,'every rejected body case ran, none silently dropped');
 const aliased=await step('aliasedBinding');
 assert.strictEqual(aliased,1,'an import alias bound to a local is refused as a read-only summary');
 // ---- local state machines ---------------------------------------------------------------------
-{
-  const app=open('local',local),s=()=>app.state();
+for(const localGroup of localGroups) {
+ if(group!=='all'&&group!=='local'&&group!==localGroup)continue;
+ const source=JSON.parse(await step(localGroup));
+ const app=open('local-'+localGroup,source),s=()=>app.state();
+ if(localGroup==='timers') {
   // Initialization: goal at zero, rating at its declared initial, timers paused at zero, no reading.
   assert.strictEqual(s().f_section_goal_value,0,'the goal starts at zero');
   assert.strictEqual(s().f_section_rating_value,5,'the rating starts at its declared initial');
   assert.strictEqual(s().f_section_timer_elapsed,0,'the timer starts at zero');
   assert.strictEqual(s().f_section_timer_running,false,'the timer starts paused');
-  assert.strictEqual(s().f_section_reading_latest_ready,false,'an absent reading is unavailable');
-  assert.strictEqual(app.hasText('No reading'),true,'the missing reading explains itself');
   // Goal: increment by the declared step, reset, and never clamp the stored value.
   const add=must(app.slot('Button','Add goal','onClick'),'the goal binds Add');
   app.dispatch(add,'0');assert.strictEqual(s().f_section_goal_value,3);
@@ -183,6 +191,10 @@ assert.strictEqual(aliased,1,'an import alias bound to a local is refused as a r
   app.dispatch(must(app.slot('Button','Skip interval','onClick'),'the interval skips the last work phase'),'0');
   assert.strictEqual(s().f_section_interval_phase,'done','skipping the final round completes without a rest');
   assert.strictEqual(s().f_section_interval_running,false);
+ }
+ if(localGroup==='reading') {
+  assert.strictEqual(s().f_section_reading_latest_ready,false,'an absent reading is unavailable');
+  assert.strictEqual(app.hasText('No reading'),true,'the missing reading explains itself');
   // Reading status: the control keeps a draft and the explicit add commits it, then latest and the
   // first exclusive upper band decide the status; the sign is not restricted.
   const draft=must(app.slot('NumberField',null,'onChange'),'the reading binds a number field');
@@ -221,6 +233,8 @@ assert.strictEqual(aliased,1,'an import alias bound to a local is refused as a r
   app.dispatch(draft,'4'); app.dispatch(addReading,'0'); app.dispatch(draft,'4'); app.dispatch(addReading,'0');
   assert.strictEqual(s().f_section_reading_chart_min_display,4);
   assert.ok(s().f_section_reading_chart_max_display > s().f_section_reading_chart_min_display,'a single distinct value still leaves a nonempty range');
+ }
+ if(localGroup==='quick') {
   // Quick log: a tap captures its own instant and keeps the timestamped history, undo removes the last
   // tap, and today's total and count stay unavailable with their located reason because this build
   // issues no local-day clock to project the captured instants onto.
@@ -242,16 +256,17 @@ assert.strictEqual(aliased,1,'an import alias bound to a local is refused as a r
   // today number, and the emitted view keeps every daily value behind its readiness guard.
   const todayStats=(()=>{let found=0;(function visit(node){if(node.component.split('.').pop()==='NumberStat'){const props=Object.fromEntries(node.props.map(item=>[item.name,item]));if(props.label!==undefined&&props.label.stringValue==='Today')found++;}for(const child of node.children)visit(child);})(app.tree());return found;})();
   assert.strictEqual(todayStats,0,'the unavailable daily total draws no Today number');
-  const localView=fs.readFileSync(path.join(root,'build/v08-cutover/catalogue-runtime/local/experience.dealui'),'utf8').replace(/\s+/g,' ');
+  const localView=fs.readFileSync(path.join(root,'build/v08-cutover/catalogue-runtime/local-quick/experience.dealui'),'utf8').replace(/\s+/g,' ');
   assert.ok(localView.includes('When(state.f_section_quick_today_total_ready) { ui.NumberStat(label: "Today"'),'the daily total value is bound behind its readiness');
   assert.ok(localView.includes('When(state.f_section_quick_today_count_ready) { ui.NumberText(value: state.f_section_quick_today_count_display)'),'the daily count value is bound behind its readiness');
-  assert.ok(localView.includes('When(state.f_section_ideas_done_today_ready) { ui.NumberText(value: state.f_section_ideas_done_today_display)'),'the daily completion count value is bound behind its readiness');
   app.dispatch(must(app.slot('Button','Undo log','onClick'),'the quick log binds Undo'),'0');
   assert.deepEqual(s().f_section_quick_amounts,[2.5],'undo removes only the last tap');
   assert.strictEqual(s().f_section_quick_stamps.length,1,'undo removes the last tap with its instant');
   app.dispatch(must(app.slot('Button','Undo log','onClick'),'the quick log binds Undo again'),'0');
   assert.deepEqual(s().f_section_quick_amounts,[],'undo removes the remaining tap');
   assert.deepEqual(s().f_section_quick_stamps,[],'undo leaves no instant behind its amount');
+ }
+ if(localGroup==='points') {
   // Points ledger: award posts a signed entry and insufficient balance blocks spending.
   assert.deepEqual(s().f_section_points_totals,[0,0],'a fresh ledger publishes one balance per person');
   assert.deepEqual(s().f_section_points_labels,['Ada','Bo'],'the ledger publishes its labels');
@@ -269,6 +284,10 @@ assert.strictEqual(aliased,1,'an import alias bound to a local is refused as a r
   assert.strictEqual(s().f_section_points_total,5,'undo removes the last signed entry');
   app.dispatch(must(app.slot('Button','Undo','onClick'),'the ledger binds Undo again'),'0');
   assert.strictEqual(s().f_section_points_total,0);
+ }
+ if(localGroup==='ideas') {
+  const localView=fs.readFileSync(path.join(root,'build/v08-cutover/catalogue-runtime/local-ideas/experience.dealui'),'utf8').replace(/\s+/g,' ');
+  assert.ok(localView.includes('When(state.f_section_ideas_done_today_ready) { ui.NumberText(value: state.f_section_ideas_done_today_display)'),'the daily completion count value is bound behind its readiness');
   // Idea deck: Done marks the idea it showed and moves on; Another wraps to the next matching idea.
   // The count of the marks made today stays unavailable with its located reason because this build
   // issues no local-day clock to scope the recorded marks.
@@ -304,6 +323,8 @@ assert.strictEqual(aliased,1,'an import alias bound to a local is refused as a r
   app.dispatch(must(app.slot('Button','Done','onClick'),'the deck binds Done once more'),'0');
   assert.deepEqual(s().f_section_ideas_done_ids,['a','c'],'re-marking a completed idea adds no second mark');
   assert.strictEqual(s().f_section_ideas_done_stamps.length,2,'re-marking a completed idea adds no second instant');
+ }
+ if(localGroup==='drafts') {
   // Label actions, the note and the query box keep their own drafts.
   assert.strictEqual(s().f_section_choose_selected,'First','the selection starts at the first label');
   app.dispatch(must(app.slot('Button','Second','onClick'),'the actions section binds its label'),'0');
@@ -312,9 +333,11 @@ assert.strictEqual(aliased,1,'an import alias bound to a local is refused as a r
   assert.strictEqual(s().f_section_memo_text,'Changed','the note retains the edited text');
   app.dispatch(must(app.slotBy('TextField','label','Filter','onChange'),'the filter box binds its query'),'Al');
   assert.strictEqual(s().f_section_filter_query,'Al','the filter box publishes its edited query');
+ }
+ console.log('catalogue local '+localGroup+' passed');
 }
 // ---- aggregate arithmetic --------------------------------------------------------------------
-{
+if(group==='all'||group==='aggregate') {
   const app=open('aggregate',aggregate),s=()=>app.state();
   assert.deepEqual(s().f_section_log_totals,[0,0],'a fresh log publishes one zero aggregate per label');
   assert.deepEqual(s().f_section_log_balances,[0,0],'the published balance array has the label length');
@@ -384,7 +407,7 @@ assert.strictEqual(aliased,1,'an import alias bound to a local is refused as a r
   assert.deepEqual(s().f_section_log_totals,[0,3],'the addition after clear lands in the still-selected category');
 }
 // ---- readers over typed publishers -----------------------------------------------------------
-{
+if(group==='all'||group==='lists') {
   const app=open('lists',lists),s=()=>app.state();
   assert.strictEqual(s().f_section_master_selected,-1,'selection starts at -1');
   assert.strictEqual(app.display('f_section_detail_detail'),'No row selected','an unselected detail view explains itself');
@@ -439,7 +462,7 @@ assert.strictEqual(aliased,1,'an import alias bound to a local is refused as a r
   assert.strictEqual(app.hasText('Total unavailable'),true,'the unavailable completion explains itself');
 }
 // ---- issued hole bodies replace their defaults in place --------------------------------------
-{
+if(group==='all'||group==='issued-bodies') {
   const app=open('issued-bodies',issued),s=()=>app.state();
   // The issued rowMatches hides Beta even though the query is empty, which the default cannot do.
   assert.strictEqual(s().f_section_master_shown_0_display,true);
@@ -450,5 +473,7 @@ assert.strictEqual(aliased,1,'an import alias bound to a local is refused as a r
   assert.strictEqual(s().f_section_timer_running,false,'the issued end body ran');
   assert.strictEqual(s().f_section_timer_elapsed,0,'the issued end body cleared the elapsed time the default body keeps');
 }
-console.log('catalogue runtime: local transitions, countdown end hole, interval carry, reading levels, ledger blocking, exact aggregate cents, keyed list taps, issued ports and issued hole bodies passed');
+assert.equal(await transport.close(),0);
+console.log('catalogue group '+group+' passed');
+if(group==='all')console.log('catalogue runtime: local transitions, countdown end hole, interval carry, reading levels, ledger blocking, exact aggregate cents, keyed list taps, issued ports and issued hole bodies passed');
 })().catch(error=>{console.error(error);process.exit(1);});

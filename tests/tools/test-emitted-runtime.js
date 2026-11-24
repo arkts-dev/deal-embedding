@@ -60,6 +60,9 @@ const props=node=>Object.fromEntries(node.props.map(prop=>[prop.name,prop]));
 const slot=(node,name)=>{const prop=props(node)[name];return prop===undefined?undefined:prop.actionSlot;};
 const texts=tree=>{const found=[];nodes(tree,'Text',node=>found.push({text:props(node).text.stringValue,style:props(node).style?props(node).style.stringValue:''}));return found;};
 const withText=(tree,text,style='')=>texts(tree).filter(entry=>entry.text===text&&entry.style===style);
+// A numeric figure binds the shipped numeric presentation component, never a text rendering.
+const numberValues=tree=>{const found=[];nodes(tree,'NumberText',node=>found.push(props(node).value.numberValue));return found;};
+const clockMinutes=tree=>{const found=[];nodes(tree,'ClockText',node=>found.push(props(node).minutes.numberValue));return found;};
 // The declared provider contract the generation harness passes for the scalar-read plan.
 const {providerContract,declaration}=require('./fixtures/provider-contract.js');
 
@@ -71,8 +74,10 @@ const {providerContract,declaration}=require('./fixtures/provider-contract.js');
   const source=runtime.source();
   assert(source.includes('When((state.f_parts_value_reason !== ""))'),'the draft reason keeps its non-empty guard');
   assert(source.includes('ui.Text(text: state.f_parts_value_reason, style: "danger")'),'the draft reason keeps its message and style');
-  assert(source.includes('When((!state.f_parts_calculate_text_ready))'),'the unavailable notice keeps its guard');
-  assert(source.includes('ui.Text(text: state.f_parts_calculate_text_reason, style: "muted")'),'the notice keeps its message and style');
+  assert(source.includes('When((!state.f_parts_calculate_ready))'),'the unavailable notice keeps its guard');
+  assert(source.includes('ui.Text(text: state.f_parts_calculate_reason, style: "muted")'),'the notice keeps its message and style');
+  assert(source.includes('ui.NumberText(value: state.f_parts_calculate_display'),'a numeric figure binds no NumberText with its prepared value');
+  assert(!source.includes('f_parts_calculate_text'),'a numeric figure still emits a text presentation');
   assert(source.includes('ui.Toggle(label: "Active", checked: state.f_parts_active, onChange: action app.f_parts_Change_active {value: payload})'),'the toggle binds label, checked and a boolean payload field');
   assert(runtime.deal().includes('export class f_parts_Change_active {\n  value: boolean;\n}'),'the toggle action declares a boolean payload field');
 
@@ -83,9 +88,9 @@ const {providerContract,declaration}=require('./fixtures/provider-contract.js');
 
   // Reason empty: nothing renders; the figure is available and shows its text.
   assert.deepEqual(texts(runtime.tree()).filter(entry=>entry.style==='danger'),[],'an empty draft reason renders no reason text');
-  assert.equal(runtime.state().f_parts_calculate_text_ready,true);
-  assert.equal(withText(runtime.tree(),runtime.state().f_parts_calculate_text_display).length,1);
-  assert.deepEqual(texts(runtime.tree()).filter(entry=>entry.style==='muted'&&entry.text===runtime.state().f_parts_calculate_text_reason),[],'an available figure renders no reason text');
+  assert.equal(runtime.state().f_parts_calculate_ready,true);
+  assert(numberValues(runtime.tree()).includes(runtime.state().f_parts_calculate_display),'the numeric figure renders its prepared value through NumberText');
+  assert.deepEqual(texts(runtime.tree()).filter(entry=>entry.style==='muted'&&entry.text===runtime.state().f_parts_calculate_reason),[],'an available figure renders no reason text');
 
   // The migrated Toggle delivers the boolean payload unchanged into the action field.
   runtime.dispatch(toggle,'true');
@@ -104,15 +109,15 @@ const {providerContract,declaration}=require('./fixtures/provider-contract.js');
   const reason=runtime.state().f_parts_value_reason;
   assert(reason!=='');
   assert.deepEqual(withText(runtime.tree(),reason,'danger').length,1,'the non-empty draft reason renders once');
-  assert.equal(runtime.state().f_parts_calculate_text_ready,false);
-  assert.deepEqual(withText(runtime.tree(),runtime.state().f_parts_calculate_text_reason,'muted').length,1,'the unavailable figure renders its notice once');
+  assert.equal(runtime.state().f_parts_calculate_ready,false);
+  assert.deepEqual(withText(runtime.tree(),runtime.state().f_parts_calculate_reason,'muted').length,1,'the unavailable figure renders its notice once');
   assert.deepEqual(texts(runtime.tree()).filter(entry=>entry.style==='danger'&&entry.text!==reason),[]);
 
   // Back in the domain the reason disappears again.
   runtime.dispatch(change,'3');
   assert.equal(runtime.state().f_parts_value_reason,'');
   assert.deepEqual(texts(runtime.tree()).filter(entry=>entry.style==='danger'),[],'the reason disappears when it is empty again');
-  assert.equal(withText(runtime.tree(),runtime.state().f_parts_calculate_text_display).length,1);
+  assert(numberValues(runtime.tree()).includes(runtime.state().f_parts_calculate_display),'the figure renders its numeric value again');
 }
 
 // --- catalogue: the guarded completion notice and the consumed catalogue payload.

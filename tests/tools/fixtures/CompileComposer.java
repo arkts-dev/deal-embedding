@@ -8,10 +8,15 @@ import java.util.*;
 public final class CompileComposer {
     private record Raw(String text) {}
     public static void main(String[] args) throws Exception {
-        // The frozen target is a compile input: absent is a rejection, never a supplied default.
-        if(args.length!=3)throw new AssertionError("ADMISSION_TARGET: a compile input carries the experience's frozen target beside the two source strings (expected screen|chat|card, got "+args.length+" arguments)");
+        // The frozen target and the issued composition metadata are compile inputs: absent either is a
+        // rejection, never a supplied default.
+        if(args.length!=5)throw new AssertionError("ADMISSION_TARGET: a compile input carries the experience's frozen target beside the two source strings, the issued composition metadata and its freshness (expected screen|chat|card, got "+args.length+" arguments)");
         String target=args[2];
         if(!List.of("screen","chat","card").contains(target))throw new AssertionError("ADMISSION_TARGET: frozen target required");
+        // An edited pair carries no issued composition metadata; the section is then absent exactly as
+        // the production compiler omits it for a supplied or repaired source.
+        String composition=Files.readString(Path.of(args[3])).trim();
+        boolean fresh=Boolean.parseBoolean(args[4]);
         Path root=Path.of(args[0]),stage=Path.of(args[1]),src=stage.resolveSibling("composed-executable").resolve("src");Files.createDirectories(src);
         String appSource=Files.readString(stage.resolve("experience.deal")),uiSource=Files.readString(stage.resolve("experience.dealui"));
         Path app=src.resolve("experience.deal"),ui=src.resolve("experience.dealui");
@@ -53,10 +58,25 @@ public final class CompileComposer {
         manifest.put("imports",parsed.program().statements().stream().filter(statement->statement instanceof deal.ast.ImportDeclaration).map(statement->((deal.ast.ImportDeclaration)statement).modulePath()).toList());
         manifest.put("providers",providerModules);manifest.put("packDigests",new ArrayList<>(result.checked().metadata().packDigests().values()));manifest.put("packVersions",new ArrayList<>(result.checked().metadata().packVersions().values()));
         manifest.put("issuedPackDigest",parsedPack.digest());manifest.put("issuedPackVersion",parsedPack.version());
+        if(!composition.isEmpty())manifest.put("composition",new Raw(composition));
+        manifest.put("declarations",declaredFields(appSource));
+        manifest.put("fresh",fresh);
         manifest.put("propConstraints",new Raw(Files.readString(projection(root,"prop-constraints.json"))));
         manifest.put("cardProfile",new Raw(Files.readString(projection(root,"card-profile.json"))));
         manifest.put("target",target);
         Files.writeString(src.getParent().resolve("js/admission.json"),encode(manifest));
+    }
+    /** The compiled AppState declarations: admission compares them with the issued composition metadata. */
+    private static List<String> declaredFields(String source) {
+        var lexed=new deal.lexer.Lexer(source,"experience.deal").tokenize();
+        var parsed=new deal.parser.Parser(lexed.tokens(),"experience.deal").parse();
+        var names=new ArrayList<String>();
+        for(var statement:parsed.program().statements()) {
+            var declaration=statement instanceof deal.ast.ExportDeclaration exported?exported.declaration():statement;
+            if(declaration instanceof deal.ast.ClassDeclaration declared&&declared.name().equals("AppState"))
+                for(var field:declared.fields())names.add(field.name());
+        }
+        return names;
     }
     /** The packaged projection bytes: the same sections the production compiler copies. */
     private static Path projection(Path root,String name) {
@@ -68,6 +88,7 @@ public final class CompileComposer {
     }
     private static String encode(Object value) {
         if(value instanceof Raw raw)return raw.text;
+        if(value instanceof Boolean flag)return flag?"true":"false";
         if(value instanceof String text)return "\""+deal.codegen.jvm.JvmJson.escapeString(text)+"\"";
         if(value instanceof Number number)return number.toString();
         if(value instanceof Map<?,?> map)return map.entrySet().stream().map(e->encode(e.getKey())+":"+encode(e.getValue())).collect(java.util.stream.Collectors.joining(",","{","}"));

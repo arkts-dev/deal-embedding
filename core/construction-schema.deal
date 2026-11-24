@@ -7,25 +7,35 @@ export function closed(value: Record<string, unknown>, required: string[], optio
   for (let key of tables.keys(value)) { if (!contains(required,key) && !contains(optional,key)) { reject("Unknown field: "+key); } }
 }
 export function contains(values: string[], value: string): boolean { return values.includes(value); }
-export function finite(value: unknown): number { let n: number = value as number; if (!Number.isFinite(n)) { reject("Expected finite number"); } return n; }
+// Declared kinds are checked, never cast: a value of another runtime kind rejects here.
+export function finite(value: unknown): number { if (typeof value === "number") { if (Number.isFinite(value)) { return value; } } reject("Expected finite number"); return 0; }
 export function integral(value: unknown): number { let n: number = finite(value); if (Math.floor(n) !== n) { reject("Expected integral number"); } return n; }
-export function text(value: unknown): string { return value as string; }
-export function nonblank(value: unknown): string { let result: string = value as string; if (result.trim() === "") { reject("Expected nonblank text"); } return result; }
+export function text(value: unknown): string { if (typeof value === "string") { return value; } reject("Expected text"); return ""; }
+export function truth(value: unknown): boolean { if (typeof value === "boolean") { return value; } reject("Expected boolean"); return false; }
+export function nonblank(value: unknown): string { let result: string = text(value); if (result.trim() === "") { reject("Expected nonblank text"); } return result; }
 export function identifier(value: unknown): string {
-  let name: string = value as string; let index: number = 0;
+  let name: string = text(value); let index: number = 0;
   for (let ch of name) {
     let alphabet: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     if (index > 0) { alphabet = alphabet+"0123456789_"; }
     if (!alphabet.includes(ch)) { reject("Invalid identifier: "+name); }
-    index++;
+    index = index+1;
   }
   if (index < 1 || index > 64) { reject("Identifier length"); }
   return name;
 }
 export function unique(ids: string[], value: string): void { if (contains(ids,value)) { reject("Duplicate identity: "+value); } ids[ids.length] = value; }
-export function oneOf(value: unknown, allowed: string[]): string { let name: string = value as string; if (!contains(allowed,name)) { reject("Unknown alternative: "+name); } return name; }
+// Whether a host-supplied name is expressible as a DEAL identifier. A discovery fact id may contain a
+// hyphen, so callers that need an emitted name test here instead of throwing: such a name stays
+// evidence for a requirement source and never becomes an expression-visible source. The test asks the
+// one identifier rule rather than restating its alphabet.
+export function identifierText(value: string): boolean {
+  try { identifier(value); } catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } return false; }
+  return true;
+}
+export function oneOf(value: unknown, allowed: string[]): string { let name: string = text(value); if (!contains(allowed,name)) { reject("Unknown alternative: "+name); } return name; }
 export function records(owner: Record<string, unknown>, name: string): Record<string, unknown>[] { if (!Object.hasOwn(owner,name)) { return []; } return decoded.records(owner[name]); }
 export function stringArray(value: unknown): string[] { return decoded.strings(value); }
-export function optionalText(owner: Record<string, unknown>, name: string): string { if (!Object.hasOwn(owner,name)) { return ""; } return owner[name] as string; }
+export function optionalText(owner: Record<string, unknown>, name: string): string { if (!Object.hasOwn(owner,name)) { return ""; } return text(owner[name]); }
 export function encode(value: unknown): string { return JSON.stringify(value) as string; }
 export function main(): void { return; }

@@ -1,0 +1,188 @@
+import * as decoded from "./decoded";
+import * as s from "./construction-schema";
+import * as tables from "std/table";
+
+// The one compiled disclosure predicate. Evidence keeps the frozen request text and
+// disclosed context in separate source envelopes. It serves the
+// seed admission of plan decode, the catalogue parameter rows and the exact-quote check of user-owned
+// content; there is never a second evidence rule.
+export function evidence(original: string, facts: string): string { return s.encode({request:original,context:facts}); }
+function word(unit: string): boolean { return unit !== "" && (unit.toLowerCase() !== unit.toUpperCase() || "0123456789_".includes(unit)); }
+function token(data: string, content: string): boolean {
+  if (content === "") { return true; }
+  let index: number = 0;
+  while (index+content.length <= data.length) {
+    if (data.substring(index,index+content.length) === content) {
+      let before: string = ""; let after: string = "";
+      if (index > 0) { before = data.substring(index-1,index); }
+      if (index+content.length < data.length) { after = data.substring(index+content.length,index+content.length+1); }
+      if (!(word(before) && word(content.substring(0,1))) && !(word(after) && word(content.substring(content.length-1)))) { return true; }
+    }
+    index = index+1;
+  }
+  return false;
+}
+function numericToken(data: string, value: number): boolean {
+  if (!Number.isFinite(value)) { return false; }
+  let index: number = 0;
+  while (index < data.length) {
+    let start: number = index;
+    while (index < data.length && "+-0123456789.eE:".includes(data.substring(index,index+1))) { index = index+1; }
+    if (index > start) {
+      let raw: string = data.substring(start,index); let before: string = ""; let after: string = "";
+      if (start > 0) { before = data.substring(start-1,start); }
+      if (index < data.length) { after = data.substring(index,index+1); }
+      if (!word(before) && !word(after) && !raw.includes(":") && raw.trim() !== "" && Number(raw) === value) { return true; }
+    } else { index = index+1; }
+  }
+  return false;
+}
+function inText(data: string, value: unknown): boolean {
+  if (typeof value === "number") { return numericToken(data,value as number); }
+  if (typeof value === "boolean") { if (value as boolean) { return token(data,"true"); } return token(data,"false"); }
+  if (typeof value === "string") { return token(data,value as string); }
+  return false;
+}
+// A prose record is one explicitly disclosed sentence/line, never a bag of values from
+// unrelated sentences. Structured evidence is matched within one row, preserving keys when
+// the source declares them. JSON numeric equivalence does not depend on decimal spelling.
+function proseRecord(data: string, values: Record<string, unknown>): boolean {
+  let lines: string[] = data.split("\n");
+  for (let line of lines) {
+    let start: number = 0; let index: number = 0;
+    while (index <= line.length) {
+      let stop: boolean = index === line.length || line.substring(index,index+1) === ";";
+      if (line.substring(index,index+1) === "." && (index+1 === line.length || line.substring(index+1,index+2) === " ")) { stop = true; }
+      if (stop) {
+        let segment: string = line.substring(start,index); let matches: boolean = true;
+        for (let key of tables.keys(values)) { if (!inText(segment,values[key])) { matches = false; } }
+        if (matches) { return true; } start = index+1;
+      }
+      index = index+1;
+    }
+  }
+  return false;
+}
+function sameValue(candidate: unknown, supplied: unknown): boolean {
+  if (typeof candidate === "number" && typeof supplied === "number") { return (candidate as number) === (supplied as number); }
+  if (typeof candidate === "boolean" && typeof supplied === "boolean") { return (candidate as boolean) === (supplied as boolean); }
+  if (typeof candidate === "string" && typeof supplied === "string") { return (candidate as string) === (supplied as string); }
+  // A text rendering of a disclosed scalar is checked, not substring-coerced.
+  if (typeof candidate === "string" && typeof supplied === "number") { return (candidate as string) === String(supplied as number); }
+  if (typeof candidate === "string" && typeof supplied === "boolean") { let spelling: string = "false"; if (supplied as boolean) { spelling = "true"; } return (candidate as string) === spelling; }
+  return false;
+}
+function structuredRecord(source: unknown, values: Record<string, unknown>): boolean {
+  if (typeof source === "string") { return proseRecord(source as string,values); }
+  if (typeof source !== "object" || source === null) {
+    let keys: string[] = tables.keys(values);
+    if (keys.length === 1) { return sameValue(values[keys[0]],source); }
+    return false;
+  }
+  // JSON arrays are row containers, not tables and never one combined record.
+  if (s.encode(source).startsWith("[")) {
+    let rows: unknown[] = source as unknown[]; let scalarRow: boolean = true;
+    for (let row of rows) { if (typeof row === "object" && row !== null) { scalarRow = false; } }
+    if (scalarRow) {
+      let all: boolean = true;
+      for (let key of tables.keys(values)) { let found: boolean = false; for (let row of rows) { if (sameValue(values[key],row)) { found = true; } } if (!found) { all = false; } }
+      if (all) { return true; }
+    }
+    for (let row of rows) { if (structuredRecord(row,values)) { return true; } }
+    return false;
+  }
+  let record: Record<string, unknown> = source as Record<string, unknown>;
+  let keys: string[] = tables.keys(record); let all: boolean = true;
+  for (let key of tables.keys(values)) {
+    let candidate: unknown = values[key]; if (typeof candidate === "string" && (candidate as string) === "") { continue; }
+    let found: boolean = false;
+    if (Object.hasOwn(record,key)) { found = sameValue(candidate,record[key]); }
+    else { for (let issued of keys) { if (sameValue(candidate,record[issued])) { found = true; } } }
+    if (!found) { all = false; }
+  }
+  if (all) { return true; }
+  // Descend into child records only. A sibling scalar cannot override a declared
+  // field that failed its association check (amount:3, unrelated:40 is not amount:40).
+  for (let key of keys) {
+    let child: unknown = record[key];
+    if (typeof child === "object" && child !== null && structuredRecord(child,values)) { return true; }
+    if (key === "text" && typeof child === "string" && Object.hasOwn(record,"id") && proseRecord(child as string,values)) { return true; }
+  }
+  return false;
+}
+function sourceRecord(source: string, values: Record<string, unknown>): boolean {
+  let parsed: unknown = null; let json: boolean = true;
+  try { parsed = JSON.parse(source); } catch (unknownError) { json = false; }
+  if (json) { return structuredRecord(parsed,values); }
+  return proseRecord(source,values);
+}
+export function admitsRecord(data: string, values: Record<string, unknown>): boolean {
+  let parsed: unknown = null;
+  try { parsed = JSON.parse(data); } catch (unknownError) { return proseRecord(data,values); }
+  if (typeof parsed !== "object" || parsed === null) { return false; }
+  let carrier: Record<string, unknown> = parsed as Record<string, unknown>;
+  if (typeof carrier.request === "string" && typeof carrier.context === "string") {
+    return sourceRecord(carrier.request as string,values) || sourceRecord(carrier.context as string,values);
+  }
+  return structuredRecord(parsed,values);
+}
+export function admitsText(data: string, content: string): boolean { if (content === "") { return true; } return admitsRecord(data,{__scalar:content}); }
+export function admitsToggle(data: string, value: boolean): boolean { return admitsRecord(data,{__scalar:value}); }
+export function admitsNumber(data: string, value: number): boolean { return admitsRecord(data,{__scalar:value}); }
+export function admitsIntegral(data: string, value: number): boolean { return admitsRecord(data,{__scalar:value}); }
+// A supplied timestamp traces to a disclosed numeric millisecond value whose declared provenance is
+// Unix milliseconds, and the comparison is exact numeric equality against that declared value. A bare
+// JSON number, a key that merely looks temporal, a label, substring, need quote or an amount, count or
+// percentage that happens to carry the same number is not timestamp evidence, so it issues no dated
+// record. The fact identity, its declared type and its value are the evidence; without them a supplied
+// timestamp rejects and the omitted timestamp keeps the captured activation time.
+export function admitsTimestamp(facts: string, value: number): string {
+  if (!Number.isFinite(value) || Math.floor(value) !== value) { return ""; }
+  let parsed: unknown = null;
+  try { parsed = JSON.parse(facts); } catch (unknownError) { return ""; }
+  if (typeof parsed !== "object" || parsed === null) { return ""; }
+  let root: Record<string, unknown> = parsed as Record<string, unknown>;
+  if (!Object.hasOwn(root,"facts")) { return ""; }
+  let issued: unknown = root.facts;
+  if (typeof issued !== "object" || issued === null) { return ""; }
+  let entries: unknown[] = issued as unknown[];
+  for (let entry of entries) {
+    if (typeof entry !== "object" || entry === null) { continue; }
+    let fact: Record<string, unknown> = entry as Record<string, unknown>;
+    // The declaration is the host-issued fact's own type, never a guessed key name.
+    if (typeof fact.type !== "string" || (fact.type as string) !== "unixMillis") { continue; }
+    if (typeof fact.id !== "string" || (fact.id as string).trim() === "") { continue; }
+    if (typeof fact.text !== "string") { continue; }
+    if (typeof fact.value !== "number") { continue; }
+    let declared: number = fact.value as number;
+    if (!Number.isFinite(declared) || Math.floor(declared) !== declared) { continue; }
+    if (declared === value) { return fact.id as string; }
+  }
+  return "";
+}
+// A record that supplies no field values is evidenced only when the need quote is nonempty and occurs
+// exactly in the request text, because nothing else evidences that a logging event happened.
+export function admitsQuote(original: string, quote: string): boolean { if (quote === "") { return false; } return original.includes(quote); }
+// A disclosed context fact is host-supplied evidence that can also become an issued string source
+// emitted as data. Decoding it here keeps one shape for the disclosed context: the facts array of
+// the frozen context value, each entry a nonblank identifier and its text. It grants no authority. An
+// entry that does not carry both strings stays requirement evidence only, while a blank or duplicate
+// fact identifier is host configuration the generation entry already refuses, so it never becomes a
+// silently renamed or dropped source here.
+export class ContextFact { id: string; text: string; }
+export function context(facts: string): ContextFact[] {
+  let result: ContextFact[] = [];
+  let raw: unknown = JSON.parse(facts);
+  if (typeof raw !== "object" || raw === null) { return result; }
+  let parsed: Record<string, unknown> = raw as Record<string, unknown>;
+  if (!Object.hasOwn(parsed,"facts")) { return result; }
+  let ids: string[] = [];
+  for (let item of decoded.records(parsed.facts)) {
+    let issued: unknown = item.id; let text: unknown = item.text;
+    if (typeof issued !== "string" || typeof text !== "string") { continue; }
+    let id: string = s.nonblank(issued); s.unique(ids,id);
+    result[result.length] = {id:id,text:text};
+  }
+  return result;
+}
+export function main(): void { return; }

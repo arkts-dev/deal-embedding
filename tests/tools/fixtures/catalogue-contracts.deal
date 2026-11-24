@@ -174,6 +174,9 @@ function admits(entry: catalogue.Configured, original: string, facts: string, us
 // Each disclosure case counts once, so deleting a case fails the exact-count check.
 function checked(condition: boolean, message: string): number { insist(condition,message); return 1; }
 export async function disclosure(): Promise<number> {
+  let substring: catalogue.Configured = {need:"fabricated",definition:definition("bar_chart"),parameters:await accepts("bar_chart","{\"points\":[{\"label\":\"Mon\",\"value\":40}],\"maximum\":200}"),accepted:true,reason:""};
+  insist(catalogue.disclosed(substring,"Mon 140","",false).includes("point 0 value"),"numeric substring was admitted at catalogue call site");
+  insist(catalogue.disclosed(substring,"","{\"rows\":[{\"label\":\"Mon\",\"value\":3},{\"label\":\"Tue\",\"value\":40}]}",false).includes("fields are not one disclosed record"),"fabricated catalogue row combination admitted");
   let request: string = "Show what I paid";
   let count: number = 0;
   // The table supplies its headers and cells; each needs evidence and an empty cell needs none.
@@ -184,17 +187,17 @@ export async function disclosure(): Promise<number> {
   let located: string = catalogue.disclosed(invented,request,headers+",\"row\":{\"item\":\"Rent\",\"amount\":\"40\"}}",false);
   count = count+checked(located !== "","Invented table cell admitted");
   // A refusal carries the need and the offending row and field, never a bare verdict.
-  count = count+checked(located.includes("data_table row 0 cell 2"),"Unlocated table refusal: "+located);
+  count = count+checked(located.includes("(data_table): row 0 cell 2"),"Unlocated table refusal: "+located);
   // A heading names the displayed column, so an invented heading is refused like any other value.
   let invented_header: catalogue.Configured = await configured("data_table","{\"headers\":[\"Item\",\"Category\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"paid\"]]}");
   let located_header: string = catalogue.disclosed(invented_header,request,headers+",\"row\":{\"item\":\"Rent\",\"amount\":\"40\",\"note\":\"paid\"}}",false);
-  count = count+checked(located_header.includes("data_table header 1"),"Unlocated header refusal: "+located_header);
+  count = count+checked(located_header.includes("(data_table): header 1"),"Unlocated header refusal: "+located_header);
   // The identical cell is admitted from the request text instead of a disclosed fact.
   let quoted: catalogue.Configured = await configured("data_table","{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Food\",\"25\",\"paid\"]]}");
-  count = count+checked(admits(quoted,request+" on Food and label it paid",headers+",\"row\":{\"amount\":\"25\"}}",false),"Request-provenance cell refused");
+  count = count+checked(!admits(quoted,request+" on Food and label it paid",headers+",\"row\":{\"amount\":\"25\"}}",false),"A row assembled from unrelated request and fact values was admitted");
   let hidden_row: catalogue.Configured = await configured("data_table","{\"headers\":[\"Item\",\"Amount\",\"Note\"],\"rows\":[[\"Rent\",\"40\",\"paid\"],[\"Food\",\"25\",\"unpaid\"]]}");
   let located_row: string = catalogue.disclosed(hidden_row,request,headers+",\"row\":{\"item\":\"Rent\",\"amount\":\"40\",\"note\":\"paid\"}}",false);
-  count = count+checked(located_row.includes("data_table row 1 cell 0"),"Unlocated second-row refusal: "+located_row);
+  count = count+checked(located_row.includes("(data_table): row 1 cell 0"),"Unlocated second-row refusal: "+located_row);
   // Atomic rejection: the production call site installs a decoded record only when the whole record
   // decodes, so a rejected row list leaves the instance unfilled instead of a shortened table.
   let entry: catalogue.Configured = {need:"table",definition:definition("data_table"),parameters:{},accepted:false,reason:"Not filled"};
@@ -209,13 +212,13 @@ export async function disclosure(): Promise<number> {
   count = count+checked(admits(timeline,"",rail+",{\"at\":\"Review\",\"minute\":600}]}",false),"Disclosed rail refused");
   let invented_detail: catalogue.Configured = await configured("timeline","{\"rows\":[{\"minute\":570,\"title\":\"Standup\",\"detail\":\"secret\"}]}");
   let located_detail: string = catalogue.disclosed(invented_detail,"",rail+"]}",false);
-  count = count+checked(located_detail.includes("timeline row 0 detail"),"Unlocated rail detail refusal: "+located_detail);
+  count = count+checked(located_detail.includes("(timeline): row 0 detail"),"Unlocated rail detail refusal: "+located_detail);
   let invented_minute: catalogue.Configured = await configured("timeline","{\"rows\":[{\"minute\":601,\"title\":\"Standup\",\"detail\":\"daily\"}]}");
   let located_minute: string = catalogue.disclosed(invented_minute,"",rail+"]}",false);
-  count = count+checked(located_minute.includes("timeline row 0 minute"),"Unlocated rail minute refusal: "+located_minute);
+  count = count+checked(located_minute.includes("(timeline): row 0 minute"),"Unlocated rail minute refusal: "+located_minute);
   let invented_title: catalogue.Configured = await configured("timeline","{\"rows\":[{\"minute\":570,\"title\":\"Invented\",\"detail\":\"daily\"}]}");
   let located_title: string = catalogue.disclosed(invented_title,"",rail+"]}",false);
-  count = count+checked(located_title.includes("timeline row 0 title"),"Unlocated rail title refusal: "+located_title);
+  count = count+checked(located_title.includes("(timeline): row 0 title"),"Unlocated rail title refusal: "+located_title);
   let empty_detail: catalogue.Configured = await configured("timeline","{\"rows\":[{\"minute\":570,\"title\":\"Standup\"}]}");
   count = count+checked(admits(empty_detail,"",rail+"]}",false),"Empty detail demanded evidence");
   // A section with no rows displays nothing, so it supplies no value to evidence.
@@ -226,7 +229,7 @@ export async function disclosure(): Promise<number> {
   count = count+checked(admits(bars,"","{\"days\":[{\"day\":\"Mon\",\"spent\":0},{\"day\":\"Tue\",\"spent\":2.5}]}",false),"Disclosed bar points refused");
   let wrong_bar: catalogue.Configured = await configured("bar_chart","{\"points\":[{\"label\":\"Mon\",\"value\":0},{\"label\":\"Tue\",\"value\":7}],\"maximum\":10}");
   let located_bar: string = catalogue.disclosed(wrong_bar,"","{\"days\":[{\"day\":\"Mon\",\"spent\":0},{\"day\":\"Tue\",\"spent\":2.5}]}",false);
-  count = count+checked(located_bar.includes("bar_chart point 1 value"),"Unlocated chart refusal: "+located_bar);
+  count = count+checked(located_bar.includes("(bar_chart): point 1 value"),"Unlocated chart refusal: "+located_bar);
   let trend: catalogue.Configured = await configured("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":-2},{\"label\":\"b\",\"value\":0.25}],\"minimum\":-3,\"maximum\":3}");
   count = count+checked(admits(trend,"","{\"series\":[{\"at\":\"a\",\"delta\":-2},{\"at\":\"b\",\"delta\":0.25}]}",false),"Disclosed trend points refused");
   // A number is matched like a text value: its shortest round-trip spelling occurs in the evidence, so
@@ -234,29 +237,30 @@ export async function disclosure(): Promise<number> {
   // its value; a rule that treats that adjacent punctuation as part of the number refuses it and
   // drops a disclosed section.
   let punctuated: catalogue.Configured = await configured("bar_chart","{\"points\":[{\"label\":\"Mon\",\"value\":5}],\"maximum\":10}");
-  count = count+checked(admits(punctuated,"Spent 5. Show Mon.","",false),"A value before prose punctuation was refused");
+  count = count+checked(!admits(punctuated,"Spent 5. Show Mon.","",false),"Unrelated statements fabricated a chart point");
+  insist(admits(punctuated,"Mon spent 5.","",false),"A value before prose punctuation was refused");
   let invented_label: catalogue.Configured = await configured("trend_chart","{\"points\":[{\"label\":\"a\",\"value\":-2},{\"label\":\"c\",\"value\":0.25}],\"minimum\":-3,\"maximum\":3}");
   let located_trend: string = catalogue.disclosed(invented_label,"","{\"series\":[{\"at\":\"a\",\"delta\":-2},{\"at\":\"b\",\"delta\":0.25}]}",false);
-  count = count+checked(located_trend.includes("trend_chart point 1 label"),"Unlocated trend refusal: "+located_trend);
+  count = count+checked(located_trend.includes("(trend_chart): point 1 label"),"Unlocated trend refusal: "+located_trend);
   // The existing fact sections keep the decisions the one predicate already made.
   let metrics: catalogue.Configured = await configured("metrics","{\"values\":[{\"label\":\"first\",\"value\":\"items\"}]}");
   count = count+checked(admits(metrics,"","{\"facts\":[{\"label\":\"first\",\"value\":\"items\"}]}",false),"Disclosed metric refused");
   let located_metric: string = catalogue.disclosed(metrics,"","{\"facts\":[{\"label\":\"first\",\"value\":\"other\"}]}",false);
-  count = count+checked(located_metric.includes("metrics row 0 value"),"Unlocated metric refusal: "+located_metric);
+  count = count+checked(located_metric.includes("(metrics): row 0 value"),"Unlocated metric refusal: "+located_metric);
   let invented_metric_label: catalogue.Configured = await configured("metrics","{\"values\":[{\"label\":\"third\",\"value\":\"items\"}]}");
   let located_metric_label: string = catalogue.disclosed(invented_metric_label,"","{\"facts\":[{\"label\":\"first\",\"value\":\"items\"}]}",false);
-  count = count+checked(located_metric_label.includes("metrics row 0 label"),"Unlocated metric label refusal: "+located_metric_label);
+  count = count+checked(located_metric_label.includes("(metrics): row 0 label"),"Unlocated metric label refusal: "+located_metric_label);
   // The existing checklist keeps the same one-predicate decision for an invented row label.
   let invented_checklist: catalogue.Configured = await configured("checklist","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\"}]}");
   let located_checklist: string = catalogue.disclosed(invented_checklist,request,"",false);
-  count = count+checked(located_checklist.includes("checklist row 0 label"),"Unlocated checklist refusal: "+located_checklist);
+  count = count+checked(located_checklist.includes("(checklist): row 0 label"),"Unlocated checklist refusal: "+located_checklist);
   let invented_detail_row: catalogue.Configured = await configured("checklist","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\",\"detail\":\"secret\"}]}");
   let located_detail_row: string = catalogue.disclosed(invented_detail_row,"Alpha","",false);
-  count = count+checked(located_detail_row.includes("checklist row 0 detail"),"Unlocated checklist detail refusal: "+located_detail_row);
+  count = count+checked(located_detail_row.includes("(checklist): row 0 detail"),"Unlocated checklist detail refusal: "+located_detail_row);
   // A user-owned note keeps exact disclosed text; the same note not marked user-owned is admitted.
   let owned_note: catalogue.Configured = await configured("note","{\"text\":\"invented\"}");
   let located_note: string = catalogue.disclosed(owned_note,"","",true);
-  count = count+checked(located_note.includes(": note note text"),"Unlocated user-owned note refusal: "+located_note);
+  count = count+checked(located_note.includes("(note): note text"),"Unlocated user-owned note refusal: "+located_note);
   count = count+checked(admits(owned_note,"","",false),"A note that is not user-owned was refused");
   // An empty text carries no content, so an empty user-owned note is admitted like any other empty value.
   let empty_note: catalogue.Configured = await configured("note","{\"text\":\"\"}");
@@ -270,44 +274,44 @@ export async function disclosure(): Promise<number> {
   let search: catalogue.Configured = await configured("search_list","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\",\"detail\":\"first\"}]}");
   count = count+checked(admits(search,"Show Alpha first","",false),"Disclosed search row refused");
   let located_search: string = catalogue.disclosed(search,request,"",false);
-  count = count+checked(located_search.includes("search_list row 0 label"),"Unlocated search refusal: "+located_search);
+  count = count+checked(located_search.includes("(search_list): row 0 label"),"Unlocated search refusal: "+located_search);
   let master: catalogue.Configured = await configured("master_list","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\"}]}");
   let located_master: string = catalogue.disclosed(master,"","",false);
-  count = count+checked(located_master.includes(": master_list row 0 label"),"Unlocated master refusal: "+located_master);
+  count = count+checked(located_master.includes("(master_list): row 0 label"),"Unlocated master refusal: "+located_master);
   // The refusal names the instance, not the kind: a need with its own identity is located by it.
   let results: catalogue.Configured = {need:"results",definition:definition("search_list"),parameters:await accepts("search_list","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\"}]}"),accepted:true,reason:""};
   let located_instance: string = catalogue.disclosed(results,"","",false);
-  count = count+checked(located_instance.includes(": results row 0 label"),"Unlocated instance refusal: "+located_instance);
+  count = count+checked(located_instance.includes("section_results (search_list): row 0 label"),"Unlocated instance refusal: "+located_instance);
   // A stop's supplied coordinate pair is disclosed navigation content: the pair is admitted from
   // evidence, and a fabricated latitude or longitude is refused with its stop and field.
   let trip: string = "{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":10,\"latitude\":12.5,\"longitude\":34.5}]}";
   let placed: catalogue.Configured = await configured("itinerary",trip);
-  count = count+checked(admits(placed,"","{\"start\":{\"label\":\"Home\"},\"hop\":{\"minutes\":10,\"lat\":12.5,\"lon\":34.5}}",false),"Disclosed stop coordinates refused");
+  count = count+checked(admits(placed,"","{\"hop\":{\"label\":\"Home\",\"minutes\":10,\"lat\":12.5,\"lon\":34.5}}",false),"Disclosed stop coordinates refused");
   let invented_latitude: catalogue.Configured = await configured("itinerary",trip);
   let located_latitude: string = catalogue.disclosed(invented_latitude,"","{\"start\":{\"label\":\"Home\"},\"hop\":{\"minutes\":10,\"lon\":34.5}}",false);
-  count = count+checked(located_latitude.includes("itinerary stop 0 latitude"),"Unlocated stop latitude refusal: "+located_latitude);
+  count = count+checked(located_latitude.includes("(itinerary): stop 0 latitude"),"Unlocated stop latitude refusal: "+located_latitude);
   let invented_longitude: catalogue.Configured = await configured("itinerary",trip);
   let located_longitude: string = catalogue.disclosed(invented_longitude,"","{\"start\":{\"label\":\"Home\"},\"hop\":{\"minutes\":10,\"lat\":12.5}}",false);
-  count = count+checked(located_longitude.includes("itinerary stop 0 longitude"),"Unlocated stop longitude refusal: "+located_longitude);
+  count = count+checked(located_longitude.includes("(itinerary): stop 0 longitude"),"Unlocated stop longitude refusal: "+located_longitude);
   // An absent coordinate pair supplies nothing, so a stop without coordinates needs no coordinate evidence.
   let unplaced: catalogue.Configured = await configured("itinerary","{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":5}]}");
-  count = count+checked(admits(unplaced,"","{\"start\":{\"label\":\"Home\"},\"hop\":{\"minutes\":5}}",false),"A stop without coordinates demanded evidence");
+  count = count+checked(admits(unplaced,"","{\"hop\":{\"label\":\"Home\",\"minutes\":5}}",false),"A stop without coordinates demanded evidence");
   // A one-shot reminder's day is a supplied fact like its minute; a daily reminder carries no day.
   let once: catalogue.Configured = await configured("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":600,\"day\":99}]}");
   count = count+checked(admits(once,"","{\"reminders\":[{\"title\":\"Pill\",\"minute\":600,\"day\":99}]}",false),"Disclosed one-shot reminder refused");
   let invented_day: catalogue.Configured = await configured("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":600,\"day\":99}]}");
   let located_day: string = catalogue.disclosed(invented_day,"","{\"reminders\":[{\"title\":\"Pill\",\"minute\":600}]}",false);
-  count = count+checked(located_day.includes("reminders reminder 0 day"),"Unlocated reminder day refusal: "+located_day);
+  count = count+checked(located_day.includes("(reminders): reminder 0 day"),"Unlocated reminder day refusal: "+located_day);
   let daily: catalogue.Configured = await configured("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":600,\"daily\":true}]}");
   count = count+checked(admits(daily,"","{\"reminders\":[{\"title\":\"Pill\",\"minute\":600}]}",false),"A daily reminder demanded a day");
   // The reminder title and minute are supplied content too, so each fabricated one is refused with its
   // row and field rather than admitted beside the evidenced day.
   let invented_reminder_title: catalogue.Configured = await configured("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Vitamins\",\"minute\":600,\"day\":99}]}");
   let located_reminder_title: string = catalogue.disclosed(invented_reminder_title,"","{\"reminders\":[{\"title\":\"Pill\",\"minute\":600,\"day\":99}]}",false);
-  count = count+checked(located_reminder_title.includes("reminders reminder 0 title"),"Unlocated reminder title refusal: "+located_reminder_title);
+  count = count+checked(located_reminder_title.includes("(reminders): reminder 0 title"),"Unlocated reminder title refusal: "+located_reminder_title);
   let invented_reminder_minute: catalogue.Configured = await configured("reminders","{\"rows\":[{\"id\":\"a\",\"title\":\"Pill\",\"minute\":601,\"day\":99}]}");
   let located_reminder_minute: string = catalogue.disclosed(invented_reminder_minute,"","{\"reminders\":[{\"title\":\"Pill\",\"minute\":600,\"day\":99}]}",false);
-  count = count+checked(located_reminder_minute.includes("reminders reminder 0 minute"),"Unlocated reminder minute refusal: "+located_reminder_minute);
+  count = count+checked(located_reminder_minute.includes("(reminders): reminder 0 minute"),"Unlocated reminder minute refusal: "+located_reminder_minute);
   return count;
 }
 
@@ -364,7 +368,7 @@ export async function instanceCount(): Promise<string> {
   for (let instance of composition.screen.instances) {
     instance.position = "main";
     let need: string = instance.fragment.covers[0]; needIds[needIds.length] = need;
-    composition.screen.slots[composition.screen.slots.length] = {id:instance.id,need:need,reads:[],writes:[],provider:false,allowedKinds:[],status:"filled",instance:instance.id,reason:""};
+    composition.screen.slots[composition.screen.slots.length] = {id:need,need:need,reads:[],writes:[],provider:false,allowedKinds:[instance.kind],valueType:"",status:"filled",instance:instance.id,reason:""};
   }
   // The emitted composition is decoded again through the production composition decoder, so the
   // no-count rule and the unique-kind rule are proved at the decode seam, not only in memory.
@@ -378,8 +382,8 @@ export async function instanceCount(): Promise<string> {
   // A second instance of an already selected kind is refused before any source is emitted.
   let duplicateRefused: boolean = false;
   let raw: string = "{\"screen\":{\"title\":\"Duplicate\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[],\"instances\":["+
-    "{\"id\":\"a\",\"kind\":\"spotlight\",\"origin\":\"catalogue\",\"parameters\":{},\"bodies\":{},\"fragment\":{\"declarations\":\"\",\"fields\":[],\"updates\":[],\"effects\":[],\"helpers\":\"\",\"view\":\"v\",\"options\":[],\"content\":[],\"ports\":[],\"holes\":[],\"covers\":[],\"owns\":[]}},"+
-    "{\"id\":\"b\",\"kind\":\"spotlight\",\"origin\":\"catalogue\",\"parameters\":{},\"bodies\":{},\"fragment\":{\"declarations\":\"\",\"fields\":[],\"updates\":[],\"effects\":[],\"helpers\":\"\",\"view\":\"v\",\"options\":[],\"content\":[],\"ports\":[],\"holes\":[],\"covers\":[],\"owns\":[]}}]},\"bindings\":{},\"actions\":{},\"connections\":[]}";
+    "{\"id\":\"a\",\"kind\":\"spotlight\",\"origin\":\"catalogue\",\"parameters\":{},\"definition\":{\"fields\":[],\"ports\":[],\"actions\":[],\"holes\":[]},\"bodies\":{},\"fragment\":{\"declarations\":\"\",\"fields\":[],\"updates\":[],\"effects\":[],\"helpers\":\"\",\"view\":\"v\",\"options\":[],\"content\":[],\"ports\":[],\"holes\":[],\"covers\":[],\"owns\":[]}},"+
+    "{\"id\":\"b\",\"kind\":\"spotlight\",\"origin\":\"catalogue\",\"parameters\":{},\"definition\":{\"fields\":[],\"ports\":[],\"actions\":[],\"holes\":[]},\"bodies\":{},\"fragment\":{\"declarations\":\"\",\"fields\":[],\"updates\":[],\"effects\":[],\"helpers\":\"\",\"view\":\"v\",\"options\":[],\"content\":[],\"ports\":[],\"holes\":[],\"covers\":[],\"owns\":[]}}]},\"bindings\":{},\"actions\":{},\"connections\":[]}";
   try { screens.decode(raw,"screen",[]); }
   catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } duplicateRefused = error.message.includes("Duplicate identity: spotlight"); }
   return s.encode({instances:decodedCount,kinds:kinds,duplicate:duplicateRefused,deal:assembled.source.deal,dealui:assembled.source.dealui});
@@ -409,7 +413,7 @@ export async function fillPath(): Promise<string> {
 // another plan need publishes. A read that names an input or a constant asks for a seed, so a reader
 // kind offered for it could never be connected; the same predicate governs both call sites.
 export async function alternatives(): Promise<string> {
-  let plan: plans.Plan = plans.decode("{\"title\":\"Reader\",\"inputs\":[{\"id\":\"value\",\"label\":\"Value\",\"kind\":\"count\",\"measure\":\"count\",\"value\":3}],\"needs\":[{\"id\":\"items\",\"type\":\"content\",\"words\":\"Toggle the items\",\"spec\":{}},{\"id\":\"summary\",\"type\":\"content\",\"words\":\"Show completion\",\"reads\":[\"items\"],\"spec\":{}},{\"id\":\"seeded\",\"type\":\"content\",\"words\":\"Show the edited value\",\"reads\":[\"value\"],\"spec\":{}}]}",[],[]);
+  let plan: plans.Plan = plans.decode("{\"title\":\"Reader\",\"constants\":[],\"requirements\":[],\"questions\":[],\"inputs\":[{\"id\":\"value\",\"label\":\"Value\",\"kind\":\"count\",\"measure\":\"count\",\"value\":3}],\"needs\":[{\"id\":\"items\",\"type\":\"content\",\"words\":\"Toggle the items\",\"reads\":[],\"spec\":{}},{\"id\":\"summary\",\"type\":\"content\",\"words\":\"Show completion\",\"reads\":[\"items\"],\"spec\":{}},{\"id\":\"seeded\",\"type\":\"content\",\"words\":\"Show the edited value\",\"reads\":[\"value\"],\"spec\":{}}]}",[],[],"","");
   let offered: Record<string, unknown> = {};
   for (let need of plan.needs) {
     let kinds: string[] = [];
@@ -431,7 +435,7 @@ export async function registryRefusals(): Promise<number> {
   let index: number = 0;
   while (index < supplied.length) {
     let issued: bindings.Registry = bindings.create([]);
-    issued.bindings[0] = {id:"nav_1",module:"host/navigation",function:"open",arguments:{},parameterOrder:[],owner:"host"};
+    issued.bindings[0] = {id:"nav_1",module:"host/navigation",function:"open",arguments:{},parameterOrder:[],owner:"host",evidence:{request:"",facts:"",quote:"",sources:[]}};
     let entry: catalogue.Configured = {need:"trip",definition:definition("itinerary"),parameters:await accepts("itinerary",wire[index]),accepted:true,reason:""};
     let located: boolean = false;
     try { await catalogue.instantiate(entry,issued); }

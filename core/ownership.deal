@@ -1,0 +1,209 @@
+import * as tables from "std/table";
+import * as decoded from "./decoded";
+import * as s from "./construction-schema";
+import * as screens from "./screen";
+
+// Ownership is decided over the qualified authoritative resources reducers write, never over a
+// declared `owns` entry, a model string or a tooling decision. The fragment-syntax mechanism
+// supplies parsed write facts; this module alone accepts or rejects them. A declared `owns` entry
+// that no reducer writes is a composition notice, never an error and never a slot write.
+export class Resource { name: string; instance: string; local: string; role: string; }
+export class Ownership { resources: Resource[]; runtime: string[]; notices: string[]; }
+function written(instance: string, local: string): string { return "f_"+instance+"_"+local; }
+export function derive(instances: screens.Instance[], facts: Record<string, unknown>): Ownership {
+  let resources: Resource[] = []; let names: string[] = []; let runtime: string[] = []; let notices: string[] = [];
+  for (let instance of instances) {
+    for (let field of instance.fragment.fields) {
+      let name: string = written(instance.id,field.name); s.unique(names,name);
+      resources[resources.length] = {name:name,instance:instance.id,local:field.name,role:field.role};
+      if (field.role === "runtime") { runtime[runtime.length] = name; }
+    }
+  }
+  for (let instance of instances) {
+    let functions: Record<string, unknown> = facts[instance.id] as Record<string, unknown>;
+    // The owner reducer set decides which write summaries must be complete before they are trusted.
+    let reducers: string[] = [];
+    for (let update of instance.fragment.updates) { reducers[reducers.length] = update.function; }
+    for (let name of tables.keys(functions)) {
+      let fact: Record<string, unknown> = functions[name] as Record<string, unknown>;
+      // A reducer whose write summary is incomplete (an alias-rooted assignment, an await or a
+      // construct the tooling cannot summarize) is never trusted as a slot write set.
+      let reducer: boolean = s.contains(reducers,name);
+      if (reducer && (fact.indirect as boolean)) { s.reject("Owner reducer has an unverified write summary: "+instance.id+"."+name); }
+      // A local that borrows state ("let next: AppState = state", "let rows = state.rows", a for-of
+      // element) aliases the resource it borrows; writing through it, mutating it in place or calling a
+      // mutating method on it is a borrowed-state write, not a local write, so the tooling records it
+      // separately and it rejects instead of escaping the resource checks below.
+      if (Object.hasOwn(fact,"borrowedWrites")) { for (let target of decoded.strings(fact.borrowedWrites)) {
+        // Parsed calls on borrowed values are conservative mechanism facts. These
+        // checked built-ins do not mutate their receiver; unknown calls still reject.
+        if (target.startsWith("call:") && (target.endsWith(".slice") || target.endsWith(".includes") || target.endsWith(".indexOf") || target.endsWith(".substring") || target.endsWith(".toLowerCase") || target.endsWith(".toUpperCase"))) { continue; }
+        s.reject("Borrowed state is written: "+instance.id+"."+name+" "+target);
+      } }
+      for (let key of ["writes","supplies"]) {
+        for (let write of decoded.strings(fact[key])) {
+          // An unattributable write target in an owner reducer cannot be compared with the issued
+          // resources, so it is refused rather than trusted.
+          if (write === "*") { if (reducer) { s.reject("Owner reducer write target is not a declared resource: "+instance.id+"."+name); } continue; }
+          let parts: string[] = write.split(".");
+          // A write to a local, parameter or loop variable that borrows no state is not a resource write.
+          if ((parts[0] as string) !== "state") { continue; }
+          if (parts.length !== 2) { s.reject("Unissued write target: "+instance.id+"."+name+" "+write); }
+          let local: string = parts[1] as string;
+          // An element write through a declared array field targets that same issued resource.
+          if (local.endsWith("[]")) { local = local.substring(0,local.length-2); }
+          let role: string = "";
+          for (let field of instance.fragment.fields) { if (field.name === local) { role = field.role; } }
+          if (role === "") { s.reject("Write outside the owner instance: "+instance.id+"."+name+" "+write); }
+          if (role !== "authoritative" && role !== "runtime") { s.reject("Write to a derived resource: "+instance.id+"."+name+" "+write); }
+        }
+      }
+    }
+    // Declared ownership grants no permission: an `owns` entry naming a declared field that no
+    // reducer writes is only a notice. An `owns` entry naming the instance itself is not a field
+    // claim, so it produces no notice.
+    let suppliedLocals: string[] = [];
+    for (let name of tables.keys(functions)) {
+      let functionFact: Record<string, unknown> = functions[name] as Record<string, unknown>;
+      for (let key of ["writes","supplies"]) {
+        for (let target of decoded.strings(functionFact[key])) {
+          let parts: string[] = target.split(".");
+          if ((parts[0] as string) === "state" && parts.length === 2) {
+            let local: string = parts[1] as string;
+            if (local.endsWith("[]")) { local = local.substring(0,local.length-2); }
+            if (!s.contains(suppliedLocals,local)) { suppliedLocals[suppliedLocals.length] = local; }
+          }
+        }
+      }
+    }
+    for (let declared of instance.fragment.owns) {
+      let field: boolean = false;
+      for (let candidate of instance.fragment.fields) { if (candidate.name === declared) { field = true; } }
+      if (!field) { continue; }
+      if (!s.contains(suppliedLocals,declared)) { notices[notices.length] = instance.id+": declared ownership "+declared+" writes no resource"; }
+    }
+  }
+  return {resources:resources,runtime:runtime,notices:notices};
+}
+// Slot `writes` is exactly the qualified authoritative resources the filling instance's declared
+// reducers write: the state-literal keys a reducer supplies with a new value, its assignment targets
+// and the same facts of every local reducer helper it calls. A field preserved by reading itself back
+// (`double: state.double`) is not a write, runtime sampling bookkeeping is not authoritative state, and
+// a declared `owns` entry contributes nothing here.
+export function writes(ownership: Ownership, instance: screens.Instance, facts: Record<string, unknown>): string[] {
+  let result: string[] = [];
+  let functions: Record<string, unknown> = functionsOf(facts,instance.id);
+  for (let handler of instance.fragment.updates) { collectWrites(functions,handler.function,instance,ownership,result,[]); }
+  return result;
+}
+function collectWrites(functions: Record<string, unknown>, name: string, instance: screens.Instance, ownership: Ownership, result: string[], path: string[]): void {
+  if (!Object.hasOwn(functions,name)) { s.reject("Unissued owner reducer: "+instance.id+"."+name); }
+  if (s.contains(path,name)) { s.reject("Recursive reducer write summary: "+instance.id+"."+name); }
+  let fact: Record<string, unknown> = functions[name] as Record<string, unknown>;
+  for (let key of ["writes","supplies"]) {
+    for (let target of decoded.strings(fact[key])) {
+      let parts: string[] = target.split(".");
+      if ((parts[0] as string) !== "state" || parts.length !== 2) { continue; }
+      let local: string = parts[1] as string;
+      if (local.endsWith("[]")) { local = local.substring(0,local.length-2); }
+      let resourceName: string = written(instance.id,local);
+      for (let resource of ownership.resources) { if (resource.name === resourceName && resource.role === "authoritative" && !s.contains(result,resourceName)) { result[result.length] = resourceName; } }
+    }
+  }
+  let next: string[] = []; for (let prior of path) { next[next.length] = prior; } next[next.length] = name;
+  for (let call of decoded.strings(fact.calls)) {
+    let parts: string[] = call.split(".");
+    if (parts.length === 1 && Object.hasOwn(functions,parts[0] as string)) { collectWrites(functions,parts[0] as string,instance,ownership,result,next); }
+  }
+}
+export function claim(ownership: Ownership, name: string): Resource {
+  for (let resource of ownership.resources) { if (resource.name === name) { return resource; } }
+  s.reject("Unissued resource: "+name); throw {name:"CONSTRUCTION_SCHEMA",message:"Unissued resource"};
+}
+function functionsOf(facts: Record<string, unknown>, instance: string): Record<string, unknown> {
+  if (!Object.hasOwn(facts,instance)) { s.reject("Unissued ownership facts: "+instance); }
+  return facts[instance] as Record<string, unknown>;
+}
+function armFact(facts: Record<string, unknown>, instance: screens.Instance, action: string): Record<string, unknown> {
+  let handler: screens.Handler | null = null;
+  for (let update of instance.fragment.updates) { if (update.action === action) { handler = update; } }
+  if (handler === null) { s.reject("Composite arm is not an owner reducer: "+instance.id+"."+action); }
+  let functions: Record<string, unknown> = functionsOf(facts,instance.id);
+  let fn: string = (handler as screens.Handler).function;
+  if (!Object.hasOwn(functions,fn)) { s.reject("Unissued composite arm reducer: "+instance.id+"."+fn); }
+  return functions[fn] as Record<string, unknown>;
+}
+function targets(fact: Record<string, unknown>, instance: string, key: string): string[] {
+  let result: string[] = [];
+  for (let path of decoded.strings(fact[key])) {
+    let parts: string[] = path.split(".");
+    if (parts.length === 2 && (parts[0] as string) === "state") {
+      let local: string = parts[1] as string;
+      if (local.endsWith("[]")) { local = local.substring(0,local.length-2); }
+      result[result.length] = written(instance,local);
+    }
+  }
+  return result;
+}
+// A composite arm writes every resource its reducer and the local helpers it calls supply or assign.
+function armTargets(facts: Record<string, unknown>, instance: string, name: string, key: string, result: string[], path: string[]): void {
+  if (name === "") { return; }
+  let functions: Record<string, unknown> = functionsOf(facts,instance);
+  if (!Object.hasOwn(functions,name)) { return; }
+  if (s.contains(path,name)) { s.reject("Recursive reducer write summary: "+instance+"."+name); }
+  let fact: Record<string, unknown> = functions[name] as Record<string, unknown>;
+  for (let target of targets(fact,instance,key)) { if (!s.contains(result,target)) { result[result.length] = target; } }
+  let next: string[] = []; for (let prior of path) { next[next.length] = prior; } next[next.length] = name;
+  for (let call of decoded.strings(fact.calls)) {
+    let parts: string[] = call.split(".");
+    if (parts.length === 1) { armTargets(facts,instance,parts[0] as string,key,result,next); }
+  }
+}
+// Composite actions are synchronous transactions: one composition-scope nominal identity with an
+// ordered list of owner arms. Each arm resolves to its declared owner reducer; overlapping writes
+// and synchronous ordering cycles reject before emission. The arms run against one candidate and
+// the composer recomputes and commits once, so no intermediate arm commits or starts an effect.
+export function validateComposites(instances: screens.Instance[], composites: screens.Composite[], facts: Record<string, unknown>): void {
+  let actions: string[] = [];
+  for (let composite of composites) {
+    s.identifier(composite.action); s.unique(actions,composite.action);
+    if (composite.arms.length < 2) { s.reject("Composite requires at least two owner arms: "+composite.action); }
+    let claimed: string[] = []; let armWrites: string[][] = []; let armReads: string[][] = [];
+    for (let arm of composite.arms) {
+      s.identifier(arm.instance); s.identifier(arm.action);
+      let instance: screens.Instance = instanceOf(instances,arm.instance);
+      let fact: Record<string, unknown> = armFact(facts,instance,arm.action);
+      if (fact.indirect as boolean) { s.reject("Composite arm has an unverified write summary: "+arm.instance); }
+      let armWrite: string[] = [];
+      let handlerName: string = "";
+      for (let update of instance.fragment.updates) { if (update.action === arm.action) { handlerName = update.function; } }
+      armTargets(facts,arm.instance,handlerName,"writes",armWrite,[]);
+      armTargets(facts,arm.instance,handlerName,"supplies",armWrite,[]);
+      for (let resource of armWrite) { if (s.contains(claimed,resource)) { s.reject("Composite arms write one resource: "+composite.action+" "+resource); } claimed[claimed.length] = resource; }
+      armWrites[armWrites.length] = armWrite;
+      let armRead: string[] = [];
+      armTargets(facts,arm.instance,handlerName,"reads",armRead,[]);
+      armReads[armReads.length] = armRead;
+    }
+    // Follow the complete arm dependency graph, not only two-arm mutual edges.
+    let armIndex: number = 0;
+    while (armIndex < armWrites.length) { compositeCycle(armIndex,armIndex,armWrites,armReads,[],composite.action); armIndex = armIndex+1; }
+  }
+}
+function compositeCycle(start: number, current: number, writes: string[][], reads: string[][], visited: number[], action: string): void {
+  for (let prior of visited) { if (prior === current) { return; } }
+  visited[visited.length] = current;
+  let index: number = 0;
+  while (index < reads.length) {
+    if (index !== current) {
+      let edge: boolean = false; for (let resource of writes[current]) { if (s.contains(reads[index],resource)) { edge = true; } }
+      if (edge) { if (index === start) { s.reject("Composite arms form a synchronous ordering cycle: "+action); } compositeCycle(start,index,writes,reads,visited,action); }
+    }
+    index = index+1;
+  }
+}
+function instanceOf(instances: screens.Instance[], id: string): screens.Instance {
+  for (let candidate of instances) { if (candidate.id === id) { return candidate; } }
+  s.reject("Unissued instance: "+id); throw {name:"CONSTRUCTION_SCHEMA",message:"Unissued instance"};
+}
+export function main(): void { return; }

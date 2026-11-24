@@ -1,3 +1,4 @@
+import * as plans from "./plan";
 import * as screens from "./screen";
 import * as decoded from "./decoded";
 import * as s from "./construction-schema";
@@ -5,15 +6,69 @@ import * as tables from "std/table";
 import * as literals from "./source-literals";
 import * as syntax from "embedding/fragment-syntax";
 import * as policy from "./computation-policy";
+import * as ownership from "./ownership";
+import * as bindings from "./bindings";
 
 // Internal resolved assembly input. Generated strings never issue type or owner identities.
-export class Computation { instance: string; field: string; value: string; ready: string; reason: string; dependencies: string[]; }
+// `dependencies` is the semantic dependency set of a derived resource: the authoritative resources
+// whose validated value, readiness or identity the value is a function of. `buffers` names the raw
+// text buffers the computation parses. A buffer is a read of the value, not a dependency resource:
+// the derived value and its readiness already capture every semantic change, so an equivalent buffer
+// spelling advances no operation revision.
+export class Computation { instance: string; field: string; value: string; ready: string; reason: string; dependencies: string[]; buffers?: string[]; }
 export class Import { module: string; alias: string; }
 export class Field { instance: string; local: string; name: string; type: string; role: string; initial: string; }
 export class Prepared { id: string; declarations: string; helpers: string; view: string; fields: Field[]; updates: screens.Handler[]; effects: screens.Handler[]; viewName: string; }
 export class Source { deal: string; dealui: string; }
-export class Result { source: Source; fields: Field[]; computations: string[]; }
+// Slot records, operation dependency sets, publication and driver identities and the runtime-only
+// field list are compiler metadata. They are rebuilt on every assembly and never emitted into
+// generated source.
+export class SlotRecord { id: string; need: string; status: string; reads: string[]; writes: string[]; outputs: string[]; event: string; trigger: string; action: string; provider: boolean; allowedKinds: string[]; instance: string; reason: string; }
+export class OperationRecord { id: string; owner: string; module: string; function: string; trigger: string; triggerResource: string; rowKey: string; dependencies: string[]; arguments: Record<string, unknown>; expires: string; expired: string; }
+export class CompositeRecord { action: string; type: string; update: string; arms: string[]; }
+// The ownership matrix assembly decided over written resources, carried as compiler metadata so
+// admission can re-check every slot against the compiled declarations instead of a source scan. A
+// resource names its owning instance and its role; an instance names its kind, origin and the
+// qualified authoritative resources its own reducers write.
+export class ResourceRecord { name: string; owner: string; role: string; }
+export class InstanceRecord { id: string; kind: string; origin: string; kinds: string[]; writes: string[]; }
+// The one Session-local clock trust identity the expiry driver reads. It is issued metadata, never a
+// model string, and every clock driver of the composition names these same two compiled fields.
+export class SessionClock { epoch: string; trust: string; resume: string; }
+export class Metadata { slots: SlotRecord[]; operations: OperationRecord[]; runtime: string[]; publications: string[]; drivers: string[]; clockDrivers: screens.Driver[]; sessionClock: SessionClock; composites: CompositeRecord[]; chatRoot: boolean; notices: string[]; declarations: string[]; owners: ResourceRecord[]; composerOwned: string[]; instances: InstanceRecord[]; sources: string[]; }
+export class ChildLabel { instance: string; label: string; }
+export class ChatRoot { children: ChildLabel[]; initialSelection: number; }
+// The chat root generation issues: one child per placed fragment in placement order, the label the
+// covering need issued and the initial selection. Both the construction route and the custom writer ask
+// this one rule, so the wrapper and its labels are decided once. The label text is the plan need's own
+// wording; a child the plan does not name (a notice instance, or a custom draft built without a plan)
+// keeps its issued instance identity, so this rule never invents or reformats text of its own.
+export function chatRoot(composition: screens.Composition, plan: plans.Plan | null): ChatRoot | null {
+  if (composition.screen.target !== "chat" || composition.screen.instances.length < 2) { return null; }
+  let children: ChildLabel[] = [];
+  for (let instance of composition.screen.instances) {
+    let label: string = instance.id;
+    if (plan !== null) { for (let need of (plan as plans.Plan).needs) { if (s.contains(instance.fragment.covers,need.id)) { label = need.words; } } }
+    children[children.length] = {instance:instance.id,label:label};
+  }
+  return {children:children,initialSelection:0};
+}
+export class Result { source: Source; fields: Field[]; computations: string[]; metadata: Metadata; }
 function qualified(id: string, name: string): string { return "f_"+id+"_"+name; }
+// The issued dependency set is closed over the checked reads of the values an operation consumes: each
+// resource a computation produces names the resources it reads, so an edit of an upstream resource
+// invalidates the invocation even when a derived result keeps the same value. Plan reads and authored
+// arguments are never seeds.
+function closeReads(dependencies: string[], seed: string, producerReads: Record<string, unknown>): void {
+  let pending: string[] = [seed]; let visited: string[] = []; let cursor: number = 0;
+  while (cursor < pending.length) {
+    let current: string = pending[cursor]; cursor = cursor+1;
+    if (s.contains(visited,current)) { continue; }
+    visited[visited.length] = current;
+    if (!Object.hasOwn(producerReads,current)) { continue; }
+    for (let read of producerReads[current] as string[]) { addUnique(dependencies,read); pending[pending.length] = read; }
+  }
+}
 class SyntaxRequest { function: string; input: string; }
 class SyntaxResult { value: string; code: string; message: string; }
 function syntaxValue(result: SyntaxResult): string {
@@ -41,8 +96,11 @@ function field(fields: Field[], instance: string, local: string): Field {
   for (let item of fields) { if (item.instance === instance && item.local === local) { return item; } }
   return s.reject("Unissued field producer/read");
 }
-function placeholder(type: string): string { if (type === "string") { return "\"\""; } if (type === "boolean") { return "false"; } if (type === "number") { return "0"; } return "null"; }
+function placeholder(type: string): string { if (type === "string") { return "\"\""; } if (type === "boolean") { return "false"; } if (type === "number") { return "0"; } if (type.endsWith("[]")) { return "[]"; } return "null"; }
 function primitive(type: string): boolean { return s.contains(["string","boolean","number"],type); }
+// A derived array binds a nonnullable prepared `_display` companion initialized empty, exactly as a
+// derived primitive does; readiness still guards it so an empty array is never a displayed fact.
+function displayable(type: string): boolean { return primitive(type) || type.endsWith("[]"); }
 function copyExpression(fields: Field[], changes: Record<string, unknown>, state: string): string {
   let result: string = "{"; let separator: string = "";
   for (let item of fields) {
@@ -54,7 +112,7 @@ function copyExpression(fields: Field[], changes: Record<string, unknown>, state
       if (Object.hasOwn(changes,item.name+"_ready")) { ready = changes[item.name+"_ready"] as string; }
       if (Object.hasOwn(changes,item.name+"_reason")) { reason = changes[item.name+"_reason"] as string; }
       result = result+", "+item.name+"_ready: "+ready+", "+item.name+"_reason: "+reason;
-      if (primitive(item.type)) { let display: string = state+"."+item.name+"_display"; if (Object.hasOwn(changes,item.name+"_display")) { display = changes[item.name+"_display"] as string; } result = result+", "+item.name+"_display: "+display; }
+      if (displayable(item.type)) { let display: string = state+"."+item.name+"_display"; if (Object.hasOwn(changes,item.name+"_display")) { display = changes[item.name+"_display"] as string; } result = result+", "+item.name+"_display: "+display; }
     }
   }
   return result+"}";
@@ -63,87 +121,188 @@ async function expression(value: string, expected: string, instance: Prepared, n
   let variables: Record<string, unknown> = {}; if (variable !== "") { variables[variable] = "AppState"; }
   return await syntax.expression(s.encode({source:value,expected:expected,names:names,fields:fields,types:types,variables:variables}));
 }
-function describedNames(raw: Record<string, unknown>, category: string): string[] { let result: string[] = []; for (let entry of decoded.records(raw[category])) { result[result.length] = s.text(entry.name); } return result; }
-function describedImports(raw: Record<string, unknown>): string[] { let result: string[] = []; for (let entry of decoded.records(raw.imports)) { result[result.length] = s.text(entry.module)+" as "+s.text(entry.alias); } return result; }
-// A hole body replaces only the body of its own hole function: it may use the fragment declarations,
-// helpers and imports, but it may not add one. A body that smuggles a declaration or an import past
-// the textual splice rejects here with the instance identity instead of widening the fragment.
-function checkBodySurfaces(instance: string, baseline: Record<string, unknown>, composed: Record<string, unknown>, holeIds: string[]): void {
-  for (let category of ["classes","functions","views"]) {
-    let before: string[] = describedNames(baseline,category);
-    let after: string[] = describedNames(composed,category);
-    for (let name of after) {
-      // A redeclaration is caught even when it reuses a name the fragment or a hole already has:
-      // the composed region must describe every declaration exactly once.
-      let occurrences: number = 0; for (let other of after) { if (other === name) { occurrences = occurrences+1; } }
-      if (occurrences > 1) { s.reject("Catalogue hole body declaration: "+instance+" duplicate "+category+" "+name); }
-      if (s.contains(before,name)) { continue; }
-      if (category === "functions" && s.contains(holeIds,name)) { continue; }
-      s.reject("Catalogue hole body declaration: "+instance+" "+category+" "+name);
+// The permitted module surface of generated source. Assembly admits it before emitting anything;
+// checking admission re-derives the same decision from the compiled manifest.
+function permitted(registry: bindings.Registry, module: string): boolean {
+  if (s.contains(["std/math","std/string","std/table","std/time","embedding/graphics","./experience","./platform.dealui-pack","host/storage"],module)) { return true; }
+  for (let contract of registry.contracts) { if (contract.module === module) { return true; } }
+  return false;
+}
+function effectNames(instance: screens.Instance): string[] {
+  let result: string[] = [];
+  for (let effect of instance.fragment.effects) { result[result.length] = effect.function; }
+  return result;
+}
+// `host/storage` is effect-bound: a call from an initializer, a recomputation helper or a reducer
+// rejects. The mechanism returns call facts; this policy decides. A field's initial expression is
+// emitted into `initialState()`, so its calls are analyzed exactly like a function body: a storage
+// call there would run at mount, outside every effect.
+async function storageConfined(instance: screens.Instance, aliases: Record<string, unknown>, facts: Record<string, unknown>): Promise<void> {
+  let storage: string = "";
+  for (let alias of tables.keys(aliases)) { if ((aliases[alias] as string) === "host/storage") { storage = alias; } }
+  if (storage === "") { return; }
+  let effects: string[] = effectNames(instance);
+  for (let name of tables.keys(facts)) {
+    let fact: Record<string, unknown> = facts[name] as Record<string, unknown>;
+    if (s.contains(effects,name)) { continue; }
+    for (let call of decoded.strings(fact.calls)) { if (call.startsWith(storage+".")) { s.reject("effect-bound storage: "+instance.id+"."+name); } }
+  }
+  // One batched mechanism request analyzes every field initializer of the instance; the policy decides.
+  let initialNames: string[] = []; let initialRequests: SyntaxRequest[] = [];
+  for (let field of instance.fragment.fields) {
+    if (field.role === "derived") { continue; }
+    initialNames[initialNames.length] = field.name;
+    initialRequests[initialRequests.length] = {function:"analyzeExpression",input:s.encode({source:field.initial})};
+  }
+  if (initialRequests.length > 0) {
+    let results: SyntaxResult[] = JSON.parse(await syntax.batch(s.encode({requests:initialRequests})));
+    let index: number = 0;
+    while (index < results.length) {
+      let analyzed: Record<string, unknown> = JSON.parse(syntaxValue(results[index]));
+      for (let call of decoded.strings(analyzed.calls)) { if (call.startsWith(storage+".")) { s.reject("effect-bound storage: "+instance.id+"."+initialNames[index]); } }
+      index = index+1;
     }
   }
-  let before: string[] = describedImports(baseline); let after: string[] = describedImports(composed);
-  if (before.length !== after.length) { s.reject("Catalogue hole body import: "+instance); }
-  for (let entry of after) { if (!s.contains(before,entry)) { s.reject("Catalogue hole body import: "+instance+" "+entry); } }
 }
-export async function assemble(composition: screens.Composition, computations: Computation[]): Promise<Result> {
+// The provider flag of a filled slot derives from the resolved external provider calls of its
+// implementation, never from the need type: a local implementation of a live need performs no
+// provider call and a custom implementation that calls a frozen contract does.
+function providerCalls(facts: Record<string, unknown>, modules: Record<string, unknown>, registry: bindings.Registry): boolean {
+  for (let name of tables.keys(facts)) {
+    let fact: Record<string, unknown> = facts[name] as Record<string, unknown>;
+    for (let call of decoded.strings(fact.calls)) {
+      let parts: string[] = call.split(".");
+      if (parts.length !== 2) { continue; }
+      let module: unknown = modules[parts[0]];
+      if (module === undefined) { continue; }
+      for (let contract of registry.contracts) { if (contract.module === (module as string)) { return true; } }
+    }
+  }
+  return false;
+}
+// Every hole function is emitted from its declared signature and the selected body. The body is body
+// text only: it replaces the declared default and never changes the parameter, the type or the name.
+// The composed function is parsed before anything is emitted, so a body that closes the function or
+// declares a different one rejects with the hole identifier instead of reaching the compiler.
+async function holeFunctions(instance: screens.Instance): Promise<string> {
+  let result: string = "";
+  // A body keyed by a hole this fragment does not declare is a route nothing defines: it rejects with
+  // the identifier instead of being dropped, so an issued body is never silently ignored.
+  let declaredHoles: string[] = [];
+  for (let hole of instance.fragment.holes) { declaredHoles[declaredHoles.length] = s.identifier(hole.id); }
+  for (let key of tables.keys(instance.bodies)) { if (!s.contains(declaredHoles,key)) { s.reject("Unissued body: "+key); } s.text(instance.bodies[key]); }
+  for (let hole of instance.fragment.holes) {
+    let id: string = s.identifier(hole.id);
+    let signature: string = screens.holeSignature(hole);
+    let body: string = "";
+    if (Object.hasOwn(hole,"signature")) { body = s.text(hole.body); } else { body = s.text(hole.default); }
+    if (Object.hasOwn(instance.bodies,id)) {
+      if (Object.hasOwn(hole,"writer") && s.text(hole.writer) !== "fill") { s.reject("Controller-writer hole body: "+id); }
+      let supplied: unknown = instance.bodies[id];
+      if (typeof supplied !== "string") { s.reject("Catalogue hole body must be text: "+id); }
+      body = supplied as string;
+    }
+    if (body.trim() === "") { s.reject("Empty hole body: "+id); }
+    if (body.length > 600) { s.reject("Hole body over 600 UTF-16 code units: "+id); }
+    let composed: string = "export function "+id+signature+" { "+body+" }\n";
+    let described: Record<string, unknown> = {};
+    try { described = JSON.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:composed,view:instance.fragment.view}))); }
+    catch (unknownError) { let error: Error = unknownError as Error; if (error.name === "CONSTRUCTION_SCHEMA") { throw error; } s.reject("Catalogue hole body is not valid syntax: "+id); }
+    let declared: Record<string, unknown>[] = decoded.records(described.functions);
+    if (declared.length !== 1 || (declared[0].name as string) !== id) {
+      for (let fn of declared) { let name: string = fn.name as string; if (name !== id) { s.reject("Catalogue hole body declaration: "+instance.id+" "+name); } }
+      s.reject("Hole body changes the composed function signature: duplicate "+id);
+    }
+    if (decoded.records(described.classes).length !== 0) { s.reject("Hole body declares a top-level class: "+id); }
+    // Only the original view's imports may occur; a body must not escape into an import.
+    let baseline: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:"",view:instance.fragment.view})));
+    if (s.encode(described.imports) !== s.encode(baseline.imports) || s.encode(described.views) !== s.encode(baseline.views)) { s.reject("Catalogue hole body import or view: "+instance.id+" "+id); }
+    result = result+composed;
+  }
+  return result;
+}
+function readyExpression(source: bindings.Source): string {
+  if (source.ready === "true" || source.ready === "") { return "true"; }
+  return "state."+source.ready;
+}
+function addUnique(values: string[], value: string): void { if (!s.contains(values,value)) { values[values.length] = value; } }
+function issuedField(fields: Field[], name: string): boolean { for (let entry of fields) { if (entry.name === name) { return true; } } return false; }
+// A slot's `reads` is the need read subset that resolves to an issued plan or composition source
+// identifier, so a read this candidate never issued is not carried as a route admission would check.
+function issuedReads(reads: string[], sources: string[], needs: string[]): string[] {
+  let result: string[] = [];
+  for (let read of reads) { if (s.contains(sources,read) || s.contains(needs,read)) { result[result.length] = read; } }
+  return result;
+}
+export async function assembleWith(composition: screens.Composition, computations: Computation[], registry: bindings.Registry, chatRoot: ChatRoot | null): Promise<Result> {
   let imports: Import[] = [{module:"std/time",alias:"embeddingClock"}];
-  let prepared: Prepared[] = []; let allFields: Field[] = []; let namesByInstance: Record<string, unknown> = {}; let fieldsByInstance: Record<string, unknown> = {}; let typesByInstance: Record<string, unknown> = {}; let factsByInstance: Record<string, unknown> = {}; let declarationsByInstance: Record<string, unknown> = {}; let helpersByInstance: Record<string, unknown> = {};
-  let instances: string[] = []; let owners: string[] = []; let storageNames: string[] = [];
+  let prepared: Prepared[] = []; let allFields: Field[] = []; let namesByInstance: Record<string, unknown> = {}; let fieldsByInstance: Record<string, unknown> = {}; let typesByInstance: Record<string, unknown> = {}; let factsByInstance: Record<string, unknown> = {}; let modulesByInstance: Record<string, unknown> = {}; let completionsByInstance: Record<string, unknown> = {}; let exportedByInstance: Record<string, unknown> = {};
+  let instances: string[] = []; let storageNames: string[] = [];
+  // Parsed syntax facts per instance: ownership and storage admission decide over these.
+  let ownershipFacts: Record<string, unknown> = {}; let holesByInstance: Record<string, unknown> = {};
+  for (let instance of composition.screen.instances) {
+    let holes: string = await holeFunctions(instance); holesByInstance[instance.id] = holes;
+    ownershipFacts[instance.id] = JSON.parse(await syntax.analyzeFunctions(s.encode({source:instance.fragment.declarations+"\n"+instance.fragment.helpers+"\n"+holes})));
+  }
+  let allComputations: Computation[] = [];
+  for (let computation of computations) { allComputations[allComputations.length] = computation; }
   for (let instance of composition.screen.instances) {
     s.unique(instances,s.identifier(instance.id));
-    for (let resource of instance.fragment.owns) { s.unique(owners,resource); }
-    // Hole bodies are keyed by the hole identities the instance issues. A body for an unissued hole,
-    // a duplicate key (refused by the JSON decoder before this point), a non-text body, a body over
-    // the 600 UTF-16 bound and any body for a controller-writer hole reject before emission; an
-    // issued body replaces the compiling default in place and never changes the signature or a
-    // parameter value.
-    let sourceDeclarations: string = instance.fragment.declarations; let sourceHelpers: string = instance.fragment.helpers;
-    let holeIds: string[] = [];
-    // The instance declarations, helpers and imports the default bodies already compile against are
-    // the baseline a body may use; nothing the body adds may survive into the emitted fragment.
-    let baseline: Record<string, unknown> | null = null;
-    if (instance.fragment.holes.length > 0) { baseline = JSON.parse(await syntax.describe(s.encode({classes:sourceDeclarations,fields:"",functions:sourceHelpers,view:instance.fragment.view}))); }
-    for (let declared of instance.fragment.holes) {
-      let holeId: string = s.identifier(declared.id); s.unique(holeIds,holeId);
-      let signature: string = s.nonblank(declared.signature); let writer: string = s.oneOf(declared.writer,["fill","controller"]); s.text(declared.requires);
-      let bodyText: string = s.text(declared.body);
-      if (!(JSON.stringify(bodyText) as string).startsWith("\"")) { s.reject("Catalogue hole body must be text: "+holeId); }
-      if (Object.hasOwn(instance.bodies,holeId)) {
-        if (writer !== "fill") { s.reject("Controller-writer hole body: "+holeId); }
-        let issued: unknown = instance.bodies[holeId];
-        if (!(JSON.stringify(issued) as string).startsWith("\"")) { s.reject("Catalogue hole body must be text: "+holeId); }
-        bodyText = s.text(issued);
-        if (bodyText.length > 600) { s.reject("Catalogue hole body bound: "+holeId); }
-        // A body is parsed with the fragment declarations, helpers and checked imports before commit;
-        // an authored body that is not valid syntax rejects the instance with its hole identifier
-        // instead of silently keeping the default and reporting the customization covered. Semantic
-        // resolution of the emitted pair stays with the whole-source checker, which reports source
-        // diagnostics for the assembled candidate.
-        let parsed: boolean = true;
-        try { await syntax.describe(s.encode({classes:sourceDeclarations,fields:"",functions:sourceHelpers+" export function "+holeId+signature+" { "+bodyText+" }",view:instance.fragment.view})); }
-        catch (unknownError) { parsed = false; }
-        if (!parsed) { s.reject("Catalogue hole body is not valid syntax: "+holeId); }
-      }
-      // A hole is a versioned helper: its issued body replaces the compiling default in place and
-      // keeps its signature, so a later computation or reducer calls the same read-only function.
-      sourceHelpers = sourceHelpers+" export function "+holeId+signature+" { "+bodyText+" }";
+    // A fragment that conflicts with the definition its instance was issued from rejects before any
+    // emission: field names, resolved types, roles, defaults, ports, actions and hole signatures come
+    // from the issued definition, never from a replacement fragment.
+    let conflict: string = screens.conflict(instance);
+    if (conflict !== "") { s.reject(conflict); }
+    // A declared `owns` entry grants no permission and gates nothing here either: ownership is decided
+    // over the qualified authoritative resources the reducers write, so two instances declaring one
+    // `owns` spelling with disjoint written resources are simply accepted.
+    let raw: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
+    // A completion action is the declared result action of an outer effect; it is reachable through
+    // that effect, never from a view binding. Hole functions are never asynchronous, so an effect is
+    // always a helper function of this region.
+    let completions: string[] = [];
+    for (let effect of instance.fragment.effects) { for (let fn of decoded.records(raw.functions)) { if ((fn.name as string) === effect.function) {
+      let parts: string[] = (fn.result as string).split(".");
+      completions[completions.length] = parts[parts.length-1] as string;
+    } } }
+    // A completion is the declared result action of an outer effect and must be an exported update
+    // handler of the same owner: an asynchronous consequence that resolves to an action no reducer
+    // handles is rejected with the instance and the action instead of being dispatched and lost.
+    for (let completion of completions) {
+      let handled: boolean = false;
+      for (let handler of instance.fragment.updates) { if (handler.action === completion) { handled = true; } }
+      if (!handled) { s.reject("Undeclared effect completion: "+instance.id+"."+completion); }
     }
-    for (let issued of tables.keys(instance.bodies)) { if (!s.contains(holeIds,issued)) { s.reject("Unissued body: "+issued); } }
-    let raw: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:sourceDeclarations,fields:"",functions:sourceHelpers,view:instance.fragment.view})));
-    if (baseline !== null) { checkBodySurfaces(instance.id,baseline as Record<string, unknown>,raw,holeIds); }
-    declarationsByInstance[instance.id] = sourceDeclarations; helpersByInstance[instance.id] = sourceHelpers;
+    completionsByInstance[instance.id] = completions;
+    // The action classes this owner exports; a view may bind those and nothing else.
+    let exported: string[] = [];
+    for (let declaration of decoded.records(raw.classes)) { if (declaration.exported as boolean) { exported[exported.length] = s.identifier(declaration.name); } }
+    exportedByInstance[instance.id] = exported;
+    // An effect completion must also be an action class this owner exports; a result action no
+    // declaration carries cannot be constructed or dispatched.
+    for (let completion of completions) { if (!s.contains(exported,completion)) { s.reject("Undeclared effect completion: "+instance.id+"."+completion); } }
     let names: Record<string, unknown> = {}; let fieldNames: Record<string, unknown> = {}; let types: Record<string, unknown> = {};
     for (let category of ["classes","functions","views"]) {
-      for (let declaration of decoded.records(raw[category])) { if (s.text(declaration.name) === "") { s.reject("Empty fragment declaration name in "+instance.id); } let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent" || name === "bridgePersistedState" || name === "bridgeRestoredState") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
+      for (let declaration of decoded.records(raw[category])) { let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent" || name === "expireOperations" || name === "recordExpiry" || name === "bump" || name === "bridgePersistedState" || name === "bridgeRestoredState") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
     }
-    for (let item of decoded.records(raw.imports)) { if (s.text(item.alias) === "") { s.reject("Empty fragment import alias in "+instance.id); } let alias: string = s.identifier(item.alias); if (Object.hasOwn(names,alias)) { s.reject("Import/declaration conflict"); } let bound: string = qualified(instance.id,alias); names[alias] = bound; addImport(imports,s.nonblank(item.module),bound); }
+    for (let hole of instance.fragment.holes) { let name: string = s.identifier(hole.id); if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
+    let aliases: Record<string, unknown> = {};
+    for (let item of decoded.records(raw.imports)) {
+      let alias: string = s.identifier(item.alias); let module: string = s.nonblank(item.module);
+      if (Object.hasOwn(names,alias)) { s.reject("Import/declaration conflict"); }
+      if (!permitted(registry,module)) { s.reject("unissued module "+module+" in "+instance.id); }
+      aliases[alias] = module;
+      let bound: string = qualified(instance.id,alias); names[alias] = bound; addImport(imports,module,bound);
+    }
+    await storageConfined(instance,aliases,ownershipFacts[instance.id] as Record<string, unknown>);
     let views: Record<string, unknown>[] = decoded.records(raw.views);
-    if (views.length !== 1 || !(views[0].exported as boolean) || (views[0].root as boolean)) { s.reject("Fragment requires one exported nonroot view"); }
+    // A fragment declares one exported view. Whether that view is a fragment-declared root is reported
+    // by the qualification mechanism and decided by the compiled ownership policy below.
+    if (views.length !== 1 || !(views[0].exported as boolean)) { s.reject("Fragment requires one exported view: "+instance.id); }
     let parameters: Record<string, unknown>[] = decoded.records(views[0].parameters);
     if (parameters.length !== 1 || (parameters[0].type as string) !== "app.AppState") { s.reject("Fragment view must receive app.AppState"); }
     let localNames: string[] = [];
-    for (let item of instance.fragment.fields) { s.unique(localNames,item.name); if (item.owner !== instance.id) { s.reject("Foreign field owner"); } fieldNames[item.name] = qualified(instance.id,item.name); types[item.name] = item.type; if (item.role === "derived") { fieldNames[item.name+"_ready"] = qualified(instance.id,item.name)+"_ready"; fieldNames[item.name+"_reason"] = qualified(instance.id,item.name)+"_reason"; types[item.name+"_ready"] = "boolean"; types[item.name+"_reason"] = "string"; if (primitive(item.type)) { fieldNames[item.name+"_display"] = qualified(instance.id,item.name)+"_display"; types[item.name+"_display"] = item.type; } } }
+    for (let item of instance.fragment.fields) { s.unique(localNames,item.name); if (item.owner !== instance.id) { s.reject("Foreign field owner"); } fieldNames[item.name] = qualified(instance.id,item.name); types[item.name] = item.type; if (item.role === "derived") { fieldNames[item.name+"_ready"] = qualified(instance.id,item.name)+"_ready"; fieldNames[item.name+"_reason"] = qualified(instance.id,item.name)+"_reason"; types[item.name+"_ready"] = "boolean"; types[item.name+"_reason"] = "string"; if (displayable(item.type)) { fieldNames[item.name+"_display"] = qualified(instance.id,item.name)+"_display"; types[item.name+"_display"] = item.type; } } }
     for (let connection of composition.connections) { if (connection.readerInstance === instance.id) {
       let reader: screens.Port | null = null; let writer: screens.Port | null = null; let writerField: screens.Field | null = null;
       for (let port of instance.fragment.ports) { if (port.name === connection.readerPort && port.direction === "read") { reader = port; } }
@@ -159,75 +318,302 @@ export async function assemble(composition: screens.Composition, computations: C
           fieldNames[port.getter+suffix] = qualified(connection.writerInstance,publisher.name)+suffix;
           if (suffix === "_ready") { types[port.getter+suffix] = "boolean"; } else { types[port.getter+suffix] = "string"; }
         }
-        if (primitive(publisher.type)) { fieldNames[port.getter+"_display"] = qualified(connection.writerInstance,publisher.name)+"_display"; types[port.getter+"_display"] = publisher.type; }
+        if (displayable(publisher.type)) { fieldNames[port.getter+"_display"] = qualified(connection.writerInstance,publisher.name)+"_display"; types[port.getter+"_display"] = publisher.type; }
       }
     } }
-    let importModules: Record<string, unknown> = {}; for (let item of decoded.records(raw.imports)) { let alias: string = item.alias as string; importModules[alias] = item.module; }
-    // An unconnected optional reader takes its assembly fallback: the emitted field is the declared
-    // fallback source value of the port's own type, so a section that reads an optional query still
-    // compiles and runs without inventing a publisher.
-    let fallbackNames: string[] = []; let fallbackTypes: string[] = []; let fallbackSources: string[] = [];
-    for (let port of instance.fragment.ports) { if (port.direction === "read" && port.optional) {
-      let connected: boolean = false; for (let connection of composition.connections) { if (connection.readerInstance === instance.id && connection.readerPort === port.name) { connected = true; } }
-      if (connected) { continue; }
+    // An optional unconnected reader holds its typed, assembly-owned fallback.
+    // It is not a missing publisher result and remains nonnullable in fragment helpers.
+    let unsupplied: screens.Port[] = [];
+    for (let port of instance.fragment.ports) { if (port.direction === "read") {
+      let served: boolean = false;
+      for (let connection of composition.connections) { if (connection.readerInstance === instance.id && connection.readerPort === port.name) { served = true; } }
+      if (served) { continue; }
+      if (!port.optional || !Object.hasOwn(port,"fallback")) { s.reject("Missing required publisher: "+instance.id+"/"+port.name); }
       if (Object.hasOwn(fieldNames,port.getter)) { s.reject("Reader field conflicts with owner field"); }
-      let fallback: string = ""; if (Object.hasOwn(port,"fallback")) { fallback = s.nonblank(port.fallback); }
       fieldNames[port.getter] = qualified(instance.id,port.getter); types[port.getter] = port.type;
-      fallbackNames[fallbackNames.length] = port.getter; fallbackTypes[fallbackTypes.length] = port.type; fallbackSources[fallbackSources.length] = fallback;
+      unsupplied[unsupplied.length] = port;
     } }
-    factsByInstance[instance.id] = await policy.inspect(sourceHelpers,importModules);
+    let importModules: Record<string, unknown> = {}; for (let item of decoded.records(raw.imports)) { let alias: string = item.alias as string; importModules[alias] = item.module; }
+    modulesByInstance[instance.id] = importModules;
+    factsByInstance[instance.id] = await policy.inspect(instance.fragment.helpers+(holesByInstance[instance.id] as string),importModules);
     namesByInstance[instance.id] = names; fieldsByInstance[instance.id] = fieldNames; typesByInstance[instance.id] = types;
-    let writable: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { writable[writable.length] = field.name; } }
-    let qualifiedSource: Record<string, unknown> = JSON.parse(await syntax.qualify(s.encode({declarations:sourceDeclarations,helpers:sourceHelpers,view:instance.fragment.view,names:names,fields:fieldNames,types:types,writable:writable})));
+    // Declared ownership grants no permission, so every claimed local is writable for qualification;
+    // the ownership map decides derived and foreign writes from parsed facts.
+    let writable: string[] = [];
+    for (let entry of instance.fragment.fields) { if (entry.role !== "derived") { writable[writable.length] = entry.name; } }
+    let holes: string = holesByInstance[instance.id] as string;
+    let qualifiedSource: Record<string, unknown> = JSON.parse(await syntax.qualify(s.encode({declarations:instance.fragment.declarations,helpers:instance.fragment.helpers+holes,view:instance.fragment.view,names:names,fields:fieldNames,types:types,writable:writable})));
+    for (let unissued of decoded.strings(qualifiedSource.unissuedWrites)) { s.reject("Write to a derived or foreign resource: "+instance.id+"."+unissued); }
+    // The syntax mechanism reports every fragment-declared root; compiled ownership policy decides and
+    // names the instance and the view it refuses.
+    for (let declaredRoot of decoded.strings(qualifiedSource.roots)) { s.reject("Fragment declares a root view: "+instance.id+"."+declaredRoot); }
     let resolvedTypes: Record<string, unknown> = qualifiedSource.types as Record<string, unknown>;
     let item: Prepared = {id:instance.id,declarations:qualifiedSource.declarations as string,helpers:qualifiedSource.helpers as string,view:qualifiedSource.view as string,fields:[],updates:instance.fragment.updates,effects:instance.fragment.effects,viewName:qualified(instance.id,views[0].name as string)};
     for (let source of instance.fragment.fields) {
-      let initial: string = "null"; if (source.role === "authoritative") { initial = await expression(source.initial,source.type,item,names,fieldNames,types,""); }
+      let initial: string = "null"; if (source.role !== "derived") { initial = await expression(source.initial,source.type,item,names,fieldNames,types,""); }
       let current: Field = {instance:instance.id,local:source.name,name:qualified(instance.id,source.name),type:resolvedTypes[source.name] as string,role:source.role,initial:initial};
       s.unique(storageNames,current.name);
-      if (current.role === "derived") { s.unique(storageNames,current.name+"_ready"); s.unique(storageNames,current.name+"_reason"); if (primitive(current.type)) { s.unique(storageNames,current.name+"_display"); } }
+      if (current.role === "derived") { s.unique(storageNames,current.name+"_ready"); s.unique(storageNames,current.name+"_reason"); if (displayable(current.type)) { s.unique(storageNames,current.name+"_display"); } }
       item.fields[item.fields.length] = current; allFields[allFields.length] = current;
     }
-    let fallback: number = 0;
-    while (fallback < fallbackNames.length) {
-      let local: string = fallbackNames[fallback]; let type: string = fallbackTypes[fallback]; let source: string = fallbackSources[fallback]; fallback = fallback+1;
-      let initial: string = await expression(source,type,item,names,fieldNames,types,"");
-      let current: Field = {instance:instance.id,local:local,name:qualified(instance.id,local),type:resolvedTypes[local] as string,role:"authoritative",initial:initial};
+    for (let port of unsupplied) {
+      let fallback: string = await expression(port.fallback as string,port.type,item,names,fieldNames,types,"");
+      let current: Field = {instance:instance.id,local:port.getter,name:qualified(instance.id,port.getter),type:resolvedTypes[port.getter] as string,role:"authoritative",initial:fallback};
       s.unique(storageNames,current.name);
       item.fields[item.fields.length] = current; allFields[allFields.length] = current;
     }
     prepared[prepared.length] = item;
   }
   if (prepared.length === 0) { s.reject("No runnable fragments"); }
+  // Ownership is decided over written resources, then composites are validated against the same map.
+  let map: ownership.Ownership = ownership.derive(composition.screen.instances,ownershipFacts);
+  let composites: screens.Composite[] = [];
+  if (Object.hasOwn(composition,"composites")) { for (let composite of composition.composites as screens.Composite[]) { composites[composites.length] = composite; } }
+  ownership.validateComposites(composition.screen.instances,composites,ownershipFacts);
+  // The ownership map and the instance facts are carried metadata, not a second authored assertion:
+  // resources come from the issued ownership derivation and writes from the parsed reducer facts of
+  // the compiled fragment, which admission then cross-checks against the compiled declarations.
+  let ownerRecords: ResourceRecord[] = [];
+  for (let resource of map.resources) { ownerRecords[ownerRecords.length] = {name:resource.name,owner:resource.instance,role:resource.role}; }
+  let instanceRecords: InstanceRecord[] = [];
+  for (let instance of composition.screen.instances) {
+    let writtenResources: string[] = ownership.writes(map,instance,ownershipFacts);
+    // A catalogue instance implements exactly its kind; a part instance issues the part kinds it built;
+    // a custom or notice implementation implements no issued kind.
+    let implemented: string[] = [];
+    if (instance.origin === "catalogue") { implemented[0] = instance.kind; }
+    else if (instance.origin === "part") { if (Object.hasOwn(instance.parameters,"kinds")) { implemented = decoded.strings(instance.parameters.kinds); } }
+    instanceRecords[instanceRecords.length] = {id:instance.id,kind:instance.kind,origin:instance.origin,kinds:implemented,writes:writtenResources};
+  }
+  // A descriptor owns one seeded string draft that at least one binding argument consumes, so assembly
+  // emits it as authoritative state of the composition together with its readiness. The intent panel
+  // renders that field; assembly only guarantees that the resource an issued operation depends on is
+  // emitted and that no model string can invent one.
+  for (let descriptor of registry.actions) {
+    if (!Object.hasOwn(descriptor,"input")) { continue; }
+    let input: bindings.Draft = descriptor.input as bindings.Draft;
+    let draftName: string = "draft_"+input.sourceId; let readyName: string = "ready_"+input.sourceId;
+    s.unique(storageNames,draftName); s.unique(storageNames,readyName);
+    allFields[allFields.length] = {instance:"descriptor",local:draftName,name:draftName,type:"string",role:"authoritative",initial:literals.quote(input.initial)};
+    allFields[allFields.length] = {instance:"descriptor",local:readyName,name:readyName,type:"boolean",role:"authoritative",initial:"true"};
+  }
+  // One operation backs one issued binding. Its dependency set is the authoritative resources its
+  // constructed arguments read plus the resource of the checked event trigger that raises it, never a
+  // plan `reads` list or an authored argument expression. The set is closed over the checked reads of
+  // the values those arguments consume: a publication's own computation names the resources it reads,
+  // so an edit of an upstream resource invalidates this invocation even when a derived result keeps
+  // the same value.
+  let producerReads: Record<string, unknown> = {};
+  for (let computation of allComputations) { producerReads[qualified(computation.instance,computation.field)] = computation.dependencies; }
+  let operations: OperationRecord[] = []; let conditions: string[] = [];
+  for (let binding of registry.bindings) {
+    let dependencies: string[] = []; let ready: string[] = [];
+    for (let key of tables.keys(binding.arguments)) {
+      let selected: bindings.Source = bindings.source(registry,binding.arguments[key] as string);
+      addUnique(dependencies,selected.getter);
+      if (selected.ready !== "true" && selected.ready !== "") { addUnique(dependencies,selected.ready); }
+      for (let dependency of selected.dependencies) { addUnique(dependencies,dependency); }
+      closeReads(dependencies,selected.getter,producerReads);
+      ready[ready.length] = readyExpression(selected);
+    }
+    // The trigger raises this operation, so the resource it raises from belongs to the operation's
+    // own revision set: the countdown completion counter, the entries records collection or the issued
+    // time source. Every trigger is raised from a resource this assembly issues, so a candidate whose
+    // route has none rejects with the action and the trigger instead of carrying a dependency that
+    // never changes. A row tap over a list that emits no records collection has no row resource either:
+    // a plan argument cannot carry a row identity, so that route does not exist.
+    let triggerKind: string = ""; let triggerTarget: string = "";
+    for (let entry of composition.screen.slots) { if (entry.need === binding.id && Object.hasOwn(entry,"event")) { triggerKind = s.text(entry.event); triggerTarget = s.identifier(entry.trigger); } }
+    let triggerValue: string = ""; let rowKeyResource: string = "";
+    if (triggerKind !== "") {
+      if (triggerKind === "countdown_end") { triggerValue = "f_parts_triggered_"+triggerTarget; }
+      else if (triggerKind === "time") {
+        if (!bindings.issued(registry,triggerTarget)) { s.reject("Trigger time source is not issued: "+binding.id+" "+triggerTarget); }
+        let timeSource: bindings.Source = bindings.source(registry,triggerTarget); triggerValue = timeSource.getter;
+        if (timeSource.ready !== "true" && timeSource.ready !== "") { addUnique(dependencies,timeSource.ready); }
+      } else if (triggerKind === "row_tap") {
+        // A row tap is raised from one captured row. The operation observes that row's own identity and
+        // values, never the collection that contains it, so an unrelated row edit leaves it current.
+        rowKeyResource = "f_parts_rowKey_"+binding.id; triggerValue = rowKeyResource;
+      } else { triggerValue = "f_parts_records_"+triggerTarget; }
+      if (!issuedField(allFields,triggerValue)) { s.reject("Trigger resource is not issued: "+binding.id+" "+triggerKind+" "+triggerTarget); }
+      // The trigger resource is part of the same closed set: a derived time source contributes the
+      // resources it reads, so an upstream edit invalidates the invocation it raises.
+      closeReads(dependencies,triggerValue,producerReads);
+      addUnique(dependencies,triggerValue);
+    }
+    if (tables.keys(binding.arguments).length > 0 && dependencies.length === 0) { s.reject("Operation constructs arguments from state without a dependency set: "+binding.id); }
+    for (let dependency of dependencies) {
+      let issued: boolean = false;
+      for (let entry of allFields) { if (entry.name === dependency || (entry.role === "derived" && (entry.name+"_ready" === dependency || entry.name+"_reason" === dependency))) { issued = true; } }
+      if (!issued) { s.reject("Dependency set names an unissued resource: "+binding.id+" "+dependency); }
+    }
+    if (triggerKind === "row_tap" && !issuedField(allFields,rowKeyResource)) { s.reject("Row tap has no captured row identity: "+binding.id+" "+rowKeyResource); }
+    let condition: string = ""; for (let item of ready) { if (item === "true") { continue; } if (condition === "") { condition = item; } else { condition = condition+" && "+item; } }
+    if (condition === "") { condition = "true"; }
+    operations[operations.length] = {id:binding.id,owner:binding.owner,module:binding.module,function:binding.function,trigger:triggerKind,triggerResource:triggerValue,rowKey:rowKeyResource,dependencies:dependencies,arguments:binding.arguments,expires:"expires_"+binding.id,expired:"expired_"+binding.id};
+    conditions[conditions.length] = condition;
+    for (let suffix of ["revision","status","sequence","phase"]) {
+      let name: string = suffix+"_"+binding.id; s.unique(storageNames,name);
+      let still: string = "0"; if (suffix === "status") { still = "\"idle\""; } else if (suffix === "phase") { still = "\"\""; }
+      let entry: Field = {instance:"operation",local:name,name:name,type:(suffix === "status" || suffix === "phase") ? "string" : "number",role:"authoritative",initial:still};
+      allFields[allFields.length] = entry;
+    }
+    // The expiry prerequisites of this operation beside its status, sequence and phase. The instant is
+    // what admission records from the captured request time and the relative or supplied absolute
+    // expiry, 0 meaning no expiry; the unexpired flag is what compiled policy materializes from it.
+    // Both are authoritative, so a cold restore keeps the recorded deadline and the expired state that
+    // survived with it, and the currentness hook reads the flag rather than source.
+    for (let suffix of ["expires","expired"]) {
+      let name: string = suffix+"_"+binding.id; s.unique(storageNames,name);
+      let still: string = "0"; let kind: string = "number";
+      if (suffix === "expired") { still = "false"; kind = "boolean"; }
+      allFields[allFields.length] = {instance:"operation",local:name,name:name,type:kind,role:"authoritative",initial:still};
+    }
+  }
+  // A frozen chat target with more than one retained fragment emits one labelled Tabs root with an
+  // authoritative selected index; every other target and a single-fragment chat emits no wrapper.
+  let chat: boolean = false;
+  if (composition.screen.target === "chat") {
+    if (prepared.length > 1) {
+      if (chatRoot === null) { s.reject("Multi-fragment chat target requires the issued chat root"); }
+      let root: ChatRoot = chatRoot as ChatRoot;
+      if (root.children.length !== prepared.length) { s.reject("Chat root child count differs from the placed instances"); }
+      let index: number = 0;
+      while (index < prepared.length) {
+        let child: ChildLabel = root.children[index];
+        if (child.instance !== prepared[index].id) { s.reject("Chat root child order differs from placement order: "+child.instance); }
+        s.nonblank(child.label);
+        index = index+1;
+      }
+      if (s.integral(root.initialSelection) < 0 || root.initialSelection >= prepared.length) { s.reject("Chat root initial selection outside the child range"); }
+      s.unique(storageNames,"chat_selected");
+      allFields[allFields.length] = {instance:"chat",local:"chat_selected",name:"chat_selected",type:"number",role:"authoritative",initial:String(root.initialSelection)};
+      // Labels are the generation-issued ones, carried as authoritative state so assembly derives no
+      // label text and the view binds a prepared array rather than a view-level literal.
+      let issuedLabels: string = ""; let labelSeparator: string = "";
+      for (let child of root.children) { issuedLabels = issuedLabels+labelSeparator+literals.quote(child.label); labelSeparator = ", "; }
+      s.unique(storageNames,"chat_labels");
+      allFields[allFields.length] = {instance:"chat",local:"chat_labels",name:"chat_labels",type:"string[]",role:"authoritative",initial:"["+issuedLabels+"]"};
+      chat = true;
+    } else if (chatRoot !== null) { s.reject("Single-fragment chat target emits no chat root wrapper"); }
+  } else if (chatRoot !== null) { s.reject("Chat root outside a chat target"); }
   let preserved: string[] = [];
-  for (let field of allFields) { preserved[preserved.length] = field.name; if (field.role === "derived") { preserved[preserved.length] = field.name+"_ready"; preserved[preserved.length] = field.name+"_reason"; if (primitive(field.type)) { preserved[preserved.length] = field.name+"_display"; } } }
+  for (let entry of allFields) { preserved[preserved.length] = entry.name; if (entry.role === "derived") { preserved[preserved.length] = entry.name+"_ready"; preserved[preserved.length] = entry.name+"_reason"; if (displayable(entry.type)) { preserved[preserved.length] = entry.name+"_display"; } } }
+  // The action names each emitted view binds, reported by the qualification mechanism. They are
+  // resolved against every placed owner below, so a foreign view may bind another owner's export.
+  let viewActionsByInstance: Record<string, unknown> = {};
   for (let item of prepared) {
     for (let instance of composition.screen.instances) { if (instance.id === item.id) {
-      let writable: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { writable[writable.length] = field.name; } }
-      let projection: Record<string, unknown> = JSON.parse(await syntax.qualify(s.encode({declarations:declarationsByInstance[item.id] as string,helpers:helpersByInstance[item.id] as string,view:instance.fragment.view,names:namesByInstance[item.id],fields:fieldsByInstance[item.id],types:typesByInstance[item.id],preserved:preserved,writable:writable})));
+      let writable: string[] = []; for (let entry of instance.fragment.fields) { if (entry.role !== "derived") { writable[writable.length] = entry.name; } }
+      let projection: Record<string, unknown> = JSON.parse(await syntax.qualify(s.encode({declarations:instance.fragment.declarations,helpers:instance.fragment.helpers+(holesByInstance[instance.id] as string),view:instance.fragment.view,names:namesByInstance[item.id],fields:fieldsByInstance[item.id],types:typesByInstance[item.id],preserved:preserved,writable:writable})));
+      for (let unissued of decoded.strings(projection.unissuedWrites)) { s.reject("Write to a derived or foreign resource: "+item.id+"."+unissued); }
+      // The emission qualification reports the same root fact, so this second compiled decision keeps a
+      // fragment-declared root out of the emitted pair even if the first check were bypassed.
+      for (let declaredRoot of decoded.strings(projection.roots)) { s.reject("Fragment declares a root view: "+item.id+"."+declaredRoot); }
+      viewActionsByInstance[item.id] = decoded.strings(projection.viewActions);
       item.declarations = projection.declarations as string; item.helpers = projection.helpers as string; item.view = projection.view as string;
     } }
   }
+  // A view binds an exported nominal action of a placed owner, its own or another's. The emitted
+  // binding names the qualified action class, so each bound name resolves to the owner that declares
+  // and handles that class; a name no placed owner declares as a handled action rejects, and the
+  // resolution is what makes the target owner's handler reachable.
+  let boundByInstance: Record<string, unknown> = {};
+  // The action classes an owner declares a reducer for: a bound class is an action only when its
+  // owner also handles it, so a data class of another owner is never mistaken for an action.
+  let handledByInstance: Record<string, unknown> = {};
+  for (let instance of composition.screen.instances) { let names: string[] = []; for (let handler of instance.fragment.updates) { addUnique(names,handler.action); } handledByInstance[instance.id] = names; }
+  // One emitted name per qualified declaration of every placed owner, including data classes, helpers,
+  // views, holes and import aliases: two owners whose ids and local names concatenate to one spelling
+  // (an id may contain an underscore) would emit two declarations of that name, so the collision is
+  // refused once here, naming both owners, before any view, effect or composite resolves it. Every value
+  // in `names` is the qualified spelling of its own instance, so a legal composition never collides.
+  let emittedNames: Record<string, unknown> = {};
+  for (let instance of composition.screen.instances) {
+    let declared: Record<string, unknown> = namesByInstance[instance.id] as Record<string, unknown>;
+    for (let local of tables.keys(declared)) {
+      let emitted: string = s.text(declared[local]); let claimed: string = instance.id+"."+local;
+      if (Object.hasOwn(emittedNames,emitted)) { s.reject("Ambiguous qualified declaration name: "+emitted+" for "+s.text(emittedNames[emitted])+" and "+claimed); }
+      emittedNames[emitted] = claimed;
+    }
+  }
+  for (let item of prepared) {
+    let names: Record<string, unknown> = namesByInstance[item.id] as Record<string, unknown>;
+    for (let bound of decoded.strings(viewActionsByInstance[item.id])) {
+      let emitted: string = bound; if (Object.hasOwn(names,bound)) { emitted = names[bound] as string; }
+      let matched: boolean = false;
+      for (let other of composition.screen.instances) {
+        let handled: string[] = decoded.strings(handledByInstance[other.id]);
+        for (let exported of decoded.strings(exportedByInstance[other.id])) { if (s.contains(handled,exported) && qualified(other.id,exported) === emitted) {
+          matched = true;
+          let reached: string[] = [];
+          if (Object.hasOwn(boundByInstance,other.id)) { reached = boundByInstance[other.id] as string[]; }
+          addUnique(reached,exported);
+          boundByInstance[other.id] = reached;
+        } }
+      }
+      if (!matched) { s.reject("Undeclared view action: "+item.id+"."+bound); }
+    }
+  }
+  // Every exported action handler is reachable through a bound view action, an effect, a composite or
+  // the trigger-dispatched row capture; a handler no issued route reaches rejects instead of shipping
+  // dead behavior.
+  for (let item of prepared) {
+    for (let instance of composition.screen.instances) { if (instance.id === item.id) {
+      let viewActions: string[] = []; if (Object.hasOwn(boundByInstance,item.id)) { viewActions = boundByInstance[item.id] as string[]; }
+      let completions: string[] = decoded.strings(completionsByInstance[item.id]);
+      for (let handler of instance.fragment.updates) {
+        let reachable: boolean = s.contains(viewActions,handler.action) || s.contains(completions,handler.action);
+        for (let effect of instance.fragment.effects) { if (effect.action === handler.action) { reachable = true; } }
+        for (let composite of (composition.composites ?? [])) { for (let arm of composite.arms) { if (arm.instance === instance.id && arm.action === handler.action) { reachable = true; } } }
+        // A row_tap operation is raised from the captured row, so the capture reducer the trigger
+        // consumer dispatches is a real route to this handler even though no view binds it.
+        for (let operation of operations) { if (operation.trigger === "row_tap" && handler.action === "CaptureRow_"+operation.id && operation.rowKey === qualified(instance.id,"rowKey_"+operation.id)) { reachable = true; } }
+        if (!reachable) { s.reject("Unreachable action handler: "+instance.id+"."+handler.action); }
+      }
+    } }
+  }
   let producers: string[] = [];
-  for (let computation of computations) { let target: Field = field(allFields,computation.instance,computation.field); if (target.role !== "derived") { s.reject("Derived producer targets authoritative field"); } s.unique(producers,target.name); }
+  for (let computation of allComputations) { let target: Field = field(allFields,computation.instance,computation.field); if (target.role !== "derived") { s.reject("Derived producer targets authoritative field"); } s.unique(producers,target.name); }
   for (let item of allFields) { if (item.role === "derived" && !s.contains(producers,item.name)) { s.reject("Missing derived producer"); } }
   let declarations: string = importSource(imports)+"export class AppState {\n";
-  for (let item of allFields) { let type: string = item.type; if (item.role === "derived") { type = "("+type+" | null)"; } declarations = declarations+"  "+item.name+": "+type+";\n"; if (item.role === "derived") { declarations = declarations+"  "+item.name+"_ready: boolean;\n  "+item.name+"_reason: string;\n"; if (primitive(item.type)) { declarations = declarations+"  "+item.name+"_display: "+item.type+";\n"; } } }
+  for (let item of allFields) { let type: string = item.type; if (item.role === "derived") { type = "("+type+" | null)"; } declarations = declarations+"  "+item.name+": "+type+";\n"; if (item.role === "derived") { declarations = declarations+"  "+item.name+"_ready: boolean;\n  "+item.name+"_reason: string;\n"; if (displayable(item.type)) { declarations = declarations+"  "+item.name+"_display: "+item.type+";\n"; } } }
   declarations = declarations+"}\n";
+  // A descriptor's seeded draft is editable state of the composition: the intent panel dispatches this
+  // issued nominal action and the reducer writes the draft field its binding consumes. The field and the
+  // action identity come from the same registry assembly consumed, never from model source.
+  for (let descriptor of registry.actions) {
+    if (!Object.hasOwn(descriptor,"input")) { continue; }
+    let input: bindings.Draft = descriptor.input as bindings.Draft;
+    let draftName: string = "draft_"+input.sourceId; let readyName: string = "ready_"+input.sourceId;
+    let changes: Record<string, unknown> = {}; changes[draftName] = "action.value"; changes[readyName] = "true";
+    declarations = declarations+"export class Draft_"+input.sourceId+" { value: string; }\nexport function draftAction_"+input.sourceId+"(state: AppState, action: Draft_"+input.sourceId+"): AppState { return "+copyExpression(allFields,changes,"state")+"; }\nexport function update_Draft_"+input.sourceId+"(state: AppState, action: Draft_"+input.sourceId+"): AppState { let updated: AppState = recompute(draftAction_"+input.sourceId+"(state, action)); return bump(updated, state); }\n";
+  }
   let viewImports: Import[] = [{module:"./experience",alias:"app"},{module:"./platform.dealui-pack",alias:"ui"}];
   for (let instance of composition.screen.instances) {
     let facts: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
     let names: Record<string, unknown> = namesByInstance[instance.id] as Record<string, unknown>;
-    for (let item of decoded.records(facts.viewImports)) { let alias: string = item.alias as string; if (Object.hasOwn(names,alias)) { alias = names[alias] as string; } addImport(viewImports,item.module as string,alias); }
+    for (let item of decoded.records(facts.viewImports)) { let alias: string = item.alias as string; if (Object.hasOwn(names,alias)) { alias = names[alias] as string; } if (!permitted(registry,item.module as string)) { s.reject("unissued module "+(item.module as string)+" in "+instance.id); } // A view is never an effect function, so the Experience store is not reachable from it.
+      if ((item.module as string) === "host/storage") { s.reject("effect-bound storage: "+instance.id+"/"+alias+" in view"); }
+      addImport(viewImports,item.module as string,alias); }
   }
   let viewSource: string = importSource(viewImports);
   let actions: string[] = []; let effects: string[] = [];
   for (let item of prepared) {
     declarations = declarations+item.declarations+item.helpers;
+    // One placed fragment is the composition root itself: its own view is the root node source, so no
+    // pass-through Main is emitted (a view body must produce exactly one root node, not another view).
+    if (prepared.length === 1) { viewSource = viewSource+"// @ui-root\n"; }
     viewSource = viewSource+item.view;
     for (let update of item.updates) {
       let action: string = qualified(item.id,update.action); s.unique(actions,action);
-      declarations = declarations+"// @ui-update\nexport function update_"+action+"(state: AppState, action: "+action+"): AppState {\n  return recompute("+qualified(item.id,update.function)+"(state, action));\n}\n";
+      // A captured-row update is dispatched by the trigger consumer from issued metadata, never by a
+      // view action, so it carries no UI update marker; every other owner reducer is a UI update.
+      let capture: boolean = false;
+      for (let operation of operations) { if (operation.trigger === "row_tap" && update.action === "CaptureRow_"+operation.id && operation.rowKey === qualified(item.id,"rowKey_"+operation.id)) { capture = true; } }
+      let marker: string = "// @ui-update\n"; if (capture) { marker = ""; }
+      declarations = declarations+marker+"export function update_"+action+"(state: AppState, action: "+action+"): AppState {\n  let updated: AppState = recompute("+qualified(item.id,update.function)+"(state, action));\n  return bump(updated, state);\n}\n";
     }
     for (let effect of item.effects) {
       let action: string = qualified(item.id,effect.action); s.unique(effects,action);
@@ -240,10 +626,76 @@ export async function assemble(composition: screens.Composition, computations: C
       declarations = declarations+"// @ui-effect\nexport async function effect_"+action+"(state: AppState, action: "+action+"): Promise<"+result+"> {\n  return await "+qualified(item.id,effect.function)+"(state, action);\n}\n";
     }
   }
+  // Composite actions are synchronous transactions, not asynchronous effect chains: one
+  // composition-scope nominal identity with per-arm payloads whose ordered owner reducers run against
+  // one candidate, followed by a single recompute/validate and one commit. No arm commits and no
+  // effect starts before the transaction succeeds. The dispatch identity is issued metadata.
+  // The currentness hook is emitted once per assembly with the spec signature. Only an issued
+  // operation with a matching sequence, phase, revision, an unexpired prerequisite and the readiness
+  // of its arguments is current.
+  let hook: string = "export function invocationCurrent(state: AppState, operationId: string, sequence: number, phase: string, revision: number): boolean {\n";
+  let operationIndex: number = 0;
+  while (operationIndex < operations.length) {
+    let operation: OperationRecord = operations[operationIndex]; let ready: string = conditions[operationIndex];
+    hook = hook+"  if (operationId === "+literals.quote(operation.id)+") { return state."+"status_"+operation.id+" === \"pending\" && state."+"sequence_"+operation.id+" === sequence && state."+"phase_"+operation.id+" === phase && state."+"revision_"+operation.id+" === revision && state."+operation.expired+" === false && "+ready+"; }\n";
+    operationIndex = operationIndex+1;
+  }
+  hook = hook+"  return false;\n}\n";
+  // The expiry transition decides the one prerequisite the hook cannot: the Session supplies the
+  // reading its lane admitted and compiled policy compares it with each recorded instant. An
+  // undecidable reading expires an operation that has a deadline, and an operation that already
+  // expired is never re-trusted, so a later matched reading cannot make it current again.
+  let expirySource: string = "export function expireOperations(state: AppState, at: number): AppState {\n";
+  if (operations.length === 0) { expirySource = expirySource+"  return state;\n}\n"; }
+  else {
+    let expiredChanges: Record<string, unknown> = {};
+    for (let operation of operations) {
+      let name: string = operation.expired;
+      expirySource = expirySource+"  let "+name+": boolean = state."+name+";\n  if (!"+name+" && state."+operation.expires+" !== 0 && (!Number.isFinite(at) || at >= state."+operation.expires+")) { "+name+" = true; }\n";
+      expiredChanges[name] = name;
+    }
+    expirySource = expirySource+"  return recompute("+copyExpression(allFields,expiredChanges,"state")+");\n}\n";
+  }
+  // Admission records the deadline of the invocation it admits through this transition: the recorded
+  // instant (0 meaning no expiry), the cleared prerequisite and the admission reading belong to the same
+  // decision, so an explicit retry is not refused forever by the deadline of the invocation it replaces.
+  // A deadline the admission reading has already passed is refused exactly as the compiled operation
+  // model refuses "Operation expiry before admission", so the two policies never disagree. Recording the
+  // prerequisite never re-trusts the correlation of the expired invocation: admission captures the new
+  // sequence and phase before it records, and the hook compares them.
+  let recordExpiry: string = "export function recordExpiry(state: AppState, operationId: string, expiresAt: number, admittedAt: number): AppState {\n";
+  if (operations.length === 0) { recordExpiry = recordExpiry+"  return state;\n}\n"; }
+  else {
+    recordExpiry = recordExpiry+"  if (expiresAt !== 0 && (!Number.isFinite(expiresAt) || expiresAt < 0 || expiresAt < admittedAt)) { return state; }\n";
+    for (let operation of operations) {
+      let changes: Record<string, unknown> = {}; changes[operation.expires] = "expiresAt"; changes[operation.expired] = "false";
+      recordExpiry = recordExpiry+"  if (operationId === "+literals.quote(operation.id)+") { return recompute("+copyExpression(allFields,changes,"state")+"); }\n";
+    }
+    recordExpiry = recordExpiry+"  return state;\n}\n";
+  }
+  // A revision counts edits to that operation's own dependency set. An edit that leaves a
+  // dependency unchanged (an equivalent draft spelling, self-pending bookkeeping, an unrelated row)
+  // bumps nothing.
+  let bumpSource: string = "export function bump(next: AppState, previous: AppState): AppState {\n";
+  let revisions: Record<string, unknown> = {};
+  for (let operation of operations) {
+    let name: string = "revision_"+operation.id;
+    let condition: string = "false";
+    for (let dependency of operation.dependencies) {
+      let compare: string = "next."+dependency+" !== previous."+dependency;
+      if (condition === "false") { condition = compare; } else { condition = condition+" || "+compare; }
+    }
+    // A row tap observes only the row it captured: the row-scoped comparison replaces the collection
+    // membership its target owns, so an unrelated row edit advances no revision.
+    if (operation.trigger === "row_tap" && operation.rowKey !== "") { condition = "f_parts_rowChanged_"+operation.id+"(next, previous) || ("+condition+")"; }
+    bumpSource = bumpSource+"  let "+name+": number = previous."+name+";\n  if ("+condition+") { "+name+" = "+name+" + 1; }\n";
+    revisions[name] = name;
+  }
+  bumpSource = bumpSource+"  return "+copyExpression(allFields,revisions,"next")+";\n}\n";
   let recompute: string = "export function recompute(candidate: AppState): AppState {\n  let state: AppState = candidate;\n"; let ordered: string[] = [];
-  while (ordered.length < computations.length) {
+  while (ordered.length < allComputations.length) {
     let progress: boolean = false;
-    for (let computation of computations) {
+    for (let computation of allComputations) {
       let target: Field = field(allFields,computation.instance,computation.field);
       if (!s.contains(ordered,target.name)) {
         let readyToEmit: boolean = true;
@@ -253,17 +705,29 @@ export async function assemble(composition: screens.Composition, computations: C
           let instance: Prepared = owner as Prepared;
           let names: Record<string, unknown> = namesByInstance[instance.id] as Record<string, unknown>; let fields: Record<string, unknown> = fieldsByInstance[instance.id] as Record<string, unknown>; let types: Record<string, unknown> = typesByInstance[instance.id] as Record<string, unknown>;
           let allowedReads: string[] = [];
+          // A raw text buffer is a checked read of this computation, so purity admits it, while it never
+          // enters the issued dependency set of an operation. Only an authoritative resource of this
+          // computation's own instance is a buffer: a derived or foreign resource keeps its readiness,
+          // ownership and port rules instead of becoming an unchecked read.
+          if (Object.hasOwn(computation,"buffers")) { for (let buffer of computation.buffers as string[]) {
+            let buffered: Field | null = null;
+            for (let entry of allFields) { if (entry.name === buffer) { buffered = entry; } }
+            if (buffered === null) { s.reject("Buffer names an unissued resource: "+computation.field+" "+buffer); }
+            let source: Field = buffered as Field;
+            if (source.instance !== computation.instance || source.role !== "authoritative") { s.reject("Buffer is not an authoritative resource of its own instance: "+computation.field+" "+buffer); }
+            allowedReads[allowedReads.length] = source.local;
+          } }
           for (let dependency of computation.dependencies) {
             let found: boolean = false;
-            for (let item of allFields) { if (item.name === dependency) { found = true; if (item.instance !== instance.id) {
+            for (let entry of allFields) { if (entry.name === dependency) { found = true; if (entry.instance !== instance.id) {
               let connected: boolean = false;
-              for (let connection of composition.connections) { if (connection.readerInstance === instance.id && connection.writerInstance === item.instance) {
-                for (let owner of composition.screen.instances) { if (owner.id === item.instance) { for (let port of owner.fragment.ports) { if (port.name === connection.writerPort && port.getter === item.local) {
+              for (let connection of composition.connections) { if (connection.readerInstance === instance.id && connection.writerInstance === entry.instance) {
+                for (let source of composition.screen.instances) { if (source.id === entry.instance) { for (let port of source.fragment.ports) { if (port.name === connection.writerPort && port.getter === entry.local) {
                   for (let current of composition.screen.instances) { if (current.id === instance.id) { for (let reader of current.fragment.ports) { if (reader.name === connection.readerPort) { allowedReads[allowedReads.length] = reader.getter; connected = true; } } } }
                 } } } }
               } }
               if (!connected) { s.reject("Cross-owner calculation requires issued port binding"); }
-            } else { allowedReads[allowedReads.length] = item.local; } if (item.role === "derived") { allowedReads[allowedReads.length] = item.local+"_ready"; allowedReads[allowedReads.length] = item.local+"_reason"; if (primitive(item.type)) { allowedReads[allowedReads.length] = item.local+"_display"; } } } }
+            } else { allowedReads[allowedReads.length] = entry.local; } if (entry.role === "derived") { allowedReads[allowedReads.length] = entry.local+"_ready"; allowedReads[allowedReads.length] = entry.local+"_reason"; if (displayable(entry.type)) { allowedReads[allowedReads.length] = entry.local+"_display"; } } } }
             if (!found) { s.reject("Unissued computation dependency"); }
           }
           let purity: policy.Facts = factsByInstance[instance.id] as policy.Facts;
@@ -280,7 +744,6 @@ export async function assemble(composition: screens.Composition, computations: C
             requests[requests.length] = {function:"expression",input:s.encode({source:sources[index],expected:expected[index],names:names,fields:fields,types:types,variables:variables})};
           }
           let results: SyntaxResult[] = JSON.parse(await syntax.batch(s.encode({requests:requests})));
-          // A purity rejection names the derived value it refuses, so a computation defect is located.
           for (let index of [0,1,2]) {
             try { policy.checkedExpression(syntaxValue(results[index]),purity,allowedReads); }
             catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } s.reject("Computation "+computation.instance+"."+computation.field+": "+error.message); }
@@ -291,11 +754,11 @@ export async function assemble(composition: screens.Composition, computations: C
           for (let dependency of computation.dependencies) { for (let input of allFields) { if (input.name === dependency && input.role === "derived") { ready = "state."+input.name+"_ready && ("+ready+")"; } } }
           let value: string = syntaxValue(results[4]);
           let reason: string = syntaxValue(results[5]);
-          let changes: Record<string, unknown> = {}; changes[target.name] = "null"; changes[target.name+"_ready"] = "false"; changes[target.name+"_reason"] = reason; if (primitive(target.type)) { changes[target.name+"_display"] = placeholder(target.type); }
+          let changes: Record<string, unknown> = {}; changes[target.name] = "null"; changes[target.name+"_ready"] = "false"; changes[target.name+"_reason"] = reason; if (displayable(target.type)) { changes[target.name+"_display"] = placeholder(target.type); }
           recompute = recompute+"  if ("+ready+") {\n    let value: "+target.type+" = "+value+";\n";
-          let finite: string = "true"; if (target.type === "number") { finite = "value - value === 0"; }
+          let finite: string = "true"; if (target.type === "number") { finite = "Number.isFinite(value)"; }
           recompute = recompute+"    if ("+finite+") {\n";
-          let available: Record<string, unknown> = {}; available[target.name] = "value"; available[target.name+"_ready"] = "true"; available[target.name+"_reason"] = "\"\""; if (primitive(target.type)) { available[target.name+"_display"] = "value"; }
+          let available: Record<string, unknown> = {}; available[target.name] = "value"; available[target.name+"_ready"] = "true"; available[target.name+"_reason"] = "\"\""; if (displayable(target.type)) { available[target.name+"_display"] = "value"; }
           recompute = recompute+"      state = "+copyExpression(allFields,available,"state")+";\n    } else {\n      state = "+copyExpression(allFields,changes,"state")+";\n    }\n  } else {\n    state = "+copyExpression(allFields,changes,"state")+";\n  }\n";
           ordered[ordered.length] = target.name; progress = true;
         }
@@ -305,10 +768,11 @@ export async function assemble(composition: screens.Composition, computations: C
   }
   recompute = recompute+"  return state;\n}\n";
   let initial: Record<string, unknown> = {};
-  for (let item of allFields) { initial[item.name] = item.initial; if (item.role === "derived") { initial[item.name+"_ready"] = "false"; initial[item.name+"_reason"] = "\"Not ready\""; if (primitive(item.type)) { initial[item.name+"_display"] = placeholder(item.type); } } }
-  declarations = declarations+recompute+"export function initialState(): AppState {\n  let capturedTime: number = embeddingClock.nowMillis();\n  let candidate: AppState = "+copyExpression(allFields,initial,"")+";\n  return recompute(candidate);\n}\n";
-  // The projection keeps only issued-authoritative fields; restore allocates the typed state,
-  // then rebuilds derived fields with the same recompute before any view exists.
+  for (let item of allFields) { initial[item.name] = item.initial; if (item.role === "derived") { initial[item.name+"_ready"] = "false"; initial[item.name+"_reason"] = "\"Not ready\""; if (displayable(item.type)) { initial[item.name+"_display"] = placeholder(item.type); } } }
+  declarations = declarations+recompute+initialStateSource(allFields,initial)+hook+expirySource+recordExpiry+bumpSource+"export function main(): void { return; }\n";
+  // The compiled app module owns the persisted authoritative projection: only authoritative fields are
+  // written, restore allocates the typed state and rebuilds derived fields with the same recompute
+  // before any view exists. A saved record with an unsupported or missing field is refused atomically.
   let projection: string = ""; let unsupported: string = ""; let required: string = ""; let restored: Record<string, unknown> = {};
   for (let item of allFields) {
     if (item.role === "authoritative") {
@@ -318,18 +782,203 @@ export async function assemble(composition: screens.Composition, computations: C
       required = required+"  if (!Object.hasOwn(source,"+literals.quote(item.name)+")) { throw {name:\"PERSISTENCE_SCHEMA\",message:\"Missing persisted field "+item.name+"\"}; }\n";
       restored[item.name] = "(source["+literals.quote(item.name)+"] as "+item.type+")";
     } else {
-      // Restore placeholders are the same initial values `initialState` recomputes from.
-      restored[item.name] = initial[item.name] as string; restored[item.name+"_ready"] = initial[item.name+"_ready"] as string; restored[item.name+"_reason"] = initial[item.name+"_reason"] as string;
-      if (primitive(item.type)) { restored[item.name+"_display"] = initial[item.name+"_display"] as string; }
+      // Restore placeholders are the same initial values `initialState` recomputes from. A runtime
+      // resource is cleared to its initial and is never written to the persisted record; only a derived
+      // resource has readiness, reason and prepared display companions.
+      restored[item.name] = initial[item.name] as string;
+      if (item.role === "derived") {
+        restored[item.name+"_ready"] = initial[item.name+"_ready"] as string; restored[item.name+"_reason"] = initial[item.name+"_reason"] as string;
+        if (displayable(item.type)) { restored[item.name+"_display"] = initial[item.name+"_display"] as string; }
+      }
     }
   }
   let rejection: string = "    throw {name:\"PERSISTENCE_SCHEMA\",message:\"No issued authoritative field\"};\n"; if (unsupported !== "") { rejection = "    if ("+unsupported+") { throw {name:\"PERSISTENCE_SCHEMA\",message:\"Unsupported persisted field: \"+key}; }\n"; }
   declarations = declarations+"export function bridgePersistedState(state: AppState): Record<string, unknown> {\n  let result: Record<string, unknown> = {};\n"+projection+"  return result;\n}\n";
   declarations = declarations+"export function bridgeRestoredState(source: Record<string, unknown>): AppState {\n  for (let key of Object.keys(source)) {\n"+rejection+"  }\n"+required+"  let candidate: AppState = "+copyExpression(allFields,restored,"")+";\n  return recompute(candidate);\n}\n";
-  declarations = declarations+"export function main(): void { return; }\n";
-  viewSource = viewSource+"// @ui-root\nexport view Main(state: app.AppState): View {\n  ui.Column() {\n";
-  for (let item of prepared) { viewSource = viewSource+"    "+item.viewName+"(state: state)\n"; }
-  viewSource = viewSource+"  }\n}\n";
-  return {source:{deal:declarations,dealui:viewSource},fields:allFields,computations:ordered};
+  // Publication and readiness per slot output. An unfilled slot never substitutes a placeholder:
+  // its getter throws and its readiness is false.
+  let publications: string[] = [];
+  // The exact publication identities each slot issues, carried on the slot record so admission can
+  // require the publication set to equal the issued outputs instead of accepting any name with an
+  // instance prefix.
+  let slotOutputs: Record<string, unknown> = {};
+  for (let slot of composition.screen.slots) { let none: string[] = []; slotOutputs[slot.id] = none; }
+  for (let slot of composition.screen.slots) {
+    if (slot.status === "filled" && slot.instance !== null) {
+      let filledBy: string = slot.instance as string;
+      for (let instance of composition.screen.instances) { if (instance.id === filledBy) {
+        for (let port of instance.fragment.ports) { if (port.direction === "publish") {
+          let target: Field = field(allFields,instance.id,port.getter);
+          let name: string = qualified(instance.id,port.name);
+          // One issued publication identity per output; a second slot filled by the same instance
+          // reuses it instead of minting a duplicate.
+          if (s.contains(publications,name)) { continue; }
+          // The declared port type is the type the getter field declares before qualification, so a
+          // publication of a fragment-declared class keeps its issued nominal type.
+          let declaredType: string = target.type;
+          for (let declared of instance.fragment.fields) { if (declared.name === port.getter) { declaredType = declared.type; } }
+          if (port.type !== declaredType) { s.reject("Publication type outside the declared port: "+instance.id+"/"+port.name); }
+          publications[publications.length] = name;
+          let issuedOutputs: string[] = slotOutputs[slot.id] as string[]; issuedOutputs[issuedOutputs.length] = name;
+          let ready: string = "true"; if (target.role === "derived") { ready = "state."+target.name+"_ready"; }
+          // A derived value is stored as T | null, so the getter keeps its declared return type by
+          // throwing the located reason while it is unready instead of returning a null placeholder.
+          let getter: string = "  return state."+target.name+";\n";
+          if (target.role === "derived") { getter = "  if (!state."+target.name+"_ready) { throw {name: \"EMPTY_SLOT\", message: state."+target.name+"_reason}; }\n  return (state."+target.name+" as "+target.type+");\n"; }
+          declarations = declarations+"export function publish_"+name+"(state: AppState): "+target.type+" {\n"+getter+"}\nexport function ready_"+name+"(state: AppState): boolean {\n  return "+ready+";\n}\n";
+        } }
+      } }
+    } else if (slot.valueType !== "") {
+      let name: string = "open_"+slot.id; s.unique(publications,name);
+      let openedOutputs: string[] = slotOutputs[slot.id] as string[]; openedOutputs[openedOutputs.length] = name;
+      declarations = declarations+"export function publish_"+name+"(state: AppState): "+slot.valueType+" {\n  throw {name: \"EMPTY_SLOT\", message: "+literals.quote(slot.need+" is open")+"};\n}\nexport function ready_"+name+"(state: AppState): boolean {\n  return false;\n}\n";
+    }
+  }
+  if (chat && prepared.length > 1) {
+    let selectionChange: Record<string, unknown> = {}; selectionChange["chat_selected"] = "action.value";
+    declarations = declarations+"export class ChangeChat { value: number; }\nexport function changeChat(state: AppState, action: ChangeChat): AppState {\n  if (Math.floor(action.value) !== action.value || action.value < 0 || action.value >= "+String(prepared.length)+") { return state; }\n  return recompute("+copyExpression(allFields,selectionChange,"state")+");\n}\n// @ui-update\nexport function update_chat(state: AppState, action: ChangeChat): AppState {\n  let updated: AppState = changeChat(state, action);\n  return bump(updated, state);\n}\n";
+    viewSource = viewSource+"// @ui-root\nexport view Main(state: app.AppState): View {\n  ui.Tabs(labels: state.chat_labels, selected: state.chat_selected, onChange: action app.ChangeChat {value: payload}) {\n";
+    for (let item of prepared) { viewSource = viewSource+"    "+item.viewName+"(state: state)\n"; }
+    viewSource = viewSource+"  }\n}\n";
+  } else if (prepared.length === 1) {
+    // The single fragment view already carries the root marker; nothing wraps it.
+  } else {
+    viewSource = viewSource+"// @ui-root\nexport view Main(state: app.AppState): View {\n  ui.Column() {\n";
+    for (let item of prepared) { viewSource = viewSource+"    "+item.viewName+"(state: state)\n"; }
+    viewSource = viewSource+"  }\n}\n";
+  }
+  let slots: SlotRecord[] = [];
+  // The issued source identifiers of the composition: a slot's `reads` names these, never an AppState
+  // field name, so admission can check it against the issued sources rather than the declarations.
+  let sourceIds: string[] = []; for (let source of registry.sources) { addUnique(sourceIds,source.id); }
+  let needIds: string[] = []; for (let slot of composition.screen.slots) { addUnique(needIds,slot.need); }
+  // The composition notices this assembly returns are the ones it received; slot issuance adds none of
+  // its own, because a checked trigger no emitted operation reaches rejects below instead.
+  let notices: string[] = [];
+  for (let prior of map.notices) { notices[notices.length] = prior; }
+  let claimed: string[] = [];
+  let claimedBy: string[] = [];
+  for (let slot of composition.screen.slots) {
+    let instance: string = "";
+    if (slot.instance !== null) { instance = slot.instance as string; }
+    // `writes` is exactly the resources the filling reducers write and empty while the slot is open,
+    // missing or unchecked; `provider` derives from that implementation's resolved provider calls.
+    let writes: string[] = []; let provider: boolean = false;
+    if (slot.status === "filled") {
+      if (instance === "") { s.reject("Filled slot without implementation: "+slot.id); }
+      let found: screens.Instance | null = null; for (let candidate of composition.screen.instances) { if (candidate.id === instance) { found = candidate; } }
+      if (found === null) { s.reject("Filled slot names an absent instance: "+slot.id); }
+      let filled: screens.Instance = found as screens.Instance;
+      writes = ownership.writes(map,filled,ownershipFacts);
+      provider = providerCalls(ownershipFacts[instance] as Record<string, unknown>,modulesByInstance[instance] as Record<string, unknown>,registry);
+      // A catalogue slot declares exactly its instance kind, a part slot its part kind, and a custom
+      // or notice implementation declares none; every other set rejects.
+      if (filled.origin === "catalogue") { if (slot.allowedKinds.length !== 1 || slot.allowedKinds[0] !== filled.kind) { s.reject("Filled catalogue slot kind outside allowedKinds: "+slot.id); } }
+      else if (filled.origin === "part") {
+        if (slot.allowedKinds.length !== 1) { s.reject("Filled part slot does not declare exactly one part kind: "+slot.id); }
+        // The part kind a slot allows must be one the instance actually implemented. The membership is
+        // decided here, at assembly, with the same issued kinds the checking-admission rule re-derives,
+        // so both boundaries reach one decision instead of deferring the kind to a later stage.
+        let implemented: string[] = [];
+        if (Object.hasOwn(filled.parameters,"kinds")) { implemented = decoded.strings(filled.parameters.kinds); }
+        if (!s.contains(implemented,slot.allowedKinds[0])) { s.reject("Filled part slot kind is not implemented by its instance: "+slot.id); }
+      }
+      else { if (slot.allowedKinds.length !== 0) { s.reject("Filled "+filled.origin+" slot declares an allowed kind: "+slot.id); } }
+    }
+    for (let resource of writes) {
+      let prior: number = -1; let index: number = 0;
+      while (index < claimed.length) { if (claimed[index] === resource) { prior = index; } index = index+1; }
+      if (prior >= 0 && claimedBy[prior] !== instance) { s.reject("Resource claimed by two slots: "+resource); }
+      if (prior < 0) { claimed[claimed.length] = resource; claimedBy[claimedBy.length] = instance; }
+    }
+    let event: string = ""; let trigger: string = ""; let action: string = "";
+    // The slot identity of a plan action need is the qualified action its event and dispatch reach; it
+    // names the emitted plan operation (owner ""), so a trigger consumer never guesses which operation
+    // an event invokes and the provider flag reflects that issued operation. A part publication whose
+    // identity equals its need is not a plan action and never claims one.
+    for (let operation of operations) { if (operation.id === slot.need && operation.owner === "") { action = operation.id; } }
+    // The composition's own slot identity must agree with the operation this assembly derived; a
+    // conflicting identity is a drifted fact, not a label.
+    if (Object.hasOwn(slot,"action")) { let declared: string = s.text(slot.action); if (declared !== "" && declared !== action) { s.reject("Slot action differs from the issued operation: "+slot.id+" "+declared); } }
+    if (Object.hasOwn(slot,"event")) { event = s.oneOf(slot.event,["countdown_end","entry_added","row_tap","time"]); trigger = s.identifier(slot.trigger); }
+    // A trigger is the route to an issued operation: a checked event slot without one names a route
+    // nothing can raise, so the candidate rejects with the slot and the event instead of an accepted
+    // composition silently losing its declared trigger. Checking admission re-derives the same rule.
+    if (event !== "" && action === "") { s.reject("Event slot without its issued operation identity: "+slot.id+" "+event); }
+    // An issued plan operation calls a frozen provider contract, so the slot carries provider work
+    // whichever instance sits in the slot.
+    if (action !== "") { provider = true; }
+    slots[slots.length] = {id:slot.id,need:slot.need,status:slot.status,reads:issuedReads(slot.reads,sourceIds,needIds),writes:writes,outputs:(slotOutputs[slot.id] as string[]),event:event,trigger:trigger,action:action,provider:provider,allowedKinds:slot.allowedKinds,instance:instance,reason:slot.reason};
+  }
+  // One driver slot per trigger target: two actions raised by one clock or collection share it.
+  let drivers: string[] = []; for (let slot of slots) { if (slot.event !== "") { addUnique(drivers,slot.event+"_"+slot.trigger); } }
+  // The private clock drivers a Session schedules are issued here with their qualified runtime fields;
+  // generated source never contains this list and no model string can add or change one.
+  let clockDrivers: screens.Driver[] = [];
+  for (let instance of composition.screen.instances) {
+    if (!Object.hasOwn(instance,"drivers")) { continue; }
+    for (let driver of instance.drivers as screens.Driver[]) {
+      for (let prior of clockDrivers) { if (prior.need === driver.need) { s.reject("Duplicate clock driver: "+driver.need); } }
+      if (!(driver.intervalMs > 0) || !Number.isFinite(driver.intervalMs)) { s.reject("Clock driver interval must be a finite positive number: "+driver.need); }
+      clockDrivers[clockDrivers.length] = {need:driver.need,sample:driver.sample,tick:driver.tick,start:driver.start,pause:driver.pause,reset:driver.reset,resume:driver.resume,request:qualified(instance.id,driver.request),running:qualified(instance.id,driver.running),restore:qualified(instance.id,"restore"),epoch:qualified(instance.id,driver.epoch),trust:qualified(instance.id,driver.trust),intervalMs:driver.intervalMs};
+    }
+  }
+  // One Session-local clock trust identity per composition: every issued clock driver names these same
+  // two compiled runtime fields, and the expiry driver consumes them through this metadata.
+  let sessionClock: SessionClock = {epoch:"",trust:"",resume:""};
+  if (clockDrivers.length > 0) { sessionClock = {epoch:(clockDrivers[0] as screens.Driver).epoch,trust:(clockDrivers[0] as screens.Driver).trust,resume:(clockDrivers[0] as screens.Driver).resume}; }
+  for (let driver of clockDrivers) { if (driver.epoch !== sessionClock.epoch || driver.trust !== sessionClock.trust) { s.reject("Clock drivers disagree about the Session clock identity: "+driver.need); } if (driver.resume !== sessionClock.resume) { s.reject("Clock drivers disagree about the Session resume identity: "+driver.need); } }
+  // Composite actions are synchronous transactions, not asynchronous effect chains: one
+  // composition-scope nominal identity with per-arm payloads whose ordered owner reducers run against
+  // one candidate, followed by a single recompute/validate and one commit. No arm commits and no
+  // effect starts before the transaction succeeds. The dispatch identity is issued metadata.
+  let compositeActions: CompositeRecord[] = [];
+  for (let composite of composites) {
+    let actionName: string = s.identifier(composite.action); s.unique(actions,actionName);
+    // A composite identity is composition-scope, so it must not reuse an emitted composer identity: the
+    // chat-root update when one is emitted, or a descriptor draft class the intent panel will bind.
+    if (chat && prepared.length > 1 && actionName === "chat") { s.reject("Composite action reuses the chat root update identity: "+actionName); }
+    for (let descriptor of registry.actions) { if (Object.hasOwn(descriptor,"input")) { let input: bindings.Draft = descriptor.input as bindings.Draft; if (actionName === "Draft_"+input.sourceId) { s.reject("Composite action reuses a descriptor draft identity: "+actionName); } } }
+    let compositeClass: string = "Composite_"+actionName;
+    let fieldsEmit: string = ""; let body: string = ""; let armRecords: string[] = []; let index: number = 0;
+    for (let arm of composite.arms) {
+      let fieldName: string = "arm"+String(index);
+      if (!s.contains(decoded.strings(exportedByInstance[arm.instance]),arm.action)) { s.reject("Composite arm action is not exported by its owner: "+arm.instance+"."+arm.action); }
+      let reducer: string = "";
+      for (let prep of prepared) { if (prep.id === arm.instance) { for (let update of prep.updates) { if (update.action === arm.action) { reducer = qualified(prep.id,update.function); } } } }
+      if (reducer === "") { s.reject("Composite arm is not an owner reducer: "+arm.instance+"."+arm.action); }
+      fieldsEmit = fieldsEmit+fieldName+": "+qualified(arm.instance,arm.action)+"; ";
+      body = body+"  candidate = "+reducer+"(candidate, action."+fieldName+");\n";
+      armRecords[armRecords.length] = arm.instance+":"+arm.action;
+      index = index+1;
+    }
+    declarations = declarations+"export class "+compositeClass+" { "+fieldsEmit+"}\n";
+    declarations = declarations+"export function composite_"+actionName+"(state: AppState, action: "+compositeClass+"): AppState {\n  let candidate: AppState = state;\n"+body+"  return candidate;\n}\n";
+    // The composite dispatch identity is issued metadata for the execution consumer that constructs
+    // the arms; it is not a view-routed update, so it carries no UI dispatch marker.
+    declarations = declarations+"export function update_"+actionName+"(state: AppState, action: "+compositeClass+"): AppState {\n  let updated: AppState = recompute(composite_"+actionName+"(state, action));\n  return bump(updated, state);\n}\n";
+    compositeActions[compositeActions.length] = {action:actionName,type:compositeClass,update:"update_"+actionName,arms:armRecords};
+  }
+  // Composition-scope resources the composer issues carry their own owner, so admission can tell an
+  // instance write moved onto operation bookkeeping, a descriptor draft or chat state from a
+  // legitimate instance resource. The composer-owned names are also carried as their own fact: a
+  // resource relabelled to the composer owner is not admitted unless the composer issued it.
+  let composerOwned: string[] = [];
+  let carriedOwners: string[] = [];
+  for (let record of ownerRecords) { carriedOwners[carriedOwners.length] = record.name; }
+  for (let name of storageNames) {
+    if (s.contains(carriedOwners,name)) { continue; }
+    let role: string = "derived";
+    for (let field of allFields) { if (field.name === name) { role = field.role; } }
+    ownerRecords[ownerRecords.length] = {name:name,owner:"composer",role:role};
+    composerOwned[composerOwned.length] = name;
+  }
+  return {source:{deal:declarations,dealui:viewSource},fields:allFields,computations:ordered,metadata:{slots:slots,operations:operations,runtime:map.runtime,publications:publications,drivers:drivers,clockDrivers:clockDrivers,sessionClock:sessionClock,composites:compositeActions,chatRoot:chat,notices:notices,declarations:storageNames,owners:ownerRecords,composerOwned:composerOwned,instances:instanceRecords,sources:sourceIds}};
+}
+function initialStateSource(fields: Field[], initial: Record<string, unknown>): string {
+  return "export function initialState(): AppState {\n  let capturedTime: number = embeddingClock.nowMillis();\n  let candidate: AppState = "+copyExpression(fields,initial,"")+";\n  return recompute(candidate);\n}\n";
+}
+export async function assemble(composition: screens.Composition, computations: Computation[]): Promise<Result> {
+  return await assembleWith(composition,computations,bindings.create([]),null);
 }
 export function main(): void { return; }

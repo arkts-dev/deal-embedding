@@ -14,8 +14,10 @@ import * as coverage from "./coverage";
 import * as constructionSelection from "./construction-selection";
 import * as formula from "./formula";
 import * as decoded from "./decoded";
+import * as disclosure from "./disclosure";
 import * as literals from "./source-literals";
 import * as graphics from "./graphics";
+import * as strings from "std/string";
 import * as events from "./events";
 import * as checking from "./isolated-check";
 import * as classification from "./classification";
@@ -34,84 +36,56 @@ export function repairAdmission(): null {
 }
 
 function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
-function rejectsPlan(raw: string): void { let rejected: boolean = false; try { plans.decode(raw,[],[]); } catch (error) { rejected = true; } insist(rejected,"Invalid plan admitted"); }
-// The shared decimals field is one domain at every site that issues it. The figure and entry-field
-// decoders apply it themselves, so these vectors drive core/plan.deal's decimals() directly.
-function figurePlan(value: string): string { return "{\"title\":\"x\",\"needs\":[{\"id\":\"total\",\"type\":\"figure\",\"words\":\"Total\",\"spec\":{\"label\":\"Total\",\"format\":\"plain\",\"unit\":\"\",\"formula\":\"1\",\"example\":{\"inputs\":{},\"result\":1},\"decimals\":"+value+"}}]}"; }
-function entriesPlan(value: string): string { return "{\"title\":\"x\",\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"spec\":{\"label\":\"Log\",\"fields\":[{\"id\":\"amount\",\"label\":\"Amount\",\"kind\":\"number\",\"initial\":0,\"measure\":\"number\",\"decimals\":"+value+"}]}}]}"; }
-// Typed plan values: one input with the declared kind and one with a wrong kind, a fractional count,
-// an out-of-range choice index or a value outside its declared bounds.
-function inputPlan(kind: string, value: string): string { return "{\"title\":\"x\",\"inputs\":[{\"id\":\"v\",\"label\":\"Value\",\"kind\":\""+kind+"\",\"measure\":\"number\",\"value\":"+value+"}]}"; }
-function choicePlan(value: string): string { return "{\"title\":\"x\",\"inputs\":[{\"id\":\"v\",\"label\":\"Value\",\"kind\":\"choice\",\"measure\":\"number\",\"value\":"+value+",\"options\":[{\"id\":\"a\",\"label\":\"A\",\"value\":1},{\"id\":\"b\",\"label\":\"B\",\"value\":2}]}]}"; }
-function boundedPlan(value: string): string { return "{\"title\":\"x\",\"inputs\":[{\"id\":\"v\",\"label\":\"Value\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":"+value+",\"min\":10,\"max\":20}]}"; }
+function rejectsPlan(raw: string): void { let rejected: boolean = false; try { plans.decode(raw,[],[],"",""); } catch (error) { rejected = true; } insist(rejected,"Invalid plan admitted"); }
+function planFailure(raw: string, original: string, facts: string): string { try { plans.decode(raw,[],[],original,facts); } catch (errorUnknown) { let error: Error = errorUnknown as Error; return error.message; } return ""; }
+function refusesPlan(raw: string, original: string, facts: string, located: string): void { let message: string = planFailure(raw,original,facts); insist(message !== "","Invalid plan admitted: "+located); insist(strings.contains(message,located),"Plan rejection "+located+" missing, got: "+message); }
 export function schemas(): null {
   for (const path of ["M +.5 -.5 L 1. 2.","M 001 000.5 L 1.e2 .5E+1","M -0 +0 A 01 02 0 0 1 3 4 Z"]) { graphics.path(path); }
   for (const path of ["M 1e 0","M 1e+ 0","M . 0","M 1e999 0","M 0 0 A 1 1 0 2 0 3 4"]) {
     let rejected: boolean = false; try { graphics.path(path); } catch(error) { rejected = true; } insist(rejected,"Malformed SVG number admitted: "+path);
   }
+  // The checked collection decodes into a fresh invariant array and keeps every UTF-16 unit, including
+  // the quote, backslash and newline the full source escapes must round-trip.
   const typed: string[] = ["😀","\ud800","\u0001","\"","\\","\n"];
-  insist(decoded.strings(typed) === typed,"Typed invariant array identity lost");
+  const copied: string[] = decoded.strings(typed); insist(copied.join("") === typed.join(""),"Checked collection changed UTF-16 units"); insist(copied !== typed,"Checked collection aliased its input");
   const dynamic: unknown[] = JSON.parse("[\"😀\",\"\\ud800\",\"\\u0001\",\"\\\"\",\"\\\\\",\"\\n\"]");
   const fresh: string[] = decoded.strings(dynamic); insist(fresh.join("") === typed.join(""),"Dynamic array conversion lost UTF-16 units");
+  let refusedCollection: boolean = false; try { decoded.strings(JSON.parse("[1]")); } catch(error) { refusedCollection = true; } insist(refusedCollection,"Wrong element kind admitted to a typed collection");
+  refusedCollection = false; try { decoded.records(JSON.parse("7")); } catch(error) { refusedCollection = true; } insist(refusedCollection,"Non-array admitted as a typed collection");
+  let location: string = "";
+  try { decoded.records(JSON.parse("[1]")); } catch (errorUnknown) { let error: Error = errorUnknown as Error; location = error.message; }
+  insist(strings.contains(location,"record at index 0"),"Collection rejection is not located: "+location);
   const controls: string = JSON.parse(literals.quote(typed.join(""))); insist(controls === typed.join(""),"Source literal escape round-trip");
   const projection = screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[],\"instances\":[]},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",[]);
   insist(projection.composition.screen.instances.length === 0,"Contextual screen decoding");
   let badScreen: boolean = false; try { screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[],\"instances\":[],\"extra\":0},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",[]); } catch(error) { badScreen = true; } insist(badScreen,"Extra nominal screen field admitted");
-  let plan: plans.Plan = plans.decode("{\"title\":\"Budget\",\"inputs\":[{\"id\":\"limit\",\"label\":\"Budget\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":120}],\"requirements\":[{\"id\":\"preserve\",\"text\":\"Stay within the budget\",\"sources\":[\"request\"],\"needs\":[\"remaining\"]}],\"needs\":[{\"id\":\"remaining\",\"type\":\"figure\",\"words\":\"Remaining budget\",\"reads\":[\"limit\"],\"spec\":{\"label\":\"Remaining\",\"format\":\"money\",\"unit\":\"EUR\",\"formula\":\"limit\",\"example\":{\"inputs\":{\"limit\":120},\"result\":120}}}]}",[],[]);
+  let plan: plans.Plan = plans.decode("{\"title\":\"Budget\",\"inputs\":[{\"id\":\"limit\",\"label\":\"Budget\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":120}],\"constants\":[],\"requirements\":[{\"id\":\"preserve\",\"text\":\"Stay within the budget\",\"sources\":[\"request\"],\"needs\":[\"remaining\"]}],\"needs\":[{\"id\":\"remaining\",\"type\":\"figure\",\"words\":\"Remaining budget\",\"reads\":[\"limit\"],\"spec\":{\"label\":\"Remaining\",\"format\":\"money\",\"unit\":\"EUR\",\"formula\":\"limit\",\"example\":{\"inputs\":{\"limit\":120},\"result\":120}}}],\"questions\":[]}",[],[],"","");
   insist(plan.inputs.length === 1 && plan.requirements.length === 1,"Plan ledger");
   insist(!Object.hasOwn(plan.inputs[0],"min"),"Absent numeric bounds became values");
   insist((plan.needs[0].spec.shown as boolean) && (plan.needs[0].spec.decimals as number) === -1,"Declared defaults");
-  rejectsPlan("{\"title\":\"x\",\"legacy\":[]}");
-  rejectsPlan("{\"title\":\"x\",\"title\":\"y\"}");
-  rejectsPlan("{\"title\":\"x\",\"inputs\":null}");
-  rejectsPlan("{\"title\":\"x\",\"needs\":[{\"id\":\"n\",\"type\":\"other\",\"words\":\"x\",\"reads\":[\"invented\"],\"spec\":{}}]}");
-  rejectsPlan("{\"title\":\"x\",\"needs\":[{\"id\":\"n\",\"type\":\"other\",\"words\":\"x\",\"reads\":[\"n\"],\"spec\":{}}]}");
-  // The shared decimals field is one domain at every site that issues it; the figure and entry-field
-  // decoders apply -1/0-6 and reject every other value themselves.
-  let figureAuto: plans.Plan = plans.decode(figurePlan("-1"),[],[]);
-  let figureFixed: plans.Plan = plans.decode(figurePlan("6"),[],[]);
-  let entriesFixed: boolean = true;
-  try { plans.decode(entriesPlan("6"),[],[]); } catch (error) { entriesFixed = false; }
-  let entriesAuto: boolean = true;
-  try { plans.decode(entriesPlan("-1"),[],[]); } catch (error) { entriesAuto = false; }
-  insist((figureAuto.needs[0].spec.decimals as number) === -1,"Figure decimals -1 accepted");
-  insist((figureFixed.needs[0].spec.decimals as number) === 6,"Figure decimals 6 accepted");
-  insist(entriesFixed,"Entry-field decimals 6 accepted");
-  insist(entriesAuto,"Entry-field decimals -1 accepted");
-  for (const value of ["7","-2","1.5"]) {
-    let refusedFigure: boolean = false;
-    try { plans.decode(figurePlan(value),[],[]); } catch (error) { refusedFigure = true; }
-    insist(refusedFigure,"Invalid figure decimals admitted: "+value);
-    let refusedEntry: boolean = false;
-    try { plans.decode(entriesPlan(value),[],[]); } catch (error) { refusedEntry = true; }
-    insist(refusedEntry,"Invalid entry-field decimals admitted: "+value);
-  }
-  // The decode boundary checks the declared kind and the declared bounds; a wrong-kind value is never
-  // cast silently.
-  let typedAccepted: boolean = true;
-  try { plans.decode(inputPlan("amount","12"),[],[]); plans.decode(inputPlan("percent","0.5"),[],[]); plans.decode(inputPlan("text","\"hello\""),[],[]); plans.decode(inputPlan("toggle","true"),[],[]); plans.decode(inputPlan("count","2"),[],[]); plans.decode(choicePlan("1"),[],[]); plans.decode(boundedPlan("15"),[],[]); } catch (error) { typedAccepted = false; }
-  insist(typedAccepted,"Typed inputs decode with their declared kinds");
-  let wrongAmount: boolean = false;
-  try { plans.decode(inputPlan("amount","\"12\""),[],[]); } catch (error) { wrongAmount = true; }
-  insist(wrongAmount,"Wrong-typed amount input admitted");
-  let wrongText: boolean = false;
-  try { plans.decode(inputPlan("text","5"),[],[]); } catch (error) { wrongText = true; }
-  insist(wrongText,"Wrong-typed text input admitted");
-  let wrongToggle: boolean = false;
-  try { plans.decode(inputPlan("toggle","\"true\""),[],[]); } catch (error) { wrongToggle = true; }
-  insist(wrongToggle,"Wrong-typed toggle input admitted");
-  let wrongCount: boolean = false;
-  try { plans.decode(inputPlan("count","1.5"),[],[]); } catch (error) { wrongCount = true; }
-  insist(wrongCount,"Fractional count input admitted");
-  let outOfRangeChoice: boolean = false;
-  try { plans.decode(choicePlan("2"),[],[]); } catch (error) { outOfRangeChoice = true; }
-  insist(outOfRangeChoice,"Choice index outside its options admitted");
-  let aboveMaximum: boolean = false;
-  try { plans.decode(boundedPlan("25"),[],[]); } catch (error) { aboveMaximum = true; }
-  insist(aboveMaximum,"Input above its declared maximum admitted");
-  let belowMinimum: boolean = false;
-  try { plans.decode(boundedPlan("5"),[],[]); } catch (error) { belowMinimum = true; }
-  insist(belowMinimum,"Input below its declared minimum admitted");
+  rejectsPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[],\"legacy\":[]}");
+  rejectsPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[],\"title\":\"y\"}");
+  rejectsPlan("{\"title\":\"x\",\"inputs\":null,\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}");
+  rejectsPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"n\",\"type\":\"other\",\"words\":\"x\",\"reads\":[\"invented\"],\"spec\":{}}],\"questions\":[]}");
+  rejectsPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"n\",\"type\":\"other\",\"words\":\"x\",\"reads\":[\"n\"],\"spec\":{}}],\"questions\":[]}");
+  // Every declared Plan array and every declared Requirement array is required: omitting one rejects
+  // with its own field name, while a present empty array stays legal.
+  refusesPlan("{\"title\":\"x\",\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","Missing field: inputs");
+  refusesPlan("{\"title\":\"x\",\"inputs\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","Missing field: constants");
+  refusesPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"needs\":[],\"questions\":[]}","","","Missing field: requirements");
+  refusesPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"questions\":[]}","","","Missing field: needs");
+  refusesPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[]}","","","Missing field: questions");
+  refusesPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"keep\",\"text\":\"Keep\",\"needs\":[]}],\"needs\":[],\"questions\":[]}","","","Missing field: sources");
+  refusesPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"keep\",\"text\":\"Keep\",\"sources\":[\"request\"]}],\"needs\":[],\"questions\":[]}","","","Missing field: needs");
+  // A human question's options are declared without an omission default too.
+  refusesPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[{\"id\":\"q\",\"text\":\"Pick\",\"default\":\"a\"}]}","","","question q: Missing field: options");
+  refusesPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[{\"id\":\"q\",\"text\":\"Pick\",\"options\":null,\"default\":\"a\"}]}","","","question q: options must be an array of options");
+  // The same rule holds inside a Need: `reads` and an entries need's `fields` are declared without an
+  // omission default, so their absence names the missing field while a present empty array stays legal.
+  refusesPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"n\",\"type\":\"other\",\"words\":\"x\",\"spec\":{}}],\"questions\":[]}","","","Missing field: reads");
+  refusesPlan("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"n\",\"type\":\"entries\",\"words\":\"x\",\"reads\":[],\"spec\":{\"label\":\"Log\"}}],\"questions\":[]}","","","Missing field: fields");
+  plans.decode("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"n\",\"type\":\"entries\",\"words\":\"x\",\"reads\":[],\"spec\":{\"label\":\"Log\",\"fields\":[]}}],\"questions\":[]}",[],[],"","");
+  plans.decode("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"keep\",\"text\":\"Keep\",\"sources\":[\"request\"],\"needs\":[]}],\"needs\":[],\"questions\":[]}",[],[],"","");
   let options: selection.Option[] = [{id:"first",criteria:"First"},{id:"second",criteria:"Second"}];
   let issued: selection.Question[] = [selection.question("choice","remaining","coverage","Select",options)];
   let answers: selection.Answer[] = selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"first\",\"probabilities\":[{\"id\":\"second\",\"p\":0.5},{\"id\":\"first\",\"p\":0.5}]}]}",issued);
@@ -120,10 +94,18 @@ export function schemas(): null {
   rejected = false; try { selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"first\",\"probabilities\":[{\"id\":\"first\",\"p\":1}]}]}",issued); } catch (error) { rejected = true; } insist(rejected,"Missing option");
   rejected = false; try { selection.decode("{\"answers\":[{\"id\":\"choice\",\"selected\":\"first\",\"probabilities\":[{\"id\":\"first\",\"p\":0.66},{\"id\":\"second\",\"p\":0.33}]}]}",issued); } catch (error) { rejected = true; } insist(rejected,"Rounded sum is invalid; never renormalize Jev answers");
   let screen: screens.Screen = screens.reserve(plan,"chat"); insist(screen.target === "chat" && screen.slots[0].status === "open","Need reservation");
+  // A composition issues exactly one slot per need and a slot is identified by its need.
+  let slotJson: string = "{\"id\":\"remaining\",\"need\":\"remaining\",\"reads\":[],\"writes\":[],\"provider\":false,\"allowedKinds\":[],\"reason\":\"\",\"status\":\"open\",\"instance\":null}";
+  let duplicateSlots: string = "";
+  try { screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":["+slotJson+","+slotJson+"],\"instances\":[]},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",["remaining"]); } catch (errorUnknown) { duplicateSlots = (errorUnknown as Error).message; }
+  insist(strings.contains(duplicateSlots,"Duplicate identity: remaining"),"Two slots for one need were admitted: "+duplicateSlots);
+  duplicateSlots = "";
+  try { screens.decode("{\"screen\":{\"title\":\"Test\",\"target\":\"screen\",\"layout\":{\"kind\":\"stack\"},\"slots\":[{\"id\":\"alias\",\"need\":\"remaining\",\"reads\":[],\"writes\":[],\"provider\":false,\"allowedKinds\":[],\"reason\":\"\",\"status\":\"open\",\"instance\":null}],\"instances\":[]},\"bindings\":{},\"actions\":{},\"connections\":[]}","screen",["remaining"]); } catch (errorUnknown) { duplicateSlots = (errorUnknown as Error).message; }
+  insist(strings.contains(duplicateSlots,"Slot identity differs from its need: alias"),"A slot whose identity differs from its need was admitted: "+duplicateSlots);
   insist(screens.catalogueKinds().length === 36,"Catalogue vocabulary");
   let ledger: coverage.Ledger = coverage.judge(plan,screen,[]);
   insist(ledger.needs[0].status === "missing" && ledger.requirements[0].status === "missing","Unimplemented requirement marked covered");
-  let independent: plans.Plan = plans.decode("{\"title\":\"Excluded action\",\"requirements\":[{\"id\":\"exclude\",\"text\":\"No booking\",\"sources\":[\"request\"]}]}",[],[]);
+  let independent: plans.Plan = plans.decode("{\"title\":\"Excluded action\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"exclude\",\"text\":\"No booking\",\"sources\":[\"request\"],\"needs\":[]}],\"needs\":[],\"questions\":[]}",[],[],"","");
   let emptyScreen: screens.Screen = screens.reserve(independent,"screen");
   let questions: selection.Question[] = coverage.questions(independent,emptyScreen);
   insist(questions.length === 1 && questions[0].id === "requirement_exclude","Original requirement omitted from coverage batch");
@@ -163,6 +145,13 @@ export function schemas(): null {
   const unaryNumber: formula.Expression = formula.compile("-(2) + 3",[]); insist((unaryNumber.number as number) === 1,"Unary numeric formula");
   const unaryBoolean: formula.Expression = formula.compile("!false",[]); insist((unaryBoolean.boolean as boolean) === true,"Unary boolean formula");
   const booleanPrecedence: formula.Expression = formula.compile("false && true || true",[]); insist((booleanPrecedence.boolean as boolean) === true,"Boolean formula precedence");
+  // A boolean operator over issued boolean operands keeps the host operator in the lowered source, so the
+  // emitted policy short-circuits the right operand instead of evaluating both eagerly.
+  let shortOperands: formula.Operand[] = [{id:"flag",expression:"state.flag",type:"boolean",dependency:"f_parts_flag"},{id:"other",expression:"state.other",type:"boolean",dependency:"f_parts_other"}];
+  const shortCircuit: formula.Expression = formula.compile("flag && other",shortOperands);
+  insist(strings.contains(shortCircuit.source,"state.flag && state.other"),"Boolean && was not lowered to the short-circuiting host operator: "+shortCircuit.source);
+  const shortOr: formula.Expression = formula.compile("flag || other",shortOperands);
+  insist(strings.contains(shortOr.source,"state.flag || state.other"),"Boolean || was not lowered to the short-circuiting host operator: "+shortOr.source);
   const comparison: formula.Expression = formula.compile("2 <= 2",[]); insist((comparison.boolean as boolean) === true,"Comparison formula");
   const floored: formula.Expression = formula.compile("floor(1.9)",[]); insist((floored.number as number) === 1,"floor formula");
   const ceiled: formula.Expression = formula.compile("ceil(1.1)",[]); insist((ceiled.number as number) === 2,"ceil formula");
@@ -253,18 +242,18 @@ export async function planningLimits(): Promise<null> {
 // ---- Action triggers are a second-batch decision -------------------------------------------
 function action(id: string, on: string, at: string): string {
   let source: string = ""; if (at !== "") { source = ",\"at\":\""+at+"\""; }
-  return "{\"id\":\""+id+"\",\"type\":\"action\",\"words\":\"Perform "+id+"\",\"spec\":{\"on\":\""+on+"\""+source+",\"operation\":\"host/ops.run\"}}";
+  return "{\"id\":\""+id+"\",\"type\":\"action\",\"words\":\"Perform "+id+"\",\"reads\":[],\"spec\":{\"on\":\""+on+"\""+source+",\"operation\":\"host/ops.run\"}}";
 }
 function triggerPlan(): plans.Plan {
-  return plans.decode("{\"title\":\"Triggers\",\"inputs\":[{\"id\":\"when\",\"label\":\"When\",\"kind\":\"time\",\"measure\":\"minutes\",\"value\":600}],\"needs\":["
-    +"{\"id\":\"timer\",\"type\":\"countdown\",\"words\":\"Count down\",\"spec\":{\"label\":\"Timer\",\"length\":\"when\"}},"
-    +"{\"id\":\"rows\",\"type\":\"entries\",\"words\":\"Log rows\",\"spec\":{\"label\":\"Rows\"}},"
+  return plans.decode("{\"title\":\"Triggers\",\"inputs\":[{\"id\":\"when\",\"label\":\"When\",\"kind\":\"time\",\"measure\":\"minutes\",\"value\":600},{\"id\":\"length\",\"label\":\"Length\",\"kind\":\"count\",\"measure\":\"seconds\",\"value\":90}],\"constants\":[],\"requirements\":[],\"needs\":["
+    +"{\"id\":\"timer\",\"type\":\"countdown\",\"words\":\"Count down\",\"reads\":[\"length\"],\"spec\":{\"label\":\"Timer\",\"length\":\"length\"}},"
+    +"{\"id\":\"rows\",\"type\":\"entries\",\"words\":\"Log rows\",\"reads\":[],\"spec\":{\"label\":\"Rows\",\"fields\":[]}},"
     +action("ends","countdown_end","timer")+","
     +action("taps","row_tap","rows")+","
     +action("clocked","time","when")+","
     +action("tapped","button","")+","
     +action("later","other","")+","
-    +action("lost","entry_added","absent")+"]}",[],[]);
+    +action("lost","other","")+"],\"questions\":[]}",[],[],"","");
 }
 function ids(needs: plans.Need[]): string[] { let result: string[] = []; for (let need of needs) { result[result.length] = need.id; } return result; }
 function answer(id: string, selected: string, p: number): selection.Answer { return {id:id,selected:selected,probability:p,accepted:p >= selection.threshold("ordinary"),probabilities:[{id:selected,p:1},{id:"unavailable",p:0}]}; }
@@ -279,8 +268,13 @@ export function triggers(): null {
   insist(optionIds(issued[0]).join(",") === "button,countdown_end_timer,entry_added_rows,row_tap_rows,time_when,unavailable","Issued trigger alternatives: "+optionIds(issued[0]).join(","));
   // A clock is a `countdown_end` source, never the `time` source a scheduled action names.
   insist(!s.contains(optionIds(issued[0]),"time_timer"),"A countdown was offered as a time source");
-  // An entry trigger naming a source absent from the plan is not offered, while the tap stays legal.
-  let lost: string[] = optionIds(issued[1]); insist(!s.contains(lost,"entry_added_absent") && s.contains(lost,"row_tap_rows"),"Eligibility of named sources");
+  // An entry trigger naming a source the plan never issues rejects at decode, so the question is
+  // only ever asked over sources that resolve; the issued tap stays legal and is offered.
+  let absent: string = "";
+  try { plans.decode("{\"title\":\"Triggers\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"rows\",\"type\":\"entries\",\"words\":\"Log rows\",\"reads\":[],\"spec\":{\"label\":\"Rows\",\"fields\":[]}},"+action("missing","entry_added","absent")+"],\"questions\":[]}",[],[],"",""); }
+  catch (errorUnknown) { let error: Error = errorUnknown as Error; absent = error.message; }
+  insist(absent === "missing: unissued trigger target absent","Unissued entry trigger target: "+absent);
+  let lost: string[] = optionIds(issued[1]); insist(s.contains(lost,"row_tap_rows") && !s.contains(lost,"entry_added_absent"),"Eligibility of issued sources: "+lost.join(","));
   // Settling binds the chosen trigger on the plan itself, so the writer receives it and no later
   // batch re-asks it.
   let settled: events.Settlement = events.settle(plan,[answer("events_later","button",1),answer("events_lost","row_tap_rows",1)]);
@@ -324,14 +318,14 @@ export function triggers(): null {
   // A trigger whose named source the plan does not resolve is never offered, and a decoded plan that
   // carries a non-identifier source rejects instead of raising an unclassified host type error.
   let nontext: string = "";
-  try { events.unsettled(plans.decode("{\"title\":\"x\",\"needs\":[{\"id\":\"act\",\"type\":\"action\",\"words\":\"Act\",\"spec\":{\"on\":\"other\",\"at\":7,\"operation\":\"host/ops.run\"}}]}",[],[])); }
+  try { events.unsettled(plans.decode("{\"title\":\"x\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"act\",\"type\":\"action\",\"words\":\"Act\",\"reads\":[],\"spec\":{\"on\":\"other\",\"at\":7,\"operation\":\"host/ops.run\"}}],\"questions\":[]}",[],[],"","")); }
   catch (errorUnknown) { let error: Error = errorUnknown as Error; nontext = error.name+":"+error.message; }
-  insist(nontext === "CONSTRUCTION_SCHEMA:Action trigger source must be an identifier","Non-text trigger source: "+nontext);
+  insist(nontext === "CONSTRUCTION_SCHEMA:need act.at: expected text","Non-text trigger source: "+nontext);
   return null;
 }
 // ---- Human question review closes every proposed question exactly once -----------------------
 function humanQuestion(id: string): string { return "{\"id\":\""+id+"\",\"text\":\"Which option?\",\"default\":\"a\",\"options\":[{\"id\":\"a\",\"label\":\"A\"},{\"id\":\"b\",\"label\":\"B\"}]}"; }
-function questionPlan(questions: string): plans.Plan { return plans.decode("{\"title\":\"Pick\",\"requirements\":[{\"id\":\"preserve\",\"text\":\"Keep the request\",\"sources\":[\"request\"]}],\"needs\":[{\"id\":\"body\",\"type\":\"other\",\"words\":\"Something useful\",\"spec\":{}}],\"questions\":["+questions+"]}",[],[]); }
+function questionPlan(questions: string): plans.Plan { return plans.decode("{\"title\":\"Pick\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"preserve\",\"text\":\"Keep the request\",\"sources\":[\"request\"],\"needs\":[]}],\"needs\":[{\"id\":\"body\",\"type\":\"other\",\"words\":\"Something useful\",\"reads\":[],\"spec\":{}}],\"questions\":["+questions+"]}",[],[],"",""); }
 function seeded(plan: plans.Plan, closed: string[]): planning.Result { return {plan:plan,diagnostics:"",answers:[],asks:0,review:[],closed:closed}; }
 function reviewInput(requestId: string): planning.Input { return {requestId:requestId,request:"Keep the request",facts:"{}",factIds:[],sourceIds:[],contracts:"[]",specification:"Plan contract",target:"screen"}; }
 export async function reviewAdmission(): Promise<null> {
@@ -387,6 +381,272 @@ export async function reviewAdmission(): Promise<null> {
   insist(cancelled,"Cancelled question did not end generation");
   return null;
 }
+function figurePlan(decimals: string): string { return "{\"title\":\"t\",\"constants\":[],\"requirements\":[],\"questions\":[],\"inputs\":[{\"id\":\"limit\",\"label\":\"Limit\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":10}],\"needs\":[{\"id\":\"total\",\"type\":\"figure\",\"words\":\"Total\",\"reads\":[\"limit\"],\"spec\":{\"label\":\"Total\",\"format\":\"money\",\"unit\":\"EUR\",\"formula\":\"limit\",\"decimals\":"+decimals+",\"example\":{\"inputs\":{\"limit\":10},\"result\":10}}}]}"; }
+function yesNoPlan(result: string): string { return "{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"questions\":[],\"needs\":[{\"id\":\"over\",\"type\":\"figure\",\"words\":\"Over\",\"reads\":[],\"spec\":{\"label\":\"Over\",\"format\":\"yes_no\",\"unit\":\"\",\"formula\":\"true\",\"example\":{\"inputs\":{},\"result\":"+result+"}}}]}"; }
+function entriesPlan(fieldDecimals: string): string { return "{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"questions\":[],\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"spec\":{\"label\":\"Log\",\"fields\":[{\"id\":\"amount\",\"label\":\"Amount\",\"kind\":\"number\",\"initial\":0,\"measure\":\"number\",\"decimals\":"+fieldDecimals+"},{\"id\":\"what\",\"label\":\"What\",\"kind\":\"text\",\"initial\":\"\",\"measure\":\"number\",\"decimals\":"+fieldDecimals+"}]}}]}"; }
+function textEntriesPlan(fieldDecimals: string): string { return "{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"questions\":[],\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"spec\":{\"label\":\"Log\",\"fields\":[{\"id\":\"what\",\"label\":\"What\",\"kind\":\"text\",\"initial\":\"\",\"measure\":\"number\",\"decimals\":"+fieldDecimals+"}]}}]}"; }
+function seedPlan(seeds: string): string { return "{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"questions\":[],\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"quote\":\"I bought coffee\",\"spec\":{\"label\":\"Log\",\"fields\":[{\"id\":\"what\",\"label\":\"What\",\"kind\":\"text\",\"initial\":\"\",\"measure\":\"number\"},{\"id\":\"done\",\"label\":\"Done\",\"kind\":\"toggle\",\"initial\":false,\"measure\":\"number\"},{\"id\":\"amount\",\"label\":\"Amount\",\"kind\":\"number\",\"initial\":0,\"measure\":\"number\"}],\"seeds\":["+seeds+"]}}]}"; }
+function emptyEntriesPlan(seeds: string): string { return "{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"questions\":[],\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"quote\":\"I bought coffee\",\"spec\":{\"label\":\"Log\",\"fields\":[],\"seeds\":["+seeds+"]}}]}"; }
+function textSeedPlan(seeds: string): string { return "{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"questions\":[],\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"quote\":\"I bought coffee\",\"spec\":{\"label\":\"Log\",\"fields\":[{\"id\":\"what\",\"label\":\"What\",\"kind\":\"text\",\"initial\":\"\",\"measure\":\"number\"}],\"seeds\":["+seeds+"]}}]}"; }
+function toggleSeedPlan(seeds: string): string { return "{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"questions\":[],\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"quote\":\"I bought coffee\",\"spec\":{\"label\":\"Log\",\"fields\":[{\"id\":\"done\",\"label\":\"Done\",\"kind\":\"toggle\",\"initial\":false,\"measure\":\"number\"}],\"seeds\":["+seeds+"]}}]}"; }
+function operandIds(count: number): formula.Operand[] {
+  let issued: formula.Operand[] = []; let index: number = 0;
+  while (index < count) { let id: string = "op"+String(index); issued[issued.length] = {id:id,expression:"(state."+id+" as number)",type:"number",dependency:"f_parts_"+id}; index = index+1; }
+  return issued;
+}
+function aggregateIds(count: number): string[] { let issued: string[] = []; let index: number = 0; while (index < count) { issued[issued.length] = "count_"+String(index); index = index+1; } return issued; }
+export function planValues(): null {
+  // The planner document enters construction as JSON text, so the boundary classifies its own parse:
+  // a fenced, truncated or prose-wrapped reply rejects with the construction classification and a
+  // located reason the bounded re-plan consumes, never an unclassified host parser error.
+  for (let malformed of ["```json\n{\"title\":\"t\"}\n```","{\"title\":","","not json","null","[]","123"]) {
+    let name: string = ""; let message: string = "";
+    try { plans.decode(malformed,[],[],"",""); }
+    catch (errorUnknown) { let error: Error = errorUnknown as Error; name = error.name; message = error.message; }
+    insist(name === "CONSTRUCTION_SCHEMA","Unclassified plan document rejection: "+name+" "+message);
+    insist(strings.contains(message,"plan:"),"Plan document rejection is not located: "+message);
+  }
+  refusesPlan("```json\n{\"title\":\"t\"}\n```","","","plan: not a JSON document");
+  refusesPlan("{\"title\":","","","plan: not a JSON document");
+  // A declared kind is checked, never cast, and the rejection names the offending identifier.
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"note\",\"label\":\"Note\",\"kind\":\"text\",\"measure\":\"number\",\"value\":7}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input note: expected text");
+  // A numeric kind fed a string is refused at its own identifier instead of being cast.
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"spent\",\"label\":\"Spent\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":\"12\"}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input spent: expected a finite number");
+  // The matching percent, amount and bounded amount values still decode with their declared kinds.
+  let declaredKinds: plans.Plan = plans.decode("{\"title\":\"t\",\"inputs\":[{\"id\":\"ratio\",\"label\":\"Ratio\",\"kind\":\"percent\",\"measure\":\"percent\",\"value\":0.5},{\"id\":\"spent\",\"label\":\"Spent\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":12},{\"id\":\"cap\",\"label\":\"Cap\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":15,\"min\":10,\"max\":20}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}",[],[],"","");
+  insist(s.finite(declaredKinds.inputs[0].value) === 0.5,"Percent input value lost");
+  insist(s.finite(declaredKinds.inputs[1].value) === 12,"Amount input value lost");
+  insist(s.finite(declaredKinds.inputs[2].value) === 15 && (declaredKinds.inputs[2].min as number) === 10 && (declaredKinds.inputs[2].max as number) === 20,"Bounded amount input inside its declared bounds was refused");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"flag\",\"label\":\"Flag\",\"kind\":\"toggle\",\"measure\":\"number\",\"value\":\"yes\"}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input flag: expected a boolean");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"items\",\"label\":\"Items\",\"kind\":\"count\",\"measure\":\"count\",\"value\":1.5,\"min\":0,\"max\":9}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input items: expected an integral number");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"items\",\"label\":\"Items\",\"kind\":\"count\",\"measure\":\"count\",\"value\":2,\"min\":0.5,\"max\":9}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input items.min: expected an integral number");
+  // Omission means unbounded, not zero: an unbounded count stays valid.
+  let unbounded: plans.Plan = plans.decode("{\"title\":\"t\",\"inputs\":[{\"id\":\"items\",\"label\":\"Items\",\"kind\":\"count\",\"measure\":\"count\",\"value\":3}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}",[],[],"","");
+  insist(!Object.hasOwn(unbounded.inputs[0],"min") && !Object.hasOwn(unbounded.inputs[0],"max"),"Unbounded count gained a bound");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"pick\",\"label\":\"Pick\",\"kind\":\"choice\",\"measure\":\"number\",\"value\":3,\"options\":[{\"id\":\"a\",\"label\":\"A\",\"value\":1}]}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input pick: choice index outside its options");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"limit\",\"label\":\"Limit\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":4,\"options\":[{\"id\":\"a\",\"label\":\"A\",\"value\":1}]}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","options on a non-choice input");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"limit\",\"label\":\"Limit\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":4,\"min\":9}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input limit: value below its minimum");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"limit\",\"label\":\"Limit\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":9,\"max\":4}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input limit: value above its maximum");
+  // A wrong-typed declared value rejects with the identifier that carries it. The wire classes declare
+  // these as unknown so the located helper decides, instead of the contextual JSON decode rejecting
+  // first with a bare "expected boolean/number/array" the planner cannot attribute.
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"items\",\"label\":\"Items\",\"kind\":\"count\",\"measure\":\"count\",\"value\":2,\"setting\":\"yes\"}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input items.setting");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"items\",\"label\":\"Items\",\"kind\":\"count\",\"measure\":\"count\",\"value\":2,\"unit\":7}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input items.unit");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"items\",\"label\":\"Items\",\"kind\":\"count\",\"measure\":\"count\",\"value\":2,\"max\":\"9\"}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input items.max");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[{\"id\":\"rate\",\"label\":\"Rate\",\"measure\":\"number\",\"value\":\"x\"}],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","constant rate");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[{\"id\":\"rate\",\"label\":\"Rate\",\"measure\":\"number\",\"value\":1,\"unit\":3}],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","constant rate.unit");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"when\",\"text\":\"Keep the date\",\"sources\":1,\"needs\":[]}],\"needs\":[],\"questions\":[]}","","","requirement when.sources");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"when\",\"text\":\"Keep the date\",\"sources\":[],\"needs\":[7]}],\"needs\":[],\"questions\":[]}","","","requirement when.needs");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"over\",\"type\":\"figure\",\"words\":\"Over\",\"reads\":[],\"required\":\"yes\",\"spec\":{\"label\":\"Over\",\"format\":\"plain\",\"unit\":\"\",\"formula\":\"1\",\"example\":{\"inputs\":{},\"result\":1}}}],\"questions\":[]}","","","need over.required");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"over\",\"type\":\"figure\",\"words\":\"Over\",\"reads\":[],\"quote\":4,\"spec\":{\"label\":\"Over\",\"format\":\"plain\",\"unit\":\"\",\"formula\":\"1\",\"example\":{\"inputs\":{},\"result\":1}}}],\"questions\":[]}","","","need over.quote");
+  // The matching correct values still decode, so the located checks never narrow the accepted plan.
+  let attributed: plans.Plan = plans.decode("{\"title\":\"t\",\"inputs\":[{\"id\":\"items\",\"label\":\"Items\",\"kind\":\"count\",\"measure\":\"count\",\"value\":2,\"min\":0,\"max\":9,\"unit\":\"items\",\"setting\":true}],\"constants\":[{\"id\":\"rate\",\"label\":\"Rate\",\"measure\":\"number\",\"value\":1,\"unit\":\"x\"}],\"requirements\":[{\"id\":\"when\",\"text\":\"Keep the request\",\"sources\":[\"request\"],\"needs\":[]}],\"needs\":[{\"id\":\"over\",\"type\":\"figure\",\"words\":\"Over\",\"reads\":[],\"required\":false,\"quote\":\"over\",\"spec\":{\"label\":\"Over\",\"format\":\"plain\",\"unit\":\"\",\"formula\":\"1\",\"example\":{\"inputs\":{},\"result\":1}}}],\"questions\":[]}",[],[],"","");
+  insist(attributed.inputs[0].setting && (attributed.inputs[0].min as number) === 0 && (attributed.inputs[0].max as number) === 9 && attributed.inputs[0].unit === "items","a correctly typed input value did not decode");
+  insist(attributed.constants[0].unit === "x" && (attributed.constants[0].value as number) === 1,"a correctly typed constant did not decode");
+  insist(attributed.requirements[0].sources.length === 1 && attributed.requirements[0].sources[0] === "request","a correctly typed requirement source did not decode");
+  insist(!attributed.needs[0].required && attributed.needs[0].quote === "over","a correctly typed need attribute did not decode");
+  // Every declared value of the plan, not only the five the review named, is checked by the located
+  // helper that owns it: the wire classes declare the leaves unknown, so the contextual decode never
+  // returns first with a bare "expected string/array/table" the planner cannot attribute.
+  refusesPlan("{\"title\":5,\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","plan.title");
+  refusesPlan("{\"title\":\"t\",\"extra\":1,\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","Unknown field: extra");
+  refusesPlan("{\"title\":\"t\",\"inputs\":5,\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","plan inputs: Expected array");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"text\":\"Keep\",\"sources\":[],\"needs\":[]}],\"needs\":[],\"questions\":[]}","","","plan requirement #0: Missing field: id");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":5,\"needs\":[],\"questions\":[]}","","","plan requirements: Expected array");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[1],\"questions\":[]}","","","plan needs: Expected record at index 0");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"when\",\"text\":\"Keep\",\"sources\":[\"budget\"],\"needs\":[]}],\"needs\":[],\"questions\":[]}","","","requirement when: Unissued requirement source budget");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[\"x\"],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","plan inputs: Expected record at index 0");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"items\",\"label\":5,\"kind\":\"count\",\"measure\":\"count\",\"value\":2}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input items.label");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"pick\",\"label\":\"Pick\",\"kind\":\"choice\",\"measure\":\"number\",\"value\":0,\"options\":9}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input pick.options: Expected array");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"pick\",\"label\":\"Pick\",\"kind\":\"choice\",\"measure\":\"number\",\"value\":0,\"options\":[{\"label\":\"A\",\"value\":1}]}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","input pick option: Missing field: id");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[{\"id\":\"rate\",\"label\":5,\"measure\":\"number\",\"value\":1}],\"requirements\":[],\"needs\":[],\"questions\":[]}","","","constant rate.label");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"when\",\"text\":5,\"sources\":[],\"needs\":[]}],\"needs\":[],\"questions\":[]}","","","requirement when.text");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"over\",\"type\":\"figure\",\"words\":5,\"reads\":[],\"spec\":{\"label\":\"Over\",\"format\":\"plain\",\"unit\":\"\",\"formula\":\"1\",\"example\":{\"inputs\":{},\"result\":1}}}],\"questions\":[]}","","","need over.words");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"over\",\"type\":\"figure\",\"words\":\"Over\",\"reads\":[],\"spec\":\"x\"}],\"questions\":[]}","","","need over.spec: expected a record");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"over\",\"type\":\"figure\",\"words\":\"Over\",\"reads\":[],\"spec\":{\"label\":5,\"format\":\"plain\",\"unit\":\"\",\"formula\":\"1\",\"example\":{\"inputs\":{},\"result\":1}}}],\"questions\":[]}","","","need over.label");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"over\",\"type\":\"figure\",\"words\":\"Over\",\"reads\":[],\"spec\":{\"label\":\"Over\",\"format\":\"plain\",\"unit\":\"\",\"formula\":\"1\",\"colour\":\"red\",\"example\":{\"inputs\":{},\"result\":1}}}],\"questions\":[]}","","","need over: Unknown field: colour");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"cost\",\"label\":\"Cost\",\"kind\":\"amount\",\"measure\":\"minutes\",\"value\":5}],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"cook\",\"type\":\"countdown\",\"words\":\"Cook\",\"reads\":[],\"spec\":{\"label\":\"Cook\",\"length\":5}}],\"questions\":[]}","","","need cook.length");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"done\",\"type\":\"action\",\"words\":\"Done\",\"reads\":[],\"spec\":{\"on\":\"button\",\"operation\":5}}],\"questions\":[]}","","","need done.operation");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[{\"id\":\"ask\",\"text\":5,\"default\":\"a\",\"options\":[{\"id\":\"a\",\"label\":\"A\"}]}]}","","","question ask.text");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[{\"id\":\"ask\",\"text\":\"Ask\",\"default\":5,\"options\":[{\"id\":\"a\",\"label\":\"A\"}]}]}","","","question ask.default");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[{\"id\":\"ask\",\"text\":\"Ask\",\"default\":\"a\",\"options\":[{\"id\":\"a\",\"label\":5}]}]}","","","question ask option a.label");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[{\"text\":\"Ask\",\"default\":\"a\"}]}","","","plan question #0: Missing field: options");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"type\":\"other\",\"words\":\"x\",\"spec\":{}}],\"questions\":[]}","","","plan need #0: Missing field: reads");
+  let attributedQuestion: plans.Plan = plans.decode("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[{\"id\":\"ask\",\"text\":\"Pick one\",\"default\":\"b\",\"options\":[{\"id\":\"a\",\"label\":\"A\"},{\"id\":\"b\",\"label\":\"B\"}]}]}",[],[],"","");
+  insist(attributedQuestion.questions.length === 1 && attributedQuestion.questions[0].default === "b" && attributedQuestion.questions[0].options.length === 2 && s.text(attributedQuestion.questions[0].text) === "Pick one","a correctly typed question did not decode");
+  let attributedEntries: plans.Plan = plans.decode("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"keep\",\"text\":\"Keep the budget\",\"sources\":[\"budget\"],\"needs\":[]}],\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"spec\":{\"label\":\"Log\",\"fields\":[{\"id\":\"what\",\"label\":\"What\",\"kind\":\"text\",\"initial\":\"\",\"measure\":\"number\",\"unit\":\"items\"}]}}],\"questions\":[]}",["budget"],[],"","");
+  insist(s.text(attributedEntries.needs[0].spec.label) === "Log","a correctly typed entries need did not decode");
+  let attributedField: Record<string, unknown> = s.records(attributedEntries.needs[0].spec,"fields")[0];
+  insist(s.text(attributedField.unit) === "items","a correctly typed entry-field unit did not decode");
+  insist(attributedEntries.requirements[0].sources.length === 1 && attributedEntries.requirements[0].sources[0] === "budget","a requirement naming an issued fact did not decode");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"spec\":{\"label\":\"Log\",\"fields\":[{\"id\":\"amount\",\"label\":\"Amount\",\"kind\":\"number\",\"initial\":0,\"measure\":\"number\",\"unit\":4}]}}],\"questions\":[]}","","","need log: field amount.unit");
+  let checked: plans.Plan = plans.decode("{\"title\":\"t\",\"inputs\":[{\"id\":\"note\",\"label\":\"Note\",\"kind\":\"text\",\"measure\":\"number\",\"value\":\"hello\"},{\"id\":\"flag\",\"label\":\"Flag\",\"kind\":\"toggle\",\"measure\":\"number\",\"value\":true},{\"id\":\"items\",\"label\":\"Items\",\"kind\":\"count\",\"measure\":\"count\",\"value\":2,\"min\":0,\"max\":9},{\"id\":\"pick\",\"label\":\"Pick\",\"kind\":\"choice\",\"measure\":\"number\",\"value\":1,\"options\":[{\"id\":\"a\",\"label\":\"A\",\"value\":1},{\"id\":\"b\",\"label\":\"B\",\"value\":2}]},{\"id\":\"mins\",\"label\":\"Minutes\",\"kind\":\"amount\",\"measure\":\"minutes\",\"value\":5}],\"constants\":[],\"requirements\":[],\"needs\":[],\"questions\":[]}",[],[],"","");
+  insist(checked.inputs.length === 5,"Checked input kinds did not decode");
+  insist(s.text(checked.inputs[0].value) === "hello" && s.truth(checked.inputs[1].value),"Checked text and toggle values lost");
+  insist(s.finite(checked.inputs[2].value) === 2 && (checked.inputs[2].min as number) === 0,"Checked count bounds lost");
+  // The shared decimals domain applies at the figure site and at every entry-field site, for numeric and text fields alike.
+  insist((plans.decode(figurePlan("-1"),[],[],"","").needs[0].spec.decimals as number) === -1,"Figure decimals -1 accepted");
+  insist((plans.decode(figurePlan("6"),[],[],"","").needs[0].spec.decimals as number) === 6,"Figure decimals 6 accepted");
+  refusesPlan(figurePlan("7"),"","","need total.decimals");
+  refusesPlan(figurePlan("-2"),"","","need total.decimals");
+  refusesPlan(figurePlan("1.5"),"","","need total.decimals");
+  let fields: Record<string, unknown>[] = s.records(plans.decode(entriesPlan("-1"),[],[],"","").needs[0].spec,"fields");
+  insist((fields[0].decimals as number) === -1 && (fields[1].decimals as number) === -1,"Entry field decimals -1 accepted");
+  fields = s.records(plans.decode(entriesPlan("6"),[],[],"","").needs[0].spec,"fields");
+  insist((fields[0].decimals as number) === 6 && (fields[1].decimals as number) === 6,"Text entry field decimals 6 accepted");
+  refusesPlan(entriesPlan("7"),"","","need log: field amount.decimals");
+  refusesPlan(entriesPlan("-2"),"","","need log: field amount.decimals");
+  refusesPlan(entriesPlan("1.5"),"","","need log: field amount.decimals");
+  refusesPlan(textEntriesPlan("7"),"","","need log: field what.decimals");
+  refusesPlan(textEntriesPlan("-2"),"","","need log: field what.decimals");
+  refusesPlan(textEntriesPlan("1.5"),"","","need log: field what.decimals");
+  insist((s.records(plans.decode(textEntriesPlan("6"),[],[],"","").needs[0].spec,"fields")[0].decimals as number) === 6,"Text entry field decimals 6 rejected");
+  // An entry field identifier becomes a member of the emitted `Values_<need>` record, and DEAL declares
+  // no class field named `constructor`: the name rejects at decode with the need and the field instead
+  // of aborting generation inside the compiler with a diagnostic that names neither.
+  let reservedField: string = "{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"spec\":{\"label\":\"Log\",\"fields\":[{\"id\":\"constructor\",\"label\":\"Constructor\",\"kind\":\"text\",\"initial\":\"\",\"measure\":\"number\"}]}}],\"questions\":[]}";
+  refusesPlan(reservedField,"","","need log: field constructor.id: not representable as a DEAL class field");
+  // Only the member name DEAL cannot declare rejects: the same alphabet stays admitted.
+  let nearName: string = strings.replace(reservedField,"\"id\":\"constructor\"","\"id\":\"constructors\"");
+  insist(s.records(plans.decode(nearName,[],[],"","").needs[0].spec,"fields").length === 1,"a legal entry field identifier was refused as a DEAL class field");
+  // A figure value type follows its format: a yes_no example is judged exactly.
+  refusesPlan(yesNoPlan("2"),"","","yes_no example result must be 0 or 1");
+  insist((plans.decode(yesNoPlan("1"),[],[],"","").needs[0].spec.decimals as number) === -1,"yes_no figure plan rejected");
+  // An example supplies its operands by issued identifier only: an invented reference rejects at plan
+  // decode with the need and the operand, while every issued value source, an issued entry aggregate
+  // and a disclosed fact identifier are admitted and left to the parts stage.
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"total\",\"type\":\"figure\",\"words\":\"Total\",\"reads\":[],\"spec\":{\"label\":\"Total\",\"format\":\"plain\",\"unit\":\"\",\"formula\":\"ghost\",\"example\":{\"inputs\":{\"ghost\":1},\"result\":1}}}],\"questions\":[]}","","","need total.example.ghost");
+  plans.decode("{\"title\":\"t\",\"inputs\":[{\"id\":\"limit\",\"label\":\"Limit\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":1}],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"spend\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"spec\":{\"label\":\"Log\",\"fields\":[]}},{\"id\":\"total\",\"type\":\"figure\",\"words\":\"Total\",\"reads\":[\"limit\",\"budget\",\"spend\"],\"spec\":{\"label\":\"Total\",\"format\":\"plain\",\"unit\":\"\",\"formula\":\"total_spend\",\"example\":{\"inputs\":{\"total_spend\":1,\"limit\":1,\"budget\":1},\"result\":1}}}],\"questions\":[]}",["budget"],[],"","");
+  // A countdown length resolves to an issued unit-bearing duration source and converts by checked arithmetic.
+  let countdown: plans.Plan = plans.decode("{\"title\":\"t\",\"inputs\":[{\"id\":\"timer\",\"label\":\"Timer\",\"kind\":\"amount\",\"measure\":\"seconds\",\"value\":90,\"unit\":\"s\"}],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"cook\",\"type\":\"countdown\",\"words\":\"Cook\",\"reads\":[\"timer\"],\"spec\":{\"label\":\"Cook\",\"length\":\"timer\"}}],\"questions\":[]}",[],[],"","");
+  let seconds: plans.DurationSource = countdown.needs[0].duration as plans.DurationSource;
+  insist(seconds.measure === "seconds" && seconds.unit === "s","Duration source lost its unit");
+  insist(plans.milliseconds(seconds,90,"cook") === 90000,"Seconds duration conversion");
+  insist(plans.milliseconds(seconds,0.5,"cook") === 500,"Fractional millisecond conversion rejected");
+  let minutes: plans.Plan = plans.decode("{\"title\":\"t\",\"inputs\":[],\"constants\":[{\"id\":\"long\",\"label\":\"Long\",\"measure\":\"minutes\",\"value\":5}],\"requirements\":[],\"needs\":[{\"id\":\"cook\",\"type\":\"countdown\",\"words\":\"Cook\",\"reads\":[\"long\"],\"spec\":{\"label\":\"Cook\",\"length\":\"long\"}}],\"questions\":[]}",[],[],"","");
+  insist(plans.milliseconds(minutes.needs[0].duration as plans.DurationSource,5,"cook") === 300000,"Minutes duration conversion");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[{\"id\":\"cost\",\"label\":\"Cost\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":5}],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"cook\",\"type\":\"countdown\",\"words\":\"Cook\",\"reads\":[\"cost\"],\"spec\":{\"label\":\"Cook\",\"length\":\"cost\"}}],\"questions\":[]}","","","cook: length source is not a duration");
+  refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"cook\",\"type\":\"countdown\",\"words\":\"Cook\",\"reads\":[],\"spec\":{\"label\":\"Cook\",\"length\":\"timer\"}}],\"questions\":[]}","","","cook: unissued duration source timer");
+  let negative: string = ""; try { plans.milliseconds(seconds,-1,"cook"); } catch(errorUnknown) { negative = (errorUnknown as Error).message; } insist(strings.contains(negative,"duration value is negative"),"Negative duration converted: "+negative);
+  let overflow: string = ""; try { plans.milliseconds(seconds,1e308,"cook"); } catch(errorUnknown) { overflow = (errorUnknown as Error).message; } insist(strings.contains(overflow,"duration conversion overflowed"),"Duration overflow converted: "+overflow);
+  // A nonfinite value is refused by the finite check of the conversion itself, before any scaling, so
+  // the located reason is the finite one and not the overflow the multiplication would raise.
+  let nonfinite: string = "";
+  try { plans.milliseconds(seconds,Number("Infinity"),"cook"); } catch(errorUnknown) { nonfinite = (errorUnknown as Error).message; }
+  insist(strings.contains(nonfinite,"duration value is not finite"),"Nonfinite duration conversion: "+nonfinite);
+  // One shared disclosure predicate decides every seed.
+  let request: string = "I bought coffee for amount 3 and marked it true.";
+  let admitted: plans.Plan = plans.decode(seedPlan("{\"values\":{\"what\":\"coffee\",\"done\":true,\"amount\":3}}"),[],[],request,"");
+  insist(s.records(admitted.needs[0].spec,"seeds").length === 1,"Admitted seed dropped");
+  refusesPlan(seedPlan("{\"values\":{\"what\":\"diamonds\",\"done\":true,\"amount\":3}}"),request,"","log: seed 0 field what is not disclosed");
+  let factData: string = "{\"what\":\"oats\",\"done\":true,\"amount\":3}";
+  let fromFacts: plans.Plan = plans.decode(seedPlan("{\"values\":{\"what\":\"oats\",\"done\":true,\"amount\":3}}"),[],[],"log a purchase",factData);
+  insist(s.records(fromFacts.needs[0].spec,"seeds").length === 1,"Fact-evidenced seed rejected");
+  plans.decode(seedPlan("{\"values\":{\"what\":\"\",\"done\":true,\"amount\":3}}"),[],[],request,"");
+  refusesPlan(seedPlan("{\"values\":{\"amount\":40}}"),"I spent 140 on Mon","","log: seed 0 field amount is not disclosed");
+  refusesPlan(seedPlan("{\"values\":{\"what\":\"Al\"}}"),"Alphabet","","log: seed 0 field what is not disclosed");
+  refusesPlan(seedPlan("{\"values\":{\"what\":\"coffee\",\"amount\":40}}"),"coffee costs 3. Tea costs 40.","","log: seed 0 fields are not one disclosed record");
+  refusesPlan(seedPlan("{\"values\":{\"what\":\"coffee\",\"amount\":40}}"),"","{\"rows\":[{\"what\":\"coffee\",\"amount\":3},{\"what\":\"tea\",\"amount\":40}]}","log: seed 0 fields are not one disclosed record");
+  plans.decode(seedPlan("{\"values\":{\"what\":\"coffee\",\"amount\":40}}"),[],[],"","{\"rows\":[{\"what\":\"coffee\",\"amount\":4e1}]}");
+  // A record whose only text value is empty carries no content, so it needs the exact quote.
+  refusesPlan(textSeedPlan("{\"values\":{\"what\":\"\"}}"),"nothing about logs","","supplies no values");
+  plans.decode(textSeedPlan("{\"values\":{\"what\":\"\"}}"),[],[],"I bought coffee","");
+  // Only the empty string carries no content: a whitespace value is content, so it must occur
+  // exactly in the evidence and it counts as a supplied value.
+  plans.decode(textSeedPlan("{\"values\":{\"what\":\" \"}}"),[],[],"nothing about logs","");
+  refusesPlan(textSeedPlan("{\"values\":{\"what\":\"\\t\\t\"}}"),"nothing about logs","","log: seed 0 field what is not disclosed");
+  // A toggle value is content: its exact spelling evidences it without the need quote.
+  plans.decode(toggleSeedPlan("{\"values\":{\"done\":true}}"),[],[],"marked it true","");
+  refusesPlan(toggleSeedPlan("{\"values\":{\"done\":true}}"),"nothing marked","","log: seed 0 field done is not disclosed");
+  // A seed on a need that declares fields may still supply no value or only some values: the spec
+  // admits a timestamp-only record when the need quote is an exact request substring, and a partial
+  // record whose unnamed fields keep their declared initial. Absence is not a missing field.
+  let fielded: string = "I bought coffee today";
+  insist(s.records(plans.decode(seedPlan("{\"values\":{}}"),[],[],fielded,"").needs[0].spec,"seeds").length === 1,"A timestamp-only seed on a field-bearing need was rejected");
+  refusesPlan(seedPlan("{\"values\":{}}"),"nothing logged","","log: seed 0 supplies no values and the need quote is not an exact request substring");
+  insist(s.records(plans.decode(seedPlan("{\"values\":{\"what\":\"coffee\"}}"),[],[],fielded,"").needs[0].spec,"seeds").length === 1,"A partial seed was rejected for its unnamed fields");
+  refusesPlan(seedPlan("{\"values\":{\"invented\":\"coffee\"}}"),fielded,"","Unknown field: invented");
+  // A present value is still checked against its declared kind: a text value for the number field
+  // rejects with the need, the seed index and the located field, so the subset rule never weakens
+  // value typing and a plan with several seeds repairs the record the rejection points at.
+  refusesPlan(seedPlan("{\"values\":{\"amount\":\"3\"}}"),fielded,"","log: seed 0 field amount: expected a finite number");
+  refusesPlan(seedPlan("{\"values\":{\"done\":\"yes\"}}"),fielded,"","log: seed 0 field done: expected a boolean");
+  refusesPlan(seedPlan("{\"values\":{\"what\":\"coffee\"}},{\"values\":{\"amount\":\"3\"}}"),fielded,"","log: seed 1 field amount: expected a finite number");
+  let partialTimestamp: string = "{\"facts\":[{\"id\":\"at\",\"text\":\"at 1700000000000\",\"type\":\"unixMillis\",\"value\":1700000000000}]}";
+  insist(s.records(plans.decode(seedPlan("{\"values\":{},\"timestamp\":1700000000000}"),[],[],fielded,partialTimestamp).needs[0].spec,"seeds").length === 1,"A timestamp-only seed with typed millisecond evidence was rejected");
+  refusesPlan(emptyEntriesPlan("{\"values\":{}}"),"I kept 1000 entries.","","supplies no values");
+  refusesPlan(emptyEntriesPlan("{\"values\":{},\"timestamp\":999}"),request,"","log: seed 0 timestamp 999 is not disclosed");
+  // A decimal spelling that happens to occur in the request is not evidence: a supplied timestamp
+  // traces only to a disclosed numeric millisecond value, and the comparison is exact numeric equality.
+  refusesPlan(emptyEntriesPlan("{\"values\":{},\"timestamp\":5}"),"I bought coffee five times; 5 of them on 2026-11-20","","log: seed 0 timestamp 5 is not disclosed");
+  refusesPlan(emptyEntriesPlan("{\"values\":{},\"timestamp\":3}"),request,"","log: seed 0 timestamp 3 is not disclosed");
+  // A supplied timestamp that is not a finite integral millisecond locates the seed and the value, not
+  // just the need.
+  refusesPlan(emptyEntriesPlan("{\"values\":{},\"timestamp\":1.5}"),request,"","log: seed 0 timestamp 1.5 is not a finite integral Unix millisecond");
+  // A supplied timestamp traces only to a disclosed fact whose own type declares Unix milliseconds;
+  // its identity, declared meaning and exact value are the evidence.
+  let millisFacts: string = "{\"facts\":[{\"id\":\"at\",\"text\":\"purchase at 1700000000000\",\"type\":\"unixMillis\",\"value\":1700000000000}]}";
+  plans.decode(emptyEntriesPlan("{\"values\":{},\"timestamp\":1700000000000}"),[],[],request,millisFacts);
+  refusesPlan(emptyEntriesPlan("{\"values\":{},\"timestamp\":1}"),request,millisFacts,"log: seed 0 timestamp 1 is not disclosed");
+  // An unrelated disclosed amount, count or percentage carrying the same number is not timestamp
+  // evidence, and neither is a key that merely looks temporal or a bare JSON number.
+  refusesPlan(emptyEntriesPlan("{\"values\":{},\"timestamp\":1700000000000}"),request,"{\"facts\":[{\"id\":\"budget\",\"text\":\"Budget\",\"amount\":1700000000000}]}","log: seed 0 timestamp 1700000000000 is not disclosed");
+  refusesPlan(emptyEntriesPlan("{\"values\":{},\"timestamp\":1700000000000}"),request,"{\"facts\":[{\"id\":\"at\",\"text\":\"at\",\"millis\":1700000000000}]}","log: seed 0 timestamp 1700000000000 is not disclosed");
+  refusesPlan(emptyEntriesPlan("{\"values\":{},\"timestamp\":1700000000000}"),request,"{\"at\":1700000000000}","log: seed 0 timestamp 1700000000000 is not disclosed");
+  refusesPlan(emptyEntriesPlan("{\"values\":{},\"timestamp\":1700000000000}"),request,"{\"facts\":[{\"id\":\"at\",\"text\":\"at 1700000000000\",\"type\":\"amount\",\"value\":1700000000000}]}","log: seed 0 timestamp 1700000000000 is not disclosed");
+  // Action.at resolves the trigger target kind; a button omits it.
+  let triggerPlan: string = "{\"title\":\"t\",\"constants\":[],\"requirements\":[],\"questions\":[],\"inputs\":[{\"id\":\"timer\",\"label\":\"Timer\",\"kind\":\"amount\",\"measure\":\"seconds\",\"value\":60},{\"id\":\"spend\",\"label\":\"Spend\",\"kind\":\"amount\",\"measure\":\"money\",\"value\":5},{\"id\":\"at\",\"label\":\"At\",\"kind\":\"time\",\"measure\":\"minutes\",\"value\":600}],\"needs\":[%NEEDS%]}";
+  let countdownNeed: string = "{\"id\":\"cook\",\"type\":\"countdown\",\"words\":\"Cook\",\"reads\":[\"timer\"],\"spec\":{\"label\":\"Cook\",\"length\":\"timer\"}}";
+  let logNeed: string = "{\"id\":\"log\",\"type\":\"entries\",\"words\":\"Log\",\"reads\":[],\"spec\":{\"label\":\"Log\",\"fields\":[]}}";
+  let clockAction: string = "{\"id\":\"done\",\"type\":\"action\",\"words\":\"Done\",\"reads\":[],\"spec\":{\"on\":\"countdown_end\",\"at\":\"cook\",\"operation\":\"log completion\"}}";
+  plans.decode(strings.replace(triggerPlan,"%NEEDS%",countdownNeed+","+clockAction),[],[],"","");
+  refusesPlan(strings.replace(triggerPlan,"%NEEDS%",logNeed+",{\"id\":\"done\",\"type\":\"action\",\"words\":\"Done\",\"reads\":[],\"spec\":{\"on\":\"countdown_end\",\"at\":\"log\",\"operation\":\"log completion\"}}"),"","","done: countdown_end target is not a countdown");
+  plans.decode(strings.replace(triggerPlan,"%NEEDS%",logNeed+",{\"id\":\"added\",\"type\":\"action\",\"words\":\"Added\",\"reads\":[],\"spec\":{\"on\":\"entry_added\",\"at\":\"log\",\"operation\":\"refresh\"}}"),[],[],"","");
+  refusesPlan(strings.replace(triggerPlan,"%NEEDS%",countdownNeed+",{\"id\":\"added\",\"type\":\"action\",\"words\":\"Added\",\"reads\":[],\"spec\":{\"on\":\"entry_added\",\"at\":\"cook\",\"operation\":\"refresh\"}}"),"","","added: entry_added target is not an entries need");
+  plans.decode(strings.replace(triggerPlan,"%NEEDS%","{\"id\":\"tick\",\"type\":\"action\",\"words\":\"Tick\",\"reads\":[],\"spec\":{\"on\":\"time\",\"at\":\"at\",\"operation\":\"refresh\"}}"),[],[],"","");
+  // A duration is not a time of day: a seconds measured input cannot raise a scheduled trigger.
+  refusesPlan(strings.replace(triggerPlan,"%NEEDS%","{\"id\":\"tick\",\"type\":\"action\",\"words\":\"Tick\",\"reads\":[],\"spec\":{\"on\":\"time\",\"at\":\"timer\",\"operation\":\"refresh\"}}"),"","","tick: time target is not a time source");
+  refusesPlan(strings.replace(triggerPlan,"%NEEDS%","{\"id\":\"tick\",\"type\":\"action\",\"words\":\"Tick\",\"reads\":[],\"spec\":{\"on\":\"time\",\"at\":\"spend\",\"operation\":\"refresh\"}}"),"","","tick: time target is not a time source");
+  refusesPlan(strings.replace(triggerPlan,"%NEEDS%","{\"id\":\"tick\",\"type\":\"action\",\"words\":\"Tick\",\"reads\":[],\"spec\":{\"on\":\"time\",\"at\":\"missing\",\"operation\":\"refresh\"}}"),"","","tick: unissued trigger target missing");
+  refusesPlan(strings.replace(triggerPlan,"%NEEDS%","{\"id\":\"tap\",\"type\":\"action\",\"words\":\"Tap\",\"reads\":[],\"spec\":{\"on\":\"button\",\"at\":\"timer\",\"operation\":\"refresh\"}}"),"","","a button action omits its trigger source");
+  // A duration bearing publication is not a time of day, so it cannot raise a scheduled trigger; a
+  // row_tap trigger names a list need.
+  refusesPlan(strings.replace(triggerPlan,"%NEEDS%","{\"id\":\"watch\",\"type\":\"live\",\"words\":\"Watch\",\"reads\":[],\"spec\":{\"label\":\"Watch\",\"measure\":\"seconds\",\"unit\":\"s\",\"query\":\"elapsed\"}},{\"id\":\"tick\",\"type\":\"action\",\"words\":\"Tick\",\"reads\":[],\"spec\":{\"on\":\"time\",\"at\":\"watch\",\"operation\":\"refresh\"}}"),"","","tick: time target is not a time source");
+  plans.decode(strings.replace(triggerPlan,"%NEEDS%",logNeed+",{\"id\":\"tap\",\"type\":\"action\",\"words\":\"Tap\",\"reads\":[],\"spec\":{\"on\":\"row_tap\",\"at\":\"log\",\"operation\":\"remove\"}},{\"id\":\"custom\",\"type\":\"action\",\"words\":\"Custom\",\"reads\":[],\"spec\":{\"on\":\"other\",\"at\":\"log\",\"operation\":\"custom\"}}"),[],[],"","");
+  // An `other` action stays open for custom writing: its `at` is the written declaration of the custom
+  // action, so prose there is accepted as data and issues no trigger slot. A non-string target is
+  // still a located rejection of the field that carries it.
+  let customPlan: string = strings.replace(triggerPlan,"%NEEDS%","{\"id\":\"custom\",\"type\":\"action\",\"words\":\"Custom\",\"reads\":[],\"spec\":{\"on\":\"other\",\"at\":\"after the timer ends\",\"operation\":\"custom\"}}");
+  let custom: plans.Plan = plans.decode(customPlan,[],[],"","");
+  insist(s.text(custom.needs[0].spec.at) === "after the timer ends","an other action lost its written target");
+  insist(!Object.hasOwn(custom.needs[0],"trigger"),"an other action issued a trigger slot");
+  refusesPlan(strings.replace(triggerPlan,"%NEEDS%","{\"id\":\"custom\",\"type\":\"action\",\"words\":\"Custom\",\"reads\":[],\"spec\":{\"on\":\"other\",\"at\":7,\"operation\":\"custom\"}}"),"","","custom.at");
+  refusesPlan(strings.replace(triggerPlan,"%NEEDS%",countdownNeed+",{\"id\":\"tap\",\"type\":\"action\",\"words\":\"Tap\",\"reads\":[],\"spec\":{\"on\":\"row_tap\",\"at\":\"cook\",\"operation\":\"remove\"}}"),"","","tap: row_tap target is not a list need");
+  // The alternative bound and the written formula bound are different bounds.
+  let bounded: formula.Enumeration = formula.enumerate(operandIds(6),aggregateIds(62));
+  insist(!bounded.overCap && bounded.count === 255 && bounded.alternatives.length === 255,"A 255 alternative set was not enumerated");
+  insist(bounded.alternatives[0].size === 1 && bounded.alternatives[0].source === "count_0","Unavailable option is not the smallest alternative");
+  let orderedOk: boolean = true; let previous: formula.Alternative = bounded.alternatives[0]; let position: number = 1;
+  while (position < bounded.alternatives.length) { let current: formula.Alternative = bounded.alternatives[position]; if (current.size < previous.size) { orderedOk = false; } if (current.size === previous.size && current.source < previous.source) { orderedOk = false; } previous = current; position = position+1; }
+  insist(orderedOk,"Alternative enumeration is not ordered by AST size then lexical source");
+  let overCap: formula.Enumeration = formula.enumerate(operandIds(6),aggregateIds(63));
+  insist(overCap.overCap && overCap.count === 256 && overCap.alternatives.length === 0,"A 256 alternative set was enumerated or truncated");
+  // Only compatible alternatives are counted: a boolean operand has no numeric unary or binary form.
+  let mixed: formula.Operand[] = operandIds(6);
+  mixed[mixed.length] = {id:"flag",expression:"(state.flag as boolean)",type:"boolean",dependency:"f_parts_flag"};
+  let filtered: formula.Enumeration = formula.enumerate(mixed,aggregateIds(62));
+  insist(!filtered.overCap && filtered.count === 255,"A boolean operand entered the numeric alternative set");
+  // A written formula over its own 300 code unit bound rejects; the source otherwise parses.
+  let overBound: string = "1"; while (strings.length(overBound) < 301) { overBound = overBound+"+1"; }
+  let rejected: string = ""; try { formula.compile(overBound,[]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.message; }
+  insist(strings.contains(rejected,"Formula length"),"A written formula over 300 code units admitted: "+rejected);
+  return null;
+}
+// A dynamic array that carries a hole leaves the invariant element type, so the checked decoders refuse
+// it instead of converting the hole into an undefined element. A hole is not expressible in DEAL source
+// (an out-of-bounds assignment is itself refused), so the driving test hands the decoders a sparse array.
+export function textCollectionRefuses(value: unknown): boolean { try { decoded.strings(value); return false; } catch (error) { return true; } }
+export function recordCollectionRefuses(value: unknown): boolean { try { decoded.records(value); return false; } catch (error) { return true; } }
 export function main(): void { return; }
 // ---- The permitted import surface and effect-only private storage -------------------------
 export function admissionSurface(): null {
@@ -510,7 +770,7 @@ export async function classificationRoute(): Promise<null> {
   insist(accented.classification === "whole" && accented.asked,"A non-ASCII-adjacent cue was refused without an ask: "+s.encode(accented));
   // Part enters the plan as exactly one scene need reading every plan input, and a second part
   // classification adds none.
-  let plan: plans.Plan = plans.decode("{\"title\":\"Draw\",\"inputs\":[{\"id\":\"size\",\"label\":\"Size\",\"kind\":\"count\",\"measure\":\"count\",\"value\":3},{\"id\":\"active\",\"label\":\"Active\",\"kind\":\"toggle\",\"measure\":\"count\",\"value\":true}],\"needs\":[{\"id\":\"body\",\"type\":\"other\",\"words\":\"Draw it\",\"spec\":{}}]}",[],[]);
+  let plan: plans.Plan = plans.decode("{\"title\":\"Draw\",\"constants\":[],\"requirements\":[],\"questions\":[],\"inputs\":[{\"id\":\"size\",\"label\":\"Size\",\"kind\":\"count\",\"measure\":\"count\",\"value\":3},{\"id\":\"active\",\"label\":\"Active\",\"kind\":\"toggle\",\"measure\":\"count\",\"value\":true}],\"needs\":[{\"id\":\"body\",\"type\":\"other\",\"words\":\"Draw it\",\"reads\":[],\"spec\":{}}]}",[],[],"","");
   let added: plans.Need = classification.scene(plan,"Draw freely");
   insist(added.id === "scene" && added.type === "scene" && added.quote === "Draw freely" && added.reads.join(",") === "size,active","Scene need shape: "+s.encode(added));
   insist(classification.scenes(plan).length === 1,"Scene need not exactly once");
@@ -519,7 +779,7 @@ export async function classificationRoute(): Promise<null> {
   let order: string[] = []; for (let need of plan.needs) { order[order.length] = need.id; }
   insist(order.join(",") === "body,scene","Scene need order: "+order.join(","));
   // A plan that already proposed a scene keeps it instead of gaining a second one.
-  let proposed: plans.Plan = plans.decode("{\"title\":\"Draw\",\"inputs\":[],\"needs\":[{\"id\":\"picture\",\"type\":\"scene\",\"words\":\"Draw it\",\"spec\":{}}]}",[],[]);
+  let proposed: plans.Plan = plans.decode("{\"title\":\"Draw\",\"constants\":[],\"requirements\":[],\"questions\":[],\"inputs\":[],\"needs\":[{\"id\":\"picture\",\"type\":\"scene\",\"words\":\"Draw it\",\"reads\":[],\"spec\":{}}]}",[],[],"","");
   let kept: plans.Need = classification.scene(proposed,"Draw freely");
   insist(kept.id === "picture" && classification.scenes(proposed).length === 1,"Proposed scene was duplicated");
   return null;
@@ -528,12 +788,12 @@ export async function classificationRoute(): Promise<null> {
 // Alignment is the ordered, thresholded stage over the accepted composition. Rounds, their enabled
 // sets, the copied decision thresholds, once-per-kind and the normal stop are driven here through the
 // production policy with issued candidate facts only: the policy never declares a kind or a threshold.
-function alignPlan(needs: string): plans.Plan { return plans.decode("{\"title\":\"Align\",\"needs\":"+needs+"}",[],[]); }
+function alignPlan(needs: string): plans.Plan { return plans.decode("{\"title\":\"Align\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":"+needs+",\"questions\":[]}",[],[],"",""); }
 function alignContext(): constructionSelection.Context { return {original:"Align the issued sections",facts:"{}",contracts:"",specification:""}; }
 function alignCandidate(need: string, kind: string, reads: string, publishes: string): alignment.Candidate {
   return {need:need,id:"cat_"+need+"_"+kind,kind:kind,criteria:"Issued "+kind+" section for "+need,reads:decoded.strings(JSON.parse(reads)),publishes:decoded.strings(JSON.parse(publishes))};
 }
-function alignNeeds(): string { return "[{\"id\":\"reader\",\"type\":\"content\",\"words\":\"Show completion\",\"spec\":{}},{\"id\":\"plain\",\"type\":\"content\",\"words\":\"Toggle the items\",\"spec\":{}},{\"id\":\"source\",\"type\":\"content\",\"words\":\"List the rows\",\"spec\":{}},{\"id\":\"late\",\"type\":\"live\",\"words\":\"Read the latest value\",\"spec\":{\"label\":\"Latest\",\"measure\":\"number\",\"unit\":\"\",\"query\":\"host/probe.read\"}}]"; }
+function alignNeeds(): string { return "[{\"id\":\"reader\",\"type\":\"content\",\"words\":\"Show completion\",\"reads\":[],\"spec\":{}},{\"id\":\"plain\",\"type\":\"content\",\"words\":\"Toggle the items\",\"reads\":[],\"spec\":{}},{\"id\":\"source\",\"type\":\"content\",\"words\":\"List the rows\",\"reads\":[],\"spec\":{}},{\"id\":\"late\",\"type\":\"live\",\"words\":\"Read the latest value\",\"reads\":[],\"spec\":{\"label\":\"Latest\",\"measure\":\"number\",\"unit\":\"\",\"query\":\"host/probe.read\"}}]"; }
 function alignCandidates(): alignment.Candidate[] {
   return [alignCandidate("reader","list_summary","[\"done:number\",\"total:number\"]","[]"),alignCandidate("reader","progress_line","[\"done:number\",\"total:number\"]","[]"),
     alignCandidate("plain","checklist","[]","[\"labels:string[]\"]"),
@@ -560,14 +820,14 @@ export async function alignmentRounds(): Promise<null> {
   insist(alignment.reason(below,"late") === "alignment stopped","Remaining need reason: "+alignment.reason(below,"late"));
   insist(below.publishers === 2,"A stopped stage changed the publishers: "+String(below.publishers));
   // C: a live need uses the live-alignment threshold, so 0.6 is below it and 0.65 exactly decides it.
-  let meterPlan: plans.Plan = alignPlan("[{\"id\":\"meter\",\"type\":\"live\",\"words\":\"Read the meter\",\"spec\":{\"label\":\"Meter\",\"measure\":\"number\",\"unit\":\"\",\"query\":\"host/probe.read\"}}]");
+  let meterPlan: plans.Plan = alignPlan("[{\"id\":\"meter\",\"type\":\"live\",\"words\":\"Read the meter\",\"reads\":[],\"spec\":{\"label\":\"Meter\",\"measure\":\"number\",\"unit\":\"\",\"query\":\"host/probe.read\"}}]");
   let meterCandidates: alignment.Candidate[] = [alignCandidate("meter","reading_status","[\"latest:number\"]","[\"count:number\"]")];
   let meter: alignment.Outcome = await alignment.run(alignContext(),meterPlan,meterCandidates,[],["note"],["latest:number"]);
   insist(meter.rounds === 1 && meter.accepted.length === 0,"A 0.6 live answer cleared the live threshold");
   insist(alignment.reason(meter,"meter") === "Alignment below the 0.65 threshold","Live threshold not copied: "+alignment.reason(meter,"meter"));
   // D: each catalogue kind is selected at most once per composition, and a candidate whose required
   // readers the composition cannot satisfy is never offered.
-  let uniquePlan: plans.Plan = alignPlan("[{\"id\":\"a\",\"type\":\"content\",\"words\":\"Show the disclosed facts\",\"spec\":{}},{\"id\":\"b\",\"type\":\"content\",\"words\":\"Show the disclosed notes\",\"spec\":{}},{\"id\":\"c\",\"type\":\"content\",\"words\":\"Show the disclosed details\",\"spec\":{}}]");
+  let uniquePlan: plans.Plan = alignPlan("[{\"id\":\"a\",\"type\":\"content\",\"words\":\"Show the disclosed facts\",\"reads\":[],\"spec\":{}},{\"id\":\"b\",\"type\":\"content\",\"words\":\"Show the disclosed notes\",\"reads\":[],\"spec\":{}},{\"id\":\"c\",\"type\":\"content\",\"words\":\"Show the disclosed details\",\"reads\":[],\"spec\":{}}]");
   let uniqueCandidates: alignment.Candidate[] = [alignCandidate("a","metrics","[]","[]"),alignCandidate("b","metrics","[]","[]"),alignCandidate("c","detail_view","[\"items:string[]\",\"selected:number\"]","[]")];
   let unique: alignment.Outcome = await alignment.run(alignContext(),uniquePlan,uniqueCandidates,[],["note"],[]);
   insist(unique.rounds === 1,"Expected the standalone round only, saw "+String(unique.rounds));
@@ -582,14 +842,14 @@ export async function alignmentRounds(): Promise<null> {
   insist(stopped.accepted.length === 1 && stopped.accepted[0].need === "reader","A stop discarded an accepted alignment: "+String(stopped.accepted.length));
   insist(alignment.reason(stopped,"plain") === "alignment stopped","A need the stop never reached: "+alignment.reason(stopped,"plain"));
   // F: a scene need is never spoken about by alignment, even when a candidate is issued for it.
-  let scenePlan: plans.Plan = alignPlan("[{\"id\":\"picture\",\"type\":\"scene\",\"words\":\"Draw the scene\",\"spec\":{}}]");
+  let scenePlan: plans.Plan = alignPlan("[{\"id\":\"picture\",\"type\":\"scene\",\"words\":\"Draw the scene\",\"reads\":[],\"spec\":{}}]");
   let sceneOutcome: alignment.Outcome = await alignment.run(alignContext(),scenePlan,[alignCandidate("picture","spotlight","[]","[]")],[],["note"],[]);
   insist(sceneOutcome.rounds === 0,"A scene need entered an alignment batch");
   insist(sceneOutcome.open.length === 0,"A scene need was left open by alignment");
   insist(alignment.reason(sceneOutcome,"picture") === "","A scene need gained an alignment reason");
   // G: a need whose every candidate kind the composition already holds is named by the once-per-kind
   // rule rather than by an unsatisfiable reader.
-  let exhaustedPlan: plans.Plan = alignPlan("[{\"id\":\"a\",\"type\":\"content\",\"words\":\"Show the disclosed facts\",\"spec\":{}},{\"id\":\"b\",\"type\":\"content\",\"words\":\"Show the disclosed notes\",\"spec\":{}}]");
+  let exhaustedPlan: plans.Plan = alignPlan("[{\"id\":\"a\",\"type\":\"content\",\"words\":\"Show the disclosed facts\",\"reads\":[],\"spec\":{}},{\"id\":\"b\",\"type\":\"content\",\"words\":\"Show the disclosed notes\",\"reads\":[],\"spec\":{}}]");
   let exhaustedCandidates: alignment.Candidate[] = [alignCandidate("a","metrics","[]","[]"),alignCandidate("b","metrics","[]","[]")];
   let exhausted: alignment.Outcome = await alignment.run(alignContext(),exhaustedPlan,exhaustedCandidates,[],["note","metrics"],[]);
   insist(exhausted.rounds === 0,"An exhausted kind set dispatched a batch: "+String(exhausted.rounds));
@@ -598,7 +858,7 @@ export async function alignmentRounds(): Promise<null> {
   // round with the standalone kinds only; when the instance accepted there publishes the ports its
   // reader declares, the third round re-asks that need with the reader it was never offered instead of
   // closing it by its earlier answer.
-  let enabledPlan: plans.Plan = alignPlan("[{\"id\":\"items\",\"type\":\"content\",\"words\":\"Toggle the items\",\"spec\":{}},{\"id\":\"summary\",\"type\":\"content\",\"words\":\"Show completion\",\"reads\":[\"items\"],\"spec\":{}}]");
+  let enabledPlan: plans.Plan = alignPlan("[{\"id\":\"items\",\"type\":\"content\",\"words\":\"Toggle the items\",\"reads\":[],\"spec\":{}},{\"id\":\"summary\",\"type\":\"content\",\"words\":\"Show completion\",\"reads\":[\"items\"],\"spec\":{}}]");
   let enabledCandidates: alignment.Candidate[] = [alignCandidate("items","note","[]","[]"),alignCandidate("items","checklist","[]","[\"done:number\",\"total:number\"]"),alignCandidate("summary","note","[]","[]"),alignCandidate("summary","list_summary","[\"done:number\",\"total:number\"]","[]")];
   let enabled: alignment.Outcome = await alignment.run(alignContext(),enabledPlan,enabledCandidates,[],["metrics"],[]);
   insist(!enabled.stopped,"The reader round stopped without an unanswered batch");
@@ -612,7 +872,7 @@ export async function alignmentRounds(): Promise<null> {
   // I: a need asked in the reader round is not re-asked in the standalone round with a candidate set it
   // already answered, and the third round offers it only the reader an earlier acceptance enables, not
   // the reader the accepted composition already satisfied.
-  let repeatPlan: plans.Plan = alignPlan("[{\"id\":\"counter\",\"type\":\"content\",\"words\":\"Keep the count\",\"spec\":{}},{\"id\":\"items\",\"type\":\"content\",\"words\":\"Toggle the items\",\"spec\":{}},{\"id\":\"reader\",\"type\":\"content\",\"words\":\"Read the meter\",\"reads\":[\"counter\"],\"spec\":{}}]");
+  let repeatPlan: plans.Plan = alignPlan("[{\"id\":\"counter\",\"type\":\"content\",\"words\":\"Keep the count\",\"reads\":[],\"spec\":{}},{\"id\":\"items\",\"type\":\"content\",\"words\":\"Toggle the items\",\"reads\":[],\"spec\":{}},{\"id\":\"reader\",\"type\":\"content\",\"words\":\"Read the meter\",\"reads\":[\"counter\"],\"spec\":{}}]");
   let repeatCandidates: alignment.Candidate[] = [alignCandidate("items","checklist","[]","[\"done:number\",\"total:number\"]"),alignCandidate("reader","reading_status","[\"latest:number\"]","[]"),alignCandidate("reader","metrics","[]","[]"),alignCandidate("reader","list_summary","[\"done:number\",\"total:number\"]","[]")];
   let repeat: alignment.Outcome = await alignment.run(alignContext(),repeatPlan,repeatCandidates,[],["note"],["latest:number"]);
   insist(!repeat.stopped,"The reader rounds stopped without an unanswered batch");

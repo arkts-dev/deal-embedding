@@ -40,6 +40,7 @@ python3 tests/tools/test-journey-rules.py
 node tests/tools/test-discovery.js
 node tests/tools/test-discovery-handoff.js
 node tests/tools/test-syntax-cache.js
+python3 tests/tools/test-host-check.py
 python3 tests/tools/test-construction-contracts.py
 # Session execution policy: dependency revisions, currentness, expiry trust, authority and text admission.
 python3 tests/tools/test-execution-contracts.py

@@ -32,6 +32,28 @@ JAVA_OPTS=-Xmx768m bash demos/build.sh tests
 bash tests/run.sh
 ```
 
+For ISSUE-0003 policy/composer changes, use the smaller lanes first (existing packaged compiler
+classes are required; these do not rebuild the AAR):
+
+```sh
+python3 tests/tools/test-construction-contracts.py
+python3 tests/tools/test-catalogue.py
+python3 tests/tools/test-composer.py --contracts-only
+python3 tests/tools/test-composer.py --pair clock
+python3 tests/tools/test-catalogue-runtime.py --group timers
+```
+
+Composer `--pair` requires an exact input/output-validated snapshot from `--contracts-only`; it refuses
+changed inputs, not stale assertions. The default composer command still executes every pair.
+Catalogue runtime groups are `timers`, `reading`, `quick`, `points`, `ideas`, `drafts`, `aggregate`,
+`lists`, `issued-bodies` and `contracts`; `local` runs all six local groups, and the default runs all
+of them. Local groups compile separately to avoid a single quadratic-sized combined fixture; no
+assertions are dropped. Syntax calls share one JVM transport, never cached assertion results.
+These four Python harnesses check dependency pins and take the repository build lock (busy exit 75).
+Each subprocess tree is bounded (normally 45 seconds, catalogue pair compilation 30 seconds);
+timeouts fail, and terminate descendant JVMs too. Full/default commands remain longer than focused
+lanes. Do not run them concurrently with packaging or edit their inputs during a run.
+
 `bash demos/build.sh library` builds/extracts only the public AAR for direct local policy checks. It
 skips dex and test APK packaging; it does not replace the final deterministic gate.
 

@@ -14,14 +14,117 @@ import * as checker from "./isolated-check";
 import * as events from "./events";
 import * as admission from "./admission";
 import * as s from "./construction-schema";
+import * as disclosure from "./disclosure";
 import * as revisions from "./source-revisions";
 import * as inference from "./inference";
 import * as identity from "embedding/construction-identity";
+import * as tables from "std/table";
 
 export class Result { candidateId: string; attempts: number; diagnostics: string; runnable: boolean; }
+// The outcome of the Bind stage: the located reasons of bindings that kept their need open, and
+// whether the parts implementation must be placed for the operations that were issued.
+export class Bound { unbound: string[]; placed: boolean; }
+// The Bind stage of one candidate, in its required order: the parts owner issues its data sources
+// (inputs, constants, disclosed facts and the frozen request), every plan action need's binding is
+// issued against the frozen contracts, and the parts implementation is placed when a need or an
+// issued operation reads one of its resources. One function, so no caller can issue operations before
+// the sources they read exist.
+export async function issueBindings(composition: screens.Composition, plan: plans.Plan, built: parts.Built, registry: bindings.Registry, original: string, facts: string): Promise<Bound> {
+  parts.issueData(plan,built.instance,registry,{request:original,facts:facts});
+  let planned: Planned = planBindings(plan,registry);
+  let unbound: string[] = planned.reasons;
+  composition.bindings = planned.bindings;
+  for (let reason of await bindings.issueComposition(registry,composition.bindings,composition.actions,original,facts)) { unbound[unbound.length] = reason; }
+  // A checked trigger is raised from a resource this candidate must emit. The decision is made over
+  // the issued bindings, never over a planned one a later stage may drop, and dropping a trigger
+  // binding can change whether the parts implementation is placed, so it runs to a fixpoint: the bind
+  // stage and assembly then read exactly one registry state. A trigger without its resource keeps its
+  // need open with the located reason instead of issuing an operation assembly would reject.
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    let placedNow: boolean = parts.places(built,registry);
+    let kept: bindings.Binding[] = [];
+    for (let binding of registry.bindings) {
+      let reason: string = triggerReason(plan,binding.id,built,registry,placedNow);
+      if (reason !== "") {
+        unbound[unbound.length] = reason; delete composition.bindings[binding.id]; changed = true; continue;
+      }
+      // A row tap is raised from one captured stable row, so the row-scoped identity resource is issued
+      // together with the binding that consumes it.
+      rowScope(plan,binding.id,built);
+      kept[kept.length] = binding;
+    }
+    registry.bindings = kept;
+  }
+  let placed: boolean = parts.places(built,registry);
+  // The parts implementation is placed when it fills a need and also when an issued operation reads
+  // one of its sources, so an emitted operation never names a resource the composition lacks.
+  if (placed) { mark(composition.screen,built.instance); }
+  // An action need whose binding was issued is implemented by that operation, so its slot names the
+  // operation identity the dispatch reaches and reports the state it is really in: an implementation
+  // exists and its behavior has not been judged yet. Leaving it open would both misreport the need and
+  // demote an accepted coverage judgement of the emitted operation. A slot an instance already fills
+  // keeps its filled identity and writes.
+  for (let binding of registry.bindings) {
+    for (let slot of composition.screen.slots) { if (slot.need === binding.id && binding.owner === "") {
+      slot.action = binding.id;
+      if (slot.status !== "filled") { slot.status = "unchecked"; slot.reason = "Behavior coverage not yet judged"; }
+    } }
+  }
+  // A trigger is the route to an issued operation. A need whose operation this candidate did not
+  // issue claims no event: its slot carries no route nothing raises, the Bind stage's reason for the
+  // dropped operation reaches the caller through `Bound.unbound`, and assembly rejects any event left
+  // without its operation.
+  for (let slot of composition.screen.slots) { if (Object.hasOwn(slot,"event") && !Object.hasOwn(slot,"action")) { delete slot.event; delete slot.trigger; } }
+  return {unbound:unbound,placed:placed};
+}
+// The located reason a plan action's checked trigger cannot be issued in this candidate, or "" when
+// it can. This is the same predicate assembly applies: the trigger must be raised from a resource
+// this candidate actually issues. A countdown_end trigger needs the completion counter, an
+// entry_added or row_tap trigger the records collection, and a time trigger an issued time source. A
+// plan argument can never carry a row identity, so a row tap over a list that emits no collection
+// keeps its need open instead of claiming a route nothing raises.
+function partField(built: parts.Built, name: string): boolean { for (let field of built.instance.fragment.fields) { if (field.name === name) { return true; } } return false; }
+// A row_tap binding observes the row it is raised from: the captured stable key and the comparison over
+// that row's own values are issued with the binding, never the collection that happens to contain it.
+function rowScope(plan: plans.Plan, id: string, built: parts.Built): void {
+  let source: plans.Trigger | null = null;
+  for (let need of plan.needs) { if (need.id === id && need.type === "action" && Object.hasOwn(need,"trigger")) { source = need.trigger as plans.Trigger; } }
+  if (source === null) { return; }
+  let trigger: plans.Trigger = source as plans.Trigger;
+  if (trigger.on !== "row_tap") { return; }
+  let fields: Record<string, unknown>[] = [];
+  for (let need of plan.needs) { if (need.id === trigger.at) { fields = s.records(need.spec,"fields"); } }
+  parts.rowScope(built,trigger.at,id,fields);
+}
+function triggerReason(plan: plans.Plan, id: string, built: parts.Built, registry: bindings.Registry, placed: boolean): string {
+  for (let need of plan.needs) { if (need.id === id) {
+    if (need.type !== "action" || !Object.hasOwn(need,"trigger")) { return ""; }
+    let trigger: plans.Trigger = need.trigger as plans.Trigger;
+    if (trigger.on === "time") {
+      if (!bindings.issued(registry,trigger.at)) { return id+": time trigger target "+trigger.at+" issues no time source"; }
+      // A parts-owned time source is an emitted parts field, so this candidate must place that
+      // implementation for the trigger resource to exist at assembly.
+      if (bindings.source(registry,trigger.at).owner === "parts" && !placed) { return id+": time trigger source "+trigger.at+" is not emitted because no parts implementation is placed"; }
+      return "";
+    }
+    let resource: string = "records_"+trigger.at;
+    if (trigger.on === "countdown_end") { resource = "triggered_"+trigger.at; }
+    if (partField(built,resource)) { return ""; }
+    return id+": "+trigger.on+" trigger target "+trigger.at+" has no issued implementation";
+  } }
+  return "";
+}
 function mark(screen: screens.Screen, instance: screens.Instance): void {
   screen.instances[screen.instances.length] = instance;
-  for (let slot of screen.slots) { if (s.contains(instance.fragment.covers,slot.need)) { slot.status = "filled"; slot.instance = instance.id; slot.reason = ""; } }
+  for (let slot of screen.slots) { if (s.contains(instance.fragment.covers,slot.need)) {
+    slot.status = "filled"; slot.instance = instance.id; slot.reason = "";
+    // A section added by alignment carries no selection choice; its kind still comes from the
+    // instance that fills the slot, never from a label. A custom or notice implementation declares
+    // no allowed kind, because no issued alternative kind produced it.
+    if (slot.allowedKinds.length === 0 && instance.origin === "catalogue") { slot.allowedKinds = [instance.kind]; }
+  } }
 }
 function notice(id: string, message: string): screens.Instance {
   // Encode data through the same compiler expression mechanism used by other fragments.
@@ -33,7 +136,17 @@ function issueSources(registry: bindings.Registry, instance: screens.Instance): 
     bindings.reserve(registry,{id:instance.id+"_"+port.name,type:port.type,schema:null,dependencies:[],owner:instance.id,payloadOwner:"",getter:"f_"+instance.id+"_"+port.getter,ready:"f_"+instance.id+"_"+port.getter+"_ready"});
   } }
 }
-function connect(composition: screens.Composition, instance: screens.Instance, registry: bindings.Registry, plan: plans.Plan): string {
+// The issued identity of one published port. A catalogue instance reserves `<instance>_<port>`; the
+// parts owner issues each publication under its need identifier, which is also what a plan action may
+// name, so reader resolution asks that identity for it instead of inventing a second one.
+function publishedSource(publisher: screens.Instance, output: screens.Port): string {
+  if (publisher.id === "parts") { return output.name; }
+  return publisher.id+"_"+output.name;
+}
+// Reader resolution for one accepted reader instance: exact port name and type, the requested
+// dependency, and the publisher's issued publication source. An unserved required port leaves the
+// reader unconnected instead of substituting a value, with the located reason the need reports.
+export function connect(composition: screens.Composition, instance: screens.Instance, registry: bindings.Registry, plan: plans.Plan): string {
   let connections: screens.Connection[] = [];
   for (let port of instance.fragment.ports) { if (port.direction === "read") {
     let found: boolean = false; let published: string = "";
@@ -43,7 +156,7 @@ function connect(composition: screens.Composition, instance: screens.Instance, r
         let requested: boolean = false;
         for (let need of plan.needs) { if (s.contains(instance.fragment.covers,need.id)) { for (let publisherNeed of publisher.fragment.covers) { if (s.contains(need.reads,publisherNeed)) { requested = true; } } } }
         if (!requested) { continue; }
-        let source: bindings.Source = bindings.source(registry,publisher.id+"_"+output.name);
+        let source: bindings.Source = bindings.source(registry,publishedSource(publisher,output));
         if (source.type !== port.type) { s.reject("Port source type mismatch"); }
         connections[connections.length] = {readerInstance:instance.id,readerPort:port.name,writerInstance:publisher.id,writerPort:output.name}; found = true;
       }
@@ -72,12 +185,8 @@ function ownership(plan: plans.Plan, alternatives: selecting.Alternative[]): sel
 // content and other needs are issued kinds today, which is what keeps a scene need out of alignment: the
 // scene is written by the ordinary writing operation (generation-recovery-and-source-editing
 // "Alignment"). Kind eligibility for the remaining need types is catalogue-owned and missing.
-// A declared port reaches alignment as the `name:type` identity assembly resolves, so a reader meets
-// its publisher only on the exact nominal port and never on a display name.
 function portNames(ports: catalogue.PortDecl[]): string[] {
-  let result: string[] = [];
-  for (let port of ports) { result[result.length] = port.name+":"+port.type; }
-  return result;
+  let result: string[] = []; for (let port of ports) { result[result.length] = port.name+":"+port.type; } return result;
 }
 function alignmentCandidates(plan: plans.Plan, settled: string[]): alignment.Candidate[] {
   let result: alignment.Candidate[] = [];
@@ -108,6 +217,37 @@ function locate(composition: screens.Composition, need: string, reason: string):
   // unreachable, and the guard keeps a future second implementation from losing its coverage.
   for (let slot of composition.screen.slots) { if (slot.need === need && slot.status !== "filled") { slot.status = "missing"; slot.reason = reason; } }
 }
+// The kind an accepted alternative declares; it becomes the slot's allowedKinds and never a label.
+function alternativeKind(choice: selecting.Choice): string {
+  if (choice.alternative.startsWith("clock_")) { return "clock"; }
+  if (choice.alternative.startsWith("entries_")) { return "entries"; }
+  if (choice.alternative.startsWith("input_")) { return "inputs"; }
+  if (choice.alternative.startsWith("part_")) { return "figure"; }
+  if (choice.alternative.startsWith("scalar_")) { return "scalar_read"; }
+  if (choice.alternative.startsWith("cat_")) {
+    for (let definition of catalogue.definitions()) { if (choice.alternative.endsWith("_"+definition.kind)) { return definition.kind; } }
+  }
+  s.reject("Unissued alternative kind: "+choice.alternative); return "";
+}
+// A plan action need names its operation and argument sources. The Bind stage resolves the module
+// and function exactly against the frozen contracts; an unknown or ambiguous operation issues no
+// binding and keeps its need open with the located reason, because the plan decode accepts any name
+// and this is the only stage that resolves it.
+export class Planned { bindings: Record<string, unknown>; reasons: string[]; }
+export function planBindings(plan: plans.Plan, registry: bindings.Registry): Planned {
+  let result: Record<string, unknown> = {}; let reasons: string[] = [];
+  for (let need of plan.needs) {
+    if (need.type !== "action") { continue; }
+    let operation: string = s.text(need.spec.operation);
+    let matches: number = 0; let module: string = "";
+    for (let contract of registry.contracts) { for (let fn of contract.functions) { if (fn.name === operation) { matches = matches+1; module = contract.module; } } }
+    if (matches !== 1) { reasons[reasons.length] = need.id+": operation "+operation+" resolves to "+String(matches)+" frozen contract function(s)"; continue; }
+    let args: Record<string, unknown> = {};
+    if (Object.hasOwn(need.spec,"arguments")) { let raw: Record<string, unknown> = need.spec.arguments as Record<string, unknown>; for (let key of tables.keys(raw)) { args[key] = s.identifier(raw[key]); } }
+    result[need.id] = {module:module,function:operation,arguments:args};
+  }
+  return {bindings:result,reasons:reasons};
+}
 export async function run(input: writing.Input, context: selecting.Context, plan: plans.Plan, registry: bindings.Registry): Promise<Result> {
   let scalarCandidates: scalar.Candidate[] = scalar.candidates(plan,registry.contracts);
   let definitions: parts.Definitions = parts.defineWithProviders(plan,scalar.operands(scalarCandidates)); let alternatives: selecting.Alternative[] = [];
@@ -125,17 +265,22 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   for (let choice of second.choices) {
     let allowed: boolean = true;
     if (choice.alternative.startsWith("part_")) {
-      let formulaAccepted: boolean = false; let unitsAccepted: boolean = false;
+      let formulaAccepted: boolean = false; let unitsAccepted: boolean = false; let writtenAccepted: boolean = true;
       for (let answer of second.answers) {
         if (answer.id === "formula_"+choice.need && answer.selected === "formula" && answer.accepted) { formulaAccepted = true; }
         if (answer.id === "units_"+choice.need && answer.selected === "preserved" && answer.accepted) { unitsAccepted = true; }
+        // Over the issueable alternative bound the written formula question must also be accepted.
+        if (answer.id === "written_formula_"+choice.need && !(answer.selected === "written" && answer.accepted)) { writtenAccepted = false; }
       }
-      allowed = formulaAccepted && unitsAccepted;
+      allowed = formulaAccepted && unitsAccepted && writtenAccepted;
     }
     if (allowed) { retained[retained.length] = choice; }
   }
   second.choices = retained;
   if (!second.usable) { return {candidateId:"",attempts:0,diagnostics:"Unusable second selection batch",runnable:false}; }
+  // A written formula returned for an over-cap alternative set replaces the figure formula after
+  // checked lowering and example verification.
+  definitions = parts.applyWritten(plan,definitions,second.answers);
   let settlement: events.Settlement = events.settle(plan,second.answers);
   // A need whose trigger is not settled is never implemented from an inferred trigger, so any
   // implementation selected for it is dropped and its located reason is recorded on the slot. No
@@ -144,10 +289,28 @@ export async function run(input: writing.Input, context: selecting.Context, plan
     let kept: selecting.Choice[] = [];
     for (let choice of second.choices) { if (choice.need !== outcome.need) { kept[kept.length] = choice; } }
     second.choices = kept;
-  }  let composition: screens.Composition = {screen:screens.reserve(plan,input.target),bindings:{},actions:{},connections:[]};
+  }
+  let composition: screens.Composition = {screen:screens.reserve(plan,input.target),bindings:{},actions:{},connections:[]};
   events.apply(composition.screen,settlement);
-  let computations: composer.Computation[] = []; let built: parts.Built = parts.buildWithProviders(plan,definitions,second.choices,registry,scalar.build(plan,scalarCandidates,first,second));
-  if (built.instance.fragment.covers.length > 0) { mark(composition.screen,built.instance); computations = built.computations; }
+  // A need whose part could not be issued keeps its slot with the located reason the definition stage
+  // recorded, so a refused figure type or formula is reported against its need instead of a generic
+  // "No implementation".
+  for (let problem of definitions.unavailable) { for (let slot of composition.screen.slots) { if (slot.need === problem.need) { slot.status = "missing"; slot.reason = problem.reason; } } }
+  // A filled slot carries the kind its accepted alternative declares, so the issued slot resource
+  // names what may fill it.
+  for (let choice of second.choices) {
+    let kind: string = alternativeKind(choice);
+    for (let slot of composition.screen.slots) { if (slot.need === choice.need) { slot.allowedKinds = [kind]; } }
+  }
+  let computations: composer.Computation[] = [];
+  let built: parts.Built = parts.buildWithProviders(plan,definitions,second.choices,registry,scalar.build(plan,scalarCandidates,first,second),{intervalMs:input.clockIntervalMs,toleranceMs:input.clockToleranceMs});
+  let bound: Bound = await issueBindings(composition,plan,built,registry,input.original,input.facts);
+  if (bound.placed) { computations = built.computations; }
+  // The Bind stage's located reasons belong to the result whichever way this candidate goes, so a
+  // candidate with nothing placeable still reports why rather than only that nothing was placed.
+  let reasons: string = "";
+  for (let reason of bound.unbound) { reasons = reasons+"unbound "+reason+"; "; }
+  for (let reason of built.unavailable) { reasons = reasons+"unavailable "+reason+"; "; }
   let entries: catalogue.Configured[] = catalogue.selected(plan,second.choices);
   // Alignment runs after both selection batches and before Fill, over the needs no accepted choice
   // fills (docs/spec-v0.8.md:256,285). Publishers of the accepted composition and of the sections a
@@ -158,33 +321,33 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   }
   for (let need of aligned.open) { locate(composition,need,alignment.reason(aligned,need)); }
   await catalogue.fill(context,plan,entries);
-  // Ownership is checked independently of the winning option, at the user threshold. An instance the
-  // fill already refused keeps the located reason that refusal recorded: an unfilled instance has no
-  // content to own, and the later verdict must not replace the parameter, row or field the fill named.
+  // Ownership is checked independently of the winning option, at the user threshold.
   for (let entry of entries) {
-    if (!entry.accepted) { continue; }
     let userOwned: boolean = false; let ownershipChecked: boolean = false;
     for (let answer of first.answers) { if (answer.id === "ownership_"+entry.need && answer.accepted) {
       ownershipChecked = true;
       for (let probability of answer.probabilities) { if ((probability.id as string) === "user" && (probability.p as number) >= selections.threshold("ownership")) {
         userOwned = true;
-        for (let need of plan.needs) { if (need.id === entry.need && (need.quote === "" || !context.original.includes(need.quote))) { entry.accepted = false; entry.reason = "User-owned content has no exact request quote"; } }
+        for (let need of plan.needs) { if (need.id === entry.need && !disclosure.admitsQuote(context.original,need.quote)) { entry.accepted = false; entry.reason = "User-owned content has no exact request quote"; } }
       } }
     } }
     if (!ownershipChecked) { entry.accepted = false; entry.reason = "Content ownership unchecked"; }
     if (entry.accepted) { let undecided: string = catalogue.disclosed(entry,context.original,context.facts,userOwned); if (undecided !== "") { entry.accepted = false; entry.reason = undecided; } }
   }
-  // A selected alignment that never became an instance keeps its need visibly missing with the
-  // located reason the fill, ownership or disclosure step recorded, instead of reverting to the
-  // generic "implementation not selected". A filled slot is never demoted.
-  for (let entry of entries) { if (!entry.accepted) { locate(composition,entry.need,entry.reason); } }
+  // A selected alignment, fill, ownership or disclosure refusal keeps its need visibly missing with the
+  // located reason that step recorded, instead of reverting to the generic coverage gap. One loop covers
+  // every refusal the stages above recorded, and the same reason joins the candidate diagnostics so a
+  // candidate with nothing placeable still reports why. A filled slot is never demoted: one selected
+  // alternative per need makes that unreachable today, and the guard keeps a future second
+  // implementation from silently losing its coverage.
+  for (let entry of entries) { if (!entry.accepted) { locate(composition,entry.need,entry.reason); reasons = reasons+entry.need+": "+entry.reason+"; "; } }
   // Publishers first; typed reader resolution is deterministic and never model-issued.
   let pending: screens.Instance[] = [];
   for (let entry of entries) { if (entry.accepted) { let instance: screens.Instance = await catalogue.instantiate(entry,registry); let reader: boolean = false; for (let port of instance.fragment.ports) { if (port.direction === "read") { reader = true; } }
     if (reader) { pending[pending.length] = instance; } else { mark(composition.screen,instance); issueSources(registry,instance); for (let computation of catalogue.computations(instance,[],composition.screen.instances)) { computations[computations.length] = computation; } }
   } }
   for (let instance of pending) { let failure: string = connect(composition,instance,registry,plan); if (failure === "") { mark(composition.screen,instance); for (let computation of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = computation; } } else { for (let need of instance.fragment.covers) { locate(composition,need,failure); } } }
-  if (composition.screen.instances.length === 0) { return {candidateId:"",attempts:0,diagnostics:"No runnable ordinary implementation",runnable:false}; }
+  if (composition.screen.instances.length === 0) { return {candidateId:"",attempts:0,diagnostics:"No runnable ordinary implementation; "+reasons,runnable:false}; }
   // The composition is admitted before emission: an import outside the issued surface or a storage
   // call outside an effect position is an authority verdict, not source feedback, so it authorizes no
   // repair and no candidate check (generation-recovery-and-source-editing "Checking and repair
@@ -192,10 +355,13 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   let providers: string[] = []; for (let contract of registry.contracts) { providers[providers.length] = contract.module; }
   let notAdmitted: admission.Verdict = await admission.composition(composition.screen.instances,providers);
   if (notAdmitted.code !== "") { return {candidateId:"",attempts:0,diagnostics:notAdmitted.message,runnable:true}; }
-  let assembled: composer.Result = await composer.assemble(composition,computations);
+  let assembled: composer.Result = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan));
   let questions: selections.Question[] = coverage.questions(plan,composition.screen);
   let judged: selections.Answer[] = await selecting.batch("coverage",{original:context.original,facts:context.facts,contracts:context.contracts,specification:context.specification+"\nCURRENT ASSEMBLED SOURCE\n"+s.encode(assembled.source)},plan,questions,false);
-  let ledger: coverage.Ledger = coverage.judge(plan,composition.screen,judged); let open: string[] = []; let diagnostics: string = "";
+  let ledger: coverage.Ledger = coverage.judge(plan,composition.screen,judged); let open: string[] = []; let diagnostics: string = reasons;
+  // The issued composition notices (a declared owns entry no reducer writes, a layout fallback) are
+  // compiler metadata that reaches the caller and the persisted record through this result.
+  for (let note of assembled.metadata.notices) { diagnostics = diagnostics+"composition: "+note+"; "; }
   for (let need of ledger.needs) { if (need.status !== "covered") { open[open.length] = need.id; diagnostics = diagnostics+need.id+": "+need.status+"; "; } }
   // A need whose trigger the selector could not settle is never handed to the writer: the written
   // action would have to invent the trigger the decision stage refused to choose. It stays visibly
@@ -212,7 +378,7 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   for (let id of open) { if (!s.contains(unsettled,id)) { writeable[writeable.length] = id; } }
   let wrote: boolean = false;
   if (writeable.length > 0) {
-    let written: writing.Result = await writing.run({original:input.original,facts:input.facts,contracts:input.contracts,specification:input.specification,language:input.language,pack:input.pack,target:input.target,plan:plan,answers:input.answers,base:composition,computations:computations,openNeeds:writeable,providers:providers});
+    let written: writing.Result = await writing.run({original:input.original,facts:input.facts,contracts:input.contracts,specification:input.specification,language:input.language,pack:input.pack,target:input.target,plan:plan,answers:input.answers,base:composition,computations:computations,openNeeds:writeable,providers:providers,registry:registry,clockIntervalMs:input.clockIntervalMs,clockToleranceMs:input.clockToleranceMs});
     attempts = written.attempts;
     // The writer's own draft is admitted before emission too; its verdict is an authority decision
     // that ends the request instead of falling back to a partial composition. One predicate decides
@@ -220,19 +386,20 @@ export async function run(input: writing.Input, context: selecting.Context, plan
     if (written.candidateId === "" && !checker.repairable(written.diagnostics)) { return {candidateId:"",attempts:attempts,diagnostics:written.diagnostics,runnable:true}; }
     // A non-verdict failure falls through to the located notices below: the writer was never issued
     // the unsettled need, so its candidate cannot report why the trigger stayed open.
-    if (written.candidateId !== "" && unsettled.length === 0) { return {candidateId:written.candidateId,attempts:attempts,diagnostics:written.diagnostics,runnable:true}; }
+    if (written.candidateId !== "" && unsettled.length === 0) { return {candidateId:written.candidateId,attempts:attempts,diagnostics:reasons+written.diagnostics,runnable:true}; }
     wrote = true;
   }
   // A runnable partial ships its missing and unchecked behavior as notices whether or not a writer
   // ran for it, so an unhandled need is never silently dropped.
   let noticed: boolean = false;
   for (let need of ledger.needs) { if (need.status !== "covered") { composition.screen.instances[composition.screen.instances.length] = notice("notice_"+need.id,need.id+": "+need.status+" — "+need.reason); noticed = true; } }
-  if (noticed || wrote) { assembled = await composer.assemble(composition,computations); }
+  if (noticed || wrote) { assembled = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan)); }
   if (missingRequirements.length > 0) {
     for (let id of missingRequirements) { composition.screen.instances[composition.screen.instances.length] = notice("requirement_"+id,"Requirement "+id+": missing or unchecked original behavior"); }
-    assembled = await composer.assemble(composition,computations);
+    assembled = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan));
   }
-  let checked: checker.Result = await checker.run(assembled.source.deal,assembled.source.dealui); attempts = attempts+1;
+  for (let note of assembled.metadata.notices) { if (!diagnostics.includes(note)) { diagnostics = diagnostics+"composition: "+note+"; "; } }
+  let checked: checker.Result = await checker.run(assembled.source.deal,assembled.source.dealui,s.encode(assembled.metadata),true); attempts = attempts+1;
   if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
   // An admission or authority verdict is not source feedback: it authorizes no repair and leaves the
   // accepted source and saved data untouched (generation-recovery-and-source-editing "Checking and
@@ -247,7 +414,9 @@ export async function run(input: writing.Input, context: selecting.Context, plan
     let applied: revisions.Applied = await revisions.apply(revision,response.content);
     if (applied.accepted) {
       revision = applied.current; attempts = attempts+1;
-      checked = await checker.run(revision.source.deal,revision.source.dealui);
+      // A repaired pair keeps the issued facts as a consistency check but is no longer the pair the
+      // assembly described, so admission does not require it to account for every declaration.
+      checked = await checker.run(revision.source.deal,revision.source.dealui,s.encode(assembled.metadata),false);
       if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
       // A repaired candidate rejected by an admission or authority verdict ends the request: the
       // verdict is never fed back as a source diagnostic.

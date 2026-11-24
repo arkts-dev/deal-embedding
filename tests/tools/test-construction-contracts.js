@@ -11,7 +11,12 @@ for(const source of Object.values(sources))for(const line of source.split('\n'))
 }
 const context=vm.createContext({sources,protocolDeclarations:declarations});
 for(const name of ['sandbox.js','protocol-host.js'])vm.runInContext(fs.readFileSync(path.resolve('android/assets/embedding/bindings',name),'utf8'),context);
-vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)])); const loaded=dealLoad(factories,'checks.js'); loaded.entry.schemas.$f(); let finished=false,failure=null; loaded.entry.edits.$f().then(()=>loaded.entry.planningLimits.$f()).then(()=>{loaded.entry.triggers.$f();return loaded.entry.reviewAdmission.$f();}).then(()=>loaded.entry.repairAdmission.$f()).then(()=>loaded.entry.classificationRoute.$f()).then(()=>loaded.entry.alignmentRounds.$f()).then(()=>{loaded.entry.admissionSurface.$f();return loaded.entry.admissionFragments.$f();}).then(()=>finished=true).catch(error=>{failure={code:error.code,message:error.message};finished=true;});`,context);
+vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)])); const loaded=dealLoad(factories,'checks.js'); loaded.entry.schemas.$f(); loaded.entry.planValues.$f(); const sparseText=[]; sparseText[1]='x'; const holeRefused=loaded.entry.textCollectionRefuses.$f(sparseText); const denseText=loaded.entry.textCollectionRefuses.$f(['a']); const sparseRecords=[]; sparseRecords[1]={id:'a'}; const recordHoleRefused=loaded.entry.recordCollectionRefuses.$f(sparseRecords); let finished=false,failure=null; loaded.entry.edits.$f().then(()=>loaded.entry.planningLimits.$f()).then(()=>{loaded.entry.triggers.$f();return loaded.entry.reviewAdmission.$f();}).then(()=>loaded.entry.repairAdmission.$f()).then(()=>loaded.entry.classificationRoute.$f()).then(()=>loaded.entry.alignmentRounds.$f()).then(()=>{loaded.entry.admissionSurface.$f();return loaded.entry.admissionFragments.$f();}).then(()=>finished=true).catch(error=>{failure={code:error.code,message:error.message};finished=true;});`,context);
+// A dynamic array that carries a hole is not an invariant collection: the checked decoders refuse it
+// rather than reading the hole as an undefined element, while a dense array of the same kind converts.
+assert.strictEqual(vm.runInContext('holeRefused',context),true,'Hole in a typed text collection admitted');
+assert.strictEqual(vm.runInContext('denseText',context),false,'Dense text collection refused');
+assert.strictEqual(vm.runInContext('recordHoleRefused',context),true,'Hole in a typed record collection admitted');
 let ids=0,dispatches=0,planningDispatches=0,reviews=0,replans=0,hostQuestions=0,classificationAsks=0;
 // The human-question review winners, in the order the fixture's scenarios dispatch them. The driver
 // only serves mechanisms; every admission assertion lives in the production policy under test.
@@ -19,7 +24,7 @@ const reviewScript=[{winner:'ask',p:0.59},{winner:'ask',p:0.6},{winner:'ask',p:0
 // Host replies for the admitted questions: unanswered, a nondefault option, then the answer-boundary
 // cases of the question adapter.
 const hostScript=[{optionId:null,text:null,cancelled:false},{optionId:'b',text:null,cancelled:false},{optionId:null,text:null,cancelled:false},{optionId:null,text:null,cancelled:false},{optionId:null,text:'x'.repeat(4096),cancelled:false},{optionId:null,text:'x'.repeat(4097),cancelled:false},{optionId:null,text:'   ',cancelled:false},{optionId:'b',text:'free text',cancelled:false},{optionId:'zzz',text:null,cancelled:false},{optionId:null,text:null,cancelled:true}];
-const replanPlan={title:'Pick',requirements:[{id:'preserve',text:'Keep the request',sources:['request']}],needs:[{id:'body',type:'other',words:'Something useful',spec:{}}],questions:[{id:'q9',text:'Still needed?',default:'a',options:[{id:'a',label:'A'},{id:'b',label:'B'}]}]};
+const replanPlan={title:'Pick',inputs:[],constants:[],requirements:[{id:'preserve',text:'Keep the request',sources:['request'],needs:[]}],needs:[{id:'body',type:'other',words:'Something useful',reads:[],spec:{}}],questions:[{id:'q9',text:'Still needed?',default:'a',options:[{id:'a',label:'A'},{id:'b',label:'B'}]}]};
 // One reply per dispatched alignment batch, in the order the fixture runs its scenarios. The driver
 // serves the mechanism only: it never decides a round, a threshold or a kind.
 const alignmentScript=[
@@ -70,8 +75,8 @@ const classificationScript=[
    else if(request.module==='embedding/policy-data'&&request.function==='sha256')reply.value=crypto.createHash('sha256').update(request.args[0]).digest('hex');
    else if(request.module==='embedding/fragment-syntax'){
     // The compiler's own AST transport: the policy is driven with real fragment facts.
-    const classpath=path.resolve('build/embedding-library/classes');
-    const result=cp.spawnSync('java',['-cp',classpath,'dev.deal.embedding.FragmentMechanisms',request.function],{input:request.args[0],encoding:'utf8'});
+    const classpath=process.env.DEAL_CONTRACT_CLASSPATH||path.resolve('build/embedding-library/classes');
+    const result=cp.spawnSync('java',['-cp',classpath,process.env.DEAL_CONTRACT_CLASSPATH?'FragmentMechanisms':'dev.deal.embedding.FragmentMechanisms',request.function],{input:request.args[0],encoding:'utf8'});
     assert.equal(result.status,0,result.stderr);reply.value=result.stdout;
    }
    else if(request.module==='embedding/questions'){
@@ -84,7 +89,12 @@ const classificationScript=[
      planningDispatches++;const sequence=(planningDispatches-1)%3+1;
      assert.equal(ask.ask,sequence);assert.equal(ask.thinking,sequence===3);assert.equal(ask.maxTokens,sequence===3?24000:8000);
      if(sequence>1){assert(ask.previous);assert(ask.diagnostics);}
-     reply.value={content:planningDispatches===3?'{'+'"title":"Preserved"}':'{"legacy":[]}',finish:'stop',refusal:''};
+     // The plan boundary classifies its own JSON: a fenced and then a truncated document reach the
+     // bounded re-plan as the located diagnostic of the previous reply, and an unusable document never
+     // escapes the loop as an operational failure.
+     if(planningDispatches===2||planningDispatches===3)assert(ask.diagnostics.includes('plan: not a JSON document'),'plan document rejection lost: '+ask.diagnostics);
+     if(planningDispatches>3&&sequence>1)assert(ask.diagnostics.includes('Missing field: title'),'plan rejection lost: '+ask.diagnostics);
+     reply.value={content:planningDispatches===1?'```json\n{"title":"Fenced"}\n```':planningDispatches===2?'{"title":':planningDispatches===3?'{"title":"Preserved","inputs":[],"constants":[],"requirements":[],"needs":[],"questions":[]}':'{"legacy":[]}',finish:'stop',refusal:''};
     }else if(ask.stage==='question-review'){
      const script=reviewScript[reviews++];assert(script,'unscripted question review');
      assert.equal(ask.maxTokens,2000);assert.equal(ask.questions,ask.input.split('\nISSUED QUESTIONS\n')[1].split('\nReturn ')[0]);

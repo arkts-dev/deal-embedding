@@ -17,6 +17,8 @@ internal class UiSession(private val context: Context, private val broker: Capab
     private var lastFault = false
     private var actionSequence = 0
     private var lastAction = ""
+    private var clockIntervalMs = 0L
+    private var nextClockPump = 0L
     private val requestParents = mutableMapOf<Int, String>()
     private val requestStarts = mutableMapOf<Int, Long>()
     private fun evaluate(source: String): String = program.evaluate(source)
@@ -25,6 +27,8 @@ internal class UiSession(private val context: Context, private val broker: Capab
     fun mount(output: File, restored: String? = null): JSONObject {
         check(!closed && capabilitySession == null) { "UI session is closed or already mounted" }
         val bundle = DealSessionBindings.bundle(context, config, output, restored)
+        clockIntervalMs = DealSessionBindings.clockInterval(output)
+        nextClockPump = 0
         capabilitySession = broker.openSession(log)
         log.event("session", "opened", candidate, workspace)
         try { return JSONObject(evaluate(bundle)).also { recordSnapshot(it) } }
@@ -32,15 +36,37 @@ internal class UiSession(private val context: Context, private val broker: Capab
     }
     fun dispatch(slot: Int, payload: String?) {
         actionSequence++
-        lastAction = "$actionSequence:$slot"
         val span = "$workspace:action:$actionSequence"
         lastAction = span
         log.event("action", "started", candidate, workspace, span, detail = payload, span = span)
-        try { evaluate(DealSessionBindings.dispatch(slot, payload)); log.event("action", "completed", candidate, workspace, span, span = span) }
+        try {
+            evaluate(DealSessionBindings.dispatch(slot, payload))
+            // A clock press is admitted with the paired adapter reading taken for that press; the
+            // driver resolves the issued control identity from the rendered tree. Compiled policy
+            // still decides elapsed, completion and trust.
+            pumpClocks(force = true)
+            log.event("action", "completed", candidate, workspace, span, span = span)
+        }
         catch (error: Throwable) { log.event("action", "failed", candidate, workspace, span, code = error.javaClass.simpleName, span = span); throw error }
     }
-    internal fun frameVisibility(visible:Boolean){evaluate("setFrameVisibility($visible)")}
+    /** Paired monotone/wall adapter readings; the host interval schedules sampling, never elapsed. */
+    private fun pumpClocks(force: Boolean) {
+        if (clockIntervalMs <= 0) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!force && now < nextClockPump) return
+        evaluate(DealSessionBindings.clockPump(now, System.currentTimeMillis(), force))
+        nextClockPump = now + clockIntervalMs
+    }
+    internal fun frameVisibility(visible:Boolean){
+        // A visible surface is a Session activation/resume; the driver lane publishes the epoch change
+        // the expiry consumer reads, and the lifecycle transition is traced with the Session.
+        if(visible)log.event("session","resumed",candidate,workspace)
+        evaluate("setFrameVisibility($visible, ${android.os.SystemClock.elapsedRealtime()})")
+    }
     fun advance(): JSONObject {
+        // Driver progress is independent of renderer events and detachment; a delayed or coalesced
+        // host callback still reports the monotone delta that really passed.
+        pumpClocks(force = false)
         evaluate("advanceFrames(${android.os.SystemClock.elapsedRealtime()})")
         val encoded = evaluate(DealSessionBindings.requests)
         check(encoded.toByteArray().size <= 16 * 1024) { "Capability request batch too large" }

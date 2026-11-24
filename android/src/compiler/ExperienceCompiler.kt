@@ -7,7 +7,7 @@ import java.io.File
 /** Checks and lowers source against host-supplied declarations and the renderer pack. */
 internal class ExperienceCompiler(private val context: Context, private val config: RuntimeConfig, private val log: EmbeddingLog = EmbeddingLog(context)) {
     private val storage = ExperienceStorage(context, config.storageName)
-    fun compile(dealSource: String, uiSource: String, target: String?): File {
+    fun compile(dealSource: String, uiSource: String, target: String?, composition: String, fresh: Boolean): File {
         // The frozen target is carried, never chosen: an absent or out-of-set value rejects before a manifest exists.
         val issuedTarget = issueTarget(target)
         StagingReclamation.retry(context)
@@ -48,6 +48,11 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             }
             File(project, "deal.json").writeText(JSONObject().put("languageVersion", "1.6").put("backend", "js")
                 .put("moduleRoots", JSONArray(listOf("src"))).put("externals", externals).toString())
+            // The issued assembly metadata is private compiler metadata: admission cross-checks it against
+            // the compiled AppState declarations below, so a removed or changed fact rejects rather than
+            // falling back to a source scan. Nothing of it enters generated source.
+            val compositionJson = if (composition.isBlank()) JSONObject() else JSONObject(composition)
+            val declarations = declaredFields(app.readText())
             val output = File(project, "output")
             val diagnostics = File(project, "diagnostics.json")
             log.stage("compiler-deal", target = "DEAL compile js", detail = entry.readText()) {
@@ -64,6 +69,8 @@ internal class ExperienceCompiler(private val context: Context, private val conf
                 .put("issuedPackDigest",parsedPack.digest()).put("issuedPackVersion",parsedPack.version())
                 .put("propConstraints",JSONObject(context.assets.open("embedding/prop-constraints.json").bufferedReader().use{it.readText()}))
                 .put("cardProfile",JSONObject(context.assets.open("embedding/card-profile.json").bufferedReader().use{it.readText()}))
+                .put("declarations",JSONArray(declarations)).put("fresh",fresh)
+                .also { if(!composition.isBlank()) it.put("composition",compositionJson) }
                 .put("target",issuedTarget).toString())
             return output
         } catch (error: deal.ui.UiDiagnostic) {
@@ -98,6 +105,22 @@ internal class ExperienceCompiler(private val context: Context, private val conf
 private fun issueTarget(target: String?): String = CompileInput.target(target) ?: throw CandidateRejected(JSONArray().put(JSONObject().put("stage", "admission").put("code", "ADMISSION_TARGET")
     .put("message", "A compile input requires the experience's frozen target").put("expected", "screen|chat|card")
     .put("actual", target ?: "absent")).toString())
+
+/** The compiled AppState declarations, read from the parsed emitted source; admission compares them with the issued composition metadata. */
+internal fun declaredFields(source: String): List<String> {
+    val parsed = deal.parser.Parser(deal.lexer.Lexer(source, "experience.deal").tokenize().tokens(), "experience.deal").parse()
+    val names = mutableListOf<String>()
+    for (statement in parsed.program().statements()) {
+        val declaration = when (statement) {
+            is deal.ast.ExportDeclaration -> statement.declaration()
+            else -> statement
+        }
+        if (declaration is deal.ast.ClassDeclaration && declaration.name() == "AppState") {
+            for (field in declaration.fields()) names.add(field.name())
+        }
+    }
+    return names
+}
 
 /** The compiled entry filename; the mount must load this exact module. */
 internal const val ENTRY_NAME = "experience_entry"

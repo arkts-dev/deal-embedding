@@ -8,6 +8,9 @@ export class RequirementCoverage { id: string; status: string; reason: string; n
 export class Ledger { needs: NeedCoverage[]; requirements: RequirementCoverage[]; }
 function implemented(screen: screens.Screen, need: string): boolean {
   for (let slot of screen.slots) {
+    // An action need implemented by an issued binding is served by that emitted operation, so it is
+    // not reported missing merely because no fragment instance fills its slot.
+    if (slot.need === need && Object.hasOwn(slot,"action")) { return true; }
     if (slot.need === need && slot.status === "filled" && slot.instance !== null) {
       for (let instance of screen.instances) { if (instance.id === (slot.instance as string) && instance.origin !== "notice" && s.contains(instance.fragment.covers,need)) { return true; } }
     }
@@ -39,7 +42,16 @@ export function judge(plan: plans.Plan, screen: screens.Screen, answers: selecti
       if (slot.need === need.id) {
         if (slot.instance !== null && !s.contains(instances,slot.instance as string)) { instances[instances.length] = slot.instance as string; }
         if (slot.status === "missing") { status = "missing"; reason = slot.reason; }
-        else if ((slot.status === "open" || slot.status === "unchecked") && status === "covered") { status = "unchecked"; reason = slot.reason; }
+        // A slot whose need is raised by a checked trigger is implemented by the operation that
+        // trigger reaches, whose own status/sequence/phase/revision fields carry its admission state;
+        // its instance-level status therefore never overrides the judged coverage. An action no
+        // emitted control or checked trigger raises keeps its slot open instead, and the reason names
+        // the missing route rather than claiming the behavior was never judged.
+        else if (!Object.hasOwn(slot,"event") && (slot.status === "open" || slot.status === "unchecked") && status === "covered") {
+          status = "unchecked";
+          if (Object.hasOwn(slot,"action")) { reason = "No emitted control or checked trigger raises the issued operation for this need"; }
+          else { reason = slot.reason; }
+        }
       }
     }
     result.needs[result.needs.length] = {id:need.id,status:status,reason:reason,instances:instances};
