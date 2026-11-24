@@ -17,6 +17,7 @@ const context = vm.createContext({ sources, hostCalls: [] });
 vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/sandbox.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT || 'dependencies/deal-ui', 'runtime-js/checkpoint.js'), 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT || 'dependencies/deal-ui', 'runtime-js/session.js'), 'utf8'), context);
+vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/text-pattern.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/ui-session.js', 'utf8'), context);
 vm.runInContext(`
   const factories = Object.fromEntries(Object.entries(sources).map(([id, source]) => [id, new Function('require','module','exports','process','console', source)]));

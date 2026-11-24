@@ -26,7 +26,18 @@ globalThis.mountDealUi = function(factories, entryId, persistedState = null, app
   else if (prepare !== null) state = prepare(entry.bridgeInitialState.$f(), rt, entry);
   // Mount input only: Deal UI decodes this typed state before it publishes any tree.
   const restored = state === null ? null : codec.encode(state);
-  const session = createDealUiSession(entry, rt, restored, scheduleEffect, checkpointSchema);
+  // Decorate only the tree-producing ABI calls; the pinned Session remains the sole store,
+  // transition/rollback and effect authority. A fault throws before it assigns candidate state.
+  const checkedEntry = {...entry};
+  for (const name of ['initial', 'transitionFromCandidate']) {
+    const original = entry[name];
+    checkedEntry[name] = {...original, $f: (...args) => {
+      const transition = original.$f(...args);
+      validateRendererValues(transition.tree);
+      return transition;
+    }};
+  }
+  const session = createDealUiSession(checkedEntry, rt, restored, scheduleEffect, checkpointSchema);
   globalThis.dealUi = session;
   let projectedFrom = null, projectedValue = null;
   globalThis.persistDealUi = function() {

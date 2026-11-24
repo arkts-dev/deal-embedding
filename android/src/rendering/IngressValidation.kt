@@ -49,6 +49,14 @@ internal object IngressValidation {
             is Resolution.Fault -> return IngressFault("PROP_FAULT", name, resolution.prop, detail = resolution.reason)
             is Resolution.Resolved -> resolution.values
         }
+        if (name == "TimeField" || name == "ClockText" || name == "DateField") {
+            val prop = if (name == "ClockText") "minutes" else "value"
+            val value = (resolved[prop] as? UiValue.Num)?.value
+            if (value == null || !value.isFinite() || value != kotlin.math.floor(value) ||
+                (name != "DateField" && value !in 0.0..1439.0)) {
+                return IngressFault("PROP_FAULT", name, prop, detail = "invalid shared temporal domain")
+            }
+        }
         if (card) {
             if (name !in PackCardProfile.components) {
                 return IngressFault("CARD_FAULT", name, detail = "component is outside the card profile")
@@ -88,14 +96,8 @@ internal object IngressValidation {
             }
         }
         styleFault(name, resolved)?.let { return it }
-        if (name == "TextField") {
-            // Declared feedback never replaces DEAL validation, but an unparseable pattern can never
-            // match, so it rejects instead of silently passing or silently failing every value.
-            val pattern = (resolved["pattern"] as? UiValue.Text)?.value ?: ""
-            if (!TextFieldRules.validPattern(pattern)) {
-                return IngressFault("PROP_FAULT", name, "pattern", detail = "pattern must be a valid regular expression")
-            }
-        }
+        // Pattern syntax is checked by the ECMAScript mechanism: precommit in the Session
+        // adapter and before publication by DealRenderer, not by Java's regex dialect here.
         if (name == "Surface") {
             val shapes = (resolved["shapes"] as? UiValue.Json)?.value
             GraphicsValidation.shapes(shapes)?.let { return IngressFault("PROP_FAULT", name, "shapes", detail = it) }

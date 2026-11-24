@@ -16,7 +16,7 @@ const sources={};
 
 function open(persisted=null){
   const context=vm.createContext({sources});
-  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/ui-session.js'])
+  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/ui-session.js'])
     vm.runInContext(fs.readFileSync(file,'utf8'),context);
   vm.runInContext('configureDealCapabilities('+JSON.stringify([providerContract])+')',context);
   vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));

@@ -682,55 +682,28 @@ fun main(args: Array<String>) {
     check(TextFieldRules.feedback("\uD83D\uDE00", minLength = 2.0, minLengthMessage = "Longer") == null) {
         "one astral character is exactly two UTF-16 units"
     }
-    check(TextFieldRules.feedback("ab", pattern = "[0-9]+", patternMessage = "Digits") == TextFieldFeedback("pattern", "Digits"))
-    check(TextFieldRules.feedback("12", pattern = "[0-9]+") == null)
-    check(TextFieldRules.feedback("12ab", pattern = "[0-9]+")?.rule == "pattern") { "the declared pattern matches the whole string" }
+    check(TextFieldRules.feedback("ab", pattern = "[0-9]+", patternMessage = "Digits", patternMatches = false) == TextFieldFeedback("pattern", "Digits"))
+    check(TextFieldRules.feedback("12", pattern = "[0-9]+", patternMatches = true) == null)
+    check(TextFieldRules.feedback("12ab", pattern = "[0-9]+", patternMatches = false)?.rule == "pattern") { "the declared pattern matches the whole string" }
     check(TextFieldRules.feedback("ab", required = true, email = true, minLength = 5.0, minLengthMessage = "Longer") ==
         TextFieldFeedback("email", "")) { "the first violated rule in declaration order reports" }
-    check(TextFieldRules.validPattern("[0-9]+"))
-    check(!TextFieldRules.validPattern("[0-9")) { "an invalid pattern is refused" }
-    // The declared ECMAScript pattern is translated to the platform engine, and a construct ECMAScript
-    // would refuse never matches here.
-    check(TextFieldRules.matches("\\u{1F600}", "\uD83D\uDE00")) { "a code-point escape names the declared character" }
-    check(TextFieldRules.matches("[^]", "x")) { "the ECMAScript any-character class matches one character" }
-    check(!TextFieldRules.matches("[^]", "ab")) { "the declared pattern matches the whole string" }
-    check(TextFieldRules.matches("\\p{Letter}+", "abc")) { "a Unicode category name matches letters" }
-    check(TextFieldRules.matches("\\p{Script=Greek}+", "\u03B1\u03B2"))
-    check(!TextFieldRules.validPattern("\\p{IsGreek}+")) { "a platform-only property spelling is refused" }
-    check(!TextFieldRules.validPattern("\\Aabc")) { "a platform-only escape is refused" }
-    check(!TextFieldRules.validPattern("a++")) { "a possessive quantifier is not an ECMAScript pattern" }
-    check(!TextFieldRules.validPattern("(?>a)")) { "an atomic group is not an ECMAScript pattern" }
-    check(!TextFieldRules.validPattern("\\u{110000}")) { "a code point beyond Unicode is refused" }
-    accepted(node("TextField", listOf(text("label", "Name"), text("value", "ab"), text("pattern", "\\p{Letter}+"))))
-    // The declared ECMAScript pattern is checked against the engine-derived fixture: an admitted
-    // pattern must behave like the declaration, and a refusal is the only way out of the subset.
-    val patternFixture = NeutralJson.parse(Files.readString(root.resolve("tests/tools/fixtures/renderer-patterns.json")))
-        ?: error("the renderer pattern fixture is not JSON")
-    val patternCases = ((patternFixture as JsonValue.Obj).fields["cases"] as JsonValue.Arr).items
-    check(patternCases.size >= 50) { "the pattern fixture lost cases: ${patternCases.size}" }
-    var admittedCases = 0
-    for (entry in patternCases) {
-        val fields = (entry as JsonValue.Obj).fields
-        val pattern = (fields["pattern"] as JsonValue.Str).value
-        val admitted = (fields["native"] as JsonValue.Str).value == "accepted"
-        check(TextFieldRules.validPattern(pattern) == admitted) { "the portable subset disagrees with its own expectation for $pattern" }
-        if (!admitted) continue
-        admittedCases++
-        check((fields["esValid"] as JsonValue.Flag).value) { "the subset admitted a pattern ECMAScript refuses: $pattern" }
-        for (sample in (fields["samples"] as JsonValue.Arr).items) {
-            val sampleFields = (sample as JsonValue.Obj).fields
-            val value = (sampleFields["value"] as JsonValue.Str).value
-            val matches = (sampleFields["matches"] as JsonValue.Flag).value
-            check(TextFieldRules.matches(pattern, value) == matches) {
-                "the admitted pattern $pattern does not match $value like the declaration"
-            }
-        }
-    }
-    check(admittedCases >= 35) { "the fixture must keep the admitted patterns it proves: $admittedCases" }
+    // Syntax and full Unicode matching run against the exact shipped JavaScript asset in
+    // test-renderer-patterns.js, not a Java-regex translation. Pending feedback is not a mismatch.
+    check(TextFieldRules.feedback("ab", pattern = "[0-9]+") == null)
     accepted(node("TextField", listOf(text("label", "Email"), text("value", "a@b.co"), flag("email", true),
         text("pattern", "[^@]+@[^@]+"), number("minLength", 5.0), number("maxLength", 40.0), text("emailMessage", "Bad"))))
-    rejected(node("TextField", listOf(text("label", "Email"), text("value", "a@b.co"), text("pattern", "[0-9"))),
-        "PROP_FAULT", "TextField", "pattern")
+    // Pattern syntax admission is tested on the real Session adapter before commit/effects.
+    for (component in listOf("TimeField", "ClockText")) {
+        val prop = if (component == "ClockText") "minutes" else "value"
+        for (valid in listOf(0.0, 1439.0))
+            accepted(node(component, listOf(text("label", "Time"), number(prop, valid))))
+        for (invalid in listOf(-1.0, 1440.0, 0.5, Double.NaN, Double.POSITIVE_INFINITY))
+            rejected(node(component, listOf(text("label", "Time"), number(prop, invalid))), "PROP_FAULT", component, prop)
+    }
+    for (valid in listOf(-1.0, 0.0, 19000.0))
+        accepted(node("DateField", listOf(text("label", "Day"), number("value", valid))))
+    for (invalid in listOf(0.5, Double.NaN, Double.POSITIVE_INFINITY))
+        rejected(node("DateField", listOf(text("label", "Day"), number("value", invalid))), "PROP_FAULT", "DateField", "value")
 
     // Checked draft conversion: only the declared spelling commits, and a temporal draft stays inside
     // the shared minute-of-day or local epoch-day domain.
@@ -806,6 +779,8 @@ fun main(args: Array<String>) {
     check(!PoseMotion.backface(listOf(271.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0))) { "a heading past the edge is the front face again" }
     check(!PoseMotion.backface(listOf(0.0, 450.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0))) { "angles wrap by a full turn" }
     check(PoseMotion.backface(listOf(0.0, 180.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0)))
+    check(!PoseMotion.backface(listOf(180.0, 180.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0))) { "two half-turns show the front" }
+    check(!PoseMotion.backface(listOf(90.0, 180.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0))) { "an edge is not a backface" }
     check(PoseMotion.cameraDistance(0.0, 2f) == 16f) { "an undeclared perspective keeps this renderer's default depth cue" }
     check(PoseMotion.cameraDistance(900.0, 2f) == 1800f) { "the shared perspective is the camera distance" }
     // Stage: depth order is the painting order and the shared perspective is the camera distance.
@@ -816,6 +791,14 @@ fun main(args: Array<String>) {
     )
     check(StageSort.order(stagePoses) == listOf(2, 1, 0)) { "the farther Transform paints first" }
     check(StageSort.order(listOf(PoseMotion.IDENTITY, PoseMotion.IDENTITY)) == listOf(0, 1)) { "equal depth keeps the declared order" }
+
+    val crossingFrom = stagePoses[0]
+    val crossingTo = stagePoses[2]
+    check(StageSort.order(listOf(PoseMotion.interpolate(crossingFrom, crossingTo, 0.25), PoseMotion.IDENTITY)) == listOf(1, 0))
+    check(StageSort.order(listOf(PoseMotion.interpolate(crossingFrom, crossingTo, 0.75), PoseMotion.IDENTITY)) == listOf(0, 1))
+    check("node.children.map(::declaredPose)" !in Files.readString(root.resolve("android/src/rendering/DealRenderer.kt"))) {
+        "the Stage must not reorder keyed children by their target pose"
+    }
 
     // Path rotation: supported off the card, still at zero, and refused by the card target.
     check(PathSpin.rotationDegrees(1000.0, 0L) == 0f)
@@ -852,7 +835,7 @@ fun main(args: Array<String>) {
         "PoseMotion.interpolate(start, pose,",
         "PoseMotion.backface(frame)",
         "PoseMotion.cameraDistance(perspective, density)",
-        "StageSort.order(node.children.map(::declaredPose))",
+        "zIndex(if (stage) PoseMotion.depth(applied.value).toFloat() else 0f)",
         "PathSpin.rotationDegrees(spinPeriod, visible + (now - start))",
         "rotate(rotation)",
         "private fun SparklinePicture(series: List<Double>, second: List<Double>, count: Int, " +

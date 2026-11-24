@@ -11,7 +11,7 @@ const sources={};
 /** A fresh isolate per call: a saved Experience never shares a live module cache or Session. */
 function open(persisted=null,appModule='experience.js'){
   const context=vm.createContext({sources});
-  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/ui-session.js'])
+  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/ui-session.js'])
     vm.runInContext(fs.readFileSync(file,'utf8'),context);
   vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));
     globalThis.__snapshot=mountDealUi(factories,'experience_entry.js',${persisted===null?'null':JSON.stringify(persisted)},${appModule===null?'null':JSON.stringify(appModule)});`,context);
@@ -20,7 +20,7 @@ function open(persisted=null,appModule='experience.js'){
 /** The host path: saved bytes are parsed from a quoted literal, never spliced as source. */
 function openBytes(saved,appModule='experience.js'){
   const context=vm.createContext({sources});
-  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/ui-session.js'])
+  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/ui-session.js'])
     vm.runInContext(fs.readFileSync(file,'utf8'),context);
   context.__saved=saved;
   vm.runInContext('const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function(\'require\',\'module\',\'exports\',\'process\',\'console\',source)]));'
@@ -31,7 +31,7 @@ const snapshot=context=>JSON.parse(vm.runInContext('__snapshot',context));
 /** The isolated checking lane restores through the same compiled roles before it renders. */
 function checked(saved,appModule='experience.js'){
   const context=vm.createContext({sources});
-  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),'android/assets/embedding/bindings/checking-session.js'])
+  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/checking-session.js'])
     vm.runInContext(fs.readFileSync(file,'utf8'),context);
   context.__saved=saved;
   vm.runInContext('const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function(\'require\',\'module\',\'exports\',\'process\',\'console\',source)]));'

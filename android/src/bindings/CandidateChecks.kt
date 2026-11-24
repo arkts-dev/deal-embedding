@@ -30,7 +30,7 @@ internal class CandidateChecks(private val context:Context,private val config:Ru
         }
         val isolate=checkNotNull(candidate.isolate)
         return try {
-            if(operation=="start")isolate.evaluate(SandboxBundle.build(context,listOf("checking-session.js"),dev.deal.embedding.capabilities.CapabilityBindings.script(config.contracts),"openChecking(factories,\"$ENTRY_NAME.js\",${DealSessionBindings.record(candidate.restored)},${DealSessionBindings.appModule(config)?.let { JSONObject.quote(it) } ?: "null"})",output=candidate.output))
+            if(operation=="start")isolate.evaluate(SandboxBundle.build(context,listOf("text-pattern.js","checking-session.js"),dev.deal.embedding.capabilities.CapabilityBindings.script(config.contracts),"openChecking(factories,\"$ENTRY_NAME.js\",${DealSessionBindings.record(candidate.restored)},${DealSessionBindings.appModule(config)?.let { JSONObject.quote(it) } ?: "null"})",output=candidate.output))
             JSONObject(isolate.evaluateString("checkingStep(${JSONObject.quote(operation)},$index,JSON.parse(${JSONObject.quote(payload)}))")).also { report ->
                 if (!report.getBoolean("ok")) report.put("diagnostics", report.getString("diagnostics").replace(candidate.output.parentFile!!.absolutePath + "/", ""))
                 if(report.getBoolean("ok")) {

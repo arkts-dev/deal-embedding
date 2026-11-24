@@ -433,7 +433,7 @@ async function run(mode){
       if(request.args[1]==='start') {
        isolatedStarts++;
        checkingContext=vm.createContext({});
-       for(const name of ['sandbox.js','checking-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),checkingContext);
+       for(const name of ['sandbox.js','text-pattern.js','checking-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),checkingContext);
        if(mode==='scalar-read')vm.runInContext('configureDealCapabilities('+JSON.stringify([providerContract])+')',checkingContext);
        const executable=path.join(stage,'../composed-executable/js');const modules={};
        function load(dir){for(const n of fs.readdirSync(dir)){const f=path.join(dir,n);if(fs.statSync(f).isDirectory())load(f);else if(n.endsWith('.js'))modules[path.relative(executable,f)]=fs.readFileSync(f,'utf8');}}load(executable);

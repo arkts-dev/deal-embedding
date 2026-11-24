@@ -22,6 +22,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -49,6 +50,10 @@ import androidx.compose.ui.unit.constrainHeight
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -68,6 +73,8 @@ private class Values(private val map: Map<String, UiValue>) {
 
 private val LocalFramed = compositionLocalOf { false }
 private val LocalCardTarget = compositionLocalOf { false }
+private val LocalTextPattern = staticCompositionLocalOf<TextPattern> { error("No renderer pattern mechanism") }
+private val LocalStageDepth = compositionLocalOf { false }
 
 /** The Stage's shared perspective in dp; a Transform reads it for its depth cue. */
 private val LocalPerspective = compositionLocalOf { PoseMotion.DEFAULT_PERSPECTIVE_DP }
@@ -308,14 +315,6 @@ private fun keyboardType(name: String): KeyboardType = when (TextFieldRules.keyb
     KeyboardHint.TEXT -> KeyboardType.Text
 }
 
-/** A Stage child's declared pose, resolved exactly as its own Transform painter resolves it. */
-private fun declaredPose(node: UiNode): List<Double> {
-    val resolved = (PropResolution.resolve(node.component, node.props) as? Resolution.Resolved)?.values
-        ?: return PoseMotion.IDENTITY
-    val entries = ((resolved["pose"] as? UiValue.Json)?.value as? JsonValue.Arr)?.items.orEmpty()
-    return PoseMotion.normalised(entries.mapNotNull { (it as? JsonValue.Num)?.value })
-}
-
 @Composable private fun ProgressBar(fraction: Double) {
     val background = PackTheme.muted.copy(alpha = .25f)
     val accent = PackTheme.accent
@@ -459,10 +458,43 @@ private fun declaredPose(node: UiNode): List<Double> {
     val tree = treeFromJson(node)
     val verdict = IngressValidation.validate(tree, target)
     var previous by remember { mutableStateOf<UiNode?>(null) }
-    val painting = if (verdict is IngressVerdict.Accepted) tree else previous
-    SideEffect { if (verdict is IngressVerdict.Accepted) previous = tree }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val limits = LocalExecutionLimits.current
+    val patterns = remember(context, limits) { TextPattern(context, limits) }
+    LaunchedEffect(patterns) {
+        try { awaitCancellation() }
+        finally { withContext(NonCancellable + Dispatchers.IO) { patterns.close() } }
+    }
+    fun hasPattern(node: UiNode): Boolean =
+        (node.component == "TextField" && (node.prop("pattern") as? UiValue.Text)?.value.orEmpty().isNotEmpty()) ||
+            node.children.any(::hasPattern)
+    val needsCheck = hasPattern(tree)
+    var checked by remember(patterns) { mutableStateOf<UiNode?>(null) }
+    LaunchedEffect(tree, patterns) {
+        if (verdict is IngressVerdict.Accepted && needsCheck) {
+            try {
+                withContext(Dispatchers.IO) {
+                    fun visit(node: UiNode) {
+                        if (node.component == "TextField") {
+                            val pattern = (node.prop("pattern") as? UiValue.Text)?.value.orEmpty()
+                            if (pattern.isNotEmpty()) patterns.matches(pattern, "")
+                        }
+                        node.children.forEach(::visit)
+                    }
+                    visit(tree)
+                }
+                checked = tree
+            } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+            catch (error: Exception) {
+                android.util.Log.w("DealRenderer", "Pattern admission failed", error)
+            }
+        }
+    }
+    val admitted = verdict is IngressVerdict.Accepted && (!needsCheck || checked == tree)
+    val painting = if (admitted) tree else previous
+    SideEffect { if (admitted) previous = tree }
     painting?.let { paint ->
-        CompositionLocalProvider(LocalCardTarget provides (target == "card")) { PaintNode(paint, dispatch) }
+        CompositionLocalProvider(LocalCardTarget provides (target == "card"), LocalTextPattern provides patterns) { PaintNode(paint, dispatch) }
     }
 }
 
@@ -633,6 +665,17 @@ private fun declaredPose(node: UiNode): List<Double> {
             val multiline = StyleFamilies.resolve("TextField", styleName) == "multiline"
             var draft by draftOf(authoritative, authoritative)
             val shown = DraftText.shown(draft, authoritative, authoritative)
+            val pattern = values.text("pattern")
+            val checker = LocalTextPattern.current
+            var patternMatches by remember(shown, pattern, checker) { mutableStateOf<Boolean?>(null) }
+            var patternUnavailable by remember(shown, pattern, checker) { mutableStateOf(false) }
+            LaunchedEffect(shown, pattern, checker) {
+                if (pattern.isNotEmpty() && shown.isNotEmpty()) {
+                    try { patternMatches = withContext(Dispatchers.IO) { checker.matches(pattern, shown) } }
+                    catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                    catch (error: Exception) { patternUnavailable = true }
+                }
+            }
             // Declared feedback explains a violated rule; it never replaces DEAL validation and never
             // suppresses input, so the typed text stays the field's value and is always dispatched.
             val feedback = TextFieldRules.feedback(
@@ -647,13 +690,14 @@ private fun declaredPose(node: UiNode): List<Double> {
                 minLengthMessage = values.text("minLengthMessage"),
                 maxLengthMessage = values.text("maxLengthMessage"),
                 patternMessage = values.text("patternMessage"),
+                patternMatches = patternMatches,
             )
-            val message = feedback?.message ?: ""
+            val message = feedback?.message ?: if (patternUnavailable) "Pattern validation unavailable" else ""
             val supporting: (@Composable () -> Unit)? = if (message.isEmpty()) null else ({ Text(message) })
             OutlinedTextField(value = shown,
                 onValueChange = { next -> draft = Draft(next, authoritative); emit("onChange", next) },
                 label = { Text(values.text("label")) }, singleLine = !multiline,
-                minLines = if (multiline) 2 else 1, isError = feedback != null,
+                minLines = if (multiline) 2 else 1, isError = feedback != null || patternUnavailable,
                 supportingText = supporting,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType(values.text("keyboardType"))),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = values.text("accessibilityLabel") },
@@ -869,7 +913,9 @@ private fun declaredPose(node: UiNode): List<Double> {
                 }
             }
             val sizing = if (size > 0) Modifier.size(size.dp) else Modifier.fillMaxWidth()
-            Column(sizing.graphicsLayer {
+            // Keep keyed children in source order; Stage layers sort displayed, not target, depth.
+            val stage = LocalStageDepth.current
+            Column(sizing.zIndex(if (stage) PoseMotion.depth(applied.value).toFloat() else 0f).graphicsLayer {
                 val frame = applied.value
                 rotationX = frame[0].toFloat()
                 rotationY = frame[1].toFloat()
@@ -881,21 +927,16 @@ private fun declaredPose(node: UiNode): List<Double> {
                 cameraDistance = PoseMotion.cameraDistance(perspective, density)
                 // A solid Transform hides the backface it is turned to, never paints it mirrored.
                 alpha = if (solid && PoseMotion.backface(frame)) 0f else frame[7].toFloat()
-                // frame[5] is moveZ: the platform layer has no z translation, so the declared depth
-                // is the Stage's painting order, which reads the same pose through StageSort.
+                // moveZ reaches the sibling paint order through the same interpolated pose.
             }) { children() }
         }
         RenderComponent.Stage -> {
             val perspective = values.number("perspective", 900.0)
-            val order = StageSort.order(node.children.map(::declaredPose))
             Box(Modifier.fillMaxWidth().heightIn(min = values.number("height").dp)) {
-                CompositionLocalProvider(LocalPerspective provides perspective) {
+                CompositionLocalProvider(LocalPerspective provides perspective, LocalStageDepth provides true) {
                     Box(Modifier.fillMaxWidth()) {
-                        // Depth order decides the paint order: the farther Transform paints first.
-                        for (index in order) {
-                            val child = node.children[index]
-                            key(child.key.ifEmpty { child.component }, index) { PaintNode(child, dispatch) }
-                        }
+                        // Transform layers sort their interpolated depth; ties keep source order.
+                        children()
                     }
                 }
             }

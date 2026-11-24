@@ -13,7 +13,7 @@ internal object DealSessionBindings {
             "ADMISSION_TARGET: compiled target differs from host configuration"
         }
         return SandboxBundle.build(
-            context, listOf("dealui-session.js", "ui-session.js"), CapabilityBindings.script(config.contracts),
+            context, listOf("dealui-session.js", "text-pattern.js", "ui-session.js"), CapabilityBindings.script(config.contracts),
             "mountDealUi(factories,\"$ENTRY_NAME.js\",${record(restored)},${appModule(config)?.let { JSONObject.quote(it) } ?: "null"})", output = output)
     }
     /** The compiled app module owns the issued persistence roles; only retaining hosts name it. */

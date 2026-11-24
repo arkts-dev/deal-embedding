@@ -30,19 +30,21 @@ internal object PoseMotion {
 
     /**
      * Whether a pose shows a backface: the layer is turned more than a quarter turn away from the
-     * viewer about either axis. Angles are taken modulo a full turn, so a heading of 280 degrees is
+     * viewer after both rotations. Angles are taken modulo a full turn, so a heading of 280 degrees is
      * the same edge as -80 and is not a backface.
      */
     fun backface(pose: List<Double>): Boolean {
         val normalisedPose = normalised(pose)
-        return turnedAway(normalisedPose[0]) || turnedAway(normalisedPose[1])
+        return facing(normalisedPose[0]) * facing(normalisedPose[1]) < 0.0
     }
 
-    private fun turnedAway(degrees: Double): Boolean {
+    private fun facing(degrees: Double): Double {
         var angle = degrees % 360.0
         if (angle > 180.0) angle -= 360.0
         if (angle <= -180.0) angle += 360.0
-        return kotlin.math.abs(angle) > 90.0
+        // Exact quarter turns are edges; avoid the sign of floating-point cos(pi/2).
+        if (kotlin.math.abs(angle) == 90.0) return 0.0
+        return kotlin.math.cos(Math.toRadians(angle))
     }
 
     /**

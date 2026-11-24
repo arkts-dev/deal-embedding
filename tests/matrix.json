@@ -804,25 +804,24 @@
       "owner": "ui-vocabulary-pack-and-rendering",
       "requirement": "TextField required, email, minLength, maxLength and pattern feedback report their own declared messages, lengths measure UTF-16 units without splitting scalars, the keyboardType only changes keys, the pattern is a full-string ECMAScript Unicode regex and an invalid one rejects at ingress, and feedback never replaces DEAL validation or suppresses input (docs/spec-v0.8.md:610).",
       "status": "covered",
-      "test": "bash tests/tools/test-renderer-rules.sh node tests/tools/test-renderer-patterns.js",
+      "test": "bash tests/tools/test-renderer-rules.sh node tests/tools/test-renderer-patterns.js node tests/tools/test-renderer-admission.js",
       "sources": [
         "tests/tools/fixtures/RendererRulesTest.kt"
       ],
-      "evidence": "The shipped feedback rule reports the first violated declaration with its own message, separates four UTF-16 units from two code points, treats a no-break space as whitespace, rejects every non-email shape the spec names, matches the pattern against the whole string, keeps the keyboard hint a key-only decision and faults an unparseable pattern at ingress. The production painter's call sites paint the typed draft, dispatch the typed string unconditionally and carry declared feedback as the field's error state alone; actual Compose painting stays the device row's. The declared pattern admits only the portable ECMAScript subset: the fixture carries the engine's own validity and full-string match for every case, the engine test re-derives them, and the rule test proves the subset agrees with that fixture for every admitted pattern and refuses the rest, including ECMAScript-valid constructs whose two engine meanings cannot be shown equal.",
+      "evidence": "The feedback fixture checks declared messages, UTF-16 lengths, keyboard hints and unconditional edit dispatch. The exact shipped ECMAScript mechanism executes every retained pattern fixture, including formerly refused valid constructs. The pinned Session with fixture ABI functions checks invalid syntax and temporal values before state/tree/version/effect commit, plus a valid sibling and initial/checking rejection. Kotlin/Compose compilation and device painting of this revision remain unverified; these host checks are not product acceptance.",
       "asserts": [
         "TextFieldRules.feedback(\"\", required = true, requiredMessage = \"Needed\") == TextFieldFeedback(\"required\", \"Needed\")",
         "TextFieldRules.feedback(\"a@b\", email = true, emailMessage = \"Bad\") == TextFieldFeedback(\"email\", \"Bad\")",
         "TextFieldRules.feedback(\"\\uD83D\\uDE00\\uD83D\\uDE00\", maxLength = 3.0, maxLengthMessage = \"Shorter\") ==",
-        "TextFieldRules.feedback(\"12ab\", pattern = \"[0-9]+\")?.rule == \"pattern\"",
-        "TextFieldRules.matches(\"\\\\p{Letter}+\", \"abc\")",
-        "the portable subset disagrees with its own expectation for $pattern",
-        "admittedCases >= 35",
+        "TextFieldRules.feedback(\"12ab\", pattern = \"[0-9]+\", patternMatches = false)?.rule == \"pattern\"",
+        "assert.equal(result.valid, valid, entry.pattern)",
+        "assert.equal(result.matches, sample.matches, 'retained fixture: ' + entry.pattern)",
         "TextFieldRules.keyboard(\"number\") == KeyboardHint.NUMBER",
         "\"isError = feedback != null\" in painter",
         "\"onValueChange = { next -> draft = Draft(next, authoritative); emit(\\\"onChange\\\", next) }\" in painter",
-        "text(\"pattern\", \"[0-9\")",
-        "assert.strictEqual(entry.esValid, valid,",
-        "the subset never admits a pattern ECMAScript refuses"
+        "assert.equal(check('a', 'a\\n').matches, false)",
+        "rejected candidate committed",
+        "valid sibling did not commit"
       ]
     },
     {

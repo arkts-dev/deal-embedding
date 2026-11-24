@@ -30,6 +30,7 @@ globalThis.openChecking = function(factories, entryId, restoredState = null, app
   function response(ok, diagnostic = '') { return JSON.stringify({ok,diagnostics:diagnostic,tree:current ? JSON.stringify(plain(current.tree)) : '',handlers:call('checkHandlerCount'),providerCalls}); }
   function render(candidate,action) {
     const next = action ? call('transitionFromCandidate',candidate,current.tree,store,action) : call('initial',candidate,store);
+    validateRendererValues(next.tree);
     state=candidate;current=next;store=next.store;
   }
   // Snapshot existing carriers in place rather than JSON-cloning them. Restoring

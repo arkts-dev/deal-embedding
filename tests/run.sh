@@ -62,8 +62,9 @@ python3 tests/tools/test-generation-gateway.py
 python3 tools/vocabulary-inventory.py
 python3 tests/tools/test-vocabulary.py
 bash tests/tools/test-renderer-rules.sh
-# The declared TextField pattern subset carries the ECMAScript engine's own verdicts.
+# Exact shipped ECMAScript mechanism and precommit boundary ordering.
 node tests/tools/test-renderer-patterns.js
+node tests/tools/test-renderer-admission.js
 python3 tests/tools/test-build-cache.py
 python3 tests/tools/test-dependencies.py
 python3 tests/tools/test-preservation.py
