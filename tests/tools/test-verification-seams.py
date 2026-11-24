@@ -33,6 +33,8 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+# A control's bound only has to outlive its owning test. The cutover control runs one generation mode
+# (`--mode=success`), measured at 14-20 s here, so the default bound covers every control.
 TIMEOUT = 300
 BACKUP = ROOT / 'build/verification/seam-backup'
 JOURNAL = BACKUP / 'journal.json'
@@ -59,12 +61,12 @@ SEAMS = [
     # module the compiler numbers before core/custom-writing.deal (core/execution.deal included) renumbers
     # it and the anchor has to be re-pinned; a shifted anchor fails loudly, and `expect` keeps a rebound
     # anchor from passing on an unrelated assertion. The anchored statement is
-    # `custom-writing.deal:252 attempts = attempts+1`, the increment the counted-check mode executes.
-    # The command names that one mode: the unbounded matrix of the packaged entry would otherwise make
-    # the control's own timeout, not the broken rule, decide the outcome.
+    # `custom-writing.deal:297 attempts = attempts+1`, the increment the counted-check mode executes.
+    # The command names that one mode: the unbounded matrix of the packaged entry would otherwise let
+    # the control's own bound, not the broken rule, decide the outcome.
     {'id': 'attempts', 'family': 'checking-admission', 'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'old': '$s84628 = ($rt.numOf($s84622) + $rt.numOf($s84625));',
-     'new': '$s84628 = ($rt.numOf($s84622) * $rt.numOf($s84625));',
+     'old': '$s133302 = ($rt.numOf($s133296) + $rt.numOf($s133299));',
+     'new': '$s133302 = ($rt.numOf($s133296) * $rt.numOf($s133299));',
      'expect': 'candidate checks are counted as attempts',
      'command': ['node', 'tests/tools/test-generation-cutover.js', '--mode=success']},
     {'id': 'vocabulary-inventory', 'family': 'prop-predicates', 'path': 'ui/platform.dealui-pack',
@@ -91,8 +93,8 @@ SEAMS = [
      'new': 'actual.maximum >= expected.maximum',
      'command': ['python3', 'tests/tools/test-construction-contracts.py']},
     {'id': 'fill-disclosure', 'family': 'catalogue-kinds', 'path': 'core/catalogue.deal',
-     'old': 'if (!supplied(s.text(row.value),data)) { return refusal(entry,"row "+String(index)+" value"); }',
-     'new': 'if (false && !supplied(s.text(row.value),data)) { return refusal(entry,"row "+String(index)+" value"); }',
+     'old': 'if (!disclosure.admitsText(data,value)) { return refusal(entry,"row "+String(index)+" cell "+String(cell)); }',
+     'new': 'if (false && !disclosure.admitsText(data,value)) { return refusal(entry,"row "+String(index)+" cell "+String(cell)); }',
      'command': ['python3', 'tests/tools/test-catalogue.py']},
     {'id': 'edits', 'family': 'source-edits', 'path': 'core/source-revisions.deal',
      'old': 'if (source.indexOf(search,found+1) >= 0) { s.reject("Ambiguous edit search"); }',
@@ -111,14 +113,14 @@ SEAMS = [
      'expect': 'a tampered signature is refused',
      'command': ['python3', 'tests/tools/test-cursor.py']},
     {'id': 'discovery', 'family': 'discovery-handoff', 'path': 'build/embedding-library/aar/assets/discovery/discovery-policy.js',
-     'old': '$s1038 = 4096.0;',
-     'new': '$s1038 = 4095.0;',
+     'old': '$s1837 = 4096.0;',
+     'new': '$s1837 = 4095.0;',
      'expect': 'the brief bound is inclusive at 4096',
      'command': ['node', 'tests/tools/test-discovery.js']},
     # The compiled handoff's fact-id bound: the unit that replaces the Kotlin schema assembly.
     {'id': 'discovery-handoff', 'family': 'discovery-handoff', 'path': 'build/embedding-library/aar/assets/discovery/discovery-policy.js',
-     'old': '$s1719 = 64.0;',
-     'new': '$s1719 = 63.0;',
+     'old': '$s2518 = 64.0;',
+     'new': '$s2518 = 63.0;',
      'expect': 'the handoff fact id bound is 64',
      'command': ['node', 'tests/tools/test-discovery-handoff.js']},
     {'id': 'assistance', 'family': 'assistance-lifecycle', 'path': 'build/embedding-consumer/assets/assistance/experience.js',
@@ -294,7 +296,7 @@ def observe(seam):
         started = time.monotonic()
         try:
             result = subprocess.run(seam['command'], cwd=ROOT, capture_output=True, text=True,
-                                    timeout=TIMEOUT, env=environment)
+                                    timeout=seam.get('timeout', TIMEOUT), env=environment)
         finally:
             print(f'[seam] {seam["id"]} elapsed={time.monotonic()-started:.2f}s', flush=True)
         if result.returncode == 0:

@@ -83,7 +83,7 @@ fun checkTargetTransport(context: Context): String {
         var planned=false
         val generatedConfig=config.copy(inference=InferenceProvider { request,_ ->
             when(request.stage) {
-                "planning" -> { check(request.input.contains("\nFROZEN TARGET\n$target\n"));planned=true;"""{"title":"Target probe","needs":[{"id":"probe","type":"other","words":"Show target probe","spec":{}}]}""" }
+                "planning" -> { check(request.input.contains("\nFROZEN TARGET\n$target\n"));planned=true;"""{"title":"Target probe","inputs":[],"constants":[],"requirements":[],"needs":[{"id":"probe","type":"other","words":"Show target probe","reads":[],"spec":{}}],"questions":[]}""" }
                 "selection-first", "selection-second", "coverage" -> {
                     val questions=JSONArray(request.input.substringAfter("\nISSUED QUESTIONS\n"))
                     JSONObject().put("answers",JSONArray((0 until questions.length()).map { index ->

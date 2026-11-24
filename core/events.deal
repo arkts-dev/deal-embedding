@@ -22,9 +22,9 @@ function list(plan: plans.Plan, id: string): boolean {
   return false;
 }
 function timed(plan: plans.Plan, id: string): boolean {
-  // A scheduled "time" trigger names a disclosed time source, never a clock or a list.
-  for (let input of plan.inputs) { if (input.id === id && input.kind === "time") { return true; } }
-  return false;
+  // A scheduled "time" trigger names a disclosed time source, never a clock or a list. The one
+  // predicate lives beside the plan values, so decode and this question never hold two rules.
+  return plans.timeSource(plan.inputs,id);
 }
 // A trigger is settled only when it names a source that actually resolves in the issued plan.
 export function resolves(plan: plans.Plan, on: string, at: string): boolean {

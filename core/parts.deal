@@ -1,3 +1,4 @@
+import * as embedding from "embedding";
 import * as plans from "./plan";
 import * as screens from "./screen";
 import * as selecting from "./construction-selection";
@@ -9,102 +10,514 @@ import * as s from "./construction-schema";
 import * as literals from "./source-literals";
 import * as tables from "std/table";
 import * as scalar from "./scalar-read";
+import * as disclosure from "./disclosure";
 
-export class Figure { need: string; expression: formula.Expression; label: string; unit: string; format: string; shown: boolean; }
-export class Definitions { alternatives: selecting.Alternative[]; figures: Figure[]; }
-export class Built { instance: screens.Instance; computations: composer.Computation[]; }
+export class Figure { need: string; expression: formula.Expression; label: string; unit: string; format: string; shown: boolean; valueType: string; operands: formula.Operand[]; example: Record<string, unknown>; result: number; }
+export class Definitions { alternatives: selecting.Alternative[]; figures: Figure[]; unavailable: DefinitionProblem[]; }
+// A figure need this composition cannot issue keeps its located reason: the need stays open with it
+// instead of the figure disappearing into coverage as "No implementation".
+export class DefinitionProblem { need: string; reason: string; }
+export class Built { instance: screens.Instance; computations: composer.Computation[]; unavailable: string[]; }
+// Host-configured clock driver: the tick interval the driver delivers and the wall-clock tolerance
+// beyond which a reading is a jump. Both are finite positive and the interval never exceeds the
+// tolerance, so a normal interval can never look like a jump.
+export class Clock { intervalMs: number; toleranceMs: number; }
+// The frozen request and the disclosed context value. Both are issued as data of ordinary sources so
+// an action argument binds them exactly as it binds a parsed input.
+export class Disclosed { request: string; facts: string; }
+// A countdown length resolves to an issued unit-bearing duration source. The clock part keeps the
+// source unit until it converts by checked arithmetic (seconds x1000, minutes x60000). An issued
+// need whose declared measure is seconds or minutes is a duration source exactly as 
+// "Plan decode" states: its checked value and readiness are the derived publication of that need.
+export class ClockSource { id: string; value: string; ready: string; dependencies: string[]; }
+// Whether the figure's formula can be emitted over the sources already issued at its turn. A figure
+// whose operand is an unselected figure or an unbuilt live read is skipped, so assembly never names a
+// computation nothing emits. The clock part asks the same predicate before trusting a figure
+// publication as a duration source.
+function figureEmittable(plan: plans.Plan, definitions: Definitions, covers: string[], figure: Figure): boolean {
+  for (let dependency of figure.expression.dependencies) {
+    let name: string = readSource(dependency,figure.operands);
+    let issued: boolean = false;
+    for (let input of plan.inputs) { if (input.id === name) { issued = true; } }
+    if (s.contains(covers,name)) { issued = true; }
+    if (!issued) { return false; }
+    for (let other of definitions.figures) { if (other.need === name && !s.contains(covers,name)) { return false; } }
+  }
+  return true;
+}
+export function clockSource(plan: plans.Plan, need: plans.Need, available: string[]): ClockSource | null {
+  if (!Object.hasOwn(need,"duration")) { return null; }
+  let duration: plans.DurationSource = need.duration as plans.DurationSource;
+  let scale: number = 60000; if (duration.measure === "seconds") { scale = 1000; }
+  for (let input of plan.inputs) { if (input.id === duration.id) {
+    if (!s.contains(["amount","percent","count"],input.kind)) { return null; }
+    let value: string = "(state."+duration.id+" as number)";
+    let converted: string = "("+value+" * "+String(scale)+")";
+    return {id:duration.id,value:value+" * "+String(scale),ready:value+" >= 0 && "+converted+" - "+converted+" === 0",dependencies:["f_parts_"+duration.id]};
+  } }
+  for (let constant of plan.constants) { if (constant.id === duration.id) {
+    try {
+      let value: number = plans.milliseconds(duration,constant.value,duration.id);
+      return {id:duration.id,value:String(value),ready:"true",dependencies:[]};
+    } catch (unknownError) {
+      let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; }
+      return null;
+    }
+  } }
+  for (let source of plan.needs) { if (source.id === duration.id) {
+    // The named need must be implemented by this composition: a figure or live publication of
+    // seconds/minutes. Plan decode and the part agree on the same accepted input.
+    if (!s.contains(available,source.id)) { return null; }
+    let value: string = "(state."+source.id+" as number)";
+    let converted: string = "("+value+" * "+String(scale)+")";
+    return {id:source.id,value:value+" * "+String(scale),ready:"state."+source.id+"_ready && "+value+" >= 0 && "+converted+" - "+converted+" === 0",dependencies:["f_parts_"+source.id]};
+  } }
+  return null;
+}
+// The clock helpers are pure: elapsed and remaining never read a clock. The private Session driver
+// samples the adapter's monotone and wall readings together for every admitted action and the clock
+// part's own actions carry that one pair: the prepared-reading action publishes the monotone sample,
+// and the Start, Pause, Reset and Tick action admitted right after it carries the wall reading taken
+// with the same sample. Elapsed and the anchor advance only by monotone progress, so a wall-clock step
+// can never shorten or extend a timer; an equal or retreating monotone reading adds nothing and a
+// retreat invalidates trust with a located diagnostic. Every admitted action compares its pair with the
+// previous one, so a wall-clock step between two ticks and a press invalidates the Session epoch
+// exactly as one between two ticks does. Nothing here fabricates an interval: a missing sample adds
+// zero, never a scheduled tick.
+export function clockHelpers(): string {
+  let source: string = "";
+  source = source+"export function clockFinite(value: number): boolean { return Number.isFinite(value); }";
+  source = source+"export function clockPrepared(previous: number, at: number): number { if (clockFinite(at) && at >= previous) { return at; } if (clockFinite(previous)) { return previous; } return -1; }";
+  source = source+"export function clockRetreated(previous: number, at: number): boolean { return clockFinite(at) && at >= 0 && at < previous; }";
+  source = source+"export function clockPressUndecidable(raw: number): boolean { if (!clockFinite(raw)) { return true; } if (raw < 0) { return true; } return false; }";
+  source = source+"export function clockStartAllowed(running: boolean, ready: boolean, at: number): boolean { if (running) { return false; } if (!ready) { return false; } if (!clockFinite(at)) { return false; } if (at < 0) { return false; } return true; }";
+  // A start admits only the raw current-run sample the driver prepared for that press: a nonfinite,
+  // negative or retreating reading is refused instead of anchoring the run at a previous reading, which
+  // would count time that elapsed before the press (and, on resume, the paused interval).
+  source = source+"export function clockStartRefused(previous: number, raw: number): boolean { if (!clockFinite(raw)) { return true; } if (raw < 0) { return true; } if (clockFinite(previous) && previous >= 0 && raw < previous) { return true; } return false; }";
+  source = source+"export function clockStartElapsed(completed: boolean, elapsed: number): number { if (completed) { return 0; } return elapsed; }";
+  source = source+"export function clockAdvance(running: boolean, completed: boolean, anchor: number, at: number): number { if (!running) { return 0; } if (completed) { return 0; } if (!clockFinite(at)) { return 0; } if (anchor < 0) { return 0; } let delta: number = at - anchor; if (!(delta > 0)) { return 0; } return delta; }";
+  source = source+"export function clockAnchor(running: boolean, completed: boolean, anchor: number, at: number): number { if (!running) { return anchor; } if (completed) { return anchor; } if (!clockFinite(at) || at < 0) { return anchor; } if (anchor < 0) { return at; } return at; }";
+  source = source+"export function clockWallValue(previous: number, raw: number): number { if (clockFinite(raw)) { return raw; } return previous; }";
+  // The Session clock epoch is Session-local and runtime-only. It advances whenever the paired
+  // readings retreat, jump beyond tolerance or cannot be decided, publishes the advance so evidence
+  // captured under an older epoch is stale, and is never cleared by resetting one clock. Untrusted is
+  // the starting state; a valid paired baseline under the current epoch is the only fresh admission.
+  source = source+"export function clockEpochNext(epoch: number, previousWall: number, previousAt: number, wall: number, at: number, tolerance: number): number { if (!clockFinite(wall) || !clockFinite(at) || at < 0) { return epoch+1; } if (previousWall < 0 || previousAt < 0) { return epoch; } let wallStep: number = wall - previousWall; let progress: number = at - previousAt; if (wallStep < 0 || progress < 0) { return epoch+1; } if (wallStep - progress > tolerance || progress - wallStep > tolerance) { return epoch+1; } return epoch; }";
+  source = source+"export function clockTrustNext(previousEpoch: number, epoch: number, wall: number, at: number): boolean { if (epoch !== previousEpoch) { return false; } if (!clockFinite(wall) || !clockFinite(at) || at < 0) { return false; } return true; }";
+  // A resume keeps the run but establishes a fresh anchor at its own admitted reading, so the suspended
+  // interval is never counted. A nonfinite, negative or retreating reading establishes no anchor and
+  // publishes the located reason; the run stays authoritative and the next admitted tick re-baselines
+  // it, exactly as a start before the first tick does.
+  source = source+"export function clockResumeAnchor(previous: number, at: number): number { if (!clockFinite(at) || at < 0) { return -1; } if (clockFinite(previous) && previous >= 0 && at < previous) { return -1; } return at; }";
+  source = source+"export function clockResumeNotice(previous: number, at: number): string { if (!clockFinite(at) || at < 0) { return \"Clock reading is undecidable; the resume anchor is unavailable and elapsed follows admitted monotone progress\"; } if (clockFinite(previous) && previous >= 0 && at < previous) { return \"Clock reading retreated; elapsed follows admitted monotone progress\"; } return \"\"; }";
+  // Without a paired baseline there is no comparison to publish, so the located reason already on the
+  // clock (a refused start or resume) is retained instead of being cleared by the first admitted tick.
+  source = source+"export function clockNoticeNow(previous: string, running: boolean, completed: boolean, wall: number, previousWall: number, at: number, previousAt: number, tolerance: number): string { if (!running) { return previous; } if (completed) { return previous; } if (!clockFinite(wall)) { return \"Clock reading is not finite; wall-clock trust is invalid and elapsed follows monotone progress\"; } if (previousWall < 0) { return previous; } let wallStep: number = wall - previousWall; if (wallStep < 0) { return \"Clock reading went backwards; wall-clock trust is invalid and elapsed follows monotone progress\"; } let progress: number = at - previousAt; if (progress >= 0 && (wallStep - progress > tolerance || progress - wallStep > tolerance)) { return \"Clock reading jumped; wall-clock trust is invalid and elapsed follows monotone progress\"; } return \"\"; }";
+  source = source+"export function clockCapped(running: boolean, ready: boolean, value: number, duration: number): number { if (!running) { return value; } if (!ready) { return value; } if (value >= duration) { return duration; } return value; }";
+  source = source+"export function clockRunning(running: boolean, ready: boolean, value: number, duration: number): boolean { if (!running) { return running; } if (!ready) { return running; } if (value >= duration) { return false; } return running; }";
+  source = source+"export function clockCompleted(previous: boolean, running: boolean, ready: boolean, value: number, duration: number): boolean { if (previous) { return true; } if (!running) { return previous; } if (!ready) { return previous; } return value >= duration; }";
+  source = source+"export function clockTriggered(previous: number, running: boolean, completed: boolean, ready: boolean, value: number, duration: number): number { if (!running) { return previous; } if (completed) { return previous; } if (!ready) { return previous; } if (value >= duration) { return previous+1; } return previous; }";
+  source = source+"export function clockRemaining(duration: number, elapsed: number): number { if (duration - elapsed < 0) { return 0; } return duration - elapsed; }";
+  return source;
+}
 function minorUnits(unit: string): boolean { return unit.endsWith("cents") || unit.endsWith("minor units"); }
+// The shared numeric presentation rule of the pack's numeric presentation contract, emitted once per
+// parts instance. The prepared row text of an entry field and the renderer's own NumberText over the
+// same typed value apply this one rule, so one stored amount is never displayed as two different
+// numbers. Automatic decimals render the shortest round-tripping decimal in plain notation, and a
+// fixed count rounds that decimal half away from zero to exactly that many places.
+export function presentationNumberHelpers(): string {
+  let source: string = "";
+  source = source+"export function charDigit(ch: string): number { let result: number = 0; for (let n of [0,1,2,3,4,5,6,7,8,9]) { if (String(n) === ch) { result = n; } } return result; }";
+  source = source+"export function shortInteger(text: string): number { let negative: boolean = false; let value: number = 0; for (let ch of text) { if (ch === \"-\") { negative = true; } else if (ch === \"+\") { } else { value = value*10+charDigit(ch); } } if (negative) { return -value; } return value; }";
+  // A finite value's shortest round-tripping decimal, split into its digit string and the number of
+  // digits before the decimal point. The host spelling may use an exponent, so the exponent is folded
+  // into the point position and never widened into a second numeric value.
+  source = source+"export function decimalParts(raw: string): string[] { let marker: number = -1; let index: number = 0; for (let ch of raw) { if (ch === \"e\" || ch === \"E\") { marker = index; } index = index+1; } let mantissa: string = raw; let exponent: number = 0; if (marker >= 0) { mantissa = raw.substring(0,marker); exponent = shortInteger(raw.substring(marker+1)); } let digits: string = \"\"; let point: number = -1; for (let ch of mantissa) { if (ch === \".\") { point = digits.length; } else { digits = digits+ch; } } if (point < 0) { point = digits.length; } return [String(point+exponent),digits]; }";
+  source = source+"export function plainPoint(digits: string, point: number, negative: boolean): string { let whole: string = \"\"; let fraction: string = \"\"; let index: number = 0; for (let ch of digits) { if (index < point) { whole = whole+ch; } else { fraction = fraction+ch; } index = index+1; } let tail: number = point-digits.length; while (tail > 0) { whole = whole+\"0\"; tail = tail-1; } let lead: number = 0; while (lead < -point) { fraction = \"0\"+fraction; lead = lead+1; } if (whole === \"\") { whole = \"0\"; } while (whole.length > 1 && whole.startsWith(\"0\")) { whole = whole.substring(1); } while (fraction.length > 0 && fraction.endsWith(\"0\")) { fraction = fraction.substring(0,fraction.length-1); } let text: string = whole; if (fraction !== \"\") { text = text+\".\"+fraction; } let nonzero: boolean = fraction !== \"\"; for (let ch of whole) { if (ch !== \"0\") { nonzero = true; } } if (negative && nonzero) { return \"-\"+text; } return text; }";
+  source = source+"export function numberText(value: number): string { if (!Number.isFinite(value)) { return String(value); } let negative: boolean = value < 0; let raw: string = String(value); if (negative) { raw = raw.substring(1); } let parts: string[] = decimalParts(raw); return plainPoint(parts[1],shortInteger(parts[0]),negative); }";
+  return source;
+}
+// The fixed-count form of the same rule, emitted only for an entries part, whose prepared row text is
+// the only compiled text a fixed count formats.
+export function presentationFixedHelpers(): string {
+  let source: string = "";
+  source = source+"export function carryDigits(integer: string): string { let chars: string[] = []; for (let ch of integer) { chars[chars.length] = ch; } let index: number = chars.length-1; let carry: boolean = true; while (index >= 0 && carry) { let digit: number = charDigit(chars[index])+1; if (digit === 10) { chars[index] = \"0\"; } else { chars[index] = String(digit); carry = false; } index = index-1; } let result: string = \"\"; for (let ch of chars) { result = result+ch; } if (carry) { result = \"1\"+result; } return result; }";
+  source = source+"export function fixedPoint(integer: string, decimals: number, negative: boolean): string { let whole: string = integer; if (whole === \"\") { whole = \"0\"; } while (whole.length < decimals+1) { whole = \"0\"+whole; } let cut: number = whole.length-decimals; let fraction: string = whole.substring(cut); whole = whole.substring(0,cut); while (whole.length > 1 && whole.startsWith(\"0\")) { whole = whole.substring(1); } let nonzero: boolean = false; for (let ch of whole) { if (ch !== \"0\") { nonzero = true; } } for (let ch of fraction) { if (ch !== \"0\") { nonzero = true; } } let text: string = whole; if (decimals > 0) { text = text+\".\"+fraction; } if (negative && nonzero) { return \"-\"+text; } return text; }";
+  source = source+"export function decimalText(value: number, decimals: number): string { if (!Number.isFinite(value)) { return String(value); } if (!(decimals >= 0)) { return numberText(value); } let negative: boolean = value < 0; let raw: string = String(value); if (negative) { raw = raw.substring(1); } let parts: string[] = decimalParts(raw); let digits: string = parts[1]; let point: number = shortInteger(parts[0]); let shift: number = point+decimals-digits.length; let kept: string = \"\"; if (shift >= 0) { kept = digits; let step: number = 0; while (step < shift) { kept = kept+\"0\"; step = step+1; } } else { let keep: number = digits.length+shift; let index: number = 0; for (let ch of digits) { if (index < keep) { kept = kept+ch; } index = index+1; } if (keep >= 0) { index = 0; let next: number = 0; for (let ch of digits) { if (index === keep) { next = charDigit(ch); } index = index+1; } if (next >= 5) { kept = carryDigits(kept); } } } return fixedPoint(kept,decimals,negative); }";
+  return source;
+}
+// The declared wire domain of an issued input, where the plan fixes one: numeric bounds when supplied,
+// a choice's issued index range and the shared temporal domains. A host domain is used only where the
+// plan leaves the value unbounded, so a frozen parameter narrower than what the control can produce
+// keeps that binding open instead of exempting the state-backed argument from the wire check.
+function inputWire(input: plans.Input): embedding.WireType {
+  let fields: embedding.WireField[] = [];
+  if (input.kind === "toggle") { return {kind:"boolean",fields:fields,element:null,maximum:0,minimumNumber:0,maximumNumber:0}; }
+  if (input.kind === "text") { return {kind:"string",fields:fields,element:null,maximum:8192,minimumNumber:0,maximumNumber:0}; }
+  let minimum: number = -1.7976931348623157e308; let maximum: number = 1.7976931348623157e308;
+  if (Object.hasOwn(input,"min")) { minimum = input.min as number; }
+  if (Object.hasOwn(input,"max")) { maximum = input.max as number; }
+  if (input.kind === "choice") { minimum = 0; maximum = input.options.length-1; }
+  if (input.kind === "time") { if (minimum < 0) { minimum = 0; } if (maximum > 1439) { maximum = 1439; } }
+  return {kind:"number",fields:fields,element:null,maximum:0,minimumNumber:minimum,maximumNumber:maximum};
+}
+// The plan input kinds this part implements. One list decides the formula operands, the inputs
+// alternative, the emitted control and the values every input reducer preserves, so a new kind is
+// never handled in one place only.
+function handled(kind: string): boolean { return s.contains(["text","toggle","amount","percent","count","time","date","choice"],kind); }
 function type(input: plans.Input): string { if (input.kind === "text") { return "string"; } if (input.kind === "toggle") { return "boolean"; } return "number"; }
 export function operands(plan: plans.Plan): formula.Operand[] {
   let result: formula.Operand[] = [];
-  for (let input of plan.inputs) { if (s.contains(["amount","percent","count","time","date","toggle"],input.kind)) { result[result.length] = {id:input.id,expression:"(state."+input.id+" as "+type(input)+")",type:type(input),dependency:"f_parts_"+input.id}; } }
+  for (let input of plan.inputs) { if (handled(input.kind)) { result[result.length] = {id:input.id,expression:"(state."+input.id+" as "+type(input)+")",type:type(input),dependency:"f_parts_"+input.id}; } }
   for (let constant of plan.constants) { result[result.length] = {id:constant.id,expression:s.encode(constant.value),type:"number",dependency:""}; }
+  // An aggregate name a plan identifier already carries is a colliding alias: the aggregate and that
+  // identifier would name the same emitted resource, so the plan rejects with the offending name instead
+  // of issuing two operands with one id or deferring the failure to a duplicate resource at build.
+  let reserved: string[] = [];
+  for (let input of plan.inputs) { reserved[reserved.length] = input.id; }
+  for (let constant of plan.constants) { reserved[reserved.length] = constant.id; }
+  for (let need of plan.needs) { reserved[reserved.length] = need.id; }
+  for (let aggregate of entryAggregates(plan)) { if (s.contains(reserved,aggregate.id)) { s.reject("Entry aggregate name collides with a plan identifier: "+aggregate.id); } result[result.length] = aggregate; }
   return result;
 }
+// The issued entry aggregates a figure may name: for every entries need the plan declares, one count
+// operand and one total operand. Each reads the entries part's emitted derived field of that name and
+// carries the field's own readiness, so a figure over an unavailable total is unready with its reason
+// instead of receiving a placeholder. The operand names the entries need it belongs to, which is the
+// need identifier such a figure declares in its reads.
+function entryAggregates(plan: plans.Plan): formula.Operand[] {
+  let result: formula.Operand[] = [];
+  for (let need of plan.needs) {
+    if (need.type !== "entries") { continue; }
+    result[result.length] = {id:"count_"+need.id,expression:"(state.count_"+need.id+" as number)",type:"number",dependency:"f_parts_count_"+need.id,aggregate:need.id};
+    result[result.length] = {id:"total_"+need.id,expression:"(state.total_"+need.id+" as number)",type:"number",dependency:"f_parts_total_"+need.id,aggregate:need.id};
+  }
+  return result;
+}
+// The issued source an emitted dependency belongs to: an entry aggregate is attributed to the entries
+// need it reads, so the need declares that need identifier in its reads; every other dependency names
+// its own resource.
+function readSource(dependency: string, operands: formula.Operand[]): string {
+  for (let operand of operands) { if (operand.dependency === dependency && Object.hasOwn(operand,"aggregate")) { return operand.aggregate as string; } }
+  return dependency.substring(8,dependency.length);
+}
+// The aggregate alternatives of one figure's compatible set, so the enumeration counts and orders the
+// issued entry aggregates it can reference.
+function aggregateIds(operands: formula.Operand[]): string[] {
+  let result: string[] = [];
+  for (let operand of operands) { if (Object.hasOwn(operand,"aggregate")) { result[result.length] = operand.id; } }
+  return result;
+}
+// Plan constants, the frozen request and every disclosed fact DEAL can name are issued sources
+// emitted as data: the value is authoritative state of this owner, so the Bind stage resolves an
+// action argument that names it exactly as it resolves a parsed input. A literal carries no state
+// dependency of its own, its readiness is constant, and its wire schema is the exact value it emits.
+// Nothing here parses, coerces or reinterprets the value, and a source never takes a name another
+// issued resource of this owner already carries.
+export function issueData(plan: plans.Plan, instance: screens.Instance, registry: bindings.Registry, disclosed: Disclosed): void {
+  for (let constant of plan.constants) { issueNumberLiteral(instance,registry,constant.id,constant.value); }
+  issueTextLiteral(instance,registry,"request",disclosed.request);
+  for (let fact of disclosure.context(disclosed.facts)) { if (s.identifierText(fact.id)) { issueTextLiteral(instance,registry,fact.id,fact.text); } }
+  // The emitted definition is reissued from the fragment carrying the new data fields, so assembly
+  // compares the placed fragment with the declarations that were actually issued.
+  instance.definition = screens.issueDefinition(instance.fragment);
+}
+// A literal's wire schema is the value it actually emits, not the whole declared-type domain: a fixed
+// value outside a frozen parameter's bounds can never satisfy the call, so the Bind stage keeps that
+// need open instead of issuing an operation the provider boundary must reject.
+function issueNumberLiteral(instance: screens.Instance, registry: bindings.Registry, id: string, value: number): void {
+  let fields: embedding.WireField[] = [];
+  let schema: embedding.WireType = {kind:"number",fields:fields,element:null,maximum:0,minimumNumber:value,maximumNumber:value};
+  issueLiteral(instance,registry,id,"number",s.encode(value),schema);
+}
+function issueTextLiteral(instance: screens.Instance, registry: bindings.Registry, id: string, text: string): void {
+  let fields: embedding.WireField[] = [];
+  let schema: embedding.WireType = {kind:"string",fields:fields,element:null,maximum:text.length,minimumNumber:0,maximumNumber:0};
+  issueLiteral(instance,registry,id,"string",s.encode(text),schema);
+}
+function issueLiteral(instance: screens.Instance, registry: bindings.Registry, id: string, type: string, initial: string, schema: embedding.WireType): void {
+  // An issued data source is emitted as an authoritative field of this owner. An id that cannot be a
+  // field name here is already a composer resource of this owner, so nothing is issued for it: the
+  // Bind stage reports any binding that names it with `Unissued argument source` and keeps that need
+  // open, instead of the whole request being rejected over a name no emitted field can carry.
+  for (let field of instance.fragment.fields) {
+    if (field.name === id) { return; }
+    if (field.role === "derived" && (field.name+"_ready" === id || field.name+"_reason" === id || field.name+"_display" === id)) { return; }
+  }
+  instance.fragment.fields[instance.fragment.fields.length] = {name:id,type:type,role:"authoritative",dependencies:[],initial:initial,owner:"parts"};
+  bindings.reserve(registry,{id:id,type:type,schema:schema,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+id,ready:"true"});
+}
+// The parts implementation is placed when it fills a need and also when an issued operation reads one
+// of its sources, so an emitted operation never names a resource the composition lacks.
+export function places(built: Built, registry: bindings.Registry): boolean {
+  if (built.instance.fragment.covers.length > 0) { return true; }
+  for (let binding of registry.bindings) { for (let key of tables.keys(binding.arguments)) { if (bindings.source(registry,binding.arguments[key] as string).owner === "parts") { return true; } } }
+  return false;
+}
 export function define(plan: plans.Plan): Definitions { return defineWithProviders(plan,[]); }
+// Record the first located reason per need: the figure fixpoint retries an unbuilt figure on every
+// pass, so a readmitted reason would repeat in the result.
+function problem(definitions: Definitions, need: string, reason: string): void {
+  for (let issued of definitions.unavailable) { if (issued.need === need) { return; } }
+  definitions.unavailable[definitions.unavailable.length] = {need:need,reason:reason};
+}
+// The example must supply a value for every operand its formula uses, so an operand missing from the
+// example is located as the example's own gap instead of the unissued-operand text of the formula pass.
+function exampleExpression(source: string, operands: formula.Operand[]): formula.Expression {
+  try { return formula.compile(source,operands); }
+  catch (unknownError) {
+    let error: Error = unknownError as Error;
+    let prefix: string = "Unissued formula operand: ";
+    if (error.name === "CONSTRUCTION_SCHEMA" && error.message.startsWith(prefix)) { s.reject("example supplies no value for operand "+error.message.substring(prefix.length)); }
+    throw error;
+  }
+}
 export function defineWithProviders(plan: plans.Plan, providerOperands: formula.Operand[]): Definitions {
-  let definitions: Definitions = {alternatives:[],figures:[]}; let issued: formula.Operand[] = operands(plan);
+  let definitions: Definitions = {alternatives:[],figures:[],unavailable:[]}; let issued: formula.Operand[] = operands(plan);
   for (let need of plan.needs) { if (need.type === "other" && need.reads.length > 0) {
     let inputsOnly: boolean = true;
-    for (let read of need.reads) { let found: boolean = false; for (let input of plan.inputs) { if (input.id === read && s.contains(["text","toggle","amount","percent","count","time","date"],input.kind)) { found = true; } } if (!found) { inputsOnly = false; } }
+    for (let read of need.reads) { let found: boolean = false; for (let input of plan.inputs) { if (input.id === read && handled(input.kind)) { found = true; } } if (!found) { inputsOnly = false; } }
     if (inputsOnly) { definitions.alternatives[definitions.alternatives.length] = {id:"input_"+need.id,need:need.id,origin:"part",kind:"inputs",criteria:"Only expose the existing issued editable input controls "+s.encode(need.reads)+" with their exact seeds, draft validation and downstream recomputation. No calculation beyond input parsing, status, provider call or additional behavior. Choose only when exposing these controls completely implements the original need.",eligible:true,reason:""}; }
   } }
-  for (let operand of providerOperands) { issued[issued.length] = operand; } let added: string[] = []; let progress: boolean = true;
+  for (let need of plan.needs) {
+    if (need.type === "entries") {
+      definitions.alternatives[definitions.alternatives.length] = {id:"entries_"+need.id,need:need.id,origin:"part",kind:"entries",criteria:"Entries part for this need: authoritative typed records with stable keys, one captured timestamp per add, checked drafts that stay visible and uncommitted when invalid, add/remove/undo at index, and derived count plus a total from the first numeric non-time field. Seeded only from admitted disclosed records. No provider or storage call runs.",eligible:true,reason:""};
+    }
+    if (need.type === "live") { definitions.alternatives[definitions.alternatives.length] = {id:"unavailable_"+need.id,need:need.id,origin:"part",kind:"figure",criteria:"No issued implementation is offered by this composer part set.",eligible:false,reason:"Live publications are issued by the scalar read part"}; }
+  }
+  for (let operand of providerOperands) { issued[issued.length] = operand; } let added: string[] = []; let refused: Record<string, unknown> = {}; let progress: boolean = true;
   while (progress) {
     progress = false;
     for (let need of plan.needs) { if (need.type === "figure" && !s.contains(added,need.id)) {
       try {
+        // A figure value type follows its format: yes_no yields a boolean expression, value, field and
+        // port; every other format yields a finite number.
+        let format: string = s.text(need.spec.format); let booleanValue: boolean = format === "yes_no";
+        let required: string = "number"; if (booleanValue) { required = "boolean"; }
         let expression: formula.Expression = formula.compile(s.text(need.spec.formula),issued);
-        let example: Record<string, unknown> = need.spec.example as Record<string, unknown>; let examples: Record<string, unknown> = example.inputs as Record<string, unknown>;
-        let testOperands: formula.Operand[] = [];
-        for (let operand of issued) { if (Object.hasOwn(examples,operand.id)) { testOperands[testOperands.length] = {id:operand.id,expression:operand.expression,type:operand.type,dependency:operand.dependency,value:s.finite(examples[operand.id])}; } }
-        for (let key of tables.keys(examples)) { let known: boolean = false; for (let operand of issued) { if (operand.id === key) { known = true; } } if (!known) { s.reject("Unissued example operand"); } }
-        let tested: formula.Expression = formula.compile(s.text(need.spec.formula),testOperands); let expected: number = s.finite(example.result);
-        if (!Object.hasOwn(tested,"number")) { s.reject("Incomplete numeric example"); }
-        let actual: number = tested.number as number; let tolerance: number = Math.abs(expected)*0.006; if (tolerance < 0.011) { tolerance = 0.011; }
-        if (!Number.isFinite(actual) || Math.abs(actual-expected) > tolerance) { s.reject("Formula fails the issued numeric example"); }
+        // The value type follows the format in both directions, and a formula over a source the need does
+        // not declare is an undeclared read: the need keeps the located reason instead of the figure
+        // disappearing from the alternative set. A formula naming a result a later pass still builds is
+        // handled by the catch below, never by this check.
         let valid: boolean = true;
-        for (let dependency of expression.dependencies) { const original = dependency.substring(8); if (!s.contains(need.reads,original)) { valid = false; } }
-        if (valid && expression.type === "number") {
-          definitions.figures[definitions.figures.length] = {need:need.id,expression:expression,label:s.nonblank(need.spec.label),unit:s.text(need.spec.unit),format:s.text(need.spec.format),shown:need.spec.shown as boolean};
-          definitions.alternatives[definitions.alternatives.length] = {id:"part_"+need.id,need:need.id,origin:"part",kind:"figure",criteria:"Pure checked numeric formula "+s.text(need.spec.formula)+" over issued inputs/constants. Preserves numeric value, explicit readiness and units; no provider work, timer, records or external action.",eligible:true,reason:""};
-          issued[issued.length] = {id:need.id,expression:"(state."+need.id+" as number)",type:"number",dependency:"f_parts_"+need.id}; added[added.length] = need.id; progress = true;
+        for (let dependency of expression.dependencies) { let original: string = readSource(dependency,issued); if (!s.contains(need.reads,original)) { valid = false; } }
+        if (!valid) {
+          refused[need.id] = "formula reads a source the need does not declare in its reads";
+        } else if (expression.type !== required) {
+          refused[need.id] = format+" figure requires a "+required+"-typed formula";
+        } else {
+          let example: Record<string, unknown> = need.spec.example as Record<string, unknown>; let examples: Record<string, unknown> = example.inputs as Record<string, unknown>;
+          let testOperands: formula.Operand[] = [];
+          for (let operand of issued) { if (Object.hasOwn(examples,operand.id)) { testOperands[testOperands.length] = {id:operand.id,expression:operand.expression,type:operand.type,dependency:operand.dependency,value:s.finite(examples[operand.id])}; } }
+          for (let key of tables.keys(examples)) { let known: boolean = false; for (let operand of issued) { if (operand.id === key) { known = true; } } if (!known) { s.reject("Unissued example operand: "+key); } }
+          let tested: formula.Expression = exampleExpression(s.text(need.spec.formula),testOperands); let expected: number = s.finite(example.result);
+          if (booleanValue) {
+            // A boolean example is judged exactly: the encoded 0 is false and 1 is true.
+            if (expected !== 0 && expected !== 1) { s.reject("yes_no example result must be 0 or 1"); }
+            if (!Object.hasOwn(tested,"boolean")) { s.reject("Incomplete boolean example"); }
+            if ((tested.boolean as boolean) !== (expected === 1)) { s.reject("Formula fails the issued boolean example"); }
+          } else {
+            if (!Object.hasOwn(tested,"number")) { s.reject("Incomplete numeric example"); }
+            let actual: number = tested.number as number; let tolerance: number = Math.abs(expected)*0.006; if (tolerance < 0.011) { tolerance = 0.011; }
+            if (!Number.isFinite(actual) || Math.abs(actual-expected) > tolerance) { s.reject("Formula fails the issued numeric example"); }
+          }
+          // The alternative set is measured over the operands this figure's own formula can reference.
+          let available: formula.Operand[] = Array.from(issued,(item: formula.Operand): formula.Operand => item);
+          definitions.figures[definitions.figures.length] = {need:need.id,expression:expression,label:s.nonblank(need.spec.label),unit:s.text(need.spec.unit),format:format,shown:s.truth(need.spec.shown),valueType:required,operands:available,example:examples,result:expected};
+          let criteria: string = "Pure checked numeric formula "+s.text(need.spec.formula)+" over issued inputs/constants. Preserves numeric value, explicit readiness and units; no provider work, timer, records or external action.";
+          if (booleanValue) { criteria = "Pure checked boolean comparison "+s.text(need.spec.formula)+" over issued inputs/constants. Preserves the boolean value, explicit readiness and the fixed Yes/No spelling; no provider work, timer, records or external action."; }
+          definitions.alternatives[definitions.alternatives.length] = {id:"part_"+need.id,need:need.id,origin:"part",kind:"figure",criteria:criteria,eligible:true,reason:""};
+          issued[issued.length] = {id:need.id,expression:"(state."+need.id+" as "+required+")",type:required,dependency:"f_parts_"+need.id}; added[added.length] = need.id; progress = true;
         }
-      } catch (unknownError) { let error: Error = unknownError as Error; if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8007"],error.name)) { throw error; } }
+      } catch (unknownError) {
+        let error: Error = unknownError as Error;
+        if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8007"],error.name)) { throw error; }
+        // Every rejection is filed against the need but materialised only after the fixpoint: a formula
+        // naming a result a later pass still builds is retried, and a figure that is finally built keeps
+        // no stale reason. The last failure is the one reported, so an example gap is not hidden by an
+        // earlier pass's missing operand.
+        refused[need.id] = error.message;
+      }
     } }
   }
+  for (let need of plan.needs) { if (need.type === "figure" && !s.contains(added,need.id) && Object.hasOwn(refused,need.id)) { problem(definitions,need.id,refused[need.id] as string); } }
+  // Clock alternatives are issued after the figures, because a countdown length may name an issued
+  // seconds/minutes need whose checked publication this composition builds.
+  let available: string[] = [];
+  for (let figure of definitions.figures) { available[available.length] = figure.need; }
+  for (let need of plan.needs) { if (need.type === "live") { available[available.length] = need.id; } }
+  for (let need of plan.needs) {
+    if (need.type === "countdown") {
+      let resolved: ClockSource | null = clockSource(plan,need,available); let eligible: boolean = resolved !== null;
+      definitions.alternatives[definitions.alternatives.length] = {id:"clock_"+need.id,need:need.id,origin:"part",kind:"clock",criteria:"Monotone clock part for this countdown: authoritative elapsed/running/completed milliseconds advanced only by the prepared reading of each admitted action (equal or retreating readings add nothing, the admitted monotone delta always counts, and a retreating reading or a wall reading that departs from monotone progress beyond the host tolerance each invalidates clock trust with a located reason), a checked duration converted from the issued seconds/minutes source, clamped remaining, start/pause/reset controls, exactly-once completion, a start after completion that clears elapsed, and one completion record per run so the trigger consumer can commit exactly one countdown_end event. Runtime sampling anchors are not authoritative state. No provider work runs.",eligible:eligible,reason:eligible?"":"Countdown length source cannot become a checked nonnegative millisecond duration; it must be an issued seconds/minutes input, constant or issued need"};
+    }
+    if (need.type === "stopwatch") {
+      definitions.alternatives[definitions.alternatives.length] = {id:"clock_"+need.id,need:need.id,origin:"part",kind:"clock",criteria:"Stopwatch part for this need: authoritative elapsed/running milliseconds advanced only by the prepared reading of each admitted action, start/pause/reset controls and a prepared millisecond display. A paused interval counts no elapsed time and it never completes. No provider work runs.",eligible:true,reason:""};
+    }
+  }
   return definitions;
+}
+// A written formula is lowered over the figure's issued operands. A rejection the compiled policy
+// classifies is rewritten to name the figure that carried the text, so the reason is located; any
+// other rejection is rethrown unchanged.
+function lowerFor(figure: Figure, written: string): formula.Lowered {
+  try { return formula.lower(written,figure.operands); }
+  catch (unknownError) {
+    let error: Error = unknownError as Error;
+    if (!s.contains(["CONSTRUCTION_SCHEMA","E8001","E8007"],error.name)) { throw error; }
+    return s.reject("Written formula for "+figure.need+" rejects: "+error.message);
+  }
+}
+// A written formula returned for an over-cap alternative set is lowered to checked helpers over the
+// issued operands, checked against the figure's issued example and used in place of the original
+// formula. The 300-unit written bound rejects; nothing is truncated.
+export function applyWritten(plan: plans.Plan, definitions: Definitions, answers: selections.Answer[]): Definitions {
+  let result: Definitions = {alternatives:definitions.alternatives,figures:[],unavailable:Array.from(definitions.unavailable,(issued: DefinitionProblem): DefinitionProblem => issued)};
+  for (let figure of definitions.figures) {
+    let overCap: boolean = formula.enumerate(figure.operands,aggregateIds(figure.operands)).overCap;
+    let written: string = "";
+    for (let answer of answers) {
+      if (answer.id === "written_formula_"+figure.need && answer.accepted && answer.selected === "written" && Object.hasOwn(answer,"text")) { written = s.text(answer.text); }
+    }
+    // Over the issueable bound nothing is truncated and no figure is rejected: without an accepted
+    // written formula the figure is not built and its need stays open with the located reason.
+    if (overCap && written === "") { problem(result,figure.need,"compatible formula set is over the issued bound and no written formula was accepted"); continue; }
+    if (written === "") { result.figures[result.figures.length] = figure; continue; }
+    let lowered: formula.Lowered = lowerFor(figure,written);
+    if (lowered.type !== figure.valueType) { s.reject("Written formula type mismatch for "+figure.need); }
+    // The example is judged over every issued operand of the figure, with a value only where the
+    // issued example supplies one: an operand the example does not cover is the example's own gap, so
+    // a legal written formula over an issued operand is never refused as an unissued operand. A
+    // formula whose value the example cannot decide leaves the need open with the located reason
+    // instead of rejecting the whole request.
+    let testOperands: formula.Operand[] = [];
+    for (let operand of figure.operands) {
+      let testOperand: formula.Operand = {id:operand.id,expression:operand.expression,type:operand.type,dependency:operand.dependency};
+      if (Object.hasOwn(figure.example,operand.id)) { testOperand.value = s.finite(figure.example[operand.id]); }
+      testOperands[testOperands.length] = testOperand;
+    }
+    let tested: formula.Expression = formula.compile(written,testOperands);
+    if (figure.valueType === "boolean") {
+      if (!Object.hasOwn(tested,"boolean")) { problem(result,figure.need,"written formula reads an operand the issued example does not supply"); continue; }
+      if ((tested.boolean as boolean) !== (figure.result === 1)) { s.reject("Written formula fails the issued boolean example: "+figure.need); }
+    } else {
+      if (!Object.hasOwn(tested,"number")) { problem(result,figure.need,"written formula reads an operand the issued example does not supply"); continue; }
+      let actual: number = tested.number as number; let tolerance: number = Math.abs(figure.result)*0.006; if (tolerance < 0.011) { tolerance = 0.011; }
+      if (!Number.isFinite(actual) || Math.abs(actual-figure.result) > tolerance) { s.reject("Written formula fails the issued numeric example: "+figure.need); }
+    }
+    let replacement: formula.Expression = {source:lowered.source,type:lowered.type,dependencies:lowered.dependencies};
+    result.figures[result.figures.length] = {need:figure.need,expression:replacement,label:figure.label,unit:figure.unit,format:figure.format,shown:figure.shown,valueType:figure.valueType,operands:figure.operands,example:figure.example,result:figure.result};
+  }
+  return result;
 }
 export function formulaQuestions(plan: plans.Plan, definitions: Definitions, first: selecting.Result): selections.Question[] {
   let questions: selections.Question[] = [];
   for (let figure of definitions.figures) {
+    // The compatible alternative set is issued only up to its bound; over the bound nothing is
+    // truncated and no figure is rejected, so the written formula question is requested instead.
+    let compatible: formula.Enumeration = formula.enumerate(figure.operands,aggregateIds(figure.operands));
     // Ask even when the first implementation batch was unusable: second-stage selections
     // must still carry the formula decision rather than silently dropping retained parts.
-    questions[questions.length] = selections.question("formula_"+figure.need,figure.need,"formula","Does this exact typed formula preserve the original requested calculation, units, constraints and dependencies? "+figure.expression.source,[{id:"formula",criteria:"The issued formula completely implements the original calculation."},{id:"unavailable",criteria:"It changes or omits requested computation, units or constraints."}]);
-    questions[questions.length] = selections.question("units_"+figure.need,figure.need,"units","Independently check the ORIGINAL REQUEST AND FACTS against this exact numeric expression and rendered unit: "+figure.expression.source+"; label="+figure.label+"; unit="+figure.unit+". Trace every input, constant and provider result through the arithmetic. Currency alone does not specify scale: cents/minor units are not major units. Accept only if both arithmetic scale and displayed unit preserve the original quantities; a numerically correct example does not prove this.",[{id:"preserved",criteria:"All source dimensions, currency and scale match the actual calculation and displayed unit, with every required conversion explicit in checked arithmetic."},{id:"unavailable",criteria:"Wrong, missing or ambiguous units/scale, or an implicit conversion; keep the need open."}]);
+    let formulaText: string = "Does this exact typed formula preserve the original requested calculation, units, constraints and dependencies? "+figure.expression.source;
+    let unitsText: string = "Independently check the ORIGINAL REQUEST AND FACTS against this exact numeric expression and rendered unit: "+figure.expression.source+"; label="+figure.label+"; unit="+figure.unit+". Trace every input, constant and provider result through the arithmetic. Currency alone does not specify scale: cents/minor units are not major units. Accept only if both arithmetic scale and displayed unit preserve the original quantities; a numerically correct example does not prove this.";
+    if (figure.valueType === "boolean") {
+      formulaText = "Does this exact typed comparison preserve the original requested condition, its operands and dependencies? "+figure.expression.source;
+      unitsText = "Independently check the ORIGINAL REQUEST AND FACTS against this exact boolean comparison: "+figure.expression.source+"; label="+figure.label+". The stored and published value stays boolean and displays Yes or No. Accept only if the compared operands, the boundary of the condition and the user-facing spelling preserve the original request; a matching example does not prove this.";
+    }
+    questions[questions.length] = selections.question("formula_"+figure.need,figure.need,"formula",formulaText,[{id:"formula",criteria:"The issued formula completely implements the original calculation."},{id:"unavailable",criteria:"It changes or omits requested computation, units or constraints."}]);
+    if (compatible.overCap) { questions[questions.length] = selections.question("written_formula_"+figure.need,figure.need,"written-formula","The compatible formula set for this need holds "+String(compatible.count)+" alternatives including the unavailable option, over the issued bound of "+String(formula.alternativeBound())+". Return a written formula of at most 300 UTF-16 code units over the issued operands and the checked helpers floor, ceil, round, abs, sqrt, min, max and pow, or keep the need open: "+figure.expression.source,[{id:"written",criteria:"A written formula of at most 300 code units over issued operands implements the original calculation exactly."},{id:"unavailable",criteria:"No written formula preserves the original calculation, operands and units; keep the need open."}]); }
+    questions[questions.length] = selections.question("units_"+figure.need,figure.need,"units",unitsText,[{id:"preserved",criteria:"All source dimensions, currency and scale match the actual calculation and displayed unit, with every required conversion explicit in checked arithmetic."},{id:"unavailable",criteria:"Wrong, missing or ambiguous units/scale, or an implicit conversion; keep the need open."}]);
   }
   return questions;
 }
-export function build(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry): Built { return buildWithProviders(plan,definitions,choices,registry,null); }
-export function buildWithProviders(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry, reads: scalar.Built | null): Built {
+// Every reducer returns all locally owned inputs; the changed input carries the action value and
+// every other input keeps its current value. A numeric input other than a choice stores its text
+// draft; a choice holds its integral selected index directly.
+function inputValues(plan: plans.Plan, changed: string): string {
+  let result: string = ""; let separator: string = "";
+  for (let other of plan.inputs) { if (handled(other.kind)) {
+    let name: string = other.id; if (type(other) === "number" && other.kind !== "choice") { name = other.id+"_draft"; }
+    result = result+separator+name+": "; if (other.id === changed) { result = result+"action.value"; } else { result = result+"state."+name; } separator = ", ";
+  } }
+  return result;
+}
+export function buildWithProviders(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry, reads: scalar.Built | null, clock: Clock): Built {
+  if (!(clock.intervalMs > 0) || !Number.isFinite(clock.intervalMs)) { s.reject("Clock driver interval must be a finite positive number"); }
+  if (!(clock.toleranceMs > 0) || !Number.isFinite(clock.toleranceMs)) { s.reject("Clock wall-clock tolerance must be a finite positive number"); }
+  if (clock.toleranceMs < clock.intervalMs) { s.reject("Clock wall-clock tolerance must cover the driver interval"); }
   let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let effects: screens.Handler[] = []; let declarations: string = ""; let helpers: string = ""; let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() {";
   let computations: composer.Computation[] = []; let covers: string[] = [];
-  helpers += "export function decimalDraft(text: string): boolean { let digits = 0; let dot = false; let index = 0; for (let ch of text) { if ((ch === \"+\" || ch === \"-\") && index === 0) {} else if (ch === \".\" && !dot) {dot = true;} else if (ch >= \"0\" && ch <= \"9\") {digits++;} else {return false;} index++; } return digits > 0 && Number.isFinite(Number(text)); } export function parseDraft(text: string): number { return Number(text); }";
+  // Which presentation helpers this instance's prepared text actually calls: a numeric draft opens on a
+  // plain spelling, and an entries part prepares row text.
+  let plainTextUsed: boolean = false; let fixedTextUsed: boolean = false;
+  // The part kinds this instance implements. They are issued with the instance so admission can
+  // re-derive a slot's allowed kind from the instance that fills it.
+  let partKinds: string[] = [];
+  // A selected figure this candidate cannot emit is reported with its need identifier, so a dropped
+  // implementation is a located gap rather than an unexplained open need. A need the definition stage
+  // already refused keeps that located reason here too.
+  let unavailable: string[] = [];
+  for (let known of definitions.unavailable) { unavailable[unavailable.length] = known.need+": "+known.reason; }
+  declarations = declarations+"import * as entriesClock from \"std/time\";";
+  helpers = helpers+"export function decimalDraft(text: string): boolean { let digits: number = 0; let dot: boolean = false; let index: number = 0; for (let ch of text) { if ((ch === \"+\" || ch === \"-\") && index === 0) {} else if (ch === \".\" && !dot) {dot = true;} else if ((ch >= \"0\" && ch <= \"9\")) {digits = digits+1;} else {return false;} index = index+1; } return digits > 0; } export function parseDraft(text: string): number { let negative: boolean = false; let whole: number = 0; let fraction: number = 0; let scale: number = 1; let places: number = 0; let dot: boolean = false; for (let ch of text) { if (ch === \"-\") {negative = true;} else if (ch === \".\") {dot = true;} else if (ch !== \"+\") { let digit: number = 0; for (let n of [0,1,2,3,4,5,6,7,8,9]) { if (String(n) === ch) {digit = n;} } if (dot) { if (fraction === 0 && digit === 0) { scale = scale*10; } else if (places < 17) { fraction = fraction*10+digit; scale = scale*10; places = places+1; } } else { whole = whole*10+digit; } } } let scaled: number = whole*scale; let value: number = whole+fraction/scale; if (Number.isFinite(scaled)) { value = (scaled+fraction)/scale; } if(negative) {return -value;} return value; }";
   for (let input of plan.inputs) {
-    if (!s.contains(["text","toggle","amount","percent","count","time","date"],input.kind)) { continue; }
+    if (!handled(input.kind)) { continue; }
     let valueType: string = type(input); let initial: string = s.encode(input.value);
     let fieldName: string = input.id; let actionType: string = valueType;
-    if (valueType === "number") {
-      fieldName = input.id+"_draft"; actionType = "string"; initial = s.encode(initial);
+    // A choice edits its integral selected index directly: the Select control offers exactly its
+    // issued option labels, so there is no text draft and its readiness is constant.
+    if (valueType === "number" && input.kind !== "choice") {
+      fieldName = input.id+"_draft"; actionType = "string";
+      // A numeric draft opens on the plain spelling of its declared value, so the buffer the control
+      // shows is a valid decimal draft even for a value the host would print with an exponent.
+      initial = "numberText("+s.encode(input.value)+")";
+      plainTextUsed = true;
       fields[fields.length] = {name:input.id,type:"number",role:"derived",dependencies:[fieldName],initial:"null",owner:"parts"};
       let ready: string = "decimalDraft(state."+fieldName+")";
       let parsed: string = "parseDraft(state."+fieldName+")";
-      if (input.kind === "count" || input.kind === "time" || input.kind === "date") { ready += " && Math.floor("+parsed+") === "+parsed; }
+      if (input.kind === "count" || input.kind === "time" || input.kind === "date") { ready = ready+" && Math.floor("+parsed+") === "+parsed; }
       if (input.measure === "money") {
-        ready += " && Math.abs("+parsed+") <= 9007199254740991";
-        if (minorUnits(input.unit)) { ready += " && Math.floor("+parsed+") === "+parsed; }
+        ready = ready+" && Math.abs("+parsed+") <= 9007199254740991";
+        if (minorUnits(input.unit)) { ready = ready+" && Math.floor("+parsed+") === "+parsed; }
       }
       if (input.kind === "time") { ready = ready+" && "+parsed+" >= 0 && "+parsed+" <= 1439"; }
       if (Object.hasOwn(input,"min")) { ready = ready+" && "+parsed+" >= "+s.encode(input.min); }
       if (Object.hasOwn(input,"max")) { ready = ready+" && "+parsed+" <= "+s.encode(input.max); }
-      computations[computations.length] = {instance:"parts",field:input.id,value:parsed,ready:ready,reason:"\"Enter a valid value in the requested domain\"",dependencies:["f_parts_"+fieldName]};
+      computations[computations.length] = {instance:"parts",field:input.id,value:parsed,ready:ready,reason:"\"Enter a valid value in the requested domain\"",dependencies:[],buffers:["f_parts_"+fieldName]};
     }
     fields[fields.length] = {name:fieldName,type:actionType,role:"authoritative",dependencies:[],initial:initial,owner:"parts"};
-    let sourceReady: string = "true"; if (valueType === "number") { sourceReady = "f_parts_"+input.id+"_ready"; }
-    bindings.reserve(registry,{id:input.id,type:valueType,schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+input.id,ready:sourceReady});
+    let sourceReady: string = "true"; if (valueType === "number" && input.kind !== "choice") { sourceReady = "f_parts_"+input.id+"_ready"; }
+    bindings.reserve(registry,{id:input.id,type:valueType,schema:inputWire(input),dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+input.id,ready:sourceReady});
     declarations = declarations+"export class Change_"+input.id+" { value: "+actionType+"; }";
     updates[updates.length] = {action:"Change_"+input.id,function:"change_"+input.id};
-    let changes: string = ""; let separator: string = "";
-    for (let other of plan.inputs) { if (s.contains(["text","toggle","amount","percent","count","time","date"],other.kind)) { let otherName: string = other.id; if (type(other) === "number") { otherName = other.id+"_draft"; } changes = changes+separator+otherName+": "; if (other.id === input.id) { changes = changes+"action.value"; } else { changes = changes+"state."+otherName; } separator = ", "; } }
+    let changes: string = inputValues(plan,input.id);
     if (reads !== null) {
       for (let invalidation of (reads as scalar.Built).invalidations) { if (invalidation.input === input.id) {
         let prefix: string = invalidation.prefix;
         changes = changes+", "+prefix+"status:\"Inputs changed; load again\", "+prefix+"valid:false, "+prefix+"pending:false, "+prefix+"action:null, "+prefix+"code:\"STALE\", "+prefix+"outcome:\"none\", "+prefix+"sequence:state."+prefix+"sequence+1";
       } }
     }
-    helpers = helpers+"export function change_"+input.id+"(state: AppState, action: Change_"+input.id+"): AppState { return {"+changes+"}; }";
+    if (input.kind === "choice") {
+      // The index is validated against the issued options before it is committed; an out-of-range or
+      // fractional payload keeps the prior selection instead of clamping or accepting it.
+      let size: string = String(input.options.length);
+      let current: string = inputValues(plan,"");
+      helpers = helpers+"export function change_"+input.id+"(state: AppState, action: Change_"+input.id+"): AppState { if (action.value >= 0 && action.value < "+size+" && Math.floor(action.value) === action.value) { return {"+changes+"}; } return {"+current+"}; }";
+    } else {
+      helpers = helpers+"export function change_"+input.id+"(state: AppState, action: Change_"+input.id+"): AppState { return {"+changes+"}; }";
+    }
     let inputLabel: string = input.label; if (input.unit !== "") { inputLabel = inputLabel+" ("+input.unit+")"; }
-    if (valueType === "string") { view = view+"ui.TextField(label: "+literals.quote(input.label)+", value: state."+input.id+", onChange: action app.Change_"+input.id+" {value: payload})"; }
+    if (input.kind === "choice") {
+      // The Select labels are issued data: a view binds state, never a literal array.
+      let labels: string = ""; let separator: string = "";
+      for (let option of input.options) { labels = labels+separator+literals.quote(s.text(option.label)); separator = ", "; }
+      for (let field of fields) { if (field.name === input.id+"_labels") { s.reject("Choice label resource collides with an issued input: "+input.id+"_labels"); } }
+      fields[fields.length] = {name:input.id+"_labels",type:"string[]",role:"authoritative",dependencies:[],initial:"["+labels+"]",owner:"parts"};
+      view = view+"ui.Select(labels: state."+input.id+"_labels, selected: state."+input.id+", accessibilityLabel: "+literals.quote(input.label)+", onChange: action app.Change_"+input.id+" {value: payload})";
+    }
+    else if (valueType === "string") { view = view+"ui.TextField(label: "+literals.quote(input.label)+", value: state."+input.id+", onChange: action app.Change_"+input.id+" {value: payload})"; }
     else if (valueType === "boolean") { view = view+"ui.Toggle(label: "+literals.quote(input.label)+", checked: state."+input.id+", onChange: action app.Change_"+input.id+" {value: payload})"; }
     else { view = view+"ui.TextField(label: "+literals.quote(inputLabel)+", value: state."+fieldName+", onChange: action app.Change_"+input.id+" {value: payload}) When(state."+input.id+"_reason !== \"\") {ui.Text(text: state."+input.id+"_reason, style: \"danger\")}"; }
   }
@@ -114,33 +527,510 @@ export function buildWithProviders(plan: plans.Plan, definitions: Definitions, c
     for (let update of built.updates) { updates[updates.length] = update; }
     effects = built.effects;
     for (let computation of built.computations) { computations[computations.length] = computation; }
-    for (let need of built.covers) { covers[covers.length] = need; bindings.reserve(registry,{id:need,type:"number",schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+need,ready:"f_parts_"+need+"_ready"}); }
+    for (let need of built.covers) { covers[covers.length] = need; }
+    // A scalar read implementation is a part kind of this instance: the issued slot's allowed kind
+    // must be one this instance re-derives at admission, so the instance states it too.
+    if (built.covers.length > 0 && !s.contains(partKinds,"scalar_read")) { partKinds[partKinds.length] = "scalar_read"; }
     declarations = declarations+built.declarations; helpers = helpers+built.helpers; view = view+built.view;
+  }
+  let clockEmitted: boolean = false; let sessionClock: boolean = false; let restoreFields: string = ""; let resumeFields: string = ""; let drivers: screens.Driver[] = [];
+  // The wall-clock tolerance is host configuration; the driver delivers the monotone reading with each
+  // action and the compiled policy reads the wall reading at admission only for trust.
+  let clockInterval: string = String(clock.intervalMs); let clockTolerance: string = String(clock.toleranceMs);
+  // A duration source must be a publication this build actually emits. A selected figure whose own
+  // operand was not issued is skipped below, so it is not available as a countdown length: the clock
+  // part stays unbuilt and its need open instead of aborting assembly on a missing dependency.
+  let scheduledNeeds: string[] = [];
+  for (let cover of covers) { scheduledNeeds[scheduledNeeds.length] = cover; }
+  for (let choice of choices) { if (choice.alternative === "input_"+choice.need) { scheduledNeeds[scheduledNeeds.length] = choice.need; } }
+  for (let need of plan.needs) { let chosen: boolean = false; for (let choice of choices) { if (choice.alternative === "entries_"+need.id) { chosen = true; } } if (chosen) { scheduledNeeds[scheduledNeeds.length] = need.id; } }
+  for (let figure of definitions.figures) { let chosen: boolean = false; for (let choice of choices) { if (choice.alternative === "part_"+figure.need) { chosen = true; } } if (chosen && figureEmittable(plan,definitions,scheduledNeeds,figure)) { scheduledNeeds[scheduledNeeds.length] = figure.need; } }
+  for (let clockNeed of plan.needs) {
+    let chosenClock: boolean = false;
+    for (let choice of choices) { if (choice.alternative === "clock_"+clockNeed.id) { chosenClock = true; } }
+    if (!chosenClock) { continue; }
+    let id: string = clockNeed.id; let countdown: boolean = clockNeed.type === "countdown";
+    let resolved: ClockSource | null = null;
+    if (countdown) { resolved = clockSource(plan,clockNeed,scheduledNeeds); if (resolved === null) {
+      unavailable[unavailable.length] = clockNeed.id+": the countdown's length source is not emitted by this candidate";
+      continue;
+    } }
+    let durationField: string = "duration_"+id; let elapsed: string = "elapsed_"+id; let running: string = "running_"+id;
+    let completed: string = "completed_"+id; let anchor: string = "anchor_"+id; let sample: string = "sample_"+id; let wall: string = "wall_"+id;
+    let triggered: string = "triggered_"+id; let notice: string = "notice_"+id; let pending: string = "pending_"+id; let request: string = "request_"+id;
+    // Authoritative business state: elapsed, running, completed and the once-per-run end record.
+    fields[fields.length] = {name:elapsed,type:"number",role:"authoritative",dependencies:[],initial:"0",owner:"parts"};
+    fields[fields.length] = {name:running,type:"boolean",role:"authoritative",dependencies:[],initial:"false",owner:"parts"};
+    fields[fields.length] = {name:completed,type:"boolean",role:"authoritative",dependencies:[],initial:"false",owner:"parts"};
+    fields[fields.length] = {name:triggered,type:"number",role:"authoritative",dependencies:[],initial:"0",owner:"parts"};
+    // Runtime-only driver state: the last admitted monotone reading, the prepared reading, the
+    // previous wall reading, the run's monotone anchor, wall-clock trust, the located diagnostic and
+    // the press intent the private driver consumes. None is an authoritative persisted value.
+    fields[fields.length] = {name:sample,type:"number",role:"runtime",dependencies:[],initial:"-1",owner:"parts"};
+    fields[fields.length] = {name:pending,type:"number",role:"runtime",dependencies:[],initial:"-1",owner:"parts"};
+    fields[fields.length] = {name:wall,type:"number",role:"runtime",dependencies:[],initial:"-1",owner:"parts"};
+    fields[fields.length] = {name:anchor,type:"number",role:"runtime",dependencies:[],initial:"-1",owner:"parts"};
+    // The Session clock epoch and its trust are composition-scope runtime state: one epoch serves
+    // every clock, starts untrusted, and is advanced by a retreat, a jump, an undecidable reading or an
+    // uncertain resume. It is not persisted business state and resetting one clock never clears it.
+    if (!sessionClock) {
+      fields[fields.length] = {name:"clockEpoch",type:"number",role:"runtime",dependencies:[],initial:"0",owner:"parts"};
+      fields[fields.length] = {name:"clockTrust",type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:"parts"};
+      sessionClock = true;
+    }
+    fields[fields.length] = {name:notice,type:"string",role:"runtime",dependencies:[],initial:"\"\"",owner:"parts"};
+    fields[fields.length] = {name:request,type:"number",role:"runtime",dependencies:[],initial:"0",owner:"parts"};
+    if (countdown) {
+      let source: ClockSource = resolved as ClockSource;
+      fields[fields.length] = {name:durationField,type:"number",role:"derived",dependencies:source.dependencies,initial:"null",owner:"parts"};
+      computations[computations.length] = {instance:"parts",field:durationField,value:source.value,ready:source.ready,reason:"\"Duration unavailable\"",dependencies:source.dependencies};
+      fields[fields.length] = {name:"remaining_"+id,type:"number",role:"derived",dependencies:[durationField,elapsed],initial:"null",owner:"parts"};
+      computations[computations.length] = {instance:"parts",field:"remaining_"+id,value:"clockRemaining((state."+durationField+" as number), state."+elapsed+")",ready:"true",reason:"\"Remaining unavailable\"",dependencies:["f_parts_"+durationField,"f_parts_"+elapsed]};
+    } else {
+      fields[fields.length] = {name:durationField,type:"number",role:"derived",dependencies:[elapsed],initial:"null",owner:"parts"};
+      computations[computations.length] = {instance:"parts",field:durationField,value:"state."+elapsed,ready:"true",reason:"\"Elapsed unavailable\"",dependencies:["f_parts_"+elapsed]};
+    }
+    declarations = declarations+"export class Ready_"+id+" { at: number; } export class Press_"+id+" { kind: number; } export class Start_"+id+" { wall: number; } export class Pause_"+id+" { wall: number; } export class Reset_"+id+" { wall: number; } export class Tick_"+id+" { wall: number; }";
+    updates[updates.length] = {action:"Ready_"+id,function:"ready_"+id};
+    updates[updates.length] = {action:"Press_"+id,function:"press_"+id};
+    updates[updates.length] = {action:"Start_"+id,function:"start_"+id};
+    updates[updates.length] = {action:"Pause_"+id,function:"pause_"+id};
+    updates[updates.length] = {action:"Reset_"+id,function:"reset_"+id};
+    updates[updates.length] = {action:"Tick_"+id,function:"tick_"+id};
+    if (!clockEmitted) { helpers = helpers+clockHelpers(); clockEmitted = true; }
+    let ready: string = "true"; let durationRead: string = "0";
+    // The duration is a derived value stored as `number | null`, so the checked read is guarded by
+    // the same readiness every consumer short-circuits on: a length source whose value is unready
+    // must not fault the whole action with a checked conversion of null.
+    if (countdown) { ready = "state."+durationField+"_ready"; durationRead = "("+ready+" ? (state."+durationField+" as number) : 0)"; }
+    // Every admitted Start, Pause and Tick carries its own paired adapter reading: the private driver
+    // publishes the monotone sample of that pair through Ready_<id> and then admits the control with the
+    // wall reading taken with the same sample. Nothing infers an interval, no scheduled tick stands in
+    // for a missing sample, and the press compares its pair with the previous one exactly as the tick
+    // does, so a wall-clock jump between two ticks and a press is classified instead of silently
+    // re-baselined. The admitted wall reading stays the run baseline; elapsed and remaining never read
+    // it.
+    // The press reading is undecidable when the prepared sample is no reading at all. Such a press
+    // changes no elapsed, advances the Session epoch and drops trust exactly as a retreating reading
+    // does; only a real pair can be compared.
+    let pressReading: string = "let raw: number = state."+pending+"; let undecidable: boolean = clockPressUndecidable(raw); let settled: boolean = undecidable || clockRetreated(state."+sample+", raw); let at: number = clockPrepared(state."+sample+", raw); let rawWall: number = action.wall; let wall: number = clockWallValue(state."+wall+", action.wall);";
+    let reading: string = "let at: number = clockPrepared(state."+sample+", state."+pending+"); let retreated: boolean = clockRetreated(state."+sample+", state."+pending+"); let rawWall: number = action.wall; let wall: number = clockWallValue(state."+wall+", action.wall);";
+    let advanced: string = "state."+elapsed+" + clockAdvance(true, state."+completed+", state."+anchor+", at)";
+    let step: string = "let advanced: number = "+advanced+";";
+    let finished: string = "state."+completed; let counted: string = "state."+triggered; let runningNext: string = "true";
+    if (countdown) {
+      step = "let advanced: number = clockCapped(true, "+ready+", "+advanced+", "+durationRead+");";
+      finished = "clockCompleted(state."+completed+", true, "+ready+", advanced, "+durationRead+")";
+      counted = "clockTriggered(state."+triggered+", true, state."+completed+", "+ready+", advanced, "+durationRead+")";
+      runningNext = "clockRunning(true, "+ready+", advanced, "+durationRead+")";
+    }
+    let epochNext: string = "clockEpochNext(state.clockEpoch, state."+wall+", state."+sample+", rawWall, at, "+clockTolerance+")";
+    let trustNext: string = "clockTrustNext(state.clockEpoch, "+epochNext+", rawWall, at)";
+    let noticeNext: string = "clockNoticeNow(state."+notice+", true, state."+completed+", rawWall, state."+wall+", at, state."+sample+", "+clockTolerance+")";
+    let noticePress: string = "clockNoticeNow(state."+notice+", true, false, rawWall, state."+wall+", at, state."+sample+", "+clockTolerance+")";
+    let noticeReset: string = "clockNoticeNow(\"\", true, false, rawWall, state."+wall+", at, state."+sample+", "+clockTolerance+")";
+    let retreatedNotice: string = "\"Clock reading retreated; elapsed follows admitted monotone progress\"";
+    let undecidableNotice: string = "\"Clock reading is undecidable; wall-clock trust is invalid and elapsed follows monotone progress\"";
+    // The prepared-reading action publishes the raw monotone sample the driver took for the next
+    // admitted action. The raw value is published unchanged, so a nonfinite or negative reading reaches
+    // the press as the reading that was actually taken instead of being replaced by an older sample.
+    helpers = helpers+"export function ready_"+id+"(state: AppState, action: Ready_"+id+"): AppState { return {"+pending+": action.at}; }";
+    // A press only records its intent; the private driver admits the real control with the paired
+    // reading taken immediately before it, so the boundary delta is never a stale periodic sample.
+    helpers = helpers+"export function press_"+id+"(state: AppState, action: Press_"+id+"): AppState { if (action.kind === 1 || action.kind === 2 || action.kind === 3) { return {"+request+": action.kind}; } return {"+request+": 0}; }";
+    // A start anchors at the raw reading prepared for this press, so no time before the admitted start
+    // counts and no scheduled interval is ever substituted for a missing sample. An undecidable or
+    // retreating sample is refused: the elapsed, running and completed state stay unchanged, the
+    // Session trust epoch advances and the located diagnostic is published. An admitted start compares
+    // its paired reading with the previous one exactly as the tick does and keeps the wall reading as
+    // the baseline of the run it starts.
+    helpers = helpers+"export function start_"+id+"(state: AppState, action: Start_"+id+"): AppState { let raw: number = state."+pending+"; if (clockStartRefused(state."+sample+", raw)) { return {"+request+": 0, "+pending+": -1, clockEpoch: state.clockEpoch+1, clockTrust: false, "+notice+": \"Clock reading is undecidable or retreated; the start was refused and elapsed follows admitted monotone progress\"}; } if (!clockStartAllowed(state."+running+", "+ready+", raw)) { return {"+request+": 0, "+pending+": raw}; } let at: number = raw; let rawWall: number = action.wall; let wall: number = clockWallValue(state."+wall+", action.wall); let epoch: number = "+epochNext+"; return {"+elapsed+": clockStartElapsed(state."+completed+", state."+elapsed+"), "+running+": true, "+completed+": false, "+triggered+": state."+triggered+", "+anchor+": at, "+sample+": at, "+pending+": at, "+wall+": wall, clockEpoch: epoch, clockTrust: clockTrustNext(state.clockEpoch, epoch, rawWall, at), "+notice+": "+noticePress+", "+request+": 0}; }";
+    // A pause incorporates the monotone progress of the paired reading taken for its own press, then
+    // stops the run; the paused interval counts no elapsed time and completion still occurs once. Its
+    // wall reading is compared with the previous one, so a jump across the press advances the Session
+    // trust epoch instead of being absorbed by the next tick.
+    helpers = helpers+"export function pause_"+id+"(state: AppState, action: Pause_"+id+"): AppState { "+pressReading+" if (!state."+running+") { return {"+request+": 0}; } "+step+" let epoch: number = settled ? state.clockEpoch+1 : "+epochNext+"; return {"+elapsed+": advanced, "+running+": false, "+completed+": "+finished+", "+triggered+": "+counted+", "+anchor+": -1, "+sample+": at, "+pending+": at, "+wall+": wall, clockEpoch: epoch, clockTrust: settled ? false : clockTrustNext(state.clockEpoch, epoch, rawWall, at), "+notice+": (undecidable ? "+undecidableNotice+" : (settled ? "+retreatedNotice+" : "+noticeNext+")), "+request+": 0}; }";
+    // A reset clears the authoritative run and keeps the paired reading it was admitted with, so the
+    // next run compares against the reading the user actually reset at.
+    helpers = helpers+"export function reset_"+id+"(state: AppState, action: Reset_"+id+"): AppState { "+pressReading+" let epoch: number = settled ? state.clockEpoch+1 : "+epochNext+"; return {"+elapsed+": 0, "+running+": false, "+completed+": false, "+anchor+": -1, "+sample+": at, "+pending+": at, "+wall+": wall, clockEpoch: epoch, clockTrust: settled ? false : clockTrustNext(state.clockEpoch, epoch, rawWall, at), "+notice+": (undecidable ? "+undecidableNotice+" : (settled ? "+retreatedNotice+" : "+noticeReset+")), "+request+": 0}; }";
+    helpers = helpers+"export function tick_"+id+"(state: AppState, action: Tick_"+id+"): AppState { "+reading+" if (!state."+running+") { return {"+request+": state."+request+"}; } "+step+" let epoch: number = retreated ? state.clockEpoch+1 : "+epochNext+"; return {"+elapsed+": advanced, "+running+": "+runningNext+", "+completed+": "+finished+", "+triggered+": "+counted+", "+anchor+": clockAnchor(true, state."+completed+", state."+anchor+", at), clockEpoch: epoch, clockTrust: retreated ? false : "+trustNext+", "+notice+": retreated ? \"Clock reading retreated; elapsed follows admitted monotone progress\" : "+noticeNext+", "+sample+": at, "+pending+": at, "+wall+": wall}; }";
+    let shown: string = countdown ? "remaining_"+id : durationField;
+    view = view+"ui.Text(text: "+literals.quote(s.text(clockNeed.spec.label))+") When(state."+shown+"_ready) {ui.NumberText(value: state."+shown+"_display, suffix: \" ms\")} When(!state."+shown+"_ready) {ui.Text(text: state."+shown+"_reason, style: \"muted\")}";
+    // A press carries only its intent; the private Session driver (compiler metadata) admits the
+    // control with the reading it prepared for that press.
+    let pressed: string = "onClick: action app.Press_"+id+" {kind: payload}";
+    view = view+"ui.Button(text: \"Start\", enabled: !state."+running+" && "+ready+", value: 1, "+pressed+")";
+    view = view+"ui.Button(text: \"Pause\", enabled: state."+running+", value: 2, "+pressed+")";
+    view = view+"ui.Button(text: \"Reset\", enabled: state."+running+" || state."+elapsed+" > 0 || state."+completed+", value: 3, "+pressed+")";
+    // Driver carriers: the private Session driver resolves these issued ids from the rendered tree and
+    // dispatches the prepared paired reading. They never run from a renderer event, so the renderer
+    // Ticker is not this clock's monotone driver.
+    view = view+"ui.Ticker(id: "+literals.quote("clock_"+id+"_sample")+", intervalMs: "+clockInterval+", running: false, onTick: action app.Ready_"+id+" {at: payload})";
+    view = view+"ui.Ticker(id: "+literals.quote("clock_"+id+"_tick")+", intervalMs: "+clockInterval+", running: false, onTick: action app.Tick_"+id+" {wall: payload})";
+    view = view+"ui.Ticker(id: "+literals.quote("clock_"+id+"_start")+", intervalMs: "+clockInterval+", running: false, onTick: action app.Start_"+id+" {wall: payload})";
+    view = view+"ui.Ticker(id: "+literals.quote("clock_"+id+"_pause")+", intervalMs: "+clockInterval+", running: false, onTick: action app.Pause_"+id+" {wall: payload})";
+    view = view+"ui.Ticker(id: "+literals.quote("clock_"+id+"_reset")+", intervalMs: "+clockInterval+", running: false, onTick: action app.Reset_"+id+" {wall: payload})";
+    // An uncertain reading must be visible as a located diagnostic, not just bookkeeping.
+    view = view+"When(state."+notice+" !== \"\") {ui.Text(text: state."+notice+", style: \"muted\")}";
+    restoreFields = restoreFields+running+": false, "+anchor+": -1, "+sample+": -1, "+pending+": -1, "+wall+": -1, "+notice+": \"\", "+request+": 0, ";
+    // A Session resume keeps the authoritative run and establishes a fresh anchor at its own admitted
+    // reading, so an edit before the resume and the suspended interval are never counted.
+    resumeFields = resumeFields+anchor+": clockResumeAnchor(state."+sample+", action.at), "+sample+": clockResumeAnchor(state."+sample+", action.at), "+pending+": clockResumeAnchor(state."+sample+", action.at), "+wall+": -1, "+notice+": clockResumeNotice(state."+sample+", action.at), "+request+": 0, ";
+    drivers[drivers.length] = {need:id,sample:"clock_"+id+"_sample",tick:"clock_"+id+"_tick",start:"clock_"+id+"_start",pause:"clock_"+id+"_pause",reset:"clock_"+id+"_reset",resume:"clock_resume",request:request,running:running,restore:"",epoch:"clockEpoch",trust:"clockTrust",intervalMs:clock.intervalMs};
+    covers[covers.length] = id;
+    if (!s.contains(partKinds,"clock")) { partKinds[partKinds.length] = "clock"; }
+  }
+  if (clockEmitted) {
+    // Cold restore normalization: the clock resumes paused and the runtime-only sampling readings,
+    // prepared reading, press intent, anchor and diagnostic are cleared while the authoritative
+    // elapsed/completed/end record are retained. The Session clock epoch advances so evidence captured
+    // before the restore is stale and the restored Session starts untrusted; the issued driver metadata
+    // names this function and the epoch/trust fields the expiry driver reads.
+    helpers = helpers+"export function restorePaused(state: AppState): AppState { return {clockEpoch: state.clockEpoch+1, clockTrust: false, "+restoreFields+"}; } export function restore(state: AppState): AppState { return recompute(restorePaused(state)); }";
+    // A resume is a Session lifecycle event, not a renderer event: the issued carrier keeps the run
+    // authoritative state, clears every clock sampling anchor and advances the Session epoch so
+    // evidence captured before the suspend is stale. The private driver dispatches it with the
+    // monotone reading taken at resume.
+    declarations = declarations+"export class ResumeClock { at: number; }";
+    updates[updates.length] = {action:"ResumeClock",function:"resumeClock"};
+    helpers = helpers+"export function resumeClock(state: AppState, action: ResumeClock): AppState { return {clockEpoch: state.clockEpoch+1, clockTrust: false, "+resumeFields+"}; }";
+    view = view+"ui.Ticker(id: "+literals.quote("clock_resume")+", intervalMs: "+clockInterval+", running: false, onTick: action app.ResumeClock {at: payload})";
+  }
+  for (let entriesNeed of plan.needs) {
+    let chosenEntries: boolean = false;
+    for (let choice of choices) { if (choice.alternative === "entries_"+entriesNeed.id) { chosenEntries = true; } }
+    if (!chosenEntries) { continue; }
+    let issued: EntriesPart = entriesPart(entriesNeed);
+    for (let entry of issued.fields) { fields[fields.length] = entry; }
+    for (let entry of issued.updates) { updates[updates.length] = entry; }
+    for (let entry of issued.computations) { computations[computations.length] = entry; }
+    declarations = declarations+issued.declarations; helpers = helpers+issued.helpers; view = view+issued.view;
+    covers[covers.length] = entriesNeed.id;
+    // A number field's prepared row text applies the issued fixed count, a time or date field keeps its
+    // plain integral spelling and a text or toggle field prepares no numeric text at all.
+    let entryKinds: string[] = [];
+    for (let declaration of s.records(entriesNeed.spec,"fields")) { entryKinds[entryKinds.length] = s.text(declaration.kind); }
+    if (s.contains(entryKinds,"number") || s.contains(entryKinds,"time") || s.contains(entryKinds,"date")) { plainTextUsed = true; }
+    if (s.contains(entryKinds,"number")) { fixedTextUsed = true; }
+    if (!s.contains(partKinds,"entries")) { partKinds[partKinds.length] = "entries"; }
   }
   let selected: string[] = []; for (let choice of choices) {
     if (choice.alternative.startsWith("part_")) { selected[selected.length] = choice.need; }
-    if (choice.alternative === "input_"+choice.need) { covers[covers.length] = choice.need; }
+    if (choice.alternative === "input_"+choice.need) { covers[covers.length] = choice.need; if (!s.contains(partKinds,"inputs")) { partKinds[partKinds.length] = "inputs"; } }
   }
   for (let figure of definitions.figures) { if (s.contains(selected,figure.need)) {
-    let dependenciesReady: boolean = true;
-    for (let dependency of figure.expression.dependencies) { const name = dependency.substring(8); let issued: boolean = false; for (let input of plan.inputs) { if (input.id === name) { issued = true; } } if (s.contains(covers,name)) { issued = true; } if (!issued) { dependenciesReady = false; } for (let other of definitions.figures) { if (other.need === name && !s.contains(covers,name)) { dependenciesReady = false; } } }
-    if (!dependenciesReady) { continue; }
-    fields[fields.length] = {name:figure.need,type:"number",role:"derived",dependencies:figure.expression.dependencies,initial:"null",owner:"parts"};
-    bindings.reserve(registry,{id:figure.need,type:"number",schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+figure.need,ready:"f_parts_"+figure.need+"_ready"});
+    if (!figureEmittable(plan,definitions,covers,figure)) {
+      unavailable[unavailable.length] = figure.need+": the selected figure's operand or publication is not emitted by this candidate";
+      continue;
+    }
+    fields[fields.length] = {name:figure.need,type:figure.valueType,role:"derived",dependencies:figure.expression.dependencies,initial:"null",owner:"parts"};
     let formulaReady: string = "true";
-    for (let need of plan.needs) { if (need.id === figure.need && s.text(need.spec.format) === "money") { formulaReady = "Math.abs("+figure.expression.source+") <= 9007199254740991"; if (minorUnits(figure.unit)) { formulaReady = formulaReady+" && Math.floor("+figure.expression.source+") === ("+figure.expression.source+")"; } } }
-    if (figure.format === "time_of_day") { formulaReady = formulaReady+" && Math.floor("+figure.expression.source+") === ("+figure.expression.source+") && ("+figure.expression.source+") >= 0 && ("+figure.expression.source+") <= 1439"; }
+    if (figure.valueType === "number") {
+      for (let need of plan.needs) { if (need.id === figure.need && s.text(need.spec.format) === "money") { formulaReady = "Math.abs("+figure.expression.source+") <= 9007199254740991"; if (minorUnits(figure.unit)) { formulaReady = formulaReady+" && Math.floor("+figure.expression.source+") === ("+figure.expression.source+")"; } } }
+      if (figure.format === "time_of_day") { formulaReady = formulaReady+" && Math.floor("+figure.expression.source+") === ("+figure.expression.source+") && ("+figure.expression.source+") >= 0 && ("+figure.expression.source+") <= 1439"; }
+    }
     computations[computations.length] = {instance:"parts",field:figure.need,value:figure.expression.source,ready:formulaReady,reason:"\"Input or upstream result unavailable\"",dependencies:figure.expression.dependencies};
-    // Primitive render values are separate composer-owned derived fields, guarded in the view.
-    fields[fields.length] = {name:figure.need+"_text",type:"string",role:"derived",dependencies:[figure.need],initial:"null",owner:"parts"};
-    let formatted: string = "numberText(state."+figure.need+" as number)";
-    if (figure.format === "time_of_day") { formatted = "timeText(state."+figure.need+" as number)"; }
-    helpers = helpers+"export function text_"+figure.need+"(state: AppState): string { return "+literals.quote(figure.label+": ")+"+"+formatted+"+"+literals.quote(" "+figure.unit)+"; }";
-    computations[computations.length] = {instance:"parts",field:figure.need+"_text",value:"text_"+figure.need+"(state)",ready:"true",reason:"\"Result unavailable\"",dependencies:["f_parts_"+figure.need]};
-    if (figure.shown) { view = view+"When(state."+figure.need+"_text_ready) {ui.Text(text: state."+figure.need+"_text_display)} When(!state."+figure.need+"_text_ready) {ui.Text(text: state."+figure.need+"_text_reason, style: \"muted\")}"; } covers[covers.length] = figure.need;
+    // The issued presentation fields of this need: the shared `decimals` count and the declared unit.
+    let figureDecimals: number = -1; let figureSpec: Record<string, unknown> = {};
+    for (let need of plan.needs) { if (need.id === figure.need) { figureSpec = need.spec; } }
+    if (Object.hasOwn(figureSpec,"decimals")) { figureDecimals = s.integral(figureSpec.decimals); }
+    // Numeric figures bind the shipped numeric presentation components with the prepared value, its
+    // affixes and its issued decimals, so the presentation is applied by the pack and the stored value
+    // keeps its numeric identity. time_of_day binds ClockText with prepared minutes. A yes_no figure
+    // displays the fixed Yes/No spelling while its stored and published value stays boolean.
+    if (figure.valueType === "boolean") {
+      fields[fields.length] = {name:figure.need+"_text",type:"string",role:"derived",dependencies:[figure.need],initial:"null",owner:"parts"};
+      helpers = helpers+"export function text_"+figure.need+"(state: AppState): string { if (state."+figure.need+" as boolean) { return "+literals.quote(figure.label+": Yes")+"; } return "+literals.quote(figure.label+": No")+"; }";
+      computations[computations.length] = {instance:"parts",field:figure.need+"_text",value:"text_"+figure.need+"(state)",ready:"true",reason:"\"Result unavailable\"",dependencies:["f_parts_"+figure.need]};
+      if (figure.shown) { view = view+"When(state."+figure.need+"_text_ready) {ui.Text(text: state."+figure.need+"_text_display)} When(!state."+figure.need+"_text_ready) {ui.Text(text: state."+figure.need+"_text_reason, style: \"muted\")}"; }
+    } else if (figure.format === "time_of_day") {
+      if (figure.shown) { view = view+"When(state."+figure.need+"_ready) {ui.ClockText(minutes: state."+figure.need+"_display)} When(!state."+figure.need+"_ready) {ui.Text(text: state."+figure.need+"_reason, style: \"muted\")}"; }
+    } else {
+      if (figure.shown) { view = view+"When(state."+figure.need+"_ready) {ui.NumberText(value: state."+figure.need+"_display, suffix: "+literals.quote(figure.unit)+", decimals: "+String(figureDecimals)+")} When(!state."+figure.need+"_ready) {ui.Text(text: state."+figure.need+"_reason, style: \"muted\")}"; }
+    }
+    covers[covers.length] = figure.need;
+    if (!s.contains(partKinds,"figure")) { partKinds[partKinds.length] = "figure"; }
   } }
 
-  helpers = helpers+"export function numberText(value: number): string { return String(value); } export function twoDigits(value:number):string {if(value<10){return \"0\"+numberText(value);}return numberText(value);} export function timeText(value:number):string {let hours:number=Math.floor(value/60);return twoDigits(hours)+\":\"+twoDigits(value-hours*60);}";
-  return {instance:{id:"parts",kind:"inputs_figures",origin:"part",parameters:{},fragment:{declarations:declarations,fields:fields,updates:updates,effects:effects,helpers:helpers,view:view+"} }",options:[],content:[],ports:[],holes:[],covers:covers,owns:["parts"]},bodies:{}},computations:computations};
+  // The presentation helpers are emitted only where a prepared text uses them: a numeric draft opens
+  // on a plain spelling, and an entries part prepares row and total text. No dead formatter ships.
+  // One condition decides which presentation sets ship: the plain set for a numeric draft or an entry
+  // row, and the fixed-count set only where a number field prepares a row.
+  if (plainTextUsed) { helpers = helpers+presentationNumberHelpers(); }
+  if (fixedTextUsed) { helpers = helpers+presentationFixedHelpers(); }
+  // Every covered need whose slot publishes a value declares its publish port here, so a filled slot
+  // issues publish_<port>/ready_<port> instead of only opening.
+  let ports: screens.Port[] = [];
+  for (let need of plan.needs) {
+    if (!s.contains(covers,need.id)) { continue; }
+    let valueType: string = "number"; let getter: string = need.id;
+    if (need.type === "figure") { if (Object.hasOwn(need.spec,"format") && s.text(need.spec.format) === "yes_no") { valueType = "boolean"; } }
+    else if (need.type === "countdown") { getter = "remaining_"+need.id; }
+    else if (need.type === "stopwatch") { getter = "duration_"+need.id; }
+    else if (need.type === "entries") { getter = "count_"+need.id; }
+    else if (need.type !== "live") { continue; }
+    ports[ports.length] = {name:need.id,type:valueType,direction:"publish",getter:getter,optional:false};
+    // Every publish port is one issued source: the need's publication carries its declared output
+    // type, the emitted getter of this owner and that getter's readiness, so an action argument may
+    // name it exactly as it names an input or a figure.
+    bindings.reserve(registry,{id:need.id,type:valueType,schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_"+getter,ready:"f_parts_"+getter+"_ready"});
+  }
+  // Every resource of this owner has one name. A duplicate would otherwise surface as a generic
+  // assembly rejection instead of a located part rejection (a choice label field is one example).
+  let resourceNames: string[] = [];
+  for (let field of fields) { if (s.contains(resourceNames,field.name)) { s.reject("Duplicate part resource: "+field.name); } resourceNames[resourceNames.length] = field.name; }
+  let issuedInstance: screens.Instance = {id:"parts",kind:"inputs_figures",origin:"part",parameters:{kinds:partKinds},fragment:{declarations:declarations,fields:fields,updates:updates,effects:effects,helpers:helpers,view:view+"} }",options:[],content:[],ports:ports,holes:[],covers:covers,owns:["parts"]},bodies:{},drivers:drivers};
+  issuedInstance.definition = screens.issueDefinition(issuedInstance.fragment);
+  return {instance:issuedInstance,computations:computations,unavailable:unavailable};
 }
+// The entries composer part. Records, keys, timestamps, drafts, the prepared rows, undo, count and
+// total are ordinary authoritative or derived state; only admitted seeds become history and no provider
+// or storage call runs. A record is the closed EntryRecord {key, timestamp, values}: `values` is a closed
+// record of every declared field identifier with that field's declared type. The prepared row's numeric
+// event value is issued with the record key by the same counter, never an array index.
+export class EntriesPart { fields: screens.Field[]; updates: screens.Handler[]; computations: composer.Computation[]; declarations: string; helpers: string; view: string; }
+function entryType(field: Record<string, unknown>): string {
+  let kind: string = s.text(field.kind);
+  if (kind === "text") { return "string"; }
+  if (kind === "toggle") { return "boolean"; }
+  return "number";
+}
+function entryRecordClass(need: plans.Need): string { return "Entry_"+need.id; }
+function entryValuesClass(need: plans.Need): string { return "Values_"+need.id; }
+function entryRemovedClass(need: plans.Need): string { return "Removed_"+need.id; }
+function entryRowClass(need: plans.Need): string { return "Row_"+need.id; }
+function entryFieldName(field: Record<string, unknown>): string { return s.identifier(field.id); }
+function entryDraft(need: plans.Need, field: Record<string, unknown>): string { return "draft_"+need.id+"_"+s.identifier(field.id); }
+function entryValid(need: plans.Need, field: Record<string, unknown>): string { return "valid_"+need.id+"_"+s.identifier(field.id); }
+function entryDisplay(value: unknown): string {
+  if (typeof value === "string") { return value as string; }
+  if (typeof value === "boolean") { if (value as boolean) { return "Yes"; } return "No"; }
+  if (typeof value === "number") { return String(value as number); }
+  return "";
+}
+// The closed `values` record of one entry: exactly the declared field identifiers with their declared
+// types. A record with no declared fields keeps the open record type, and a seed supplies the declared
+// initial of every field it does not name.
+function valuesLiteral(definitions: Record<string, unknown>[], values: Record<string, unknown>): string {
+  if (definitions.length === 0) { return "{}"; }
+  let result: string = "{"; let separator: string = "";
+  for (let field of definitions) {
+    let name: string = entryFieldName(field); let value: unknown = field.initial;
+    if (Object.hasOwn(values,name)) { value = values[name]; }
+    result = result+separator+name+": "+s.encode(value); separator = ", ";
+  }
+  return result+"}";
+}
+// The issued numeric presentation of one entry field is applied by the one emitted formatter, so the
+// prepared row text of a seeded or added record and the renderer's NumberText over the same typed
+// value apply the same rule. The stored value stays numeric and is the value every computation and
+// the total read.
+function fieldDecimals(field: Record<string, unknown>): number { if (Object.hasOwn(field,"decimals")) { return s.integral(field.decimals); } return -1; }
+// The declared initial of a numeric entry field is a number of its own domain: a count, minute of day
+// or epoch day is integral, and a number or money field is finite.
+function numericInitial(field: Record<string, unknown>): number {
+  let kind: string = s.text(field.kind);
+  if (kind === "time" || kind === "date") { return s.integral(field.initial); }
+  return s.finite(field.initial);
+}
+function fieldUnit(field: Record<string, unknown>): string { return s.optionalText(field,"unit"); }
+function numericEntry(need: plans.Need): Record<string, unknown> | null {
+  for (let field of s.records(need.spec,"fields")) { if (s.text(field.kind) === "number") { return field; } }
+  return null;
+}
+// The entries composer part. Records, keys, timestamps, drafts, the prepared rows, undo, count and
+// total are ordinary authoritative or derived state; only admitted seeds become history and no
+// provider or storage call runs. A record is the closed EntryRecord {key, timestamp, values} the owner
+// contract names: `values` is a closed record of every declared field identifier with that field's
+// declared type. Removal is addressed by that record key and stores one pending undo value (index plus
+// removed record). The prepared row projection is authoritative and maintained by the same reducers,
+// because a recomputation helper may not build an array.
+export function entriesPart(need: plans.Need): EntriesPart {
+  let id: string = need.id; let recordClass: string = entryRecordClass(need); let valuesClass: string = entryValuesClass(need); let removedClass: string = entryRemovedClass(need); let rowClass: string = entryRowClass(need);
+  let definitions: Record<string, unknown>[] = s.records(need.spec,"fields");
+  let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let computations: composer.Computation[] = [];
+  let declarations: string = "";
+  // The record's values are one closed nominal record of every declared field identifier, including
+  // the field-less need: an empty class is still a closed type, so no undeclared key can enter a
+  // restored or recomputed record.
+  let valuesType: string = valuesClass;
+  declarations = declarations+"export class "+valuesClass+" {";
+  for (let field of definitions) { declarations = declarations+" "+entryFieldName(field)+": "+entryType(field)+";"; }
+  declarations = declarations+" }\n";
+  declarations = declarations+"export class "+recordClass+" { key: string; timestamp: number; values: "+valuesType+"; }\n";
+  declarations = declarations+"export class "+removedClass+" { index: number; record: "+recordClass+"; }\n";
+  declarations = declarations+"export class "+rowClass+" { key: string; text: string; value: number; }\n";
+  // The row event value is the numeric identity issued with the record key by the same counter that
+  // issues the key. Compiled policy prepares it; the view never derives an identity from an index or
+  // guesses one from a key. Keys are issued as "k"+counter, so an issued key yields its counter.
+  let helpersText: string = "export function rowValue_"+id+"(key: string): number { let value: number = 0; let digits: number = 0; let started: boolean = false; for (let ch of key) { let digit: number = -1; for (let n of [0,1,2,3,4,5,6,7,8,9]) { if (String(n) === ch) { digit = n; } } if (digit >= 0) { value = value*10+digit; digits = digits+1; started = true; } else if (started) { return -1; } } if (digits === 0 || value <= 0) { return -1; } return value; } ";
+  helpersText = helpersText+"export function textOf_"+id+"(value: boolean): string { if (value) { return \"Yes\"; } return \"No\"; } ";
+  // Initialization appends one record per admitted seed in seed order, under a newly issued stable
+  // key, and the matching prepared row. An omitted timestamp uses the captured activation time. The
+  // seeded row is projected by the same emitted `rowOf_` helper the add reducer uses, so a seed's
+  // prepared text applies the one issued presentation rule instead of a build-time copy of it.
+  let seeds: Record<string, unknown>[] = s.records(need.spec,"seeds");
+  let initial: string = "["; let initialRows: string = "["; let separator: string = ""; let serial: number = 1;
+  for (let seed of seeds) {
+    let values: Record<string, unknown> = seed.values as Record<string, unknown>;
+    let stamp: string = "capturedTime"; if (Object.hasOwn(seed,"timestamp")) { stamp = s.encode(s.integral(seed.timestamp)); }
+    let record: string = "{key: "+s.encode("k"+String(serial))+", timestamp: "+stamp+", values: "+valuesLiteral(definitions,values)+"}";
+    initial = initial+separator+record;
+    initialRows = initialRows+separator+"rowOf_"+id+"("+record+")";
+    separator = ", "; serial = serial+1;
+  }
+  initial = initial+"]"; initialRows = initialRows+"]";
+  fields[fields.length] = {name:"records_"+id,type:recordClass+"[]",role:"authoritative",dependencies:[],initial:initial,owner:"parts"};
+  fields[fields.length] = {name:"rows_"+id,type:rowClass+"[]",role:"authoritative",dependencies:[],initial:initialRows,owner:"parts"};
+  fields[fields.length] = {name:"nextKey_"+id,type:"number",role:"authoritative",dependencies:[],initial:String(serial),owner:"parts"};
+  fields[fields.length] = {name:"notice_"+id,type:"string",role:"runtime",dependencies:[],initial:"\"\"",owner:"parts"};
+  fields[fields.length] = {name:"removed_"+id,type:removedClass+" | null",role:"authoritative",dependencies:[],initial:"null",owner:"parts"};
+  let allValid: string = "true"; let draftReads: string[] = []; let clearedText: string = ""; let separatorDraft: string = "";
+  for (let field of definitions) {
+    let fieldId: string = entryFieldName(field); let kind: string = s.text(field.kind); let name: string = entryDraft(need,field);
+    if (kind === "toggle") { fields[fields.length] = {name:name,type:"boolean",role:"authoritative",dependencies:[],initial:s.encode(s.truth(field.initial)),owner:"parts"}; }
+    // A number draft opens on the plain spelling of its declared initial, so the buffer the control
+    // shows is a valid decimal draft even for a value the host would print with an exponent.
+    else if (kind === "number" || kind === "time" || kind === "date") { fields[fields.length] = {name:name,type:"string",role:"authoritative",dependencies:[],initial:"numberText("+s.encode(numericInitial(field))+")",owner:"parts"}; }
+    else { fields[fields.length] = {name:name,type:"string",role:"authoritative",dependencies:[],initial:s.encode(entryDisplay(field.initial)),owner:"parts"}; }
+    draftReads[draftReads.length] = "f_parts_"+name;
+    // A non-toggle draft is a checked text buffer; only a toggle draft carries its boolean choice.
+    let draftType: string = "string"; if (kind === "toggle") { draftType = "boolean"; }
+    declarations = declarations+"export class Draft_"+id+"_"+fieldId+" { value: "+draftType+"; }";
+    updates[updates.length] = {action:"Draft_"+id+"_"+fieldId,function:"draft_"+id+"_"+fieldId};
+    if (kind === "text") { clearedText = clearedText+separatorDraft+name+": \"\""; separatorDraft = ", "; }
+    if (allValid === "true") { allValid = entryValid(need,field)+"(state)"; } else { allValid = allValid+" && "+entryValid(need,field)+"(state)"; }
+  }
+  for (let field of definitions) {
+    let fieldId: string = entryFieldName(field); let kind: string = s.text(field.kind); let name: string = entryDraft(need,field);
+    let rule: string = "true"; let expectation: string = "";
+    // A grammatically valid draft whose value is not a finite binary64 (an over-long digit string)
+    // is not a number: it stays visible and uncommitted instead of entering a record as Infinity.
+    if (kind === "number") { rule = "decimalDraft(state."+name+") && Number.isFinite(parseDraft(state."+name+"))"; expectation = "enter a finite decimal number"; }
+    if (kind === "time") { rule = "decimalDraft(state."+name+") && Math.floor(parseDraft(state."+name+")) === parseDraft(state."+name+") && parseDraft(state."+name+") >= 0 && parseDraft(state."+name+") <= 1439"; expectation = "enter an integral minute of day between 0 and 1439"; }
+    if (kind === "date") { rule = "decimalDraft(state."+name+") && Math.floor(parseDraft(state."+name+")) === parseDraft(state."+name+") && Math.abs(parseDraft(state."+name+")) <= 9007199254740991"; expectation = "enter an integral day within the safe integer range"; }
+    helpersText = helpersText+"export function "+entryValid(need,field)+"(state: AppState): boolean { return "+rule+"; } ";
+    helpersText = helpersText+"export function draft_"+id+"_"+fieldId+"(state: AppState, action: Draft_"+id+"_"+fieldId+"): AppState { return {"+name+": action.value}; } ";
+    // Every invalid draft keeps its own located reason, rendered beside the draft it belongs to, and
+    // its own prepared validity so the view needs no helper call.
+    if (expectation !== "") {
+      let okField: string = "fieldValid_"+id+"_"+fieldId; let whyField: string = "fieldReason_"+id+"_"+fieldId; let located: string = literals.quote(s.text(field.label)+": "+expectation);
+      fields[fields.length] = {name:okField,type:"boolean",role:"derived",dependencies:[],initial:"null",owner:"parts"};
+      computations[computations.length] = {instance:"parts",field:okField,value:entryValid(need,field)+"(state)",ready:"true",reason:"\"Draft validation unavailable\"",dependencies:[],buffers:["f_parts_"+name]};
+      fields[fields.length] = {name:whyField,type:"string",role:"derived",dependencies:[],initial:"null",owner:"parts"};
+      computations[computations.length] = {instance:"parts",field:whyField,value:whyField+"(state)",ready:"true",reason:"\"Draft validation unavailable\"",dependencies:[],buffers:["f_parts_"+name]};
+      helpersText = helpersText+"export function "+whyField+"(state: AppState): string { if ("+entryValid(need,field)+"(state)) { return \"\"; } return "+located+"; } ";
+    }
+  }
+  // The prepared boolean shows a disabled Add; each invalid draft's own prepared boolean and reason
+  // stay beside that draft, so the user sees which field and domain is wrong without losing the draft.
+  fields[fields.length] = {name:"formValid_"+id,type:"boolean",role:"derived",dependencies:[],initial:"null",owner:"parts"};
+  computations[computations.length] = {instance:"parts",field:"formValid_"+id,value:allValid,ready:"true",reason:"\"Draft validation unavailable\"",dependencies:[],buffers:draftReads};
+  declarations = declarations+"export class Add_"+id+" { at: number; } export class Remove_"+id+" { key: string; at: number; } export class Undo_"+id+" { at: number; }";
+  updates[updates.length] = {action:"Add_"+id,function:"add_"+id};
+  updates[updates.length] = {action:"Remove_"+id,function:"remove_"+id};
+  updates[updates.length] = {action:"Undo_"+id,function:"undo_"+id};
+  let valueBuild: string = ""; let recordBuild: string = ""; let recordText: string = "\"\"";
+  // The prepared row text applies the issued `decimals` and `unit` of a number field; a time or date
+  // field keeps its integral spelling and a text or toggle field acquires no numeric formatting.
+  // A fixed-count row text exists only where a declared number field prepares one.
+  if (numericEntry(need) !== null) { helpersText = helpersText+"export function fixedText_"+id+"(value: number, decimals: number, unit: string): string { return decimalText(value,decimals)+unit; } "; }
+  for (let field of definitions) {
+    let kind: string = s.text(field.kind); let name: string = entryDraft(need,field); let value: string = "state."+name;
+    if (kind === "number" || kind === "time" || kind === "date") { value = "parseDraft(state."+name+")"; }
+    valueBuild = valueBuild+entryFieldName(field)+": "+value+", ";
+    // The same display text over the stored values record, which is what a prepared row binds.
+    let stored: string = "record.values."+entryFieldName(field);
+    let storedShown: string = stored;
+    if (kind === "toggle") { storedShown = "textOf_"+id+"("+stored+")"; }
+    else if (kind === "number") { storedShown = "fixedText_"+id+"("+stored+", "+String(fieldDecimals(field))+", "+literals.quote(fieldUnit(field))+")"; }
+    else if (kind === "time" || kind === "date") { storedShown = "numberText("+stored+")"; }
+    let storedPiece: string = literals.quote(s.text(field.label)+": ")+"+"+storedShown;
+    if (recordBuild === "") { recordBuild = storedPiece; } else { recordBuild = recordBuild+"+"+literals.quote("; ")+"+"+storedPiece; }
+  }
+  if (recordBuild !== "") { recordText = recordBuild; }
+  // One pure projection from a stored record to its prepared row: stable key, prepared text and the
+  // issued numeric event value.
+  helpersText = helpersText+"export function rowOf_"+id+"(record: "+recordClass+"): "+rowClass+" { return {key: record.key, text: "+recordText+", value: rowValue_"+id+"(record.key)}; } ";
+  let valuesConstruct: string = "let values: "+valuesType+" = {"+valueBuild+"};";
+  // One tap is one record: the timestamp is captured once by the add action, the key is the next
+  // issued counter, `values` is the closed record of every declared field, the matching prepared row is
+  // appended, and only text-kind drafts are cleared. The record carries no display text and no index.
+  helpersText = helpersText+"export function add_"+id+"(state: AppState, action: Add_"+id+"): AppState { if (!("+allValid+")) { return {notice_"+id+": \"Enter a valid value in every field before adding\"}; } let nextKey: number = state.nextKey_"+id+"; "+valuesConstruct+" let record: "+recordClass+" = {key: \"k\"+String(nextKey), timestamp: entriesClock.nowMillis(), values: values}; let records: "+recordClass+"[] = []; for (let row of state.records_"+id+") { records[records.length] = row; } records[records.length] = record; let rows: "+rowClass+"[] = []; for (let row of state.rows_"+id+") { rows[rows.length] = row; } rows[rows.length] = rowOf_"+id+"(record); return {records_"+id+": records, rows_"+id+": rows, nextKey_"+id+": nextKey+1, removed_"+id+": null, notice_"+id+": \"\""+(clearedText === "" ? "" : ", "+clearedText)+"}; } ";
+  // Removal is addressed by the record key and consumes the pack's numeric row payload. Both the stable
+  // key and the exact numeric identity issued with it are validated against the current record mapping
+  // before anything is removed: finite alone is insufficient, so a stale or tampered payload rejects
+  // with a located reason and changes no record and no pending undo.
+  helpersText = helpersText+"export function remove_"+id+"(state: AppState, action: Remove_"+id+"): AppState { if (!Number.isFinite(action.at)) { return {notice_"+id+": \"Entry row tap carried no numeric event value\"}; } let index: number = -1; let found: "+recordClass+" | null = null; let position: number = 0; for (let row of state.records_"+id+") { if (row.key === action.key) { index = position; found = row; } position = position+1; } if (index < 0 || found === null) { return {notice_"+id+": \"Unknown record key: \"+action.key}; } let issued: number = -1; for (let row of state.rows_"+id+") { if (row.key === action.key) { issued = row.value; } } if (issued !== action.at) { return {notice_"+id+": \"Entry row identity does not match its prepared row: \"+action.key}; } let records: "+recordClass+"[] = []; let rows: "+rowClass+"[] = []; position = 0; for (let row of state.records_"+id+") { if (position !== index) { records[records.length] = row; rows[rows.length] = rowOf_"+id+"(row); } position = position+1; } return {records_"+id+": records, rows_"+id+": rows, removed_"+id+": {index: index, record: (found as "+recordClass+")}, notice_"+id+": \"\"}; } ";
+  helpersText = helpersText+"export function undo_"+id+"(state: AppState, action: Undo_"+id+"): AppState { let pending: "+removedClass+" | null = state.removed_"+id+"; if (pending === null) { return {notice_"+id+": \"Nothing to undo\"}; } let previous: "+removedClass+" = pending as "+removedClass+"; let records: "+recordClass+"[] = []; let rows: "+rowClass+"[] = []; let position: number = 0; let inserted: boolean = false; for (let row of state.records_"+id+") { if (position === previous.index && !inserted) { records[records.length] = previous.record; rows[rows.length] = rowOf_"+id+"(previous.record); inserted = true; } records[records.length] = row; rows[rows.length] = rowOf_"+id+"(row); position = position+1; } if (!inserted) { records[records.length] = previous.record; rows[rows.length] = rowOf_"+id+"(previous.record); } return {records_"+id+": records, rows_"+id+": rows, removed_"+id+": null, notice_"+id+": \"\"}; } ";
+  fields[fields.length] = {name:"undoable_"+id,type:"boolean",role:"derived",dependencies:["removed_"+id],initial:"null",owner:"parts"};
+  computations[computations.length] = {instance:"parts",field:"undoable_"+id,value:"undoable_"+id+"(state)",ready:"true",reason:"\"Undo state unavailable\"",dependencies:["f_parts_removed_"+id]};
+  helpersText = helpersText+"export function undoable_"+id+"(state: AppState): boolean { let pending: "+removedClass+" | null = state.removed_"+id+"; return pending !== null; } ";
+  fields[fields.length] = {name:"count_"+id,type:"number",role:"derived",dependencies:["records_"+id],initial:"null",owner:"parts"};
+  computations[computations.length] = {instance:"parts",field:"count_"+id,value:"count_"+id+"(state)",ready:"true",reason:"\"Count unavailable\"",dependencies:["f_parts_records_"+id]};
+  helpersText = helpersText+"export function count_"+id+"(state: AppState): number { return state.records_"+id+".length; } ";
+  let numeric: Record<string, unknown> | null = numericEntry(need);
+  let totalUnit: string = ""; let totalDecimals: number = -1;
+  if (numeric !== null) { totalUnit = fieldUnit(numeric); totalDecimals = fieldDecimals(numeric); }
+  if (numeric === null) {
+    fields[fields.length] = {name:"total_"+id,type:"number",role:"derived",dependencies:[],initial:"null",owner:"parts"};
+    computations[computations.length] = {instance:"parts",field:"total_"+id,value:"0",ready:"false",reason:"\"No numeric non-time field exists\"",dependencies:[]};
+  } else {
+    fields[fields.length] = {name:"total_"+id,type:"number",role:"derived",dependencies:["records_"+id],initial:"null",owner:"parts"};
+    computations[computations.length] = {instance:"parts",field:"total_"+id,value:"total_"+id+"(state)",ready:"true",reason:"\"Total unavailable\"",dependencies:["f_parts_records_"+id]};
+    helpersText = helpersText+"export function total_"+id+"(state: AppState): number { let sum: number = 0; for (let row of state.records_"+id+") { sum = sum + row.values."+entryFieldName(numeric)+"; } return sum; } ";
+  }
+  let view: string = "ui.Section(title: "+literals.quote(s.text(need.spec.label))+") {";
+  for (let field of definitions) {
+    let kind: string = s.text(field.kind); let name: string = entryDraft(need,field); let label: string = literals.quote(s.text(field.label));
+    if (kind === "toggle") { view = view+"ui.Toggle(label: "+label+", checked: state."+name+", onChange: action app.Draft_"+id+"_"+entryFieldName(field)+" {value: payload})"; }
+    else { view = view+"ui.TextField(label: "+label+", value: state."+name+", onChange: action app.Draft_"+id+"_"+entryFieldName(field)+" {value: payload})"; }
+    // A field with a checked domain renders its own located reason directly under its control.
+    if (kind === "number" || kind === "time" || kind === "date") { view = view+"When(!state.fieldValid_"+id+"_"+entryFieldName(field)+"_display) {ui.Text(text: state.fieldReason_"+id+"_"+entryFieldName(field)+"_display, style: \"danger\")}"; }
+  }
+  view = view+"ui.Button(text: \"Add\", enabled: state.formValid_"+id+"_display, value: 0, onClick: action app.Add_"+id+" {at: payload})";
+  view = view+"ui.Button(text: \"Undo\", enabled: state.undoable_"+id+"_display, value: 0, onClick: action app.Undo_"+id+" {at: payload})";
+  view = view+"When(state.count_"+id+"_ready) {ui.NumberText(value: state.count_"+id+"_display, suffix: \" records\")}";
+  view = view+"When(state.total_"+id+"_ready) {ui.NumberText(value: state.total_"+id+"_display, prefix: "+literals.quote(s.text(need.spec.label)+" total: ")+", suffix: "+literals.quote(totalUnit)+", decimals: "+String(totalDecimals)+")} When(!state.total_"+id+"_ready) {ui.Text(text: state.total_"+id+"_reason, style: \"muted\")}";
+  view = view+"When(state.notice_"+id+" !== \"\") {ui.Text(text: state.notice_"+id+", style: \"danger\")}";
+  // A keyed ForEach binds inside the enclosing Section, a loop-accepting container; ListGroup's
+  // enumerated child set is never given a loop.
+  view = view+"ForEach(state.rows_"+id+", row: app.f_parts_"+rowClass+", key: row.key) { ui.ListItem(title: row.text, eventValue: row.value, onTap: action app.Remove_"+id+" {key: row.key, at: payload}) }}";
+  return {fields:fields,updates:updates,computations:computations,declarations:declarations,helpers:helpersText,view:view};
+}
+
+// One row_tap operation observes the row it was raised from, not the collection that contains it.
+// Assembly issues the captured stable row key and a comparison over that row's own values, so an
+// unrelated row addition, edit or removal never advances the operation's revision while an edit or
+// removal of the tapped row does. A row tap whose target emits no records collection issues nothing
+// here, and the bind stage keeps that need open with its located reason.
+export function rowScope(built: Built, target: string, operationId: string, fields: Record<string, unknown>[]): void {
+  let instance: screens.Instance = built.instance;
+  let keyName: string = "rowKey_"+operationId;
+  for (let field of instance.fragment.fields) { if (field.name === keyName) { return; } }
+  instance.fragment.fields[instance.fragment.fields.length] = {name:keyName,type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:"parts"};
+  let recordClass: string = "Entry_"+target;
+  instance.fragment.declarations = instance.fragment.declarations+"export class CaptureRow_"+operationId+" { key: string; }";
+  // The captured key is validated against the current record mapping: an unknown key keeps the prior
+  // capture instead of pointing the operation at a row that does not exist.
+  instance.fragment.helpers = instance.fragment.helpers+"export function rowKeyValid_"+operationId+"(state: AppState, key: string): boolean { if (key === \"\") { return false; } for (let row of state.records_"+target+") { if (row.key === key) { return true; } } return false; } ";
+  instance.fragment.helpers = instance.fragment.helpers+"export function captureRow_"+operationId+"(state: AppState, action: CaptureRow_"+operationId+"): AppState { let key: string = state."+keyName+"; if (rowKeyValid_"+operationId+"(state, action.key)) { key = action.key; } return {"+keyName+": key}; } ";
+  // The captured-row action is an ordinary owner reducer of this instance, so the carried write set
+  // and the reachability check see the resource it writes; the row_tap operation is its dispatch route.
+  instance.fragment.updates[instance.fragment.updates.length] = {action:"CaptureRow_"+operationId,function:"captureRow_"+operationId};
+  // The row-scoped comparison is the resource this operation's revision observes: only the tapped row's
+  // timestamp or validated values can change it.
+  let comparisons: string = "";
+  for (let field of fields) {
+    let name: string = s.identifier(field.id);
+    let compare: string = "prior.values."+name+" !== current.values."+name;
+    if (comparisons === "") { comparisons = compare; } else { comparisons = comparisons+" || "+compare; }
+  }
+  let body: string = "export function rowChanged_"+operationId+"(next: AppState, previous: AppState): boolean { let key: string = next."+keyName+"; if (key !== previous."+keyName+") { return true; } if (key === \"\") { return false; } let before: "+recordClass+" | null = null; for (let row of previous.records_"+target+") { if (row.key === key) { before = row; } } let after: "+recordClass+" | null = null; for (let row of next.records_"+target+") { if (row.key === key) { after = row; } } if (before === null && after === null) { return false; } if (before === null || after === null) { return true; } let prior: "+recordClass+" = before as "+recordClass+"; let current: "+recordClass+" = after as "+recordClass+"; if (prior.timestamp !== current.timestamp) { return true; }";
+  if (comparisons !== "") { body = body+" if ("+comparisons+") { return true; }"; }
+  body = body+" return false; } ";
+  instance.fragment.helpers = instance.fragment.helpers+body;
+  instance.definition = screens.issueDefinition(instance.fragment);
+}
+
 export function main(): void { return; }

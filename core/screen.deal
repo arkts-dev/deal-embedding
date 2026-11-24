@@ -6,7 +6,7 @@ import * as plans from "./plan";
 // Construction state is request-local; source fragments retain resolved compiler metadata.
 export class Position { id: string; allowedKinds: string[]; minimum: number; maximum: number; }
 export class Layout { kind: string; positions: Position[]; }
-export class Slot { id: string; need: string; reads: string[]; writes: string[]; event?: string; provider: boolean; allowedKinds: string[]; status: string; instance: string | null; reason: string; }
+export class Slot { id: string; need: string; reads: string[]; writes: string[]; event?: string; trigger?: string; action?: string; provider: boolean; allowedKinds: string[]; valueType: string; status: string; instance: string | null; reason: string; }
 export class Field { name: string; type: string; role: string; dependencies: string[]; initial: string; owner: string; }
 export class Handler { action: string; function: string; }
 export class Port { name: string; type: string; direction: string; getter: string; optional: boolean; fallback?: string; }
@@ -14,23 +14,90 @@ export class Fragment {
   declarations: string; fields: Field[]; updates: Handler[]; effects: Handler[]; helpers: string; view: string;
   options: Record<string, unknown>[]; content: Record<string, unknown>[]; ports: Port[]; holes: Record<string, unknown>[]; covers: string[]; owns: string[];
 }
-export class Instance { id: string; kind: string; origin: string; parameters: Record<string, unknown>; fragment: Fragment; bodies: Record<string, unknown>; position?: string; }
+// Issued definition of an instance: the declarations its implementation was built from. A fragment
+// that disagrees with it is a replacement and rejects before emission.
+export class DefinitionField { name: string; type: string; role: string; initial: string; }
+export class DefinitionPort { name: string; type: string; direction: string; }
+export class DefinitionHole { id: string; parameter: string; type: string; result: string; }
+export class Definition { fields: DefinitionField[]; ports: DefinitionPort[]; actions: string[]; holes: DefinitionHole[]; }
+// Compiler-issued private driver: the emitted ticker identities the Session resolves from the rendered
+// tree, the runtime press-intent and running fields it reads, and the host scheduling interval. It is
+// assembly metadata, never emitted source and never model-supplied.
+export class Driver { need: string; sample: string; tick: string; start: string; pause: string; reset: string; resume: string; request: string; running: string; restore: string; epoch: string; trust: string; intervalMs: number; }
+export class Instance { id: string; kind: string; origin: string; parameters: Record<string, unknown>; fragment: Fragment; bodies: Record<string, unknown>; position?: string; definition?: Definition; drivers?: Driver[]; }
 export class Screen { title: string; target: string; layout: Layout; slots: Slot[]; instances: Instance[]; }
 export class ActionBinding { module: string; function: string; arguments: Record<string, unknown>; }
 export class DescriptorInput { sourceId: string; label: string; initial: string; }
 export class ActionDescriptor { id: string; label: string; binding: string; input?: DescriptorInput; }
 export class Connection { readerInstance: string; readerPort: string; writerInstance: string; writerPort: string; }
-export class Composition { screen: Screen; bindings: Record<string, unknown>; actions: Record<string, unknown>; connections: Connection[]; }
+export class CompositeArm { instance: string; action: string; }
+export class Composite { action: string; arms: CompositeArm[]; }
+export class Composition { screen: Screen; bindings: Record<string, unknown>; actions: Record<string, unknown>; connections: Connection[]; composites?: Composite[]; }
 export class Projection { composition: Composition; notices: string[]; }
 class WireLayout { kind:string; positions?:Position[]; }
 class WirePort { name:string; type:string; direction:string; getter:string; optional?:boolean; fallback?:string; }
 class WireFragment { declarations:string; fields:Field[]; updates:Handler[]; effects:Handler[]; helpers:string; view:string; options:Record<string, unknown>[]; content:Record<string, unknown>[]; ports:WirePort[]; holes:Record<string, unknown>[]; covers:string[]; owns:string[]; }
-class WireInstance { id:string; kind:string; origin:string; parameters:Record<string, unknown>; fragment:WireFragment; bodies:Record<string, unknown>; position?:string; }
+class WireInstance { id:string; kind:string; origin:string; parameters:Record<string, unknown>; fragment:WireFragment; bodies:Record<string, unknown>; position?:string; definition?:WireDefinition; }
 class WireScreen { title:string; target:string; layout:WireLayout; slots:Slot[]; instances:WireInstance[]; }
-class WireComposition { screen:WireScreen; bindings:Record<string, unknown>; actions:Record<string, unknown>; connections:Connection[]; }
+class WireDefinitionField { name:string; type:string; role:string; initial:string; }
+class WireDefinitionPort { name:string; type:string; direction:string; }
+class WireDefinitionHole { id:string; parameter:string; type:string; result:string; }
+class WireDefinition { fields:WireDefinitionField[]; ports:WireDefinitionPort[]; actions:string[]; holes:WireDefinitionHole[]; }
+class WireComposition { screen:WireScreen; bindings:Record<string, unknown>; actions:Record<string, unknown>; connections:Connection[]; composites?:Composite[]; }
 
 export function catalogueKinds(): string[] {
   return ["checklist","metrics","timer","calendar_event","actions","progress_goal","key_facts","trend_chart","note","rating","spotlight","search_list","master_list","filter_box","detail_view","list_summary","record_log","number_strip","breakdown_table","series_chart","settle_up","itinerary","progress_line","intent_panel","data_table","timeline","bar_chart","quick_log","reminders","dose_schedule","due_items","points_ledger","idea_deck","interval_timer","reading_status","live_figure"];
+}
+// The issued definition of a fragment as its own construction stage produced it: field names with
+// resolved types, roles and default expressions, ports with their direction, action names and hole
+// identifiers with their fixed signatures. It is captured before any later stage can replace the
+// fragment, so assembly compares the emitted fragment with what was issued.
+export function issueDefinition(fragment: Fragment): Definition {
+  let fields: DefinitionField[] = []; let ports: DefinitionPort[] = []; let actions: string[] = []; let holes: DefinitionHole[] = [];
+  for (let field of fragment.fields) { fields[fields.length] = {name:field.name,type:field.type,role:field.role,initial:field.initial}; }
+  for (let port of fragment.ports) { ports[ports.length] = {name:port.name,type:port.type,direction:port.direction}; }
+  for (let handler of fragment.updates) { actions[actions.length] = handler.action; }
+  for (let hole of fragment.holes) { holes[holes.length] = {id:s.identifier(hole.id),parameter:s.identifier(hole.parameter),type:s.nonblank(hole.type),result:s.nonblank(hole.result)}; }
+  return {fields:fields,ports:ports,actions:actions,holes:holes};
+}
+function definition(raw: WireDefinition): Definition {
+  let fields: DefinitionField[] = []; let ports: DefinitionPort[] = []; let actions: string[] = []; let holes: DefinitionHole[] = [];
+  let names: string[] = [];
+  for (let field of raw.fields) { s.unique(names,s.identifier(field.name)); fields[fields.length] = {name:field.name,type:s.nonblank(field.type),role:s.oneOf(field.role,["authoritative","derived","runtime"]),initial:s.nonblank(field.initial)}; }
+  for (let port of raw.ports) { ports[ports.length] = {name:s.identifier(port.name),type:s.nonblank(port.type),direction:s.oneOf(port.direction,["publish","read"])}; }
+  for (let action of s.stringArray(raw.actions)) { actions[actions.length] = s.identifier(action); }
+  for (let hole of raw.holes) { holes[holes.length] = {id:s.identifier(hole.id),parameter:s.identifier(hole.parameter),type:s.nonblank(hole.type),result:s.nonblank(hole.result)}; }
+  return {fields:fields,ports:ports,actions:actions,holes:holes};
+}
+// Every issued declaration must still agree with the fragment carrying it. Hole bodies are not
+// compared: an issued body replaces the declared default body and never its signature.
+export function conflict(instance: Instance): string {
+  if (!Object.hasOwn(instance,"definition")) { return ""; }
+  let issued: Definition = instance.definition as Definition; let fragment: Fragment = instance.fragment;
+  if (fragment.fields.length !== issued.fields.length) { return "Conflicting declaration: "+instance.id+" declares "+String(fragment.fields.length)+" fields for an issued "+String(issued.fields.length); }
+  let index: number = 0;
+  while (index < issued.fields.length) {
+    let expected: DefinitionField = issued.fields[index]; let declared: Field = fragment.fields[index];
+    if (declared.name !== expected.name || declared.type !== expected.type || declared.role !== expected.role || declared.initial !== expected.initial) { return "Conflicting declaration or default: "+instance.id+"."+expected.name; }
+    index = index+1;
+  }
+  if (fragment.ports.length !== issued.ports.length) { return "Conflicting port declaration: "+instance.id+" declares "+String(fragment.ports.length)+" ports for an issued "+String(issued.ports.length); }
+  index = 0;
+  while (index < issued.ports.length) {
+    let expectedPort: DefinitionPort = issued.ports[index]; let declaredPort: Port = fragment.ports[index];
+    if (declaredPort.name !== expectedPort.name || declaredPort.type !== expectedPort.type || declaredPort.direction !== expectedPort.direction) { return "Conflicting port declaration: "+instance.id+"."+expectedPort.name; }
+    index = index+1;
+  }
+  if (fragment.updates.length !== issued.actions.length) { return "Conflicting action declaration: "+instance.id; }
+  for (let action of issued.actions) { let declaredAction: boolean = false; for (let handler of fragment.updates) { if (handler.action === action) { declaredAction = true; } } if (!declaredAction) { return "Conflicting action declaration: "+instance.id+"."+action; } }
+  if (fragment.holes.length !== issued.holes.length) { return "Conflicting hole declaration: "+instance.id; }
+  index = 0;
+  while (index < issued.holes.length) {
+    let expectedHole: DefinitionHole = issued.holes[index]; let declaredHole: Record<string, unknown> = fragment.holes[index];
+    if (s.identifier(declaredHole.id) !== expectedHole.id || s.identifier(declaredHole.parameter) !== expectedHole.parameter || s.nonblank(declaredHole.type) !== expectedHole.type || s.nonblank(declaredHole.result) !== expectedHole.result) { return "Conflicting hole declaration: "+instance.id+"."+expectedHole.id; }
+    index = index+1;
+  }
+  return "";
 }
 function layout(raw: WireLayout): Layout {
   let kind: string = s.oneOf(raw.kind,["stack","positions"]); let positions: Position[] = [];
@@ -54,7 +121,7 @@ function handlers(values: Handler[]): Handler[] {
 function fragment(raw: WireFragment, owner: string): Fragment {
   let fields: Field[] = []; let names: string[] = [];
   for (let field of raw.fields) {
-    s.identifier(field.name); s.nonblank(field.type); s.oneOf(field.role,["authoritative","derived"]); s.nonblank(field.initial); s.identifier(field.owner);
+    s.identifier(field.name); s.nonblank(field.type); s.oneOf(field.role,["authoritative","derived","runtime"]); s.nonblank(field.initial); s.identifier(field.owner);
     if (field.owner !== owner) { s.reject("Foreign field owner"); } s.unique(names,field.name); fields[fields.length] = field;
   }
   let ports: Port[] = []; let portNames: string[] = [];
@@ -69,29 +136,58 @@ function fragment(raw: WireFragment, owner: string): Fragment {
 }
 export function reserve(plan: plans.Plan, target: string): Screen {
   s.oneOf(target,["screen","chat","card"]); let slots: Slot[] = [];
-  for (let need of plan.needs) { slots[slots.length] = {id:need.id,need:need.id,reads:need.reads,writes:[],provider:need.type === "action" || need.type === "live",allowedKinds:[],status:"open",instance:null,reason:"Implementation not selected"}; }
+  for (let need of plan.needs) { slots[slots.length] = {id:need.id,need:need.id,reads:need.reads,writes:[],provider:false,allowedKinds:[],valueType:publishedType(need),status:"open",instance:null,reason:"Implementation not selected"}; }
+  // A checked event slot is issued from the need action trigger on that action need's own slot, so
+  // its identity is the qualified action the trigger must reach and `trigger` names the issued clock,
+  // entries, list or time source it is raised from. A button action carries no event slot.
+  for (let need of plan.needs) { if (need.type === "action" && Object.hasOwn(need,"trigger")) {
+    let trigger: plans.Trigger = need.trigger as plans.Trigger;
+    for (let slot of slots) { if (slot.need === need.id) { slot.event = trigger.on; slot.trigger = trigger.at; } }
+  } }
   return {title:plan.title,target:target,layout:{kind:"stack",positions:[]},slots:slots,instances:[]};
+}
+// The need-fixed value type of a slot output. A need without a published value issues none.
+function publishedType(need: plans.Need): string {
+  if (need.type === "figure") { if (Object.hasOwn(need.spec,"format") && s.text(need.spec.format) === "yes_no") { return "boolean"; } return "number"; }
+  if (need.type === "live" || need.type === "countdown" || need.type === "stopwatch" || need.type === "entries") { return "number"; }
+  return "";
 }
 function screen(raw: WireScreen, frozenTarget: string, needIds: string[]): Screen {
   let target: string = s.oneOf(raw.target,["screen","chat","card"]); if (target !== frozenTarget) { s.reject("Screen target promotion"); }
   let result: Screen = {title:s.nonblank(raw.title),target:target,layout:layout(raw.layout),slots:[],instances:[]};
-  let slotIds: string[] = []; let instanceIds: string[] = []; let catalogue: string[] = [];
+  let slotIds: string[] = []; let slotNeeds: string[] = []; let instanceIds: string[] = []; let catalogue: string[] = [];
   for (let value of raw.instances) {
     let id: string = s.identifier(value.id); s.unique(instanceIds,id);
     let entry: Instance = {id:id,kind:s.nonblank(value.kind),origin:s.oneOf(value.origin,["part","catalogue","custom","notice"]),parameters:value.parameters as Record<string, unknown>,fragment:fragment(value.fragment,id),bodies:value.bodies as Record<string, unknown>};
     if (Object.hasOwn(value,"position")) { entry.position = s.identifier(value.position); }
     if (entry.origin === "catalogue") { s.oneOf(entry.kind,catalogueKinds()); s.unique(catalogue,entry.kind); }
+    // An issued catalogue or part instance carries the definition it was built from; a composition
+    // without one cannot prove that its fragment implements the issued declaration.
+    if (Object.hasOwn(value,"definition")) { entry.definition = definition(value.definition as WireDefinition); }
+    else if (entry.origin === "catalogue" || entry.origin === "part") { s.reject("Missing issued definition: "+entry.id); }
+    let declaredConflict: string = conflict(entry);
+    if (declaredConflict !== "") { s.reject(declaredConflict); }
     let holes: string[] = []; for (let hole of entry.fragment.holes) { s.unique(holes,s.identifier(hole.id)); }
     for (let holeId of tables.keys(entry.bodies)) { if (!s.contains(holes,holeId)) { s.reject("Unissued body: "+holeId); } s.text(entry.bodies[holeId]); }
     for (let cover of entry.fragment.covers) { if (!s.contains(needIds,cover)) { s.reject("Unissued fragment coverage"); } }
     result.instances[result.instances.length] = entry;
   }
   for (let value of raw.slots) {
-    let entry: Slot = {id:s.identifier(value.id),need:s.identifier(value.need),reads:value.reads,writes:value.writes,provider:value.provider,allowedKinds:value.allowedKinds,status:s.oneOf(value.status,["open","filled","missing","unchecked"]),instance:null,reason:value.reason};
-    if (!s.contains(needIds,entry.need)) { s.reject("Unissued slot need"); } s.unique(slotIds,entry.id);
+    let entry: Slot = {id:s.identifier(value.id),need:s.identifier(value.need),reads:value.reads,writes:value.writes,provider:value.provider,allowedKinds:value.allowedKinds,valueType:"",status:s.oneOf(value.status,["open","filled","missing","unchecked"]),instance:null,reason:value.reason};
+    if (!s.contains(needIds,entry.need)) { s.reject("Unissued slot need"); }
+    // A slot is identified by its need and a composition issues exactly one slot per need.
+    if (entry.id !== entry.need) { s.reject("Slot identity differs from its need: "+entry.id); }
+    s.unique(slotIds,entry.id); s.unique(slotNeeds,entry.need);
     if (value.instance !== null) { entry.instance = s.identifier(value.instance); if (!s.contains(instanceIds,entry.instance as string)) { s.reject("Unissued slot instance"); } }
     if (entry.status === "filled" && entry.instance === null) { s.reject("Filled slot without implementation"); }
     if (Object.hasOwn(value,"event")) { entry.event = s.identifier(value.event); }
+    if (Object.hasOwn(value,"trigger")) { entry.trigger = s.identifier(value.trigger); }
+    // An action need served by an issued binding carries the operation identity it is dispatched to.
+    if (Object.hasOwn(value,"action")) { entry.action = s.identifier(value.action); }
+    // An event slot carries the issued trigger source it is raised from; an event without one, or a
+    // trigger with no event, leaves a consumer guessing the resource the trigger reaches.
+    if (Object.hasOwn(entry,"event") !== Object.hasOwn(entry,"trigger")) { s.reject("Event slot without its trigger source: "+entry.id); }
+    if (Object.hasOwn(value,"valueType")) { entry.valueType = s.text(value.valueType); }
     result.slots[result.slots.length] = entry;
   }
   for (let need of needIds) { let preserved: boolean = false; for (let slot of result.slots) { if (slot.need === need) { preserved = true; } } if (!preserved) { s.reject("Lost need: "+need); } }
@@ -105,7 +201,7 @@ function visit(id: string, connections: Connection[], path: string[]): void {
 }
 export function decode(raw: string, frozenTarget: string, needIds: string[]): Projection {
   const value: WireComposition = JSON.parse(raw);
-  let result: Composition = {screen:screen(value.screen,frozenTarget,needIds),bindings:{},actions:{},connections:[]}; let notices: string[] = [];
+  let result: Composition = {screen:screen(value.screen,frozenTarget,needIds),bindings:{},actions:{},connections:[],composites:[]}; let notices: string[] = [];
   let bindings: Record<string, unknown> = value.bindings as Record<string, unknown>;
   for (let id of tables.keys(bindings)) {
     s.identifier(id); let rawBinding: Record<string, unknown> = bindings[id] as Record<string, unknown>; s.closed(rawBinding,["module","function","arguments"],[]);
@@ -129,11 +225,26 @@ export function decode(raw: string, frozenTarget: string, needIds: string[]): Pr
     if (reader.type !== writer.type) { s.reject("Port identity mismatch"); }
     s.unique(readers,connection.readerInstance+"/"+connection.readerPort); result.connections[result.connections.length] = connection;
   }
-  let owners: string[] = [];
   for (let instance of result.screen.instances) {
     visit(instance.id,result.connections,[]);
-    for (let resource of instance.fragment.owns) { s.unique(owners,resource); }
+    // Declared `owns` entries grant no permission and gate nothing: ownership is decided over the
+    // qualified authoritative resources reducers write, so two instances declaring one `owns` spelling
+    // are not a conflict and their written resources decide every conflict.
     for (let port of instance.fragment.ports) { if (port.direction === "read" && !port.optional && !s.contains(readers,instance.id+"/"+port.name)) { s.reject("Missing required publisher"); } }
+  }
+  if (Object.hasOwn(value,"composites")) {
+    let actions: string[] = []; let issued: Composite[] = [];
+    for (let rawComposite of value.composites as Composite[]) {
+      let composite: Composite = {action:s.identifier(rawComposite.action),arms:[]}; s.unique(actions,composite.action);
+      let owners: string[] = [];
+      for (let rawArm of rawComposite.arms) {
+        s.identifier(rawArm.instance); s.identifier(rawArm.action); owners[owners.length] = rawArm.instance;
+        composite.arms[composite.arms.length] = {instance:rawArm.instance,action:rawArm.action};
+      }
+      if (composite.arms.length < 2) { s.reject("Composite requires at least two owner arms: "+composite.action); }
+      issued[issued.length] = composite;
+    }
+    result.composites = issued;
   }
   if (result.screen.layout.kind === "stack") { for (let instance of result.screen.instances) { if (Object.hasOwn(instance,"position")) { s.reject("Position in stack layout"); } } }
   else {
@@ -145,6 +256,16 @@ export function decode(raw: string, frozenTarget: string, needIds: string[]): Pr
     }
     for (let instance of result.screen.instances) { if (!Object.hasOwn(instance,"position")) { incompatible = true; } else if (!s.contains(positions,instance.position as string)) { s.reject("Unknown layout position"); } }
     if (incompatible) { result.screen.layout = {kind:"stack",positions:[]}; for (let instance of result.screen.instances) { if (Object.hasOwn(instance,"position")) { delete instance.position; } } notices[notices.length] = "Incompatible layout capacities or kinds; using stack"; }
+    else {
+      // A declared position whose minimum is 0 and which no instance occupies disappears from the
+      // emitted layout; a position any instance fills is retained.
+      let retained: Position[] = [];
+      for (let position of result.screen.layout.positions) {
+        let count: number = 0; for (let instance of result.screen.instances) { if (Object.hasOwn(instance,"position") && (instance.position as string) === position.id) { count = count+1; } }
+        if (count > 0 || position.minimum > 0) { retained[retained.length] = position; }
+      }
+      result.screen.layout = {kind:"positions",positions:retained};
+    }
   }
   return {composition:result,notices:notices};
 }

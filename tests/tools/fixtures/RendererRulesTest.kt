@@ -185,6 +185,14 @@ fun main(args: Array<String>) {
     check(NumericPresentation.format(3.0, "€", " kg", 2, 0) == "€03 kg")
     check(NumericPresentation.format(1.0 / 3.0, "", "", 1, -1) == "0.3333333333333333")
     check(NumericPresentation.format(1e21, "", "", 1, -1) == "1000000000000000000000")
+    // The fixed count rounds the shortest round-tripping decimal half away from zero, not the binary
+    // product: the entry row's prepared text and the NumberText total show one number (1.005 -> 1.01,
+    // 2.675 -> 2.68) and an automatic count keeps a tiny decimal plain (1e-7 -> 0.0000001).
+    check(NumericPresentation.format(1.005, "", "", 1, 2) == "1.01")
+    check(NumericPresentation.format(2.675, "", "", 1, 2) == "2.68")
+    check(NumericPresentation.format(1e-7, "", "", 1, -1) == "0.0000001")
+    check(NumericPresentation.format(1.5, "", "", 1, 0) == "2")
+    check(NumericPresentation.format(-0.001, "", "", 1, 2) == "0.00")
     check(NumericPresentation.display(4.0, mapOf("prefix" to UiValue.Text("#"), "suffix" to UiValue.Text("!"),
         "minimumDigits" to UiValue.Num(2.0), "decimals" to UiValue.Num(1.0))) == "#04.0!")
 

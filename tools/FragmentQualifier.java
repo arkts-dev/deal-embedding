@@ -17,6 +17,11 @@ public final class FragmentQualifier {
     private final Set<String> imports = new HashSet<>();
     private final List<String> preserved = new ArrayList<>();
     private final Set<String> writable = new HashSet<>();
+    private final Set<String> unissued = new LinkedHashSet<>();
+    /** Root views the fragment declares: reported as a fact, never rejected here. */
+    private final List<String> roots = new ArrayList<>();
+    /** Action names the fragment view binds; a handler no view, effect or composite reaches rejects. */
+    private final Set<String> viewActions = new LinkedHashSet<>();
     private FragmentQualifier(Map<String,String> names, Map<String,String> fields) {
         this.names = Map.copyOf(names); this.fields = Map.copyOf(fields);
     }
@@ -46,7 +51,8 @@ public final class FragmentQualifier {
         var parsedView = UiParser.parseViews(Path.of("fragment.dealui"),view);
         Map<String,String> qualifiedTypes = new LinkedHashMap<>(); stateTypes.forEach((key,text) -> qualifiedTypes.put(key,printer.type(parseType(text))));
         return Map.of("declarations",printer.program(first,declarations),"helpers",printer.program(second,helpers),
-            "view",printer.view(parsedView),"types",qualifiedTypes);
+            "view",printer.view(parsedView),"types",qualifiedTypes,"unissuedWrites",new ArrayList<>(printer.unissued),
+            "viewActions",new ArrayList<>(printer.viewActions),"roots",printer.roots);
     }
     public static String expression(String source, Map<String,String> names, Map<String,String> fields,
                                     Map<String,String> stateTypes, String expected, Map<String,String> variables) {
@@ -170,10 +176,13 @@ public final class FragmentQualifier {
                 TypeNode target = null;
                 if (state(expected)) target = stateTypes.get(p.name());
                 else if (unnull(expected) instanceof NamedType n && classes.containsKey(n.name())) for (var f : classes.get(n.name()).fields()) if (f.name().equals(p.name())) target = f.type();
-                if(state(expected) && !writable.contains(p.name())) {
-                    if(!(p.value() instanceof MemberAccessExpr member) || !member.field().equals(p.name()) || !state(resolved(member.object(),scope)))throw new IllegalArgumentException("Owner reducer cannot write derived/foreign field: "+p.name());
-                }
                 if (state(expected) && p.key()!=null) throw new IllegalArgumentException("Computed AppState field is not an issued owner field");
+                if (state(expected) && !writable.contains(p.name())) {
+                    // Preserving an unchanged value (`double: state.double`) is not a write; only a
+                    // literal that supplies a different value for an unissued resource is a fact.
+                    boolean selfReference = p.value() instanceof MemberAccessExpr member && member.field().equals(p.name()) && state(resolved(member.object(),scope));
+                    if (!selfReference) unissued.add(p.name());
+                }
                 String key = p.key()!=null ? "["+expression(p.key(),scope,null)+"]" : state(expected) ? stateField(p.name()) : p.name().matches("[A-Za-z_$][A-Za-z0-9_$]*") ? p.name() : quote(p.name());
                 properties.add(key + ": " + expression(p.value(),scope,target));
               }
@@ -214,7 +223,9 @@ public final class FragmentQualifier {
     private String view(UiModel.ViewModule module) {
         StringBuilder out = new StringBuilder();
         for (var item : module.views()) {
-            if (item.root()) throw new IllegalArgumentException("Only composer may issue @ui-root");
+            // A fragment-declared root is reported as a fact of this mechanism; compiled ownership policy
+            // decides whether the composition may carry it.
+            if (item.root()) { roots.add(item.name()); continue; }
             Map<String,UiModel.TypeRef> scope = new LinkedHashMap<>(); item.parameters().forEach(p -> scope.put(p.name(),p.type()));
             out.append(item.exported()?"export ":"").append("view ").append(name(item.name())).append("(").append(item.parameters().stream().map(p -> p.name() + ": " + uiType(p.type())).collect(Collectors.joining(", "))).append("): View {\n");
             for (var node : item.nodes()) out.append(uiNode(node,scope,1));
@@ -247,6 +258,7 @@ public final class FragmentQualifier {
             case UiModel.Has h -> "Object.hasOwn(" + uiPath(h.path(),scope) + ")";
             case UiModel.Action a -> {
                 String[] parts = a.name().split("\\."); String action = parts.length==2 ? name(parts[0])+"."+name(parts[1]) : name(a.name());
+                viewActions.add(parts.length==2 ? parts[1] : a.name());
                 yield "action " + action + a.fields().entrySet().stream().map(e -> e.getKey() + ": " + uiExpr(e.getValue(),scope)).collect(Collectors.joining(", "," {", "}"));
             }
         };

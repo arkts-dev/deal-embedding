@@ -39,8 +39,11 @@ REQUIRED_FAMILIES = [
     'build-boundary', 'acceptance-journeys', 'human-visual', 'final-integration',
 ]
 # A line states a check when it carries one of these markers. A token that only appears in prose, in a
-# fixture definition or in a comment does not prove the requirement.
+# fixture definition or in a comment does not prove the requirement. The fixture helper `refusesPlan(`
+# is an assertion in its own right: it throws TEST_FAILED unless the decoded plan is refused with the
+# named located reason, so its lines are asserting lines.
 ASSERTION_MARKERS = ('assert', 'check(', 'require(', 'expect(', 'insist', 'rejects(',
+                     'refusesPlan(',
                      'rejected(', 'accepted(', 'checked(', 'expectMismatch(')
 # An assertion source is executed code or a fixture it drives; documentation is prose, never evidence.
 SOURCE_SUFFIXES = {'.kt', '.deal', '.js', '.py', '.java'}

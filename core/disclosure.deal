@@ -1,0 +1,72 @@
+import * as decoded from "./decoded";
+import * as s from "./construction-schema";
+import * as tables from "std/table";
+
+// The one compiled disclosure predicate. Evidence is the frozen request text followed by a newline
+// and the disclosed facts, which are the two strings the catalogue rule already joins. It serves the
+// seed admission of plan decode, the catalogue parameter rows and the exact-quote check of user-owned
+// content; there is never a second evidence rule.
+export function evidence(original: string, facts: string): string { return original+"\n"+facts; }
+// A nonempty text value occurs as an exact substring; only the empty string carries no content. A
+// whitespace-only value is content like any other and needs its exact evidence.
+export function admitsText(data: string, content: string): boolean { if (content === "") { return true; } return data.includes(content); }
+// A toggle value contributes its exact `true` or `false` spelling.
+export function admitsToggle(data: string, value: boolean): boolean { if (value) { return data.includes("true"); } return data.includes("false"); }
+// A number value contributes its shortest round-trip decimal spelling.
+export function admitsNumber(data: string, value: number): boolean { return data.includes(String(value)); }
+// A time or date value contributes its integral spelling.
+export function admitsIntegral(data: string, value: number): boolean { return data.includes(String(value)); }
+// A supplied timestamp traces to a disclosed numeric millisecond value whose declared provenance is
+// Unix milliseconds, and the comparison is exact numeric equality against that declared value. A bare
+// JSON number, a key that merely looks temporal, a label, substring, need quote or an amount, count or
+// percentage that happens to carry the same number is not timestamp evidence, so it issues no dated
+// record. The fact identity, its declared type and its value are the evidence; without them a supplied
+// timestamp rejects and the omitted timestamp keeps the captured activation time.
+export function admitsTimestamp(facts: string, value: number): string {
+  if (!Number.isFinite(value) || Math.floor(value) !== value) { return ""; }
+  let parsed: unknown = null;
+  try { parsed = JSON.parse(facts); } catch (unknownError) { return ""; }
+  if (typeof parsed !== "object" || parsed === null) { return ""; }
+  let root: Record<string, unknown> = parsed as Record<string, unknown>;
+  if (!Object.hasOwn(root,"facts")) { return ""; }
+  let issued: unknown = root.facts;
+  if (typeof issued !== "object" || issued === null) { return ""; }
+  let entries: unknown[] = issued as unknown[];
+  for (let entry of entries) {
+    if (typeof entry !== "object" || entry === null) { continue; }
+    let fact: Record<string, unknown> = entry as Record<string, unknown>;
+    // The declaration is the host-issued fact's own type, never a guessed key name.
+    if (typeof fact.type !== "string" || (fact.type as string) !== "unixMillis") { continue; }
+    if (typeof fact.id !== "string" || (fact.id as string).trim() === "") { continue; }
+    if (typeof fact.text !== "string") { continue; }
+    if (typeof fact.value !== "number") { continue; }
+    let declared: number = fact.value as number;
+    if (!Number.isFinite(declared) || Math.floor(declared) !== declared) { continue; }
+    if (declared === value) { return fact.id as string; }
+  }
+  return "";
+}
+// A record that supplies no field values is evidenced only when the need quote is nonempty and occurs
+// exactly in the request text, because nothing else evidences that a logging event happened.
+export function admitsQuote(original: string, quote: string): boolean { if (quote === "") { return false; } return original.includes(quote); }
+// A disclosed context fact is host-supplied evidence that can also become an issued string source
+// emitted as data. Decoding it here keeps one shape for the disclosed context: the facts array of
+// the frozen context value, each entry a nonblank identifier and its text. It grants no authority, and
+// an entry of another shape stays requirement evidence only instead of aborting the composition.
+export class ContextFact { id: string; text: string; }
+export function context(facts: string): ContextFact[] {
+  let result: ContextFact[] = [];
+  let raw: unknown = JSON.parse(facts);
+  if (typeof raw !== "object" || raw === null) { return result; }
+  let parsed: Record<string, unknown> = raw as Record<string, unknown>;
+  if (!Object.hasOwn(parsed,"facts")) { return result; }
+  let ids: string[] = [];
+  for (let item of decoded.records(parsed.facts)) {
+    let issued: unknown = item.id; let text: unknown = item.text;
+    if (typeof issued !== "string" || typeof text !== "string") { continue; }
+    let id: string = s.nonblank(issued); s.unique(ids,id);
+    result[result.length] = {id:id,text:text};
+  }
+  return result;
+}
+export function main(): void { return; }

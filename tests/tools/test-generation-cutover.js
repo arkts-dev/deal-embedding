@@ -13,6 +13,10 @@ const RETAINED=new Set(['ordinary','catalogue','catalogue-empty','catalogue-sect
 const classes=path.join(root,'build/embedding-library/classes'),testClasses=path.join(stage,'classes');fs.mkdirSync(testClasses,{recursive:true});
 cp.execFileSync('javac',['--release','21','-cp',classes,'-d',testClasses,'tests/tools/fixtures/CompileComposer.java','tests/tools/fixtures/ProviderDeclaration.java']);
 const classpath=testClasses+':'+classes;
+// One long-lived syntax-mechanism process for the whole matrix; every call is still the library's own
+// one-invocation entry, opened only if a mode reaches the mechanism.
+let transport=null;const syntaxTransport=()=>transport||(transport=require('./fixtures/syntax-transport.js')(classpath,'dev.deal.embedding.FragmentMechanisms'));
+async function closeTransport(){if(!transport)return;const code=await transport.close();assert.equal(code,0,'syntax transport exited '+code);}
 const javaWithKotlin=classpath+':'+path.join(process.env.KOTLIN_HOME||'/snap/kotlin/current','lib/kotlin-stdlib.jar');
 const sources={};function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(path.join(assets,'generation'),file)]=fs.readFileSync(file,'utf8');}}walk(path.join(assets,'generation'));
 // Pairs kept for the runtime items. Their recorded digest is written only after every mode passed, so a
@@ -21,8 +25,8 @@ const emitted=[];
 const vocabularyDigest=require('./fixtures/generation-digest.js').digest;
 // The digest of the generation sources the emitters are fed, sampled once with the module snapshot.
 const bundleDigest=vocabularyDigest(assets);
-const ordinaryPlan={title:'Editable calculation',inputs:[{id:'value',label:'Value',kind:'count',measure:'count',value:3,min:0,max:99},{id:'active',label:'Active',kind:'toggle',measure:'count',value:false}],requirements:[{id:'preserve',text:'Double the edited value',sources:['request'],needs:['calculate']}],needs:[{id:'calculate',type:'figure',words:'Double the edited value',reads:['value'],spec:{label:'Double',format:'count',unit:'',formula:'value * 2',example:{inputs:{value:3},result:6}}}],questions:[]};
-const cataloguePlan={title:'Checklist',requirements:[{id:'preserve',text:'Toggle items and summarize completion',sources:['request'],needs:['items','summary','choice']}],needs:[{id:'items',type:'content',words:'Toggle the disclosed checklist',quote:'',reads:[],spec:{}},{id:'summary',type:'content',words:'Show completion and remaining counts',reads:['items'],spec:{}},{id:'choice',type:'content',words:'Choose one disclosed label',reads:[],spec:{}}]};
+const ordinaryPlan={title:'Editable calculation',inputs:[{id:'value',label:'Value',kind:'count',measure:'count',value:3,min:0,max:99},{id:'active',label:'Active',kind:'toggle',measure:'count',value:false}],constants:[],requirements:[{id:'preserve',text:'Double the edited value',sources:['request'],needs:['calculate']}],needs:[{id:'calculate',type:'figure',words:'Double the edited value',reads:['value'],spec:{label:'Double',format:'count',unit:'',formula:'value * 2',example:{inputs:{value:3},result:6}}}],questions:[]};
+const cataloguePlan={title:'Checklist',inputs:[],constants:[],requirements:[{id:'preserve',text:'Toggle items and summarize completion',sources:['request'],needs:['items','summary','choice']}],needs:[{id:'items',type:'content',words:'Toggle the disclosed checklist',quote:'',reads:[],spec:{}},{id:'summary',type:'content',words:'Show completion and remaining counts',reads:['items'],spec:{}},{id:'choice',type:'content',words:'Choose one disclosed label',reads:[],spec:{}}],questions:[]};
 // Alignment runs after both selection batches over the needs no accepted choice fills: round one
 // offers the readers the accepted composition already satisfies, round two the standalone kinds.
 const alignmentPlan={...ordinaryPlan,needs:[...ordinaryPlan.needs,{id:'items',type:'content',words:'Toggle the disclosed checklist',quote:'',reads:[],spec:{}},{id:'summary',type:'content',words:'Show completion and remaining counts',reads:['items'],spec:{}},{id:'extra',type:'content',words:'Show the disclosed extra facts',quote:'',reads:[],spec:{}}]};
@@ -32,20 +36,20 @@ const alignmentSections=[{need:'items',parameters:{title:'Disclosed checklist',i
 const alignmentOncePlan={...alignmentPlan,needs:[...alignmentPlan.needs,{id:'notes',type:'content',words:'Show the disclosed notes',quote:'',reads:[],spec:{}}]};
 const mixedPlan={...ordinaryPlan,needs:[...ordinaryPlan.needs,{id:'extra',type:'other',words:'An additional custom editable value',reads:[],spec:{}}]};
 const wrongUnitPlan={...ordinaryPlan,needs:[...ordinaryPlan.needs,{id:'wrong_scale',type:'figure',words:'Display the original minor-unit amount',reads:['value'],spec:{label:'Wrong scale',format:'money',unit:'EUR',formula:'value',example:{inputs:{value:3},result:3}}}]};
-const catalogueEmptyPlan={title:'Checklist',requirements:[{id:'preserve',text:'Toggle items and show disclosed facts',sources:['request'],needs:['items','facts']}],needs:[{id:'items',type:'content',words:'Toggle the disclosed checklist',quote:'',reads:[],spec:{}},{id:'facts',type:'content',words:'Show the disclosed facts',reads:[],spec:{}}]};
-const catalogueSectionsPlan={title:'Facts',requirements:[{id:'preserve',text:'Show disclosed facts and a highlighted message',sources:['request'],needs:['facts','watch','details']}],needs:[{id:'facts',type:'content',words:'Show the disclosed facts',quote:'',reads:[],spec:{}},{id:'watch',type:'content',words:'Highlight the disclosed message',quote:'',reads:[],spec:{}},{id:'details',type:'content',words:'Show the disclosed details',quote:'',reads:[],spec:{}}]};
+const catalogueEmptyPlan={title:'Checklist',inputs:[],constants:[],requirements:[{id:'preserve',text:'Toggle items and show disclosed facts',sources:['request'],needs:['items','facts']}],needs:[{id:'items',type:'content',words:'Toggle the disclosed checklist',quote:'',reads:[],spec:{}},{id:'facts',type:'content',words:'Show the disclosed facts',reads:[],spec:{}}],questions:[]};
+const catalogueSectionsPlan={title:'Facts',inputs:[],constants:[],requirements:[{id:'preserve',text:'Show disclosed facts and a highlighted message',sources:['request'],needs:['facts','watch','details']}],needs:[{id:'facts',type:'content',words:'Show the disclosed facts',quote:'',reads:[],spec:{}},{id:'watch',type:'content',words:'Highlight the disclosed message',quote:'',reads:[],spec:{}},{id:'details',type:'content',words:'Show the disclosed details',quote:'',reads:[],spec:{}}],questions:[]};
 // The read-only sections: one need per kind, each carrying plain disclosed content. The escaped cell
 // exercises the compiler's literal printer end to end; the row carries quotes, a backslash, a newline,
 // an astral pair and a control unit, and the request text discloses it.
 const escapedCell='sh"q\\b\n\u{1F600}\u0001end';
-const catalogueReadonlyPlan={title:'Read-only sections',requirements:[{id:'preserve',text:'Show the disclosed table, rail, charts and facts',sources:['request'],needs:['table','rail','bars','trend','facts','details']}],needs:[{id:'table',type:'content',words:'Show the disclosed table',quote:'',reads:[],spec:{}},{id:'rail',type:'content',words:'Show the disclosed timeline',quote:'',reads:[],spec:{}},{id:'bars',type:'content',words:'Show the disclosed bars',quote:'',reads:[],spec:{}},{id:'trend',type:'content',words:'Show the disclosed trend',quote:'',reads:[],spec:{}},{id:'facts',type:'content',words:'Show the disclosed facts',quote:'',reads:[],spec:{}},{id:'details',type:'content',words:'Show the disclosed details',quote:'',reads:[],spec:{}}]};
+const catalogueReadonlyPlan={title:'Read-only sections',inputs:[],constants:[],requirements:[{id:'preserve',text:'Show the disclosed table, rail, charts and facts',sources:['request'],needs:['table','rail','bars','trend','facts','details']}],needs:[{id:'table',type:'content',words:'Show the disclosed table',quote:'',reads:[],spec:{}},{id:'rail',type:'content',words:'Show the disclosed timeline',quote:'',reads:[],spec:{}},{id:'bars',type:'content',words:'Show the disclosed bars',quote:'',reads:[],spec:{}},{id:'trend',type:'content',words:'Show the disclosed trend',quote:'',reads:[],spec:{}},{id:'facts',type:'content',words:'Show the disclosed facts',quote:'',reads:[],spec:{}},{id:'details',type:'content',words:'Show the disclosed details',quote:'',reads:[],spec:{}}],questions:[]};
 // Every cell, rail title and detail, chart label with its decimal spelling and fact is disclosed.
 const catalogueReadonlyFacts={headers:['Item','Amount','Note'],table:[{item:'Rent',amount:'40',note:'paid'},{item:'Food',amount:'2.5'}],rail:[{at:'Standup',note:'daily',minute:570},{at:'Review',minute:600}],chart:[{day:'Mon',spent:0},{day:'Tue',spent:2.5},{day:'Wed',spent:10},{at:'a',delta:-2},{at:'b',delta:0.25},{at:'c',delta:3}],notes:[{label:'first',value:'items'},{label:'second',value:'done'}]};
 // Empty sections carry no row, so they are admitted and must compile as their explanation alone.
-const catalogueReadonlyEmptyPlan={title:'Empty sections',requirements:[{id:'preserve',text:'Explain the empty table, rail and chart',sources:['request'],needs:['table','rail','bars']}],needs:[{id:'table',type:'content',words:'Show the disclosed table',quote:'',reads:[],spec:{}},{id:'rail',type:'content',words:'Show the disclosed timeline',quote:'',reads:[],spec:{}},{id:'bars',type:'content',words:'Show the disclosed bars',quote:'',reads:[],spec:{}}]};
+const catalogueReadonlyEmptyPlan={title:'Empty sections',inputs:[],constants:[],requirements:[{id:'preserve',text:'Explain the empty table, rail and chart',sources:['request'],needs:['table','rail','bars']}],needs:[{id:'table',type:'content',words:'Show the disclosed table',quote:'',reads:[],spec:{}},{id:'rail',type:'content',words:'Show the disclosed timeline',quote:'',reads:[],spec:{}},{id:'bars',type:'content',words:'Show the disclosed bars',quote:'',reads:[],spec:{}}],questions:[]};
 // One disclosed row and one invented cell: the predicate at its production call site must refuse the
 // whole instance, leaving the need open for custom writing instead of a trimmed table.
-const catalogueUndisclosedPlan={title:'Undisclosed row',requirements:[{id:'preserve',text:'Show the disclosed table and a highlighted message',sources:['request'],needs:['table','watch']}],needs:[{id:'table',type:'content',words:'Show the disclosed table',quote:'',reads:[],spec:{}},{id:'watch',type:'content',words:'Highlight the disclosed message',quote:'',reads:[],spec:{}}]};
+const catalogueUndisclosedPlan={title:'Undisclosed row',inputs:[],constants:[],requirements:[{id:'preserve',text:'Show the disclosed table and a highlighted message',sources:['request'],needs:['table','watch']}],needs:[{id:'table',type:'content',words:'Show the disclosed table',quote:'',reads:[],spec:{}},{id:'watch',type:'content',words:'Highlight the disclosed message',quote:'',reads:[],spec:{}}],questions:[]};
 // The headers and the first row are disclosed; only the invented second-row cell is not, so the
 // refusal must reach the production call site as that cell's location.
 const catalogueUndisclosedFacts={headers:['Item','Amount','Note'],table:[{item:'Rent',amount:'40',note:'paid'},{item:'Food',amount:'2.5'}]};
@@ -53,12 +57,12 @@ const fixtureFacts='{"items":[{"id":"first","label":"First item"},{"id":"second"
 const fixturePlan={title:'Editable calculation',inputs:[],constants:[],requirements:[{id:'preserve',text:'Double the edited value',sources:['request'],needs:['calculate']}],needs:[{id:'calculate',type:'other',words:'Double the edited value',reads:[],spec:{}}],questions:[]};
 // An action need whose trigger the plan left open (`other`): the second Select batch must decide it
 // before any writer sees the plan (docs/spec-v0.8.md:260).
-const eventsPlan={title:'Timed log',inputs:[{id:'value',label:'Value',kind:'count',measure:'count',value:3,min:0,max:99}],requirements:[{id:'preserve',text:'Double the edited value and log it',sources:['request'],needs:['calculate','log']}],needs:[{id:'calculate',type:'figure',words:'Double the edited value',reads:['value'],spec:{label:'Double',format:'count',unit:'',formula:'value * 2',example:{inputs:{value:3},result:6}}},{id:'log',type:'action',words:'Log the doubled value',reads:['calculate'],spec:{on:'other',operation:'host/log.write'}}],questions:[]};
+const eventsPlan={title:'Timed log',constants:[],inputs:[{id:'value',label:'Value',kind:'count',measure:'count',value:3,min:0,max:99}],requirements:[{id:'preserve',text:'Double the edited value and log it',sources:['request'],needs:['calculate','log']}],needs:[{id:'calculate',type:'figure',words:'Double the edited value',reads:['value'],spec:{label:'Double',format:'count',unit:'',formula:'value * 2',example:{inputs:{value:3},result:6}}},{id:'log',type:'action',words:'Log the doubled value',reads:['calculate'],spec:{on:'other',operation:'host/log.write'}}],questions:[]};
 // The same request with several eligible trigger sources: a spread answer below the ordinary
 // threshold leaves the trigger unsettled, which must keep the need out of the writer input.
-const eventsOpenPlan={...eventsPlan,needs:[...eventsPlan.needs,{id:'timer',type:'countdown',words:'Count down to the deadline',reads:[],spec:{label:'Timer',length:'value'}},{id:'rows',type:'entries',words:'Log rows',reads:[],spec:{label:'Rows'}}]};
+const eventsOpenPlan={...eventsPlan,inputs:[...eventsPlan.inputs,{id:'span',label:'Span',kind:'count',measure:'seconds',value:60}],needs:[...eventsPlan.needs,{id:'timer',type:'countdown',words:'Count down to the deadline',reads:['span'],spec:{label:'Timer',length:'span'}},{id:'rows',type:'entries',words:'Log rows',reads:[],spec:{label:'Rows',fields:[]}}]};
 // A live need and one declared provider contract make the scalar-read emitter produce its Load pair.
-const scalarPlan={title:'Scalar provider',inputs:[],requirements:[{id:'preserve',text:'Read the current scalar value',sources:['request'],needs:['read']}],needs:[{id:'read',type:'live',words:'Explicitly read the scalar value',reads:[],spec:{label:'Scalar',measure:'number',unit:'',query:'host/probe.read'}}],questions:[]};
+const scalarPlan={title:'Scalar provider',inputs:[],constants:[],requirements:[{id:'preserve',text:'Read the current scalar value',sources:['request'],needs:['read']}],needs:[{id:'read',type:'live',words:'Explicitly read the scalar value',reads:[],spec:{label:'Scalar',measure:'number',unit:'',query:'host/probe.read'}}],questions:[]};
 const {providerContract,declaration}=require('./fixtures/provider-contract.js');
 const providerDeclarations=contracts=>Object.fromEntries(contracts.map(c=>[c.module,declaration(c)]));
 const regions='<classes>export class Change {value: number;}</classes><fields>value: number = 3;</fields><functions>export function change(state: AppState, action: Change): AppState {return {value: action.value};}</functions><view>import * as app from "./experience"; import * as ui from "./platform.dealui-pack"; export view Panel(state: app.AppState): View {ui.Column(){ui.Text(text: "Retained authored text 😀") ui.NumberField(label: "Value", value: state.value, minimum: 0, maximum: 999, step: 1, onChange: action app.Change {value: payload})}}</view>';
@@ -81,7 +85,7 @@ async function run(mode){
  const context=vm.createContext({sources,frozenTarget});
  for(const name of ['sandbox.js','generation-contracts.js','protocol-contracts.js','protocol-host.js','generation-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),context);
  const intent=mode.startsWith('classified-')?'Let the user draw freely on the canvas':'Double the edited value';
- vm.runInContext(`protocolContexts.fixture={value:${JSON.stringify(mode==='catalogue-readonly'?JSON.stringify(catalogueReadonlyFacts):mode==='catalogue-undisclosed'?JSON.stringify(catalogueUndisclosedFacts):fixtureFacts)},schema:{kind:'record',fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0}};const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));runGeneration(factories,{intent:${JSON.stringify(mode==='catalogue-readonly'?'Double the edited value '+escapedCell:intent)},context:{id:'fixture'},target:frozenTarget,capabilities:${mode==='scalar-read'?JSON.stringify([providerContract]):'[]'}});`,context);
+ vm.runInContext(`protocolContexts.fixture={value:${JSON.stringify(mode==='catalogue-readonly'?JSON.stringify(catalogueReadonlyFacts):mode==='catalogue-undisclosed'?JSON.stringify(catalogueUndisclosedFacts):fixtureFacts)},schema:{kind:'record',fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0}};const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));runGeneration(factories,{intent:${JSON.stringify(mode==='catalogue-readonly'?'Double the edited value '+escapedCell:intent)},context:{id:'fixture'},target:frozenTarget,clockIntervalMs:1000,clockToleranceMs:2000,capabilities:${mode==='scalar-read'?JSON.stringify([providerContract]):'[]'}});`,context);
  let asks=[],checks=0,issued=0,editSeen=false,discarded=0,isolatedStarts=0,acceptedSource=null,checkingContext=null,classificationAsks=0,surfaceAsks=0,alignmentAsks=0,alignmentQuestions=[];
  for(let turn=0;turn<2000;turn++){
   await new Promise(resolve=>setImmediate(resolve));
@@ -122,7 +126,7 @@ async function run(mode){
     assert.equal(asks.filter(r=>r.stage==='custom-edit').length,1);
    }
    else if(mode.startsWith('events')) {
-   assert.equal(snapshot.error,null,mode+' '+JSON.stringify(snapshot.error));assert(snapshot.result.candidateId);assert.equal(checks,1);
+   assert.equal(snapshot.error,null,mode+' '+JSON.stringify(snapshot.error));assert(snapshot.result.candidateId);assert.equal(checks,1,mode+' checked '+checks+': '+JSON.stringify(snapshot.result)+' stages '+JSON.stringify(asks.map(r=>r.stage)));
    // Exactly one events question is issued, in the second batch, at the ordinary threshold.
    const second=asks.filter(r=>r.stage==='selection-second');assert.equal(second.length,1);
    const issued=JSON.parse(second[0].questions).filter(q=>q.id==='events_log');assert.equal(issued.length,1);
@@ -260,7 +264,7 @@ async function run(mode){
    }
   }
   else if(['ordinary','repair','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','scalar-read','mixed','partial','units-rejected'].includes(mode)) {
-    assert.equal(snapshot.error,null,mode+' '+JSON.stringify(snapshot.error));assert(snapshot.result.candidateId);assert(checks>=1);
+    assert.equal(snapshot.error,null,mode+' '+JSON.stringify(snapshot.error));assert(snapshot.result.candidateId,mode+' produced no candidate: '+JSON.stringify(snapshot.result)+' stages '+JSON.stringify(asks.map(r=>r.stage)));assert(checks>=1);
     assert(!asks.some(r=>r.stage==='custom-whole'),'Runnable ordinary result must never enter whole writing: '+mode+' '+JSON.stringify(asks.map(r=>r.stage)));
     if(mode==='repair'){assert.equal(checks,2);assert.equal(snapshot.result.attempts,2,'a failed check plus an accepted repair is two attempts');assert.equal(asks.filter(r=>r.stage==='assembled-edit').length,1);}
     if(mode==='ordinary'){assert.equal(checks,1);assert.equal(snapshot.result.attempts,1,'candidate checks are counted as attempts');assert.deepEqual(asks.map(r=>r.stage),['planning','selection-first','selection-second','coverage']);}
@@ -307,7 +311,7 @@ async function run(mode){
      assert(!acceptedSource.dealui.includes('invented')&&!acceptedSource.deal.includes('invented'),'the fabricated cell never reaches the compiled source');
      assert(asks.some(r=>r.stage.startsWith('custom')),'the undisclosed need stayed open for custom writing');
      // The refused need keeps its located reason in the shipped notice, not a generic coverage gap.
-     assert(acceptedSource.dealui.includes('table: missing — Undisclosed personal or factual content: table row 1 cell 2'),acceptedSource.dealui);}
+     assert(acceptedSource.dealui.includes('table: missing — Undisclosed personal or factual content: section_table (data_table): row 1 cell 2'),acceptedSource.dealui);}
     if(mode==='scalar-read'){
      // The scalar-read emitter's Load button carries the current sequence and consumes the number payload.
      assert(asks.length>0&&asks[0].input.includes('COMPILER PROVIDER DECLARATIONS\n// host/probe\nexport function read(): Promise<number>;'),'the planning prompt carries the declared provider declaration');
@@ -399,7 +403,7 @@ async function run(mode){
      }
      else if(r.stage==='content') {const sections=mode==='catalogue-readonly'?[{need:'table',parameters:{title:'Disclosed table',headers:['Item','Amount','Note'],rows:[['Rent','40','paid'],['Food','2.5',escapedCell]]}},{need:'rail',parameters:{title:'Disclosed rail',rows:[{minute:570,title:'Standup',detail:'daily'},{minute:600,title:'Review'}]}},{need:'bars',parameters:{points:[{label:'Mon',value:0},{label:'Tue',value:2.5},{label:'Wed',value:10}],maximum:10}},{need:'trend',parameters:{points:[{label:'a',value:-2},{label:'b',value:0.25},{label:'c',value:3}],minimum:-3,maximum:3}},{need:'facts',parameters:{values:[{label:'first',value:'items'}]}},{need:'details',parameters:{items:[{label:'second',value:'done'}]}}]:mode==='catalogue-readonly-empty'?[{need:'table',parameters:{title:'Empty table',headers:['Item','Amount','Note'],rows:[]}},{need:'rail',parameters:{title:'Empty rail',rows:[]}},{need:'bars',parameters:{title:'Empty bars',points:[],maximum:4}}]:mode==='catalogue-undisclosed'?[{need:'table',parameters:{title:'Fabricated table',headers:['Item','Amount','Note'],rows:[['Rent','40','paid'],['Food','2.5','invented']]}},{need:'watch',parameters:{message:'Highlighted message'}}]:mode==='catalogue-sections'?[{need:'facts',parameters:{title:'Facts',subtitle:'Disclosed',values:[{label:'first',value:'items'}]}},{need:'watch',parameters:{message:'Highlighted message'}},{need:'details',parameters:{items:[{label:'second',value:'done'}]}}]:mode==='catalogue-empty'?[{need:'items',parameters:{items:[]}},{need:'facts',parameters:{values:[]}}]:(mode.startsWith('alignment'))?alignmentSections.filter(section=>['items','extra'].includes(section.need)||(mode==='alignment-rounds'&&section.need==='summary')):[{need:'items',parameters:{title:'Disclosed checklist',items:[{id:'first',label:'First item'},{id:'second',label:'Second item',done:true}]}},{need:'summary',parameters:{}},{need:'choice',parameters:{labels:['Alpha','Beta']}}];value={content:JSON.stringify({sections}),finish:'stop',refusal:''};}
      else if(r.stage==='custom-section'){assert.equal(r.maxTokens,['classified-part','classified-part-gap'].includes(mode)?7000:6000,mode+' custom-section tokens '+r.ask+' '+r.diagnostics);assert(r.input.includes('Write only a custom section'));value={content:['classified-part','classified-part-gap'].includes(mode)?sceneRegions:mode==='store-reducer'?storeRegions:mode==='assembly-imports'?importRegions:['partial','units-rejected','catalogue-undisclosed'].includes(mode)||mode.startsWith('events')||mode.startsWith('alignment')?'':regions,finish:'stop',refusal:''};}
-     else if(r.stage==='assembled-edit') {const revision=JSON.parse(r.input.split('\nCURRENT ISSUED SOURCE REVISION\n')[1].split('\nRepair only ')[0]);assert.equal(r.maxTokens,2000);value={content:JSON.stringify({revision:revision.revision,digest:revision.digest,edits:[{file:'dealui',search:'f_parts_Panel(state: state)',replace:'f_parts_Panel(state: state)\n    ui.Text(text: "Source repaired")'}]}),finish:'stop',refusal:''};}
+     else if(r.stage==='assembled-edit') {const revision=JSON.parse(r.input.split('\nCURRENT ISSUED SOURCE REVISION\n')[1].split('\nRepair only ')[0]);assert.equal(r.maxTokens,2000);value={content:JSON.stringify({revision:revision.revision,digest:revision.digest,edits:[{file:'dealui',search:'ui.Column() {',replace:'ui.Column() {\n    ui.Text(text: "Source repaired")'}]}),finish:'stop',refusal:''};}
      else if(r.stage==='custom-whole'){assert.equal(r.maxTokens,8000);value={content:regions,finish:'stop',refusal:''};}
      else if(r.stage==='custom-edit'){
       const marker='\nCURRENT ISSUED SOURCE REVISION\n';const revision=JSON.parse(r.input.split(marker)[1].split('\nReturn only ')[0]);
@@ -410,7 +414,7 @@ async function run(mode){
      else throw Error('Unexpected inference stage: '+r.stage);break;
     }
     case 'embedding/fragment-syntax':{
-     const result=cp.spawnSync('java',['-cp',classpath,'dev.deal.embedding.FragmentMechanisms',request.function],{input:request.args[0],encoding:'utf8'});assert.equal(result.status,0,result.stderr);value=result.stdout;break;
+     const result=await syntaxTransport().invoke(request.function,request.args[0]);value=result;break;
     }
     case 'embedding/checker':{
      if(request.function==='finish'){checkingContext=null;value=null;break;}
@@ -427,12 +431,12 @@ async function run(mode){
       }
       checkingContext.args=request.args;value=JSON.parse(vm.runInContext('checkingStep(args[1],args[2],JSON.parse(args[3]))',checkingContext));break;
      }
-     assert.equal(request.function,'compile');checks++;fs.writeFileSync(path.join(stage,'experience.deal'),request.args[0]);fs.writeFileSync(path.join(stage,'experience.dealui'),request.args[1]);
+     assert.equal(request.function,'compile');checks++;fs.writeFileSync(path.join(stage,'experience.deal'),request.args[0]);fs.writeFileSync(path.join(stage,'experience.dealui'),request.args[1]);fs.writeFileSync(path.join(stage,'metadata.json'),request.args[2]);
      // The composer receives each declared provider declaration, exactly as the compiler writes them.
      const modules=providerDeclarations(mode==='scalar-read'?[providerContract]:[]),lines=[];let index=0;
      for(const [module,text] of Object.entries(modules)){const file='provider-'+(index++)+'.d.deal';fs.writeFileSync(path.join(stage,file),text+'\n');lines.push(module+'='+file);}
      fs.writeFileSync(path.join(stage,'providers.txt'),lines.length?lines.join('\n')+'\n':'');
-     cp.execFileSync('java',['-Ddeal.home='+path.resolve(process.env.DEAL_ROOT||path.join(root,'dependencies/deal')),'-cp',classpath,'CompileComposer',root,stage,frozenTarget]);
+     cp.execFileSync('java',['-Ddeal.home='+path.resolve(process.env.DEAL_ROOT||path.join(root,'dependencies/deal')),'-cp',classpath,'CompileComposer',root,stage,frozenTarget,path.join(stage,'metadata.json'),String(request.args[3])]);
      acceptedSource={deal:request.args[0],dealui:request.args[1]};
      // Keep the composed pair the emitters produced so the runtime items drive real emitted source.
      if(RETAINED.has(mode)){const kept=path.join(root,'build/v08-cutover/emitted',mode);fs.rmSync(kept,{recursive:true,force:true});fs.cpSync(path.join(root,'build/v08-cutover/composed-executable'),kept,{recursive:true});
@@ -477,6 +481,7 @@ const requested=supplied.filter(argument=>argument.startsWith('--mode=')).map(ar
  if(retained.length)throw Error('Generation mode(s) '+retained.join(',')+' retain a source pair; only the unfiltered matrix may record its digest');
  const chosen=requested.length?MODES.filter(([,mode])=>requested.includes(mode)):MODES;
  const receipt={};for(const [key,mode] of chosen)receipt[key]=await run(mode);
+ await closeTransport();
  if(requested.length){console.log('packaged generation entry: modes '+chosen.map(([,mode])=>mode).join(',')+' passed');return;}
  for(const kept of emitted)fs.writeFileSync(path.join(kept,'generation.sha256'),bundleDigest);
  fs.writeFileSync(path.join(stage,'receipt.json'),JSON.stringify(receipt,null,2));
@@ -484,4 +489,4 @@ const requested=supplied.filter(argument=>argument.startsWith('--mode=')).map(ar
  // fallback, repair or retained draft resets the count.
  for(const [name,value] of Object.entries(receipt))if(value.attempts!==undefined)assert.equal(value.attempts,value.checks,name+': attempts must count candidate checks');
  console.log('packaged generation entry: compiled construction, exact repair, actual check accounting and operational failure propagation passed');
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().catch(error=>{if(transport)transport.close().catch(()=>{});console.error(error);process.exitCode=1;});

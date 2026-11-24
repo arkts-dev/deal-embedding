@@ -1,9 +1,16 @@
 import * as s from "./construction-schema";
 
 // Restricted formula grammar, not source rewriting. Only controller-issued operands resolve.
-export class Operand { id: string; expression: string; type: string; dependency: string; value?: number; }
+// An operand is an issued readable value. An entry aggregate names the entries need it belongs to in
+// `aggregate`, so the enumeration and the undeclared-read check attribute it to that need instead of to
+// its emitted field spelling.
+export class Operand { id: string; expression: string; type: string; dependency: string; value?: number; aggregate?: string; }
 export class Expression { source: string; type: string; dependencies: string[]; number?: number; boolean?: boolean; }
 class Parser { tokens: string[]; index: number; operands: Operand[]; dependencies: string[]; }
+// `pow` is the ECMAScript binary64 power of DEAL v1.6's `Math.pow`: the folded value and
+// the emitted call are that one host operator. No hand-written series stands in for it, so an exact
+// comparison such as `pow(x, 0.5) === sqrt(x)` and an infinite operand follow the specified
+// operator.
 function tokenize(source: string): string[] {
   let tokens: string[] = []; let index: number = 0;
   while (index < source.length) {
@@ -47,7 +54,11 @@ function atom(parser: Parser): Expression {
   if (token === "-" || token === "!") { let value: Expression = atom(parser); let type: string = "number"; if (token === "!") { type = "boolean"; } if (value.type !== type) { s.reject("Unary formula type"); } let result: Expression = {source:"("+token+value.source+")",type:type,dependencies:[]}; if (type === "number" && Object.hasOwn(value,"number")) { result.number = -(value.number as number); } if (type === "boolean" && Object.hasOwn(value,"boolean")) { result.boolean = !(value.boolean as boolean); } return result; }
   if (token === "true" || token === "false") { return {source:token,type:"boolean",dependencies:[],boolean:token === "true"}; }
   if ("0123456789.".includes(token.substring(0,1))) {
-    let number: number = JSON.parse(token); s.finite(number);
+    // The host parser is a mechanism, not the grammar: the literal form is the JSON number the folded
+    // value and the emitted spelling use, so a token such as `2.`, `.` or `1..5` reaches the parser and
+    // throws a host Error that no caller classifies. The literal is checked here and a malformed formula
+    // rejects with its located reason instead of aborting the request.
+    let number: number = 0; try { number = JSON.parse(token); } catch (unknownError) { s.reject("Invalid formula literal: "+token); } s.finite(number);
     return {source:s.encode(number),type:"number",dependencies:[],number:number};
   }
   if (peek(parser) === "(") {
@@ -63,14 +74,15 @@ function atom(parser: Parser): Expression {
       }
       return result;
     }
-    if (!["floor","ceil","sqrt","abs","round","min","max"].includes(token) || !args.every((arg): boolean => arg.type === "number")) { s.reject("Unissued formula call"); }
-    const binary = token === "min" || token === "max";
+    if (!["floor","ceil","sqrt","abs","round","min","max","pow"].includes(token) || !args.every((arg: Expression): boolean => arg.type === "number")) { s.reject("Unissued formula call"); }
+    const binary = token === "min" || token === "max" || token === "pow";
     if (args.length !== (binary ? 2 : 1)) { s.reject("Formula call arity"); }
-    let result: Expression = {source:"Math."+token+"("+args.map((arg): string => arg.source).join(",")+")",type:"number",dependencies:[]};
+    let call: string = "Math."+token;
+    let result: Expression = {source:call+"("+args.map((arg: Expression): string => arg.source).join(",")+")",type:"number",dependencies:[]};
     const n = args[0].number;
     if (n !== undefined) {
       if (token === "floor") { result.number = Math.floor(n); } else if (token === "ceil") { result.number = Math.ceil(n); } else if (token === "sqrt") { result.number = Math.sqrt(n); } else if (token === "abs") { result.number = Math.abs(n); } else if (token === "round") { result.number = Math.round(n); }
-      else { const b = args[1].number; if (b !== undefined) { result.number = token === "min" ? Math.min(n,b) : Math.max(n,b); } }
+      else { const b = args[1].number; if (b !== undefined) { if (token === "pow") { result.number = Math.pow(n as number, b); } else { result.number = token === "min" ? Math.min(n,b) : Math.max(n,b); } } }
     }
     return result;
   }
@@ -99,5 +111,59 @@ export function compile(source: string, operands: Operand[]): Expression {
   if (source.length > 300) { s.reject("Formula length"); }
   let parser: Parser = {tokens:tokenize(source),index:0,operands:operands,dependencies:[]};
   let result: Expression = parse(parser,1); if (parser.index !== parser.tokens.length) { s.reject("Trailing formula syntax"); } result.dependencies = parser.dependencies; return result;
+}
+// A written formula is lowered through the same restricted grammar to checked helpers for floor,
+// ceil, round, abs, sqrt, min, max and pow. It is at most 300 UTF-16 code units over issued
+// operands; an unknown operand or an over-bound text rejects. Round ties follow ECMAScript
+// (toward positive infinity, keeping negative zero for [-0.5, 0)) and abs(-0) is +0.
+// This is the 300-unit written-formula bound, never the 255-alternative enumeration bound.
+export class Lowered { source: string; type: string; dependencies: string[]; number?: number; boolean?: boolean; }
+export function lower(written: string, operands: Operand[]): Lowered {
+  if (written.trim() === "") { s.reject("Empty written formula"); }
+  if (written.length > 300) { s.reject("Written formula over 300 UTF-16 code units"); }
+  let expression: Expression = compile(written,operands);
+  let result: Lowered = {source:expression.source,type:expression.type,dependencies:expression.dependencies};
+  if (Object.hasOwn(expression,"number")) { result.number = expression.number as number; }
+  if (Object.hasOwn(expression,"boolean")) { result.boolean = expression.boolean as boolean; }
+  return result;
+}
+// The compatible alternative set: compatible values, unary operations, ordered binary operands and
+// issued entry aggregates, sorted by AST size then lexical source. A set over the bound including the
+// unavailable option issues no enumeration: it truncates nothing and rejects no figure; the written
+// formula question is requested instead. The 255 alternative bound and the 300 UTF-16 unit written
+// formula bound are different bounds.
+export class Alternative { source: string; size: number; }
+export class Enumeration { alternatives: Alternative[]; count: number; overCap: boolean; }
+export function alternativeBound(): number { return 255; }
+function before(left: Alternative, right: Alternative): boolean { if (left.size !== right.size) { return left.size < right.size; } return left.source < right.source; }
+function ordered(alternatives: Alternative[]): Alternative[] {
+  let result: Alternative[] = Array.from(alternatives,(item: Alternative): Alternative => item);
+  let index: number = 0;
+  while (index < result.length) {
+    let best: number = index; let scan: number = index+1;
+    while (scan < result.length) { if (before(result[scan],result[best])) { best = scan; } scan = scan+1; }
+    if (best !== index) { let swap: Alternative = result[index]; result[index] = result[best]; result[best] = swap; }
+    index = index+1;
+  }
+  return result;
+}
+export function enumerate(operands: Operand[], aggregates: string[]): Enumeration {
+  // Only compatible alternatives are issued: a boolean operand has no numeric unary or binary form.
+  let numeric: Operand[] = [];
+  for (let operand of operands) { if (operand.type === "number") { numeric[numeric.length] = operand; } }
+  let alternatives: Alternative[] = []; let operators: string[] = ["+","-","*","/","min","max"];
+  alternatives[alternatives.length] = {source:"unavailable",size:1};
+  let numericIds: string[] = [];
+  for (let operand of numeric) { alternatives[alternatives.length] = {source:operand.id,size:1}; numericIds[numericIds.length] = operand.id; }
+  // An issued entry aggregate that is also an issued operand is one alternative, never two: the
+  // enumeration holds every compatible alternative exactly once.
+  for (let aggregate of aggregates) { if (s.contains(numericIds,aggregate)) { continue; } alternatives[alternatives.length] = {source:aggregate,size:1}; }
+  for (let operand of numeric) { alternatives[alternatives.length] = {source:"(-"+operand.id+")",size:2}; }
+  for (let left of numeric) { for (let right of numeric) { if (left.id !== right.id) { for (let operator of operators) {
+    if (operator === "min" || operator === "max") { alternatives[alternatives.length] = {source:operator+"("+left.id+", "+right.id+")",size:3}; }
+    else { alternatives[alternatives.length] = {source:"("+left.id+" "+operator+" "+right.id+")",size:3}; }
+  } } } }
+  if (alternatives.length > alternativeBound()) { return {alternatives:[],count:alternatives.length,overCap:true}; }
+  return {alternatives:ordered(alternatives),count:alternatives.length,overCap:false};
 }
 export function main(): void { return; }

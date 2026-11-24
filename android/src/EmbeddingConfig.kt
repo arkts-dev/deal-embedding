@@ -12,11 +12,16 @@ data class EmbeddingConfig(
     val target: String = "screen",
     /** Host-configured bound on concurrent `next` waits per Session; admission is compiled controller policy. */
     val updateWaits: Int = 8,
+    /** Clock driver cadence and wall-clock jump tolerance; both host configuration, never a literal in generated source. */
+    val clockIntervalMs: Long = 1_000,
+    val clockToleranceMs: Long = 2_000,
 ) {
     init {
         require(CompileInput.target(target) != null) { "Invalid host presentation target: $target" }
         // The rendering observer holds one wait per attached Session, so one slot must stay for the host.
         require(updateWaits in 2..64) { "Update wait limit must be 2-64" }
+        require(clockIntervalMs > 0) { "Clock driver interval must be positive" }
+        require(clockToleranceMs >= clockIntervalMs) { "Wall-clock tolerance must cover the clock driver interval" }
     }
 }
 

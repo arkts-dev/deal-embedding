@@ -1,4 +1,4 @@
-export function compile(deal: string, dealui: string): Promise<Record<string, unknown>>;
+export function compile(deal: string, dealui: string, composition: string, fresh: boolean): Promise<Record<string, unknown>>;
 export function step(candidateId: string, operation: string, index: number, payload: string): Promise<Record<string, unknown>>;
 export function finish(candidateId: string): Promise<null>;
 export function discard(candidateId: string): Promise<null>;

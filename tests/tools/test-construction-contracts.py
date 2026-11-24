@@ -14,7 +14,7 @@ STAGE = ROOT / 'build/v08-cutover/contract-tests'
 STAGE.mkdir(parents=True, exist_ok=True)
 source = STAGE / 'src'
 source.mkdir(exist_ok=True)
-for name in ['decoded', 'construction-schema', 'plan', 'selection', 'screen', 'custom-fragment', 'source-revisions', 'source-literals', 'inference', 'questions', 'bindings', 'operations', 'planning', 'coverage', 'construction-selection', 'formula', 'graphics', 'events', 'classification', 'isolated-check', 'admission', 'alignment']:
+for name in ['decoded', 'construction-schema', 'disclosure', 'plan', 'selection', 'screen', 'custom-fragment', 'source-revisions', 'source-literals', 'inference', 'questions', 'bindings', 'operations', 'planning', 'coverage', 'construction-selection', 'formula', 'graphics', 'events', 'classification', 'isolated-check', 'admission', 'alignment']:
     shutil.copyfile(EMBEDDING / f'core/{name}.deal', source / f'{name}.deal')
 shutil.copyfile(ROOT / 'tests/tools/fixtures/construction-contracts.deal', source / 'checks.deal')
 shutil.copytree(DEAL_UI / 'ui', STAGE / 'ui', dirs_exist_ok=True)

@@ -773,6 +773,9 @@ private fun declaredPose(node: UiNode): List<Double> {
         RenderComponent.Ticker -> {
             val running = values.flag("running")
             val interval = values.number("intervalMs").toLong().coerceAtLeast(1)
+            // The declared payload stays Unix milliseconds. A clock part takes its monotone progress from
+            // the driver reading bound to its own action field and uses this value only for wall-clock
+            // trust, so redefining the event would be a vocabulary change, not a timer fix.
             LaunchedEffect(running, interval) { while (running) { delay(interval); emit("onTick", System.currentTimeMillis().toString()) } }
         }
         RenderComponent.BackHandler -> BackHandler(enabled = true) { emit("onBack", null) }

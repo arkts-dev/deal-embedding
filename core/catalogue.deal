@@ -7,6 +7,7 @@ import * as syntax from "embedding/fragment-syntax";
 import * as bindings from "./bindings";
 import * as composer from "./composer";
 import * as s from "./construction-schema";
+import * as disclosure from "./disclosure";
 
 // Only executable definitions are issued. Unsupported kinds remain open for custom sections.
 export class Parameter { name: string; type: string; required: boolean; fallback: unknown; maximum: number; }
@@ -70,8 +71,6 @@ function record(value: unknown, name: string): void { if (!s.encode(value).start
 // or boolean value rejects here instead of reaching a checked numeric cast.
 function number(value: unknown, name: string): number { if (!Number.isFinite(value)) { s.reject("Catalogue number required: "+name); } return s.finite(value); }
 function integer(value: unknown, name: string): number { let result: number = number(value,name); if (Math.floor(result) !== result) { s.reject("Catalogue integral required: "+name); } return result; }
-// An empty text carries no content and needs no evidence; any supplied text must occur in it.
-function supplied(value: string, data: string): boolean { return value === "" || data.includes(value); }
 // An optional row field returns its dynamic value so the wire-kind guard of `text` runs before any
 // typed cast; a typed accessor would raise the runtime type error instead of a schema rejection.
 function optionalValue(owner: Record<string, unknown>, name: string): unknown { if (!Object.hasOwn(owner,name)) { return ""; } return owner[name]; }
@@ -157,31 +156,25 @@ export async function decode(definition: Definition, raw: unknown): Promise<Reco
   }
   return result;
 }
-// The empty string admits the instance; a refusal names the need and the supplied row or field that
-// no evidence admits, so a rejected instance keeps its located reason instead of a bare verdict.
-function refusal(entry: Configured, where: string): string { return "Undisclosed personal or factual content: "+entry.need+" "+where; }
-// A number value contributes its shortest round-trip decimal spelling, matched the way a text value is
-// matched: the spelling occurs in the evidence. The one predicate of
-// `plan-schemas-values-and-parts` "Seed disclosure" is deliberately string-based, so a label likewise
-// matches inside a longer word and a digit likewise matches inside a longer number. This domain
-// applies that predicate and never a second, stricter numeric rule of its own.
-function numeric(value: number, data: string): boolean { return data.includes(String(value)); }
+// The empty string admits the instance; a refusal names the issued catalogue instance, its kind and
+// the supplied row or field that no evidence admits, so a rejected instance keeps a located reason.
+function refusal(entry: Configured, where: string): string { return "Undisclosed personal or factual content: section_"+entry.need+" ("+entry.definition.kind+"): "+where; }
 export function disclosed(entry: Configured, original: string, facts: string, userOwned: boolean): string {
-  let data: string = original+"\n"+facts;
+  let data: string = disclosure.evidence(original,facts);
   if (entry.definition.kind === "metrics" || entry.definition.kind === "key_facts") {
     let key: string = "values"; if (entry.definition.kind === "key_facts") { key = "items"; }
     let index: number = 0;
     for (let row of s.records(entry.parameters,key)) {
-      if (!supplied(s.text(row.label),data)) { return refusal(entry,"row "+String(index)+" label"); }
-      if (!supplied(s.text(row.value),data)) { return refusal(entry,"row "+String(index)+" value"); }
+      if (!disclosure.admitsText(data,s.text(row.label))) { return refusal(entry,"row "+String(index)+" label"); }
+      if (!disclosure.admitsText(data,s.text(row.value))) { return refusal(entry,"row "+String(index)+" value"); }
       index = index+1;
     }
   }
   if (entry.definition.kind === "checklist") {
     let index: number = 0;
     for (let row of s.records(entry.parameters,"items")) {
-      if (!supplied(s.text(row.label),data)) { return refusal(entry,"row "+String(index)+" label"); }
-      if (!supplied(s.text(row.detail),data)) { return refusal(entry,"row "+String(index)+" detail"); }
+      if (!disclosure.admitsText(data,s.text(row.label))) { return refusal(entry,"row "+String(index)+" label"); }
+      if (!disclosure.admitsText(data,s.text(row.detail))) { return refusal(entry,"row "+String(index)+" detail"); }
       index = index+1;
     }
   }
@@ -193,31 +186,31 @@ export function disclosed(entry: Configured, original: string, facts: string, us
     let table: string[][] = entry.parameters.rows as string[][];
     if (table.length > 0) {
       let column: number = 0;
-      for (let header of entry.parameters.headers as string[]) { if (!supplied(header,data)) { return refusal(entry,"header "+String(column)); } column = column+1; }
+      for (let header of entry.parameters.headers as string[]) { if (!disclosure.admitsText(data,header)) { return refusal(entry,"header "+String(column)); } column = column+1; }
       let index: number = 0;
-      for (let row of table) { let cell: number = 0; for (let value of row) { if (!supplied(value,data)) { return refusal(entry,"row "+String(index)+" cell "+String(cell)); } cell = cell+1; } index = index+1; }
+      for (let row of table) { let cell: number = 0; for (let value of row) { if (!disclosure.admitsText(data,value)) { return refusal(entry,"row "+String(index)+" cell "+String(cell)); } cell = cell+1; } index = index+1; }
     }
   }
   if (entry.definition.kind === "timeline" && Object.hasOwn(entry.parameters,"rows")) {
     let index: number = 0;
     for (let row of entry.parameters.rows as Record<string, unknown>[]) {
-      if (!supplied(s.text(row.title),data)) { return refusal(entry,"row "+String(index)+" title"); }
-      if (!supplied(s.text(row.detail),data)) { return refusal(entry,"row "+String(index)+" detail"); }
-      if (!numeric(s.finite(row.minute),data)) { return refusal(entry,"row "+String(index)+" minute"); }
+      if (!disclosure.admitsText(data,s.text(row.title))) { return refusal(entry,"row "+String(index)+" title"); }
+      if (!disclosure.admitsText(data,s.text(row.detail))) { return refusal(entry,"row "+String(index)+" detail"); }
+      if (!disclosure.admitsNumber(data,s.finite(row.minute))) { return refusal(entry,"row "+String(index)+" minute"); }
       index = index+1;
     }
   }
   if ((entry.definition.kind === "bar_chart" || entry.definition.kind === "trend_chart") && Object.hasOwn(entry.parameters,"points")) {
     let index: number = 0;
     for (let point of entry.parameters.points as Record<string, unknown>[]) {
-      if (!supplied(s.text(point.label),data)) { return refusal(entry,"point "+String(index)+" label"); }
-      if (!numeric(s.finite(point.value),data)) { return refusal(entry,"point "+String(index)+" value"); }
+      if (!disclosure.admitsText(data,s.text(point.label))) { return refusal(entry,"point "+String(index)+" label"); }
+      if (!disclosure.admitsNumber(data,s.finite(point.value))) { return refusal(entry,"point "+String(index)+" value"); }
       index = index+1;
     }
   }
   // The chart scale is a declared configuration of the picture, like the section title, and not a
   // supplied value: only the plotted labels and values must be evidenced.
-  if (userOwned && entry.definition.kind === "note" && !supplied(s.text(entry.parameters.text),data)) { return refusal(entry,"note text"); }
+  if (userOwned && entry.definition.kind === "note" && !disclosure.admitsText(data,s.text(entry.parameters.text))) { return refusal(entry,"note text"); }
   return "";
 }
 export function selected(plan: plans.Plan, choices: selecting.Choice[]): Configured[] {
@@ -334,9 +327,22 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     body = body+"When(state.summary_ready) {ui.Text(text: state.summary_display)} When(!state.summary_ready) {ui.Text(text: state.summary_reason, style: \"muted\")}";
   }
   let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){"+body+"}}";
-  return {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:[],helpers:helpers,view:view,options:[],content:[],ports:ports,holes:[],covers:[entry.need],owns:[id]},bodies:{}};
+  let issued: screens.Instance = {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:[],helpers:helpers,view:view,options:[],content:[],ports:ports,holes:[],covers:[entry.need],owns:[id]},bodies:{}};
+  issued.definition = screens.issueDefinition(issued.fragment);
+  return issued;
 }
-export function computations(instance: screens.Instance, connections: screens.Connection[]): composer.Computation[] {
+// The qualified authoritative resource a connection reads. It is the publisher's declared port getter,
+// never its port name: a part publishes under a need identifier while the emitted field has its own
+// name, so only the declared getter names a resource the composition emits.
+function writerField(connection: screens.Connection, instances: screens.Instance[]): string {
+  let getter: string = "";
+  for (let publisher of instances) { if (publisher.id === connection.writerInstance) {
+    for (let port of publisher.fragment.ports) { if (port.direction === "publish" && port.name === connection.writerPort) { getter = port.getter; } }
+  } }
+  if (getter === "") { s.reject("Connection names an unissued publisher port: "+connection.writerInstance+"/"+connection.writerPort); }
+  return "f_"+connection.writerInstance+"_"+getter;
+}
+export function computations(instance: screens.Instance, connections: screens.Connection[], instances: screens.Instance[]): composer.Computation[] {
   let result: composer.Computation[] = [];
   if (instance.kind === "checklist") {
     let dependencies: string[] = []; for (let field of instance.fragment.fields) { if (field.role === "authoritative") { dependencies[dependencies.length] = "f_"+instance.id+"_"+field.name; } }
@@ -344,7 +350,7 @@ export function computations(instance: screens.Instance, connections: screens.Co
     result[result.length] = {instance:instance.id,field:"total",value:s.encode(s.records(instance.parameters,"items").length),ready:"true",reason:"\"Unavailable\"",dependencies:[]};
   } else if (instance.kind === "list_summary") {
     let dependencies: string[] = [];
-    for (let connection of connections) { if (connection.readerInstance === instance.id) { dependencies[dependencies.length] = "f_"+connection.writerInstance+"_"+connection.writerPort; } }
+    for (let connection of connections) { if (connection.readerInstance === instance.id) { dependencies[dependencies.length] = writerField(connection,instances); } }
     result[0] = {instance:instance.id,field:"summary",value:"summarize(state)",ready:"true",reason:"\"Publisher unavailable\"",dependencies:dependencies};
   }
   return result;

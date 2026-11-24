@@ -22,8 +22,11 @@ public final class FragmentMechanisms {
     public static String invoke(String function, String input) {
         return invoke(function,input,FragmentMechanisms::invoke);
     }
+    private static Map<String,Object> request(String json) {
+        return object(decode(JvmJson.decode(json,"record",new deal.semantic.ir.SourceOrigin("syntax transport",deal.semantic.ir.SourceSpan.synthetic("syntax transport"),deal.semantic.ir.SourceOriginKind.SYNTHETIC,new deal.semantic.ir.AnchorId(0),null),"syntax transport",Map.of())));
+    }
     private static String invoke(String function, String input, java.util.function.BiFunction<String,String,String> call) {
-        Map<String,Object> value = object(decode(JvmJson.decode(input,"record",new deal.semantic.ir.SourceOrigin("syntax transport",deal.semantic.ir.SourceSpan.synthetic("syntax transport"),deal.semantic.ir.SourceOriginKind.SYNTHETIC,new deal.semantic.ir.AnchorId(0),null),"syntax transport",Map.of())));
+        Map<String,Object> value = request(input);
         if (function.equals("batch")) {
             List<Object> results = new ArrayList<>();
             for (Object item : (List<?>)value.get("requests")) {
@@ -67,5 +70,27 @@ public final class FragmentMechanisms {
         if(value instanceof List<?> list)return list.stream().map(FragmentMechanisms::encode).collect(java.util.stream.Collectors.joining(",","[","]"));
         throw new IllegalArgumentException("Unsupported syntax transport value");
     }
-    public static void main(String[] args) throws Exception { System.out.print(invoke(args[0],new String(System.in.readAllBytes(),java.nio.charset.StandardCharsets.UTF_8))); }
+    /**
+     * Line-delimited variant of one invocation per process, for a harness that issues many calls.
+     * Each line is one {@code {function, input}} request and each reply is {@code {ok, value}} or
+     * {@code {ok: false, error}}; the call itself is unchanged and no result is retained across lines.
+     */
+    private static void serve() throws java.io.IOException {
+        java.io.BufferedReader lines = new java.io.BufferedReader(new java.io.InputStreamReader(System.in,java.nio.charset.StandardCharsets.UTF_8));
+        java.io.PrintStream replies = new java.io.PrintStream(System.out,true,java.nio.charset.StandardCharsets.UTF_8);
+        for (String line = lines.readLine(); line != null; line = lines.readLine()) {
+            Map<String,Object> reply = new LinkedHashMap<>();
+            try {
+                Map<String,Object> value = request(line);
+                reply.put("ok",true); reply.put("value",invoke(text(value,"function"),text(value,"input")));
+            } catch (RuntimeException error) {
+                reply.put("ok",false); reply.put("error",error.getClass().getSimpleName()+": "+(error.getMessage()==null ? "Invalid fragment syntax" : error.getMessage()));
+            }
+            replies.print(encode(reply)+"\n"); replies.flush();
+        }
+    }
+    public static void main(String[] args) throws Exception {
+        if (args.length==1 && args[0].equals("serve")) { serve(); return; }
+        System.out.print(invoke(args[0],new String(System.in.readAllBytes(),java.nio.charset.StandardCharsets.UTF_8)));
+    }
 }

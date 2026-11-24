@@ -77,6 +77,20 @@ async function call(name,args,handler){
  assert.equal(await call('contextJson',[bounded.id]),'5','an accessor returns the stored value JSON');
  for(const [title,intent] of [['t'.repeat(121),'intent'],['Title','i'.repeat(4097)]])
   await assert.rejects(call('request',[title,intent,facts.id]),error=>error.code==='INVALID_ARGUMENT');
+ // The frozen context is the host-declared, schema-validated carrier that seed-timestamp provenance
+ // reads. The shipped discovery fact shape declares only id and text, so a typed Unix-millisecond
+ // declaration cannot exist there and plan decode rejects every supplied timestamp (the owner
+ // contract's fallback). A host that declares the typed fact fields gets a frozen carrier whose exact
+ // numeric value and declared meaning are the evidence plan decode checks.
+ const record=(maximum,fields)=>({kind:'record',fields:fields.map(field=>({...field,optional:false})),element:null,maximum,minimumNumber:0,maximumNumber:0});
+ const array=(maximum,element)=>({kind:'array',fields:[],element,maximum,minimumNumber:0,maximumNumber:0});
+ const factFields=[{name:'id',type:{...textSchema,maximum:64}},{name:'text',type:textSchema}];
+ const shippedFactsSchema=record(64,[{name:'facts',type:array(16,record(64,factFields))}]);
+ const typedFactsSchema=record(64,[{name:'facts',type:array(16,record(64,[...factFields,{name:'type',type:textSchema},{name:'value',type:{...scalar,maximum:64,minimumNumber:0,maximumNumber:Number.MAX_SAFE_INTEGER}}]))}]);
+ const typedFacts=JSON.stringify({facts:[{id:'at',text:'purchase at 1700000000000',type:'unixMillis',value:1700000000000}]});
+ await assert.rejects(call('snapshot',[shippedFactsSchema,typedFacts]),error=>error.code==='INVALID_ARGUMENT');
+ const typedContext=await call('snapshot',[typedFactsSchema,typedFacts]);
+ assert.equal(await call('contextJson',[typedContext.id]),typedFacts);
  await call('grant',[contract.module]);
  const firstEpoch=vm.runInContext("publicProtocol.permitted('host/probe')",context);
  await call('grant',[contract.module]);

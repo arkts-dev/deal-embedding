@@ -290,7 +290,7 @@ def main():
     classpath = f"{composer_classes}:{CLASSES}"
     for target in ("screen", "card"):
         result = run("java", f"-Ddeal.home={ROOT / 'dependencies/deal'}", "-cp", classpath,
-                     "CompileComposer", ROOT, stage, target)
+                     "CompileComposer", ROOT, stage, target, stage / "metadata.json", "true")
         assert result.returncode == 0, result.stderr
         manifest = json.loads((ROOT / "build/v08-cutover/composed-executable/js/admission.json").read_text())
         assert manifest["target"] == target
@@ -301,7 +301,7 @@ def main():
     for name in ("experience.deal", "experience.dealui"):
         shutil.copy(stage / name, invalid / name)
     result = run("java", f"-Ddeal.home={ROOT / 'dependencies/deal'}", "-cp", classpath,
-                 "CompileComposer", ROOT, invalid, "print")
+                 "CompileComposer", ROOT, invalid, "print", stage / "metadata.json", "true")
     assert result.returncode != 0, "an out-of-set target must be rejected"
     assert "ADMISSION_TARGET" in (result.stdout + result.stderr), result.stdout + result.stderr
     assert not (invalid.parent / "composed-executable/js/admission.json").exists(), "an out-of-set target writes no manifest"
@@ -318,8 +318,10 @@ def main():
     removed = alias.group(1) + "." + REMOVED[1] + "("
     assert alias.group(1) + ".Column(" in view
     (bad / "experience.dealui").write_text(view.replace(alias.group(1) + ".Column(", removed, 1))
+    # An edited pair is not the freshly assembled one: it carries the last issued metadata as a
+    # repaired source does, and admission treats it as repaired rather than fresh.
     result = run("java", f"-Ddeal.home={ROOT / 'dependencies/deal'}", "-cp", classpath,
-                 "CompileComposer", ROOT, bad, "screen")
+                 "CompileComposer", ROOT, bad, "screen", bad / "metadata.json", "false")
     assert result.returncode != 0, "a removed-name candidate must not compile"
     assert "IntField" in (result.stdout + result.stderr), result.stdout + result.stderr
 
@@ -332,7 +334,7 @@ def main():
     assert binding in view, view
     (unconsumed / "experience.dealui").write_text(view.replace(binding, 'onChange: action app.f_calculation_Change {value: state.f_calculation_value}'))
     result = run("java", f"-Ddeal.home={ROOT / 'dependencies/deal'}", "-cp", classpath,
-                 "CompileComposer", ROOT, unconsumed, "screen")
+                 "CompileComposer", ROOT, unconsumed, "screen", unconsumed / "metadata.json", "false")
     assert result.returncode != 0, "an unconsumed payload must not compile"
     message = result.stdout + result.stderr
     assert "PAYLOAD_UNCONSUMED" in message and "NumberField" in message and "onChange" in message, message

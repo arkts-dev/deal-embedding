@@ -3,8 +3,10 @@
 // Compiled catalogue policy items: closed decoding, row bounds, the one disclosure predicate and
 // initialized fragments. Every assertion is taken from the specification row of the kind, not from
 // the implementation under test; the driver only forwards the real fragment-syntax mechanisms.
-const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('assert'),cp=require('child_process');
+const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('assert');
 const stage=path.resolve(process.argv[2]),base=path.join(stage,'js'),classpath=process.argv[3],sources={};
+// One long-lived syntax-mechanism process for the whole item; every call is still the one-invocation entry.
+const transport=require('./fixtures/syntax-transport.js')(classpath);
 function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(base,file)]=fs.readFileSync(file,'utf8');}}
 walk(base);
 const declarations={};
@@ -38,9 +40,8 @@ async function step(name){
    }
    else {
     assert.equal(request.module,'embedding/fragment-syntax','unissued mechanism reached: '+request.module);
-    const output=cp.spawnSync('java',['-cp',classpath,'FragmentMechanisms',request.function],{input:request.args[0],encoding:'utf8'});
-    if(output.status!==0)throw Error(output.stderr);
-    context.reply={id:request.id,ok:true,value:output.stdout};
+    const output=await transport.invoke(request.function,request.args[0]);
+    context.reply={id:request.id,ok:true,value:output};
    }
    vm.runInContext('dealCapabilities.deliver([reply])',context);
   }
@@ -187,7 +188,7 @@ assert.deepEqual(fill.empty.parameters.rows,[],'the empty row list is decoded as
 assert.equal(fill.admittedEmpty,true,'an empty section passes the one predicate');
 assert.equal(fill.fabricated.accepted,true,'the fabricated row decodes at the fill site');
 assert.deepEqual(fill.fabricated.parameters.rows,[['Rent','40','invented']],'the decoded row list reaches construction unchanged');
-assert(fill.locatedFabricated.includes('fabricated row 0 cell 2'),'the one predicate refuses the fabricated cell with its location: '+fill.locatedFabricated);
+assert(fill.locatedFabricated.includes('(data_table): row 0 cell 2'),'the one predicate refuses the fabricated cell with its location: '+fill.locatedFabricated);
 assert.equal(fill.short.accepted,false,'a short row leaves its instance unfilled');
 assert.deepEqual(fill.short.parameters,{},'a rejected row list installs no partial parameters');
 assert(fill.short.reason.includes('Catalogue columns match headers'),'the rejected row keeps its located reason: '+fill.short.reason);
@@ -204,5 +205,6 @@ assert(!offered.items.includes('list_summary'),'a need that reads nothing is off
 assert(!offered.seeded.includes('list_summary'),'a need that reads only an input is offered a reader kind: '+JSON.stringify(offered.seeded));
 assert(offered.summary.includes('list_summary'),'a need that reads a publisher is refused its reader kind: '+JSON.stringify(offered.summary));
 assert(offered.items.includes('checklist'),'the standalone kinds stay issued: '+JSON.stringify(offered.items));
+const transportExit=await transport.close();assert.equal(transportExit,0,'syntax transport exited '+transportExit);
 console.log('catalogue sections: closed decode, row bounds, exact order and UTF-16 text, shared disclosure, reader eligibility, immutable initialization, empty states and computation-free assembly passed');
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().catch(error=>{transport.close().catch(()=>{});console.error(error);process.exitCode=1;});

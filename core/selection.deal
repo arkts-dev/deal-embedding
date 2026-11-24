@@ -2,9 +2,9 @@ import * as s from "./construction-schema";
 export class Option { id: string; criteria: string; }
 export class Question { id: string; need: string; decision: string; instructions: string; options: Option[]; threshold: number; }
 export class Probability { id: string; p: number; }
-class WireAnswer { id: string; selected: string; probabilities: Probability[]; }
+class WireAnswer { id: string; selected: string; probabilities: Probability[]; text?: string; }
 class Envelope { answers: WireAnswer[]; }
-export class Answer { id: string; selected: string; probability: number; accepted: boolean; probabilities: Probability[]; }
+export class Answer { id: string; selected: string; probability: number; accepted: boolean; probabilities: Probability[]; text?: string; }
 export function threshold(category: string): number {
   if (category === "ordinary") { return 0.25; }
   if (category === "formula" || category === "argument" || category === "deadline") { return 0.4; }
@@ -47,7 +47,21 @@ export function decode(raw: string, questions: Question[]): Answer[] {
           if (!present) { s.reject("Missing issued probability"); }
         }
         if (Math.abs(total-1) > 0.000001 || value.selected !== winner) { s.reject("Probability sum or selected maximum"); }
-        result[result.length] = {id:id,selected:winner,probability:best,accepted:best >= question.threshold,probabilities:probabilities};
+        let answer: Answer = {id:id,selected:winner,probability:best,accepted:best >= question.threshold,probabilities:probabilities};
+        if (Object.hasOwn(value,"text")) {
+          let written: string = s.text(value.text);
+          // The written-formula bound is 300 UTF-16 code units and is distinct from the 255
+          // alternative enumeration bound; an over-bound text rejects.
+          if (written.length > 300) { s.reject("Written formula over 300 UTF-16 code units"); }
+          answer.text = written;
+        }
+        // An accepted written-formula answer is the figure's formula. An answer that omits it, or
+        // carries only whitespace, would drop the selected figure from the composition with no
+        // located reason, so both reject here with the figure identifier.
+        let formula: string = "";
+        if (Object.hasOwn(answer,"text")) { formula = answer.text as string; }
+        if (question.decision === "written-formula" && answer.accepted && answer.selected === "written" && formula.trim() === "") { s.reject("Accepted written formula answer carries no formula: "+question.need); }
+        result[result.length] = answer;
       }
     }
     if (!found) { s.reject("Unanswered question: "+question.id); }
