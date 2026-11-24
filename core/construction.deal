@@ -332,10 +332,11 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   }
   // A selected alignment, fill, ownership or disclosure refusal keeps its need visibly missing with the
   // located reason that step recorded, instead of reverting to the generic coverage gap. One loop covers
-  // every refusal the stages above recorded. A filled slot is never demoted: one selected alternative per
-  // need makes that unreachable today, and the guard keeps a future second implementation from silently
-  // losing its coverage.
-  for (let entry of entries) { if (!entry.accepted) { locate(composition,entry.need,entry.reason); } }
+  // every refusal the stages above recorded, and the same reason joins the candidate diagnostics so a
+  // candidate with nothing placeable still reports why. A filled slot is never demoted: one selected
+  // alternative per need makes that unreachable today, and the guard keeps a future second
+  // implementation from silently losing its coverage.
+  for (let entry of entries) { if (!entry.accepted) { locate(composition,entry.need,entry.reason); reasons = reasons+entry.need+": "+entry.reason+"; "; } }
   // Publishers first; typed reader resolution is deterministic and never model-issued.
   let pending: screens.Instance[] = [];
   for (let entry of entries) { if (entry.accepted) { let instance: screens.Instance = await catalogue.instantiate(entry,registry); let reader: boolean = false; for (let port of instance.fragment.ports) { if (port.direction === "read") { reader = true; } }

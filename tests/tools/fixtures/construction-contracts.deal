@@ -529,6 +529,8 @@ export function planValues(): null {
   refusesPlan("{\"title\":\"t\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"cook\",\"type\":\"countdown\",\"words\":\"Cook\",\"reads\":[],\"spec\":{\"label\":\"Cook\",\"length\":\"timer\"}}],\"questions\":[]}","","","cook: unissued duration source timer");
   let negative: boolean = false; try { plans.milliseconds(seconds,-1,"cook"); } catch(error) { negative = true; } insist(negative,"Negative duration converted");
   let overflow: boolean = false; try { plans.milliseconds(seconds,1e308,"cook"); } catch(error) { overflow = true; } insist(overflow,"Duration overflow converted");
+  // A nonfinite value is refused by the conversion itself, not rounded or clamped into a duration.
+  let nonfinite: boolean = false; try { plans.milliseconds(seconds,Number("Infinity"),"cook"); } catch(error) { nonfinite = true; } insist(nonfinite,"Nonfinite duration converted");
   // One shared disclosure predicate decides every seed.
   let request: string = "I bought coffee three times and marked it true; entry 3 is complete.";
   let admitted: plans.Plan = plans.decode(seedPlan("{\"values\":{\"what\":\"coffee\",\"done\":true,\"amount\":3}}"),[],[],request,"");

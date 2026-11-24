@@ -759,16 +759,17 @@ export function buildWithProviders(plan: plans.Plan, definitions: Definitions, c
   if (plainTextUsed) { helpers = helpers+presentationNumberHelpers(); }
   if (fixedTextUsed) { helpers = helpers+presentationFixedHelpers(); }
   // Every covered need whose slot publishes a value declares its publish port here, so a filled slot
-  // issues publish_<port>/ready_<port> instead of only opening.
+  // issues publish_<port>/ready_<port> instead of only opening. The need-fixed value type is the one
+  // rule assembly and the custom writer share; this loop adds only the part's own display getter.
   let ports: screens.Port[] = [];
   for (let need of plan.needs) {
     if (!s.contains(covers,need.id)) { continue; }
-    let valueType: string = "number"; let getter: string = need.id;
-    if (need.type === "figure") { if (Object.hasOwn(need.spec,"format") && s.text(need.spec.format) === "yes_no") { valueType = "boolean"; } }
-    else if (need.type === "countdown") { getter = "remaining_"+need.id; }
+    let valueType: string = screens.publishedType(need);
+    if (valueType === "") { continue; }
+    let getter: string = need.id;
+    if (need.type === "countdown") { getter = "remaining_"+need.id; }
     else if (need.type === "stopwatch") { getter = "duration_"+need.id; }
     else if (need.type === "entries") { getter = "count_"+need.id; }
-    else if (need.type !== "live") { continue; }
     ports[ports.length] = {name:need.id,type:valueType,direction:"publish",getter:getter,optional:false};
     // Every publish port is one issued source: the need's publication carries its declared output
     // type, the emitted getter of this owner and that getter's readiness, so an action argument may

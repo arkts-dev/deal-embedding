@@ -51,8 +51,10 @@ export function admitsTimestamp(facts: string, value: number): string {
 export function admitsQuote(original: string, quote: string): boolean { if (quote === "") { return false; } return original.includes(quote); }
 // A disclosed context fact is host-supplied evidence that can also become an issued string source
 // emitted as data. Decoding it here keeps one shape for the disclosed context: the facts array of
-// the frozen context value, each entry a nonblank identifier and its text. It grants no authority, and
-// an entry of another shape stays requirement evidence only instead of aborting the composition.
+// the frozen context value, each entry a nonblank identifier and its text. It grants no authority. An
+// entry that does not carry both strings stays requirement evidence only, while a blank or duplicate
+// fact identifier is host configuration the generation entry already refuses, so it never becomes a
+// silently renamed or dropped source here.
 export class ContextFact { id: string; text: string; }
 export function context(facts: string): ContextFact[] {
   let result: ContextFact[] = [];

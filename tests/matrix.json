@@ -334,19 +334,20 @@
       "id": "durations",
       "family": "durations-parts",
       "owner": "plan-schemas-values-and-parts",
-      "requirement": "countdown.length resolves seconds inputs and minutes constants with checked millisecond conversion; unissued, money, percent, count and nonfinite sources reject.",
+      "requirement": "countdown.length resolves seconds inputs and minutes constants with checked millisecond conversion; an unissued source, a source of a non-duration measure (money, percent, count) and a negative or nonfinite value reject.",
       "status": "covered",
       "test": "python3 tests/tools/test-construction-contracts.py python3 tests/tools/test-composer.py",
       "sources": [
         "tests/tools/fixtures/construction-contracts.deal",
         "tests/tools/test-clock-part.js"
       ],
-      "evidence": "plan.decode resolves countdown.length through plans.durationSource and converts it with the checked plans.milliseconds, so a seconds input converts to 90000 ms and a minutes constant to 300000 ms while a money source, an unissued identifier, a negative value and an overflowing value reject with the need identifier; the clock part that conversion feeds is driven at its emitted runtime by the composer item (private driver press/tick readings, completion once, restart and clamped remaining).",
+      "evidence": "plan.decode resolves countdown.length through plans.durationSource and converts it with the checked plans.milliseconds, so a seconds input converts to 90000 ms and a minutes constant to 300000 ms while a money source - the same measure test that refuses a percent, count or number measure - an unissued identifier, a negative value, a nonfinite value and an overflowing value reject with the need identifier; the clock part that conversion feeds is driven at its emitted runtime by the composer item (private driver press/tick readings, completion once, restart and clamped remaining).",
       "asserts": [
         "milliseconds(seconds,90,\"cook\") === 90000",
         "cook: length source is not a duration",
         "cook: unissued duration source timer",
         "insist(negative,\"Negative duration converted\")",
+        "insist(nonfinite,\"Nonfinite duration converted\")",
         "assert.strictEqual(driver.intervalMs,1000,'the driver interval is host configuration')"
       ]
     },

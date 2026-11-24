@@ -366,11 +366,12 @@ function visit(id: string, needs: Need[], path: string[]): void {
 // seeds only. It builds no part, chooses no alternative and emits no source.
 export function decode(raw: string, factIds: string[], issuedSourceIds: string[], original: string, facts: string): Plan {
   // The planner document enters construction as JSON text, so this is one classified boundary: a
-  // fenced, truncated or prose-wrapped reply is a located plan rejection that the bounded re-plan
-  // consumes, never an unclassified host parser error that loses the request before any typed check
-  // runs. Presence is read from the declared document itself, because a converted value defaults an
-  // absent optional array to empty and only the declared record can report a required array the model
-  // omitted; both reads are of this one text and neither can raise outside the classification.
+  // fenced, truncated or prose-wrapped reply is a located plan rejection that names the plan and the
+  // offending text instead of propagating the host parser's own error name and message into the
+  // bounded re-plan. Presence is read from the declared document itself, because a converted value
+  // defaults an absent optional array to empty and only the declared record can report a required
+  // array the model omitted; both reads are of this one text and neither can raise outside the
+  // classification.
   let presence: Record<string, unknown> = {};
   try { presence = record(JSON.parse(raw),"plan"); }
   catch (unknownError) {

@@ -40,7 +40,8 @@ export class ChildLabel { instance: string; label: string; }
 export class ChatRoot { children: ChildLabel[]; initialSelection: number; }
 // The chat root generation issues: one child per placed fragment in placement order, the label the
 // covering need issued and the initial selection. Both the construction route and the custom writer ask
-// this one rule, so assembly never derives a label and the wrapper is decided once.
+// this one rule, so the wrapper and its labels are decided once. The label text is the plan need's own
+// wording; this rule copies it and never invents, reformats or translates a label.
 export function chatRoot(composition: screens.Composition, plan: plans.Plan | null): ChatRoot | null {
   if (composition.screen.target !== "chat" || composition.screen.instances.length < 2) { return null; }
   let children: ChildLabel[] = [];
