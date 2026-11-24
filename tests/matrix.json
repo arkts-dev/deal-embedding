@@ -690,16 +690,33 @@
       "family": "candidate-predicates",
       "owner": "generation-recovery-and-source-editing",
       "requirement": "Candidate admission runs the shared prop/card validator on the initial tree and on every synthetic handler, frame and pointer tree before activation, rejecting with a located CHECK_PROP naming the component, the prop and the class, or CHECK_CARD naming the component and the count, and retaining the diagnostics without activating a degraded tree.",
-      "status": "missing",
-      "blocker": "Candidate admission never invokes the shared validator: android/src/rendering/IngressValidation.kt has exactly one production caller, android/src/rendering/DealRenderer.kt:312, at render time (tests/tools/fixtures/RendererRulesTest.kt:19 drives it directly), and no CHECK_PROP or CHECK_CARD producer exists in core/ or android/src (grep over *.deal, *.kt, *.js, *.py). core/isolated-check.deal proves pack identity and the Surface script only, so an invalid candidate tree is activated with no located predicate rejection and no deterministic or device item drives this boundary."
+      "status": "covered",
+      "test": "node tests/tools/test-renderer-admission.js",
+      "evidence": "The isolated checker runs the same whole-tree admission the Session runs (android/assets/embedding/bindings/renderer-admission.js over the generated projections) on its initial tree and after a synthetic onFrame event step, a pointer event step and a handler step, before it adopts any tree. A refused candidate returns ok:false with a located CHECK_PROP naming the component, the prop and the class, or CHECK_CARD naming the component, the prop and the count; the accepted tree is never replaced by the degraded candidate, and the step reports that located diagnostic to its caller instead of a degraded tree. The pack facts are the generated projections the library packages; the spec-fixed mechanisms are stated in both runtimes, and this item compares their tables (closed icons, text alignment, shape colour grammar, shape variants, accepted fields, command arity, graphics bounds) against the Kotlin copies so a drifted table fails the lane.",
+      "asserts": [
+        "CHECK_PROP: Progress.maximum positive",
+        "CHECK_CARD: Surface.shapes (60): shape limit per picture",
+        "the checker activated an invalid progress candidate",
+        "a synthetic frame step activated an invalid candidate",
+        "a synthetic pointer step activated an invalid candidate",
+        "the checker adopted the degraded candidate tree"
+      ]
     },
     {
       "id": "precommit-validation",
       "family": "precommit-validation",
       "owner": "ui-vocabulary-pack-and-rendering",
       "requirement": "The serialized Session runs the same shared validator on every candidate tree before business-state/tree commit, retains the prior state and tree and starts no effect on failure, faults the Session with PROP_FAULT or CARD_FAULT naming the component, the prop and the class, keeps the failed evidence, and includes ordered NumberField/Slider bounds, time/date domains and TextField length/pattern constraints.",
-      "status": "missing",
-      "blocker": "No precommit validation exists: android/src/rendering/DealRenderer.kt:310-316 validates inside the composable and only draws the previously accepted tree, so no Session fault is retained, no business state or effect is guarded and commit ordering is never exercised. android/src/rendering/IngressValidation.kt:32-39 has no caller before a Session transition commits, and tests/tools/fixtures/RendererRulesTest.kt:19 drives the validator directly instead of through the Session commit path."
+      "status": "partial",
+      "test": "node tests/tools/test-renderer-admission.js",
+      "seam": "session-ingress",
+      "blocker": "The Session boundary is implemented and proven for the issued pack rules: android/assets/embedding/bindings/renderer-admission.js applies the generated constraint, card-profile and prop-declaration projections that android/src/rendering/RendererContract.kt delivers with the private host target, android/assets/embedding/bindings/ui-session.js validates the initial tree and every transition candidate before the pinned Session commits, a projection that lost a constraint row, a row's class or a declaration's kind is refused with ADMISSION_PACK instead of degrading to the default finite class, and a refusal keeps the prior business state, display tree and version, starts no effect and leaves the located PROP_FAULT/CARD_FAULT in the Session fault. The ordered NumberField/Slider bound rule and the TextField minLength/maxLength ingress predicate stay unimplemented because neither is an issued rule: ui/platform.dealui-pack declares NumberField{minimum,maximum}, Slider{minimum,maximum} and TextField{minLength,maxLength}, but ui/prop-constraints.json carries no ordering row for the numeric pair and no length domain, and docs/spec-v0.8.md:655 - the UI vocabulary's own constraint list - names no component-scoped ordering or length class. The ordered-bounds sentence at docs/spec-v0.8.md:183 governs plan schemas and the composer applies it before emission, and the length rule is display feedback (docs/spec-v0.8.md:610, android/src/rendering/TextFieldRules.kt), not an ingress fault. A component special case here would also make the Session stricter than the class table the renderer is compiled from (PackConstraints would still class the prop finite), so the rule is owed a pack-issued class in the ui/ vocabulary before both boundaries can refuse it. The residual is not hypothetical: an admitted Slider with minimum above maximum reaches Compose's Slider(valueRange = ...) at android/src/rendering/DealRenderer.kt:749, which requires a non-empty range, so that candidate traps the surface instead of being refused here. This row keeps its located blocker and never counts as a pass. android/src/rendering/RendererContract.kt resolves the packaged projections through AssetManager, so the deterministic lane proves the assembled contract script and the missing/unparseable verdicts (tests/tools/fixtures/RendererRulesTest.kt) while the asset read and its cache execute only in the device lane.",
+      "asserts": [
+        "PROP_FAULT: Progress\\.maximum \\[positive\\]",
+        "PROP_FAULT: Transform\\.durationMs \\[nonnegative\\]",
+        "rejected candidate committed",
+        "valid sibling did not commit"
+      ]
     },
     {
       "id": "source-edits",
@@ -1167,8 +1184,8 @@
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "Persistence envelope {schemaDigest, value} with nominal tags, aliases and cycles by refs, ordered fields, digest mismatch rejection and atomic failure.",
       "status": "covered",
-      "test": "node tests/tools/test-persistence.js build/v08-cutover/composed-executable/js",
-      "evidence": "Aliases, cycles, nominal tags, ordering and poisoned-record rejection run through the pinned codec path.",
+      "test": "node tests/tools/test-persistence.js build/v08-cutover/composer-pairs/numeric/composed-executable/js",
+      "evidence": "Aliases, cycles, nominal tags, ordering and poisoned-record rejection run through the pinned codec path. The lane names the numeric screen-target pair the composer lane emits earlier in the same run (tests/tools/test-composer.py) and reads its issued target from admission.json, instead of the shared build/v08-cutover/composed-executable copy that the generation-cutover and vocabulary items delete and rewrite (the copy a reader finds afterwards is a card-target compile whose view authors NumberField, which the card profile refuses with CARD_FAULT: NumberField).",
       "asserts": [
         "assert.equal(envelope.value[0],'record'",
         "malformed saved bytes are refused as data"
@@ -1180,8 +1197,8 @@
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "The persistence envelope encodes and restores the full spec tag set: number, string, boolean, null, undefined, array with its element descriptor, record, class, ref, nan, positiveInfinity, negativeInfinity and negativeZero.",
       "status": "partial",
-      "test": "node tests/tools/test-persistence.js build/v08-cutover/composed-executable/js",
-      "blocker": "The record named here carries number, boolean, class and ref values only; the provider-bearing record of the sibling persistence item adds string (core/scalar-read.deal:84-85, tests/tools/test-persistence-provider.js). No restored production record therefore carries null, undefined, array, nan, positiveInfinity, negativeInfinity or negativeZero. The pinned codec implements every tag (dependencies/deal-ui/runtime-js/checkpoint.js:22-31,38); the missing proof is an emitted field of each kind, owned by the execution persistence producer."
+      "test": "node tests/tools/test-persistence.js build/v08-cutover/composer-pairs/numeric/composed-executable/js",
+      "blocker": "The record named here carries number, boolean, class and ref values only; the provider-bearing record of the sibling persistence item adds string (core/scalar-read.deal:84-85, tests/tools/test-persistence-provider.js). No restored production record therefore carries null, undefined, array, nan, positiveInfinity, negativeInfinity or negativeZero. The pinned codec implements every tag (dependencies/deal-ui/runtime-js/checkpoint.js:22-31,38); the missing proof is an emitted field of each kind, owned by the execution persistence producer. The subject is the numeric screen-target pair the composer lane emits earlier in the same run, not the shared build/v08-cutover/composed-executable copy that later lanes delete and rewrite."
     },
     {
       "id": "persistence-restore",

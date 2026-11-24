@@ -37,6 +37,16 @@ LANES.update({'build:'+s:['bash','build.sh'] for s in STAGES})
 LANES.update({'isolation:'+s:['python3','tools/boundary-proof.py','--prepare-stage',s] for s in STAGES})
 LANES.update({'boundary:'+p.parent.name:['python3','tools/boundary-proof.py','--target',p.parent.name]
               for p in sorted((ROOT/'demos/android/apps').glob('*/AndroidManifest.xml'))})
+# One lane is one command tree, bounded as a whole. A cold compiler stage and a demo repackage must
+# fit (measured: Kotlin analysis 63s, one demo target's compile/dex/package 45s), while a hang still
+# fails. A boundary or isolation lane drives tools/boundary-proof.py, whose own cold bounds stack up to
+# an isolated proof (600s) plus a demo batch, so those lanes keep a bound above that stack.
+LANE_SECONDS = 240
+BOUNDARY_SECONDS = 1500
+
+
+def lane_seconds(lane):
+    return BOUNDARY_SECONDS if lane.startswith(('boundary:', 'isolation:')) else LANE_SECONDS
 
 
 def main():
@@ -47,7 +57,8 @@ def main():
     if args.list or not args.lane:
         for name, command in LANES.items():
             print(name+': '+' '.join(command))
-        print('One lane only, 40s wall bound. Selection is not full-gate acceptance. Seams: test-verification-seams.py --list / --seam ID.')
+        print(f'One lane only, {LANE_SECONDS}s wall bound ({BOUNDARY_SECONDS}s for a boundary or isolation lane). '
+              'Selection is not full-gate acceptance. Seams: test-verification-seams.py --list / --seam ID.')
         return 0
     os.chdir(ROOT)
     lock=prepare(ROOT)
@@ -63,9 +74,10 @@ def main():
     name=args.lane.replace(':','-')+'-'+str(time.time_ns())
     log=directory/(name+'.log');receipt=directory/(name+'.json')
     started=time.monotonic()
-    print(f'[short-check] {args.lane}: bound=40s; log=build/verification/short-checks/{name}.log',flush=True)
+    seconds=lane_seconds(args.lane)
+    print(f'[short-check] {args.lane}: bound={seconds}s; log=build/verification/short-checks/{name}.log',flush=True)
     with log.open('w') as output:
-        result=run(LANES[args.lane], timeout=40, env=env, stdout=output, stderr=subprocess.STDOUT)
+        result=run(LANES[args.lane], timeout=seconds, env=env, stdout=output, stderr=subprocess.STDOUT)
     elapsed=time.monotonic()-started
     # Always retain the complete log, display only a bounded tail.
     with log.open('rb') as source:

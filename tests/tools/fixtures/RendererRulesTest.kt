@@ -162,6 +162,12 @@ fun main(args: Array<String>) {
     rejected(node("Transform", listOf(infinite, number("durationMs", 10.0))), "PROP_FAULT", "Transform", "pose", "pose")
     accepted(node("Progress", listOf(text("label", "p"), number("value", 150.0), number("maximum", 100.0))))
     check(NumericPresentation.format(150.0, "", "", 1, -1) == "150")
+    // Over-range progress is clamped by the painter; a nonfinite one is not a clamp and never decodes
+    // from the wire, so ingress refuses it exactly as the Session boundary does.
+    rejected(node("Progress", listOf(text("label", "p"), number("value", Double.NaN), number("maximum", 100.0))),
+        "PROP_FAULT", "Progress", "value", "display-clamp")
+    rejected(node("ProgressRing", listOf(text("label", "p"), number("value", Double.POSITIVE_INFINITY),
+        number("maximum", 100.0))), "PROP_FAULT", "ProgressRing", "value", "display-clamp")
 
     // Shared numeric presentation domain and text.
     fun numberText(decimals: Double? = null, minimumDigits: Double? = null, value: Double = 1.0): UiNode {
@@ -295,6 +301,18 @@ fun main(args: Array<String>) {
         "tag" to JsonValue.Str("rect"), "x" to JsonValue.Num(Double.POSITIVE_INFINITY), "y" to JsonValue.Num(0.0),
         "width" to JsonValue.Num(1.0), "height" to JsonValue.Num(1.0), "color" to JsonValue.Str("#112233")))))
     check(GraphicsValidation.shapes(nonfiniteShape) != null) { "a nonfinite shape field must be refused" }
+    // The path grammar separates coordinates with Kotlin's Char.isWhitespace: every Unicode space
+    // character - the non-breaking ones included - and the C0 separators, but not the byte-order mark.
+    // The Session-boundary admission mechanism applies the same class, so a committed path is never
+    // refused at paint time.
+    val noBreakSpace = "M" + '\u00A0' + "0 0"
+    check(GraphicsValidation.shapes(NeutralJson.parse("""[{"tag":"path","commands":"$noBreakSpace","color":"#112233"}]""")) == null) {
+        "a non-breaking space must separate path numbers"
+    }
+    val byteOrderMark = "M" + '\uFEFF' + "0 0"
+    check(GraphicsValidation.shapes(NeutralJson.parse("""[{"tag":"path","commands":"$byteOrderMark","color":"#112233"}]""")) != null) {
+        "the byte-order mark is not path whitespace"
+    }
 
     // Card profile: membership, events, limits and unsupported props selected by the issued target.
     fun cardTree(surfaces: Int, shapesPerSurface: Int = 60, motions: Int = 5, timers: Int = 3, extra: List<UiNode> = emptyList()) =
@@ -905,6 +923,37 @@ fun main(args: Array<String>) {
     // checked on the banner's own branch.
     check(branch("InsetBanner")?.contains("if (values.text(\"icon\").isNotEmpty()) PackIcon(values.text(\"icon\"))") == true) {
         "the banner paints the icon it declares instead of dropping it"
+    }
+
+    // The issued contract script: the private target is the only text that needs quoting, the
+    // projections are spliced as JSON, and a line separator inside either can never end the script.
+    // The object is frozen and its global binding made read-only before any compiled module runs.
+    val issued = RendererContractScript.assemble("card", "{\"version\":2}", "{}", "{}")
+    check(issued.startsWith("globalThis.rendererContract={target:\"card\",constraints:{\"version\":2},card:{},declarations:{}};")) {
+        "issued contract script: $issued"
+    }
+    check("deep(issued);" in issued && issued.indexOf("deep(issued);") < issued.indexOf("Object.defineProperty(globalThis, 'rendererContract'") &&
+        "Object.isFrozen(value)" in issued) {
+        "the issued facts must be frozen before the binding is sealed: $issued"
+    }
+    check("Object.defineProperty(globalThis, 'rendererContract', {value: issued, writable: false, configurable: false});" in issued) {
+        "the issued contract binding must be read-only: $issued"
+    }
+    val separator = RendererContractScript.assemble("screen", "{}", "{}", "{\"label\":\"a\u2028b\"}")
+    check("\\u2028" in separator && separator.none { it == '\u2028' }) { "a projection line separator must be escaped: $separator" }
+    val trickyTarget = "a\"b\\c\nd\u2028e"
+    val quoted = RendererContractScript.assemble(trickyTarget, "{}", "{}", "{}")
+    check(trickyTarget !in quoted && quoted.none { it == '\u2028' || it == '\n' }) { "the target must be a string literal: $quoted" }
+    // A projection that is absent or unreadable is an issued-pack verdict, never unclassified I/O that
+    // bounded source repair could mistake for its own defect.
+    fun failure(operation: () -> Unit): ProtocolFailure? = try { operation(); null } catch (error: ProtocolFailure) { error }
+    val absent = failure { RendererContractScript.missing("embedding/prop-constraints.json") }
+    check(absent?.code == "ADMISSION_PACK" && absent.message?.contains("embedding/prop-constraints.json") == true) {
+        "a missing projection must be a located ADMISSION_PACK: $absent"
+    }
+    val corrupt = failure { RendererContractScript.unparseable("embedding/card-profile.json") }
+    check(corrupt?.code == "ADMISSION_PACK" && corrupt.message?.contains("embedding/card-profile.json") == true) {
+        "an unparseable projection must be a located ADMISSION_PACK: $corrupt"
     }
 
     println("renderer rules: metadata, resolution, seven classes, presentation, style, payloads, graphics, card, dispatch, tabs panels, drafts, display vocabulary, container and chart modes, text-field feedback, draft conversion, motion, pose, stage ordering and path rotation passed")

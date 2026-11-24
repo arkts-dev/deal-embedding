@@ -25,7 +25,9 @@ case ${DEAL_BUILD_STAGE:-} in
     *) echo "Unknown DEAL_BUILD_STAGE" >&2; exit 2;;
 esac
 # No assertion results are cached: RendererConformance always executes after compilation.
-# Default bounds are deliberately short. Slow stages stop with their name, preserving predecessors.
+# A bound must exceed this toolchain's measured cold compiler cost (Java and Kotlin analysis dominate
+# at 52s and 63s here), so a cold gate can finish. A stage that overruns still stops with its name,
+# preserving validated predecessors, and is never reported as a pass.
 stage() {
     local name=$1; shift
     if [[ ${SELECTED_DONE:-0} == 1 ]]; then return; fi
@@ -38,7 +40,7 @@ stage() {
     export -f "$name"
     local status=0
     python3 "$ROOT/tools/build-stage.py" "$name" --record "$OUTPUT_DIR/stages/$name.json" \
-        --seconds "${DEAL_BUILD_STAGE_SECONDS:-30}" "${args[@]}" -- bash -euo pipefail -c "$name" || status=$?
+        --seconds "${DEAL_BUILD_STAGE_SECONDS:-180}" "${args[@]}" -- bash -euo pipefail -c "$name" || status=$?
     if [[ $prerequisite == 1 && $status != 0 ]]; then
         echo "Prepare prerequisite first: DEAL_BUILD_STAGE=$name" >&2; return "$status"
     fi

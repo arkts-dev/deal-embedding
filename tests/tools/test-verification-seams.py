@@ -44,9 +44,6 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-# A control's bound only has to outlive its owning test. The cutover control runs one generation mode
-# (`--mode=success`), measured at 14-20 s here, so the default bound covers every control.
-TIMEOUT = 300
 BACKUP = ROOT / 'build/verification/seam-backup'
 JOURNAL = BACKUP / 'journal.json'
 
@@ -55,6 +52,14 @@ SEAMS = [
      'old': '"Progress.maximum" to "positive"',
      'new': '"Progress.maximum" to "finite"',
      'command': ['bash', 'tests/tools/test-renderer-rules.sh']},
+    # The Session-boundary half of the same rule: the compile-time projection above only reaches the
+    # renderer's ingress. The positive class is the rule that refuses Progress.maximum = 0 before a
+    # candidate commits, so weakening it in the admission mechanism must fail the Session item.
+    {'id': 'session-ingress', 'family': 'precommit-validation', 'path': 'android/assets/embedding/bindings/renderer-admission.js',
+     'old': 'if (!(number !== null && Number.isFinite(number) && number > 0)) fault(null);',
+     'new': 'if (false) fault(null);',
+     'expect': 'rejected candidate committed: Progress.maximum = 0',
+     'command': ['node', 'tests/tools/test-renderer-admission.js']},
     {'id': 'numeric-presentation', 'family': 'prop-predicates', 'path': 'android/src/rendering/NumericPresentation.kt',
      'old': 'BigDecimal(value.toString()).setScale(decimals, RoundingMode.HALF_UP).toPlainString()',
      'new': 'BigDecimal(value.toString()).setScale(decimals, RoundingMode.DOWN).toPlainString()',
@@ -357,7 +362,7 @@ def observe(seam):
         try:
             environment['DEAL_BUILD_LOCK_HELD'] = str(ROOT)
             result = bounded_run(seam['command'], cwd=ROOT, capture_output=True, text=True,
-                                 timeout=min(seam.get('timeout', TIMEOUT), RUN_BOUND), env=environment)
+                                 timeout=RUN_BOUND, env=environment)
         finally:
             print(f'[seam] {seam["id"]} elapsed={time.monotonic()-started:.2f}s', flush=True)
         if result.returncode in (75, 124, 137) or result.returncode < 0:
@@ -382,7 +387,9 @@ def observe(seam):
         release()
 
 
-RUN_BOUND = 30
+# A control's bound only has to outlive its owning test. A cold owning test compiles first (the renderer
+# rules compile measured 29 s here), so this bound covers compilation, not only assertions.
+RUN_BOUND = 180
 
 
 def main():
@@ -391,7 +398,7 @@ def main():
     parser.add_argument('--recover', action='store_true')
     parser.add_argument('--list', action='store_true')
     parser.add_argument('--seam', action='append', choices=[s['id'] for s in SEAMS])
-    parser.add_argument('--seconds', type=int, default=30)
+    parser.add_argument('--seconds', type=int, default=180)
     args = parser.parse_args()
     if args.seconds < 1 or args.seconds > 300:
         parser.error('--seconds must be 1..300')

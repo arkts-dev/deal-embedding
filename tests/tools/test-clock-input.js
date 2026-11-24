@@ -17,11 +17,12 @@ const driver=need=>{const found=drivers.find(item=>item.need===need);assert(foun
 assert.strictEqual(driver('focus').intervalMs,1000,'the countdown driver interval is host configuration');
 assert.strictEqual(driver('lap').intervalMs,1000,'the stopwatch driver interval is host configuration');
 
-const context=vm.createContext({sources});
+const context=vm.createContext({sources,rendererContract:require('./fixtures/renderer-contract.js')(manifest.target)});
 vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/sandbox.js','utf8'),context);
 vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js/checkpoint.js'),'utf8'),context);
 vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js/session.js'),'utf8'),context);
 vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/text-pattern.js','utf8'),context);
+vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/renderer-admission.js','utf8'),context);
 vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/ui-session.js','utf8'),context);
 vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));const loaded=dealLoad(factories,'experience_entry.js');const entry=loaded.entry,rt=loaded.rt,checkpointSchema=loaded.checkpointSchema;mountDealUi(factories,'experience_entry.js',null,null,null,${JSON.stringify(drivers)});`,context);
 const state=()=>vm.runInContext("createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f()).decode(JSON.parse(dealUi.checkpoint()),entry.bridgeInitialState.$sig.substring(4))",context);

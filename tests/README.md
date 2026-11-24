@@ -15,13 +15,16 @@ python3 tests/check.py catalogue:timers
 python3 tests/check.py renderer-admission
 ```
 
-One lane per invocation, **40-second command-tree bound**, no automatic broad gate or build.
+One lane per invocation, **240-second command-tree bound** (1500 seconds for a `boundary:` or
+`isolation:` lane, which may prove the isolated library before it repackages its target), no
+automatic broad gate or build.
 Full logs and exit/timing receipts are kept in ignored `build/verification/short-checks/`.
 A timeout is a failure, not a negative-control pass. Earlier validated compiler artifacts survive;
 fix/profile the named stage instead of restarting a whole gate. Preparation alone is not verification.
-No claim that every cold compiler stage finishes within this bound: unresolved expensive stages stop.
-
-Library `build.sh` now has independently content-validated stages (default 30 seconds each), separate
+The lane bound covers a cold stage on this toolchain (Kotlin analysis measured 63s, one demo
+target's compile/dex/package 45s), so a lane can prepare the stage it names; the library stage bound
+(below) is the second, per-stage bound inside it.
+Library `build.sh` now has independently content-validated stages (default 180 seconds each), separate
 Java/mechanism/Kotlin outputs, and assembly into the existing packaged paths. A policy change does not
 force Java/Compose recompilation. Missing/corrupt outputs, changed source, toolchain or command invalidate
 the owning stage. Every stage clears its own generated outputs before compilation; stale deleted classes
@@ -41,7 +44,7 @@ Selected build stages require validated predecessors, not merely existing direct
 preparation retains its own isolated outputs, never canonical compiled outputs; final digest comparison,
 input auditing and negative controls remain mandatory. Demo proofs validate APK output content too.
 Library/composer/construction/catalogue caches store compiler artifacts only; assertions run on every check.
-Seams are selectable, hold the common lock and default to 30 seconds per owning test; infrastructure
+Seams are selectable, hold the common lock and default to 180 seconds per owning test; infrastructure
 exit/timeout never counts as an observed broken rule. Interrupted mutation journals remain recoverable.
 `DEAL_BUILD_PLAN=1` previews library stages without compiling; `DEAL_BUILD_COLD=1` refuses artifact reuse.
 These are preparation/diagnostic controls, not substitutes for the complete gate.
@@ -132,7 +135,7 @@ mechanisms only); it checks reuse, source/classpath invalidation and damaged/del
 
 `DEAL_ROOT` and `DEAL_UI_ROOT` accept absolute override paths and default to the framework's `dependencies/deal` and `dependencies/deal-ui` independent ignored checkouts. Run `python3 tools/dependencies.py setup` first; the test runner verifies exact lock pins and rejects tracked dependency edits. Tests use the compiler classes built by the framework library build; upstream compiler build outputs are not required. `tests/run.sh` changes to the framework root and works from any caller directory. Individual test tools assume that root as working directory.
 
-Test APK packaging (`bash tests/tools/build-cutover-test.sh`) now validates four independent artifact stages: resources, test Kotlin/JAR, DEX and signed APK. Unchanged stages are reused, damaged outputs invalidate their owner, and a timeout retains validated predecessors. Bounds are 30/60/45/30 seconds respectively (`DEAL_TEST_COMPILE_SECONDS` adjusts the Kotlin bound). `DEAL_TEST_KEYSTORE` selects an existing debug signing key explicitly; it never changes an installed package's signing identity or resets data. Device assertions always run separately. For diagnostic gate resumption, `DEAL_GATE_FROM=tests/tools/<script>` starts an explicitly labelled segment, not a complete gate pass.
+Test APK packaging (`bash tests/tools/build-cutover-test.sh`) now validates four independent artifact stages: resources, test Kotlin/JAR, DEX and signed APK. Unchanged stages are reused, damaged outputs invalidate their owner, and a timeout retains validated predecessors. Bounds are 30/180/45/30 seconds respectively (`DEAL_TEST_COMPILE_SECONDS` adjusts the Kotlin bound). `DEAL_TEST_KEYSTORE` selects an existing debug signing key explicitly; it never changes an installed package's signing identity or resets data. Device assertions always run separately. For diagnostic gate resumption, `DEAL_GATE_FROM=tests/tools/<script>` starts an explicitly labelled segment, not a complete gate pass.
 
 Android instrumentation sources are in `tests/android/`; the APK is `build/v08-cutover/device-test/tests.apk`. Installing/running is explicit, never part of the build. Device construction can be selected with `-e construction true -e mode ordinary` (also catalogue, mixed, partial, syntax-recovery, gap-reader, money, time, lazy-formula); `-e providers true`, `-e targets true` and `-e storage true` isolate the other nonvisual groups. Selected groups are not the complete device suite. Existing package names and private test-resource cleanup behavior are unchanged. `-e timer true` runs the production-renderer Timer check in `TimerPainterChecks.kt` (`adb shell am instrument -w -e timer true dev.deal.cutover.tests/.CutoverInstrumentation`): an epoch deadline counts down and an epoch origin counts up while visible, a pre-1970 origin paints its whole elapsed span, the lifecycle owner around the renderer leaving `RESUMED` freezes the painted second while the page stays visible (an ungated tick loop moves it), returning recomputes from the presentation clock without replaying the hidden seconds (the first reading after `RESUMED` that leaves the frozen one is compared with the clock, so a renderer that resumes its frozen reading stays more than the one-second tolerance off instead of converging), a reached deadline paints zero from its deadline and stays there, ticking dispatches no action, and removing the node stops painting. The same check fails against the removed epoch-division painter.
 

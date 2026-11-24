@@ -22,8 +22,10 @@ internal class SuggestionSurface(context: Context, title: String, private val op
     init {
         try {
             val contract = "[{module:'embedding/assistance',functions:[{name:'open',parameters:[],result:{kind:'null'}},{name:'dismiss',parameters:[],result:{kind:'null'}}]}]"
-            program.evaluate(SandboxBundle.build(context,listOf("dealui-session.js","text-pattern.js","ui-session.js"),
-                "configureDealCapabilities($contract);", """
+            program.evaluate(SandboxBundle.build(context,listOf("dealui-session.js","text-pattern.js","renderer-admission.js","ui-session.js"),
+                // The fixed suggestion view is framework UI authored for the host default surface target;
+                // it carries no issued candidate target and no card profile applies to it.
+                "configureDealCapabilities($contract);" + RendererContract.script(context, "screen"), """
                     mountDealUi(factories,'experience_entry.js',null,null,(initial,rt) => {
                       // Native presentation supplies the title to the initial state before the first tree.
                       rt.setProp(initial,'title',${JSONObject.quote(title)});

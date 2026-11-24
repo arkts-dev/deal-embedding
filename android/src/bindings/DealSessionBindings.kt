@@ -18,7 +18,8 @@ internal object DealSessionBindings {
             ?: manifest.optString("composition").takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() }
         val drivers = composition?.optJSONArray("clockDrivers")?.toString() ?: "[]"
         return SandboxBundle.build(
-            context, listOf("dealui-session.js", "text-pattern.js", "ui-session.js"), CapabilityBindings.script(config.contracts),
+            context, listOf("dealui-session.js", "text-pattern.js", "renderer-admission.js", "ui-session.js"),
+            CapabilityBindings.script(config.contracts) + RendererContract.script(context, config.target),
             "mountDealUi(factories,\"$ENTRY_NAME.js\",${record(restored)},${appModule(config)?.let { JSONObject.quote(it) } ?: "null"},null,$drivers)", output = output)
     }
     /** The compiled app module owns the issued persistence roles; only retaining hosts name it. */

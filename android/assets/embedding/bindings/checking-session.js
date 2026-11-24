@@ -28,6 +28,25 @@ globalThis.openChecking = function(factories, entryId, restoredState = null, app
     return value;
   }
   function response(ok, diagnostic = '') { return JSON.stringify({ok,diagnostics:diagnostic,tree:current ? JSON.stringify(plain(current.tree)) : '',handlers:call('checkHandlerCount'),providerCalls}); }
+  // A candidate tree the shared admission refuses is located checker feedback about the assembled
+  // source, not an execution failure: the diagnostic names the component, the prop and the class, or
+  // the card limit, so bounded repair can locate the writer's defect and no degraded tree activates.
+  function admissionDiagnostic(fault) {
+    const located = (prefix) => fault.component === '' ? prefix : prefix + ': ' + fault.component + (fault.prop ? '.' + fault.prop : '');
+    if (fault.code === 'PROP_FAULT') {
+      let text = located('CHECK_PROP');
+      if (fault.propClass) text += ' ' + fault.propClass;
+      if (fault.detail) text += ': ' + fault.detail;
+      return text;
+    }
+    if (fault.code === 'CARD_FAULT') {
+      let text = located('CHECK_CARD');
+      if (fault.count !== undefined) text += ' (' + fault.count + ')';
+      if (fault.detail) text += ': ' + fault.detail;
+      return text;
+    }
+    return fault.code + (fault.detail ? ': ' + fault.detail : '');
+  }
   function render(candidate,action) {
     const next = action ? call('transitionFromCandidate',candidate,current.tree,store,action) : call('initial',candidate,store);
     validateRendererValues(next.tree);
@@ -85,7 +104,10 @@ globalThis.openChecking = function(factories, entryId, restoredState = null, app
         render(candidate,action);
       }
       return response(true);
-    } catch(error) {return response(false,'CHECK_EXECUTION: '+rt.runtimeDiagnostic(rt.reifyError(error)));}
+    } catch(error) {
+      if(error && error.fault) return response(false,admissionDiagnostic(error.fault));
+      return response(false,'CHECK_EXECUTION: '+rt.runtimeDiagnostic(rt.reifyError(error)));
+    }
   };
   return '';
 };

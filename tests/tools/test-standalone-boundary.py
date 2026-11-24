@@ -16,7 +16,7 @@ DIGEST = re.compile(r'classes ([0-9a-f]{16}) assets ([0-9a-f]{16})')
 
 
 def prove(*arguments):
-    result = subprocess.run(['timeout', '--kill-after=2s', '40s', sys.executable, 'tools/boundary-proof.py', *arguments], cwd=ROOT,
+    result = subprocess.run(['timeout', '--kill-after=2s', '2100s', sys.executable, 'tools/boundary-proof.py', *arguments], cwd=ROOT,
                             capture_output=True, text=True)
     # unittest otherwise hides successful child diagnostics, including where the time went.
     for line in result.stderr.splitlines():

@@ -193,7 +193,9 @@ internal object IngressValidation {
                 val opacity = entries[7] as JsonValue.Num
                 return if (opacity.value < 0 || opacity.value > 1) fault("pose opacity must be in [0, 1]") else null
             }
-            "display-clamp" -> return null
+            // Over-range progress is clamped by the painter; it is never an ingress fault. A nonfinite
+            // value never decodes from the transport, so refusing it keeps both boundaries equal.
+            "display-clamp" -> return if (number != null && !number.isFinite()) fault("progress value must be finite") else null
         }
         return null
     }

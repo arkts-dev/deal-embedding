@@ -28,6 +28,7 @@ SOURCES=(
   android/src/rendering/CompileInput.kt \
   android/src/rendering/TreePresentation.kt \
   android/src/rendering/RendererMetadata.kt \
+  android/src/rendering/RendererContractScript.kt \
   build/embedding-library/generated/PackProjections.kt \
   tests/tools/fixtures/RendererRulesTest.kt \
   tests/tools/fixtures/ImageLoadTest.kt \

@@ -369,6 +369,7 @@ def main():
     assert not any("ui-vocabulary" in name for name in names), "the inventory was packaged"
     for name in ("assets/embedding/platform.dealui-pack", "assets/embedding/prop-constraints.json",
                  "assets/embedding/card-profile.json", "assets/embedding/prop-declarations.json",
+                 "assets/embedding/bindings/renderer-admission.js",
                  "assets/ui/platform.dealui-pack", "assets/ui/theme.json", "assets/ui/prop-constraints.json"):
         assert name in names, f"{name} is missing from the AAR"
     reduced = pathlib.Path(tempfile.mkdtemp(prefix="vocabulary-reduced-"))

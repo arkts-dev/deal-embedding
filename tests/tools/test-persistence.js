@@ -4,14 +4,17 @@
 // a cold mount of saved bytes. Saved derived values are never reused, edits to authoritative values
 // survive, aliases/cycles/absence keep identity and no provider, inference or effect work replays.
 const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('node:assert/strict');
+const rendererContract=require('./fixtures/renderer-contract.js');
 const base=path.resolve(process.argv[2]),dealUi=process.env.DEAL_UI_ROOT||'dependencies/deal-ui';
+/** The frozen target the pair was compiled for is part of the issued contract this lane replays. */
+const target=JSON.parse(fs.readFileSync(path.join(base,'admission.json'),'utf8')).target;
 const sources={};
 (function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(base,file)]=fs.readFileSync(file,'utf8');}})(base);
 
 /** A fresh isolate per call: a saved Experience never shares a live module cache or Session. */
 function open(persisted=null,appModule='experience.js'){
-  const context=vm.createContext({sources});
-  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/ui-session.js'])
+  const context=vm.createContext({sources,rendererContract:rendererContract(target)});
+  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/renderer-admission.js','android/assets/embedding/bindings/ui-session.js'])
     vm.runInContext(fs.readFileSync(file,'utf8'),context);
   vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));
     globalThis.__snapshot=mountDealUi(factories,'experience_entry.js',${persisted===null?'null':JSON.stringify(persisted)},${appModule===null?'null':JSON.stringify(appModule)});`,context);
@@ -19,8 +22,8 @@ function open(persisted=null,appModule='experience.js'){
 }
 /** The host path: saved bytes are parsed from a quoted literal, never spliced as source. */
 function openBytes(saved,appModule='experience.js'){
-  const context=vm.createContext({sources});
-  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/ui-session.js'])
+  const context=vm.createContext({sources,rendererContract:rendererContract(target)});
+  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/renderer-admission.js','android/assets/embedding/bindings/ui-session.js'])
     vm.runInContext(fs.readFileSync(file,'utf8'),context);
   context.__saved=saved;
   vm.runInContext('const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function(\'require\',\'module\',\'exports\',\'process\',\'console\',source)]));'
@@ -30,8 +33,8 @@ function openBytes(saved,appModule='experience.js'){
 const snapshot=context=>JSON.parse(vm.runInContext('__snapshot',context));
 /** The isolated checking lane restores through the same compiled roles before it renders. */
 function checked(saved,appModule='experience.js'){
-  const context=vm.createContext({sources});
-  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/checking-session.js'])
+  const context=vm.createContext({sources,rendererContract:rendererContract(target)});
+  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/renderer-admission.js','android/assets/embedding/bindings/checking-session.js'])
     vm.runInContext(fs.readFileSync(file,'utf8'),context);
   context.__saved=saved;
   vm.runInContext('const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function(\'require\',\'module\',\'exports\',\'process\',\'console\',source)]));'

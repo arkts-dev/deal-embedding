@@ -160,7 +160,8 @@ internal object GraphicsValidation {
             }
             (fields["points"] as? JsonValue.Arr)?.let { points ->
                 if (points.items.size % 2 != 0) return "$tag points must be coordinate pairs"
-                if (points.items.size > MAX_POINT_NUMBERS) return "$tag exceeds 1000 points"
+                // The bound counts point coordinates: the spec's 1000 points are two numbers each.
+                if (points.items.size > MAX_POINT_NUMBERS) return "$tag exceeds ${MAX_POINT_NUMBERS / 2} points"
                 for (number in points.items) if (number !is JsonValue.Num || !number.value.isFinite()) return "$tag points must be finite"
             }
             if ("points" in required && fields["points"] !is JsonValue.Arr) return "$tag requires points"

@@ -15,8 +15,8 @@ const sources={};
 (function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))sources[path.relative(base,file)]=fs.readFileSync(file,'utf8');}})(base);
 
 function open(persisted=null){
-  const context=vm.createContext({sources});
-  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/ui-session.js'])
+  const context=vm.createContext({sources,rendererContract:require('./fixtures/renderer-contract.js')(JSON.parse(fs.readFileSync(path.join(base,'admission.json'),'utf8')).target)});
+  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/renderer-admission.js','android/assets/embedding/bindings/ui-session.js'])
     vm.runInContext(fs.readFileSync(file,'utf8'),context);
   vm.runInContext('configureDealCapabilities('+JSON.stringify([providerContract])+')',context);
   vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));

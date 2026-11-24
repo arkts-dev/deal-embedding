@@ -61,7 +61,7 @@ python3 tests/tools/test-catalogue.py
 # published ports, issued hole bodies and the exact aggregate arithmetic.
 python3 tests/tools/test-catalogue-runtime.py
 python3 tests/tools/test-composer.py
-node tests/tools/test-persistence.js build/v08-cutover/composed-executable/js
+node tests/tools/test-persistence.js build/v08-cutover/composer-pairs/numeric/composed-executable/js
 python3 tests/tools/test-fragment-semantics.py
 node tests/tools/test-generation-cutover.js
 node tests/tools/test-persistence-provider.js build/v08-cutover/emitted/scalar-read/js

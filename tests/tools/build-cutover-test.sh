@@ -84,7 +84,7 @@ stage resources 30 --input "$ANDROID" --input "$TOOLS/aapt2" --input "$OUT/Andro
     --input build/compose/resources.txt --input build/compose/packages.txt --input build/embedding-consumer/assets \
     "${args[@]}" --output "$OUT/resources.apk" --output "$OUT/rjava"
 args=(); for source in "${TEST_SOURCES[@]}" "${JARS[@]}"; do args+=(--input "$source"); done
-stage test_kotlin "${DEAL_TEST_COMPILE_SECONDS:-60}" --input "$CP_SOURCES" --input "$OUT/rjava" --input "$ANDROID" \
+stage test_kotlin "${DEAL_TEST_COMPILE_SECONDS:-180}" --input "$CP_SOURCES" --input "$OUT/rjava" --input "$ANDROID" \
     --input "$KOTLIN_HOME/bin/kotlinc" --input "$KOTLIN_HOME/lib/kotlin-compiler.jar" \
     --input "$KOTLIN_HOME/lib/compose-compiler-plugin.jar" "${args[@]}" \
     --output "$OUT/classes" --output "$OUT/test.jar" --output "$OUT/sources.sha256"

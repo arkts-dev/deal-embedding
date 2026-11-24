@@ -67,6 +67,7 @@ const eventsOpenPlan={...eventsPlan,inputs:[...eventsPlan.inputs,{id:'span',labe
 // A live need and one declared provider contract make the scalar-read emitter produce its Load pair.
 const scalarPlan={title:'Scalar provider',inputs:[],constants:[],requirements:[{id:'preserve',text:'Read the current scalar value',sources:['request'],needs:['read']}],needs:[{id:'read',type:'live',words:'Explicitly read the scalar value',reads:[],spec:{label:'Scalar',measure:'number',unit:'',query:'host/probe.read'}}],questions:[]};
 const {providerContract,declaration}=require('./fixtures/provider-contract.js');
+const rendererContract=require('./fixtures/renderer-contract.js');
 const providerDeclarations=contracts=>Object.fromEntries(contracts.map(c=>[c.module,declaration(c)]));
 const regions='<classes>export class Change {value: number;}</classes><fields>value: number = 3;</fields><functions>export function change(state: AppState, action: Change): AppState {return {value: action.value};}</functions><view>import * as app from "./experience"; import * as ui from "./platform.dealui-pack"; export view Panel(state: app.AppState): View {ui.Column(){ui.Text(text: "Retained authored text 😀") ui.NumberField(label: "Value", value: state.value, minimum: 0, maximum: 999, step: 1, onChange: action app.Change {value: payload})}}</view>';
 // A scene section owns scene-only state: its snapshot is never a producer of the existing plan input
@@ -438,8 +439,8 @@ async function run(mode){
      if(request.function==='step') {
       if(request.args[1]==='start') {
        isolatedStarts++;
-       checkingContext=vm.createContext({});
-       for(const name of ['sandbox.js','text-pattern.js','checking-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),checkingContext);
+       checkingContext=vm.createContext({rendererContract:rendererContract(frozenTarget)});
+       for(const name of ['sandbox.js','text-pattern.js','renderer-admission.js','checking-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),checkingContext);
        if(hasProvider)vm.runInContext('configureDealCapabilities('+JSON.stringify([providerContract])+')',checkingContext);
        const executable=path.join(stage,'../composed-executable/js');const modules={};
        function load(dir){for(const n of fs.readdirSync(dir)){const f=path.join(dir,n);if(fs.statSync(f).isDirectory())load(f);else if(n.endsWith('.js'))modules[path.relative(executable,f)]=fs.readFileSync(f,'utf8');}}load(executable);

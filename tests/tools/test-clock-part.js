@@ -27,11 +27,12 @@ assert.strictEqual(driver.trust,'f_parts_clockTrust','the driver names the Sessi
 assert.strictEqual(manifest.composition.sessionClock.epoch,'f_parts_clockEpoch','the composition publishes its Session clock identity');
 assert.strictEqual(manifest.composition.sessionClock.trust,'f_parts_clockTrust','the composition publishes its Session clock trust identity');
 
-const context=vm.createContext({sources});
+const context=vm.createContext({sources,rendererContract:require('./fixtures/renderer-contract.js')(manifest.target)});
 vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/sandbox.js','utf8'),context);
 vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js/checkpoint.js'),'utf8'),context);
 vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js/session.js'),'utf8'),context);
 vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/text-pattern.js','utf8'),context);
+vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/renderer-admission.js','utf8'),context);
 vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/ui-session.js','utf8'),context);
 vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));globalThis.dealFactories=factories;const loaded=dealLoad(factories,'experience_entry.js');const entry=loaded.entry,rt=loaded.rt,checkpointSchema=loaded.checkpointSchema;mountDealUi(factories,'experience_entry.js',null,'experience.js',null,${JSON.stringify(drivers)});`,context);
 const state=()=>vm.runInContext("createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f()).decode(JSON.parse(dealUi.checkpoint()),entry.bridgeInitialState.$sig.substring(4))",context);

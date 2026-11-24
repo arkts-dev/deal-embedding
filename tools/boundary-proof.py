@@ -200,11 +200,10 @@ def isolated_digests(android, aidl, prepare_stage=None, plan=False):
     print('[boundary] isolated library build starting', file=sys.stderr, flush=True)
     started = time.monotonic()
     try:
-        # Preparation executes one compiler stage, not a whole proof. Kotlin's measured
-        # active-analysis path needs more than the cached-proof bound on this toolchain.
-        seconds = 65 if prepare_stage == 'kotlin' else 35
-        if prepare_stage == 'kotlin':
-            environment['DEAL_BUILD_STAGE_SECONDS'] = '60'
+        # Preparation executes one compiler stage, not a whole proof. The outer bound covers a cold
+        # stage on this toolchain (Java and Kotlin analysis measured at 52s and 63s); the inner bound
+        # stays the build's own, so a validated stage is still refused after its own limit.
+        seconds = 240 if prepare_stage else 600
         subprocess.run(['timeout', '--kill-after=2s', f'{seconds}s', 'bash', 'build.sh'], cwd=stage, env=environment, check=True)
     finally:
         print(f'[boundary] isolated library build elapsed={time.monotonic()-started:.2f}s',
@@ -427,7 +426,12 @@ def compile_demos(declarations):
                 produced.unlink(missing_ok=True)
         started = time.monotonic()
         try:
-            subprocess.run(['timeout', '--kill-after=2s', '30s', 'bash', 'demos/build.sh', *pending], cwd=ROOT, check=True, env=environment)
+            # A cold batch compiles, dexes, resource-links and signs one APK per pending target; the
+            # measured batch cost exceeds a short lane bound, and a serial batch (DEAL_DEMO_JOBS=1) over
+            # a slow host sums every target, so the bound scales with the pending targets instead of
+            # failing the proof at its first run, with headroom over the measured serial sum.
+            seconds = max(600, 180 * len(pending))
+            subprocess.run(['timeout', '--kill-after=2s', f'{seconds}s', 'bash', 'demos/build.sh', *pending], cwd=ROOT, check=True, env=environment)
         finally:
             print(f'[boundary] demo packaging elapsed={time.monotonic()-started:.2f}s',
                   file=sys.stderr, flush=True)
