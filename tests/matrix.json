@@ -346,8 +346,9 @@
         "milliseconds(seconds,90,\"cook\") === 90000",
         "cook: length source is not a duration",
         "cook: unissued duration source timer",
-        "insist(negative,\"Negative duration converted\")",
-        "insist(nonfinite,\"Nonfinite duration converted\")",
+        "duration value is negative",
+        "duration value is not finite",
+        "duration conversion overflowed",
         "assert.strictEqual(driver.intervalMs,1000,'the driver interval is host configuration')"
       ]
     },
@@ -420,7 +421,7 @@
         "tests/tools/fixtures/construction-contracts.deal",
         "tests/tools/fixtures/composer-contracts.deal"
       ],
-      "evidence": "core/formula.deal issues pow in its written-formula call set and folds it through the host Math.pow, so the emitted source carries Math.pow rather than a hand-written helper; a boolean operator over issued boolean operands is lowered to the host && / || operator over those operands, so the emitted policy keeps the host short-circuit rather than evaluating both operands eagerly. The composer item compiles a pow figure and a written formula through the production compiler.",
+      "evidence": "core/formula.deal issues pow in its written-formula call set and folds it through the host Math.pow, so the emitted source carries Math.pow rather than a hand-written helper; a boolean operator over issued boolean operands is lowered to the host && / || operator over those operands, so the emitted policy keeps the host short-circuit rather than evaluating both operands eagerly. The composer item compiles the pow figure through the production compiler, and exercises the written-formula helper set and its bounds in the same item.",
       "asserts": [
         "Boolean && was not lowered to the short-circuiting host operator",
         "Boolean || was not lowered to the short-circuiting host operator",

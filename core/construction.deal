@@ -382,7 +382,7 @@ export async function run(input: writing.Input, context: selecting.Context, plan
     if (written.candidateId === "" && !checker.repairable(written.diagnostics)) { return {candidateId:"",attempts:attempts,diagnostics:written.diagnostics,runnable:true}; }
     // A non-verdict failure falls through to the located notices below: the writer was never issued
     // the unsettled need, so its candidate cannot report why the trigger stayed open.
-    if (written.candidateId !== "" && unsettled.length === 0) { return {candidateId:written.candidateId,attempts:attempts,diagnostics:written.diagnostics,runnable:true}; }
+    if (written.candidateId !== "" && unsettled.length === 0) { return {candidateId:written.candidateId,attempts:attempts,diagnostics:reasons+written.diagnostics,runnable:true}; }
     wrote = true;
   }
   // A runnable partial ships its missing and unchecked behavior as notices whether or not a writer
