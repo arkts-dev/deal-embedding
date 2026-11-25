@@ -1,0 +1,14 @@
+// Public-probe mechanism issued to composed source beside the checked standard modules.
+// The transport layer (native) owns the socket mechanics: HTTPS only, no redirect, the host-configured
+// byte bound and deadline, one resolution of the name whose every answer must be public, and a check of
+// the peer the connection really reached; a nonpublic peer fails the read before any request is written,
+// and the name's own certificate identity still authenticates the destination.
+// The mechanism layer (the shipped isolate binding) owns the public-probe policy the specification
+// states: the destination and authority rules, the connected-destination check, the JSON media type,
+// the strict UTF-8 decode, the configured document depth and selected-character bounds, the RFC 6901
+// path selection and the finite-number rule. Probes grant no application-provider reads.
+// One validated read of `url`. `paths` are RFC 6901 JSON Pointers into the response document and each
+// must resolve to a finite number; `asofPath` is the optional pointer to the source's own observation
+// time, and an absent, unresolved, empty or nonstring value yields "" instead of a fetch time. The
+// result is that validated read encoded as JSON, so composed source decodes it into its own checked type.
+export function fetch(url: string, mode: string, paths: string[], asofPath: string): Promise<string>;

@@ -433,14 +433,22 @@ export async function registryRefusals(): Promise<number> {
   let supplied: string[] = ["navigationBinding","calendarBinding"];
   let wire: string[] = [navigation,calendar];
   let index: number = 0;
+  // A binding the composition issued is dispatched: the section emits the start action, the completion
+  // action and the asynchronous effect that calls exactly that module and function with the issued
+  // argument source. The argument is passed as the source getter, not re-read from a model string.
   while (index < supplied.length) {
     let issued: bindings.Registry = bindings.create([]);
-    issued.bindings[0] = {id:"nav_1",module:"host/navigation",function:"open",arguments:{},parameterOrder:[],owner:"host",evidence:{request:"",facts:"",quote:"",sources:[]}};
+    bindings.reserve(issued,{id:"stop",type:"string",schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_stop",ready:"true"});
+    issued.bindings[0] = {id:"nav_1",module:"host/navigation",function:"open",arguments:{target:"stop"},parameterOrder:["target"],owner:"host",evidence:{request:"",facts:"",quote:"",sources:["stop"]}};
     let entry: catalogue.Configured = {need:"trip",definition:definition("itinerary"),parameters:await accepts("itinerary",wire[index]),accepted:true,reason:""};
-    let located: boolean = false;
-    try { await catalogue.instantiate(entry,issued); }
-    catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } located = error.message.includes("trip") && error.message.includes("is not executable"); }
-    insist(located,"Itinerary binding was admitted or unlocated: "+supplied[index]);
+    let instance: screens.Instance = await catalogue.instantiate(entry,issued);
+    let startName: string = "Navigate"; let runName: string = "run_navigate";
+    if (supplied[index] === "calendarBinding") { startName = "ScheduleTrip"; runName = "run_trip"; }
+    let dispatched: boolean = instance.fragment.effects.length === 1 && instance.fragment.effects[0].action === startName && instance.fragment.effects[0].function === runName;
+    let imported: boolean = instance.fragment.declarations.includes("import * as provider_"+runName.substring(4)+" from \"host/navigation\"");
+    let call: boolean = instance.fragment.helpers.includes("provider_"+runName.substring(4)+".open((state.f_parts_stop as string))");
+    let handled: boolean = false; for (let entryHandler of instance.fragment.updates) { if (entryHandler.action === "Navigated" && startName === "Navigate") { handled = true; } if (entryHandler.action === "ScheduledTrip" && startName === "ScheduleTrip") { handled = true; } }
+    insist(dispatched && imported && call && handled,"Itinerary binding issued no dispatch: "+supplied[index]);
     count = count+1;
     index = index+1;
   }
@@ -451,6 +459,132 @@ export async function registryRefusals(): Promise<number> {
   try { await catalogue.instantiate(unissued,bare); }
   catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } unresolved = error.message.includes("Unresolved catalogue registry reference: nav_1"); }
   insist(unresolved,"Unissued itinerary binding admitted or unlocated");
+  count = count+1;
+  // A descriptor is a resolvable reference too: the dispatch resolves the descriptor's own binding, so
+  // a catalogue section never names a module or function itself.
+  let described: bindings.Registry = bindings.create([]);
+  described.bindings[0] = {id:"sched_1",module:"host/calendar",function:"schedule",arguments:{},parameterOrder:[],owner:"run",evidence:{request:"",facts:"",quote:"",sources:[]}};
+  described.actions[0] = {id:"run",label:"Schedule",binding:"sched_1",evidence:{request:"",facts:"",quote:"",sources:[]}};
+  let reminderEntry: catalogue.Configured = {need:"remind",definition:definition("reminders"),parameters:await accepts("reminders","{\"rows\":[],\"scheduleBinding\":\"run\"}"),accepted:true,reason:""};
+  let reminder: screens.Instance = await catalogue.instantiate(reminderEntry,described);
+  // Reminders count completed and successfully scheduled rows: the scheduled count reads the recorded
+  // reply keys, and the row control carries the row identity the attempt records.
+  let reminderEffect: boolean = reminder.fragment.effects.length === 1 && reminder.fragment.effects[0].action === "ScheduleReminder";
+  let reminderImport: boolean = reminder.fragment.declarations.includes("import * as provider_schedule from \"host/calendar\"");
+  let reminderControl: boolean = reminder.fragment.view.includes("value: state.schedule_sequence, onClick: action app.ScheduleReminder {sequence: payload, id: row.id}");
+  insist(reminderEffect && reminderImport && reminderControl,"Reminder schedule binding issued no per-row dispatch");
+  let scheduled: boolean = false;
+  for (let entry of catalogue.computations(reminder,[],[reminder])) { if (entry.field === "scheduled") { scheduled = entry.value === "scheduledCount(state)"; } }
+  insist(scheduled,"The reminder scheduled count does not read the recorded replies");
+  count = count+1;
+  // An unissued reference is an unresolved registry reference, so resolution runs before any emission.
+  let bareSchedule: catalogue.Configured = {need:"remind",definition:definition("reminders"),parameters:await accepts("reminders","{\"rows\":[],\"scheduleBinding\":\"sched_1\"}"),accepted:true,reason:""};
+  let unresolvedSchedule: boolean = false;
+  try { await catalogue.instantiate(bareSchedule,bindings.create([])); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } unresolvedSchedule = error.message.includes("Unresolved catalogue registry reference: sched_1"); }
+  insist(unresolvedSchedule,"Unissued reminder schedule binding admitted or mislocated");
+  count = count+1;
+  // A dose schedule reconciles the daily mark through the calendar reply: the mark reducer exists only
+  // as the completion of the dispatched operation, so a refused reply records no dose.
+  let issuedCalendar: bindings.Registry = bindings.create([]);
+  issuedCalendar.bindings[0] = {id:"cal_1",module:"host/calendar",function:"create",arguments:{},parameterOrder:[],owner:"host",evidence:{request:"",facts:"",quote:"",sources:[]}};
+  let doseEntry: catalogue.Configured = {need:"doses",definition:definition("dose_schedule"),parameters:await accepts("dose_schedule","{\"rows\":[],\"calendarBinding\":\"cal_1\"}"),accepted:true,reason:""};
+  let dose: screens.Instance = await catalogue.instantiate(doseEntry,issuedCalendar);
+  let takeEffect: boolean = dose.fragment.effects.length === 1 && dose.fragment.effects[0].action === "TakeDose" && dose.fragment.effects[0].function === "run_take";
+  let reconciled: boolean = dose.fragment.helpers.includes("taken_keys: takenKeys(state, state.take_target, takeDay)");
+  let noLocalMark: boolean = !dose.fragment.helpers.includes("export function markDose(");
+  insist(takeEffect && reconciled && noLocalMark,"Dose calendar binding did not reconcile the taken mark through the reply");
+  count = count+1;
+  let bareCalendar: catalogue.Configured = {need:"doses",definition:definition("dose_schedule"),parameters:await accepts("dose_schedule","{\"rows\":[],\"calendarBinding\":\"cal_1\"}"),accepted:true,reason:""};
+  let unresolvedCalendar: boolean = false;
+  try { await catalogue.instantiate(bareCalendar,bindings.create([])); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } unresolvedCalendar = error.message.includes("Unresolved catalogue registry reference: cal_1"); }
+  insist(unresolvedCalendar,"Unissued dose calendar binding admitted or mislocated");
+  count = count+1;
+  // calendar_event is executable: the explicit Add dispatches the disclosed calendar operation with the
+  // issued argument source, and the section publishes no port of its own.
+  let eventRegistry: bindings.Registry = bindings.create([]);
+  bindings.reserve(eventRegistry,{id:"minute",type:"number",schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_minute",ready:"true"});
+  eventRegistry.bindings[0] = {id:"cal_2",module:"host/calendar",function:"propose",arguments:{minute:"minute"},parameterOrder:["minute"],owner:"host",evidence:{request:"",facts:"",quote:"",sources:["minute"]}};
+  let eventEntry: catalogue.Configured = {need:"event",definition:definition("calendar_event"),parameters:await accepts("calendar_event","{\"eventTitle\":\"Show\",\"day\":4,\"minute\":570,\"durationMinutes\":90,\"calendarBinding\":\"cal_2\"}"),accepted:true,reason:""};
+  let event: screens.Instance = await catalogue.instantiate(eventEntry,eventRegistry);
+  let eventDispatched: boolean = event.fragment.effects.length === 1 && event.fragment.effects[0].action === "AddEvent" && event.fragment.effects[0].function === "run_event";
+  let eventCall: boolean = event.fragment.helpers.includes("provider_event.propose((state.f_parts_minute as number))");
+  let eventPending: boolean = event.fragment.fields.some((item: screens.Field): boolean => item.name === "event_pending" && item.type === "boolean");
+  let eventControl: boolean = event.fragment.view.includes("value: state.event_sequence, onClick: action app.AddEvent {sequence: payload, id: \"\"}");
+  let noPorts: boolean = event.fragment.ports.length === 0;
+  insist(eventDispatched && eventCall && eventPending && eventControl && noPorts,"calendar_event issued no explicit Add over the disclosed operation");
+  count = count+1;
+  // A dispatch never calls the operation with an unavailable argument, and a refused duplicate never
+  // carries the live attempt identity: the start reducer refuses an unread argument and the effect of a
+  // refused attempt reports no sequence, so it can never retire the attempt another tap started.
+  let guarded: bindings.Registry = bindings.create([]);
+  bindings.reserve(guarded,{id:"minute",type:"number",schema:null,dependencies:[],owner:"parts",payloadOwner:"",getter:"f_parts_minute",ready:"f_parts_minute_ready"});
+  guarded.bindings[0] = {id:"cal_3",module:"host/calendar",function:"propose",arguments:{minute:"minute"},parameterOrder:["minute"],owner:"host",evidence:{request:"",facts:"",quote:"",sources:["minute"]}};
+  let guardedEntry: catalogue.Configured = {need:"event",definition:definition("calendar_event"),parameters:await accepts("calendar_event","{\"eventTitle\":\"Show\",\"day\":4,\"minute\":570,\"durationMinutes\":90,\"calendarBinding\":\"cal_3\"}"),accepted:true,reason:""};
+  let guardedEvent: screens.Instance = await catalogue.instantiate(guardedEntry,guarded);
+  let readiness: boolean = guardedEvent.fragment.helpers.includes("|| !(state.f_parts_minute_ready)");
+  let refusal: boolean = guardedEvent.fragment.helpers.includes("sequence: -1, ok: false, code: \"NOT_ADMITTED\"");
+  insist(readiness,"a dispatch admitted an unready argument");
+  insist(refusal,"a refused attempt claimed the live attempt identity");
+  count = count+1;
+  // An intent panel dispatches the issued descriptors themselves: each descriptor's label, its seeded draft
+  // edited through the composition-owned nominal update, and one tap per descriptor whose effect calls
+  // exactly the issued module and function with that descriptor's own argument source.
+  let panelRegistry: bindings.Registry = bindings.create([]);
+  bindings.reserve(panelRegistry,{id:"note_draft",type:"string",schema:null,dependencies:[],owner:"send",payloadOwner:"send",getter:"draft_note_draft",ready:"ready_note_draft",derived:true});
+  panelRegistry.bindings[0] = {id:"send_op",module:"host/notes",function:"send",arguments:{text:"note_draft"},parameterOrder:["text"],owner:"send",evidence:{request:"",facts:"",quote:"",sources:["note_draft"]}};
+  panelRegistry.actions[0] = {id:"send",label:"Send note",binding:"send_op",input:{sourceId:"note_draft",label:"Note",initial:"Hello"},evidence:{request:"",facts:"",quote:"",sources:[]}};
+  panelRegistry.bindings[1] = {id:"ping_op",module:"host/notes",function:"ping",arguments:{},parameterOrder:[],owner:"ping",evidence:{request:"",facts:"",quote:"",sources:[]}};
+  panelRegistry.actions[1] = {id:"ping",label:"Ping",binding:"ping_op",evidence:{request:"",facts:"",quote:"",sources:[]}};
+  let panelEntry: catalogue.Configured = {need:"panel",definition:definition("intent_panel"),parameters:await accepts("intent_panel","{\"actionIds\":[\"send\",\"ping\"]}"),accepted:true,reason:""};
+  let panel: screens.Instance = await catalogue.instantiate(panelEntry,panelRegistry);
+  let panelDispatch: boolean = panel.fragment.effects.length === 1 && panel.fragment.effects[0].action === "TapDescriptor" && panel.fragment.effects[0].function === "runDescriptor";
+  let panelImport: boolean = panel.fragment.declarations.includes("import * as descriptor_module_0 from \"host/notes\"") && panel.fragment.declarations.split("import * as descriptor_module_0").length === 2;
+  let panelDraft: boolean = panel.fragment.view.includes("value: state.draft_note_draft, onChange: action app.Draft_note_draft {value: payload}");
+  let panelCall: boolean = panel.fragment.helpers.includes("descriptor_module_0.send((state.draft_note_draft as string))") && panel.fragment.helpers.includes("descriptor_module_0.ping()");
+  let panelTap: boolean = panel.fragment.view.includes("onClick: action app.TapDescriptor {id: \"send\", sequence: payload}") && panel.fragment.view.includes("onClick: action app.TapDescriptor {id: \"ping\", sequence: payload}");
+  let panelOrder: number = panel.fragment.view.indexOf("ui.Text(text: \"Send note\")");
+  let pingOrder: number = panel.fragment.view.indexOf("ui.Text(text: \"Ping\")");
+  insist(panelDispatch && panelImport && panelDraft && panelCall && panelTap,"intent_panel rendered no issued descriptor workflow");
+  insist(panelOrder >= 0 && pingOrder > panelOrder,"intent_panel did not render its descriptors in actionIds order");
+  // One explicit attempt per descriptor: the attempt identity is recorded per descriptor, so a tap on a
+  // pending descriptor is ignored while a tap on another descriptor is still admitted.
+  let perDescriptor: boolean = panel.fragment.helpers.includes("state.tap_pending_send") && panel.fragment.helpers.includes("state.tap_pending_ping") && panel.fragment.helpers.includes("state.tap_attempt_send") ;
+  insist(perDescriptor,"intent_panel did not track pending state per descriptor");
+  count = count+1;
+  // An id the composition never issued is an unresolved registry reference, never an invented operation.
+  let unresolvedPanel: catalogue.Configured = {need:"panel",definition:definition("intent_panel"),parameters:await accepts("intent_panel","{\"actionIds\":[\"missing\"]}"),accepted:true,reason:""};
+  let unresolvedDescriptor: boolean = false;
+  try { await catalogue.instantiate(unresolvedPanel,panelRegistry); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } unresolvedDescriptor = error.message.includes("Unresolved catalogue registry reference: missing"); }
+  insist(unresolvedDescriptor,"Unissued descriptor admitted or mislocated");
+  count = count+1;
+  // A live figure reads through the public probe: the section starts unavailable, one explicit Refresh and
+  // the read-only poll of the declared mode dispatch the probe, the five specification ports are issued,
+  // and the published observation time is the source's own asof value rather than a fetch time.
+  let liveSource: string = "{\"url\":\"https://example.com/data.json\",\"mode\":\"api\",\"asofPath\":\"/updated\"}";
+  let liveEntry: catalogue.Configured = {need:"live",definition:definition("live_figure"),parameters:await accepts("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"Temperature\",\"unit\":\"C\",\"path\":\"/current/temp\"}],\"source\":"+liveSource+"}"),accepted:true,reason:""};
+  let live: screens.Instance = await catalogue.instantiate(liveEntry,bindings.create([]));
+  let probeImport: boolean = live.fragment.declarations.includes("import * as probe_section_live from \"embedding/probe\"");
+  let probeEffects: boolean = live.fragment.effects.length === 2;
+  let refreshed: boolean = false; let polled: boolean = false; let completed: boolean = false;
+  for (let entryEffect of live.fragment.effects) { if (entryEffect.action === "RefreshLive" && entryEffect.function === "runRefresh") { refreshed = true; } if (entryEffect.action === "PollLive" && entryEffect.function === "runPoll") { polled = true; } }
+  for (let entryHandler of live.fragment.updates) { if (entryHandler.action === "RefreshedLive") { completed = true; } }
+  let livePorts: string[] = []; for (let port of live.fragment.ports) { livePorts[livePorts.length] = port.name+":"+port.type; }
+  let declaredPorts: boolean = livePorts.length === 5 && livePorts[0] === "live1:number" && livePorts[1] === "live2:number" && livePorts[2] === "live3:number" && livePorts[3] === "live_source:string" && livePorts[4] === "live_asof:string";
+  let unavailable: boolean = live.fragment.view.includes("When(!state.live1_ready) {ui.Text(text: \"Temperature unavailable\", style: \"muted\")}");
+  let asofFromSource: boolean = live.fragment.helpers.includes("refresh_asof: action.asof");
+  let refreshControl: boolean = live.fragment.view.includes("value: state.refresh_attempt, onClick: action app.RefreshLive {sequence: payload}");
+  let apiPoll: boolean = live.fragment.view.includes("intervalMs: 60000");
+  insist(probeImport && probeEffects && refreshed && polled && completed,"live_figure issued no public-probe read");
+  insist(declaredPorts,"live_figure did not publish its five specification ports: "+livePorts.join(","));
+  insist(unavailable && refreshControl && asofFromSource,"live_figure did not stay unavailable until a reply or published a fetch time as its observation time");
+  insist(apiPoll,"live_figure did not poll an api source at sixty seconds");
+  count = count+1;
+  let searchEntry: catalogue.Configured = {need:"live",definition:definition("live_figure"),parameters:await accepts("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"Temperature\",\"path\":\"/current/temp\"}],\"source\":{\"url\":\"https://example.com/data.json\",\"mode\":\"search\"}}"),accepted:true,reason:""};
+  let searchLive: screens.Instance = await catalogue.instantiate(searchEntry,bindings.create([]));
+  insist(searchLive.fragment.view.includes("intervalMs: 300000"),"live_figure did not poll a search source at three hundred seconds");
   count = count+1;
   return count;
 }
@@ -467,6 +601,17 @@ export async function ownership(): Promise<string> {
   result.decimals = {name:parameter.name,type:parameter.type,required:parameter.required,origin:parameter.origin,owner:parameter.owner,fallback:parameter.fallback};
   result.facts = catalogue.facts(decimals);
   result.readerFacts = catalogue.facts(definition("search_list"));
+  // The day-scoped kinds are executable and publish the ports of their specification rows.
+  result.reminderFacts = catalogue.facts(definition("reminders"));
+  result.doseFacts = catalogue.facts(definition("dose_schedule"));
+  result.dueFacts = catalogue.facts(definition("due_items"));
+  result.panelFacts = catalogue.facts(definition("intent_panel"));
+  result.liveFacts = catalogue.facts(definition("live_figure"));
+  // The public probe is a mechanism of this build rather than a discovered provider contract, so the live
+  // figure is offered and instantiates with no frozen contract at all while an ordinary live parameter
+  // still needs one.
+  result.liveOffered = catalogue.offered(definition("live_figure"));
+  result.panelOffered = catalogue.offered(definition("intent_panel"));
   result.listFacts = catalogue.facts(definition("checklist"));
   // A declaration without an origin is refused before any instance can be instantiated from it.
   let unowned: catalogue.Definition = {kind:"note",criteria:"x",parameters:[{name:"text",type:"string",required:false,fallback:"",maximum:512,origin:"",owner:"fill"}],mutable:true,publishes:[],reads:[],holes:[],requirements:[],executable:true};
@@ -554,7 +699,148 @@ export async function strictness(): Promise<number> {
   count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"http://example.com/a.json\",\"mode\":\"api\"}}","plain HTTP live source");
   count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"a\"}],\"source\":{\"url\":\"https://example.com/a.json\",\"mode\":\"api\"}}","JSON Pointer without a leading slash");
   count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a~2b\"}],\"source\":{\"url\":\"https://example.com/a.json\",\"mode\":\"api\"}}","invalid JSON Pointer escape");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[fc00::1]/a.json\",\"mode\":\"api\"}}","nonpublic IPv6 live source");
+  // The decode classifier is the probe binding's own rule, applied to the parsed hextets instead of to the
+  // spellings this file happens to name: everything outside global unicast 2000::/3 is refused under its
+  // own spelling, and a padded or upper-case documentation address stays the documentation address.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[1000::1]/a.json\",\"mode\":\"api\"}}","IPv6 below global unicast");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[1fff::1]/a.json\",\"mode\":\"api\"}}","IPv6 at the lower edge of 2000::/3");
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2000::1]/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[3ffe::1]/a.json\",\"mode\":\"api\"}}"));
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[::]/a.json\",\"mode\":\"api\"}}","unspecified IPv6 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[4000::1]/a.json\",\"mode\":\"api\"}}","IPv6 above global unicast");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:0db8::1]/a.json\",\"mode\":\"api\"}}","zero-padded documentation IPv6");
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:0db7::1]/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:0db9::1]/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:200::1]/a.json\",\"mode\":\"api\"}}"));
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:DB8::1]/a.json\",\"mode\":\"api\"}}","upper-case documentation IPv6");
+  // An out-of-range dotted quad, a fragment and a spelled port are the binding's refusals, not names.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://999.1.1.1/a.json\",\"mode\":\"api\"}}","IPv4 component above 255");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com/a.json#part\",\"mode\":\"api\"}}","fragment on the live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:4860::8888]:/a.json\",\"mode\":\"api\"}}","empty port on a bracketed authority");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com:/a.json\",\"mode\":\"api\"}}","empty port on a named host");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com:0/a.json\",\"mode\":\"api\"}}","zero port on a named host");
+  // A destination the transport could never parse is refused at decode too: a malformed bracketed literal,
+  // a spelled or out-of-range port, and a name whose final label is numeric because the address parser
+  // reads that authority as an address. Nothing admitted here is unreadable at every refresh.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001]/a.json\",\"mode\":\"api\"}}","bracketed literal without its groups");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:1]/a.json\",\"mode\":\"api\"}}","bracketed literal with two groups");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:1:1:1:1:1:1:1:1]/a.json\",\"mode\":\"api\"}}","bracketed literal with nine groups");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001::1::2]/a.json\",\"mode\":\"api\"}}","bracketed literal with two compressions");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:1::999.1.1.1]/a.json\",\"mode\":\"api\"}}","bracketed literal with a malformed IPv4 tail");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com:abc/a.json\",\"mode\":\"api\"}}","spelled port on a named host");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com:99999/a.json\",\"mode\":\"api\"}}","port beyond the transport range");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://1.2.3.4./a.json\",\"mode\":\"api\"}}","numeric authority with a root dot");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://1.2.3/a.json\",\"mode\":\"api\"}}","name ending in a numeric label");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.123/a.json\",\"mode\":\"api\"}}","name whose final label is numeric");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://1.2.3.4.5/a.json\",\"mode\":\"api\"}}","five-label numeric authority");
+  // The address parser reads any authority whose final label begins with a digit as an address and reports
+  // no host, and a bare integer is the legacy single-number IPv4 spelling rather than a name.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://1.2.3.4a/a.json\",\"mode\":\"api\"}}","final label beginning with a digit");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.4a/a.json\",\"mode\":\"api\"}}","final label beginning with a digit");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://134744072/a.json\",\"mode\":\"api\"}}","legacy single-number IPv4 spelling");
+  // A dotted quad is one to three digits per component, the width the isolate binding's address test reads:
+  // a longer component is a name there, so it is refused here instead of admitted by the layer above.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://0001.2.3.4/a.json\",\"mode\":\"api\"}}","over-wide IPv4 component");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://1.2.3.0004/a.json\",\"mode\":\"api\"}}","over-wide IPv4 component");
+  // The binding lane carries this same IPv6 list; decode refuses each one for itself, under the same
+  // spellings, so both lanes are proven against one list of inputs. The path and query shapes below are
+  // decode-only because the binding never inspects them and the transport's parser decides them.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:db8::1]/a.json\",\"mode\":\"api\"}}","documentation IPv6 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[0x2001::1]/a.json\",\"mode\":\"api\"}}","hex-prefixed hextet");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[12000::1]/a.json\",\"mode\":\"api\"}}","five-digit hextet");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[0064:ff9b::a9fe:a9fe]/a.json\",\"mode\":\"api\"}}","padded NAT64 IPv6 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[::1]/a.json\",\"mode\":\"api\"}}","loopback IPv6 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[fe80::1]/a.json\",\"mode\":\"api\"}}","link-local IPv6 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[fec0::1]/a.json\",\"mode\":\"api\"}}","site-local IPv6 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[64:ff9b::7f00:1]/a.json\",\"mode\":\"api\"}}","NAT64 IPv6 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[::ffff:10.0.0.5]/a.json\",\"mode\":\"api\"}}","IPv4-mapped IPv6 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[100::1]/a.json\",\"mode\":\"api\"}}","IPv6 discard prefix live source");
+  // The URL text after the authority is held to the transport's own parser: a space, a generic delimiter, a
+  // broken escape and a raw non-ASCII character cannot be requested as written, so they are refused rather
+  // than admitted as a figure whose every read fails.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com/a b.json\",\"mode\":\"api\"}}","space in the live source path");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com/a%zz.json\",\"mode\":\"api\"}}","truncated escape in the live source path");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com/a[b.json\",\"mode\":\"api\"}}","generic delimiter in the live source path");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com/a{b.json\",\"mode\":\"api\"}}","generic delimiter in the live source path");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com/\u00e4.json\",\"mode\":\"api\"}}","non-ASCII character in the live source path");
+  // The same nonpublic destinations the probe lane carries: loopback, private, documentation-IPv4,
+  // localhost and userinfo are refused before a probe can be issued.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://127.0.0.1/a.json\",\"mode\":\"api\"}}","loopback live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://10.1.2.3/a.json\",\"mode\":\"api\"}}","private IPv4 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://192.0.2.1/a.json\",\"mode\":\"api\"}}","IPv4 documentation live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://localhost/a.json\",\"mode\":\"api\"}}","localhost live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://user:pw@example.com/a.json\",\"mode\":\"api\"}}","credentialed live source");
+  // The reserved blocks beside global unicast are refused with it.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[3fff::1]/a.json\",\"mode\":\"api\"}}","documentation IPv6 block");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:2::1]/a.json\",\"mode\":\"api\"}}","benchmarking IPv6 block");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:2:ffff::1]/a.json\",\"mode\":\"api\"}}","benchmarking IPv6 block edge");
+  // The Teredo block, the protocol-assignment blocks and their /28 edges are refused with the benchmarking
+  // block; the rest of 2001::/23 is left to the transport, exactly as a name that does not resolve is.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001::1]/a.json\",\"mode\":\"api\"}}","Teredo IPv6 block");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:1f::1]/a.json\",\"mode\":\"api\"}}","protocol-assignment IPv6 block edge");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://192.0.0.9/a.json\",\"mode\":\"api\"}}","IPv4 protocol-assignment live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:20::1]/a.json\",\"mode\":\"api\"}}","protocol-assignment IPv6 block");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:3f::1]/a.json\",\"mode\":\"api\"}}","protocol-assignment IPv6 block edge");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:10::1]/a.json\",\"mode\":\"api\"}}","protocol-assignment IPv6 block");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:30::1]/a.json\",\"mode\":\"api\"}}","protocol-assignment IPv6 block");
+  // The 6to4 relay anycast block is not a reachable destination either.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://192.88.99.1/a.json\",\"mode\":\"api\"}}","6to4 relay anycast live source");
+  // The remaining nonpublic IPv4 blocks and the multicast range, so the range rule is executed rather than
+  // shadowed by a platform flag.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://0.0.0.1/a.json\",\"mode\":\"api\"}}","reserved IPv4 block");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://100.64.0.1/a.json\",\"mode\":\"api\"}}","carrier-grade NAT live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://169.254.1.1/a.json\",\"mode\":\"api\"}}","link-local IPv4 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://172.16.0.1/a.json\",\"mode\":\"api\"}}","private IPv4 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://192.168.0.1/a.json\",\"mode\":\"api\"}}","private IPv4 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://198.18.0.1/a.json\",\"mode\":\"api\"}}","benchmarking IPv4 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://224.0.0.1/a.json\",\"mode\":\"api\"}}","multicast IPv4 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://255.255.255.255/a.json\",\"mode\":\"api\"}}","broadcast IPv4 live source");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[ff02::1]/a.json\",\"mode\":\"api\"}}","multicast IPv6 live source");
+  // A name's labels are the parser's: no leading or trailing hyphen, only letters, digits and internal
+  // hyphens.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://-example.com/a.json\",\"mode\":\"api\"}}","leading hyphen in a name label");
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://exa_mple.com/a.json\",\"mode\":\"api\"}}","underscore in a name label");
+  // The root spelling of a name cannot pass the transport's TLS server name, so it is refused here too.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com./a.json\",\"mode\":\"api\"}}","root-dot spelling of a name");
+  // ...and the addresses the transport can read are admitted, so the rules refuse blocks and shapes, not
+  // whole families: a global-unicast literal, a scheme spelled in another case, a named host, a query with
+  // no path and a completed escape.
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2606:4700:4700::1111]/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"HTTPS://example.com/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://10.example.com/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com?a=1\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com/a%20b.json\",\"mode\":\"api\"}}"));
+  // A sub-delimiter in the path and square brackets in the query are legal in the transport's parser.
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com/a(b.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com?a=[1]\",\"mode\":\"api\"}}"));
+  // An address-like prefix that ends in a public name is a name: only the final label decides whether the
+  // authority is read as an address.
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://999.1.1.1.a/a.json\",\"mode\":\"api\"}}"));
+  // A final label that begins with a letter is a name even when it contains digits.
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.a1/a.json\",\"mode\":\"api\"}}"));
+  // Blocks a probe can only reach through the network are admitted beside the refused ones, so the rule
+  // refuses what cannot be reached rather than a whole family.
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:3::1]/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:4:112::1]/a.json\",\"mode\":\"api\"}}"));
+  // A block the network refuses at connect time is admitted, exactly as a name that does not resolve is.
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:1::1]/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:5::1]/a.json\",\"mode\":\"api\"}}"));
+  // The admitted tail of 2001::/23: the second hextets beside the refused blocks run to 0x01ff, and the
+  // boundary beside benchmarking is admitted.
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:1ff::1]/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:0ff::1]/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:40::1]/a.json\",\"mode\":\"api\"}}"));
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:0f::1]/a.json\",\"mode\":\"api\"}}"));
+  // 3fff::/16 is refused whole, so its upper half is refused too and not only the documentation /20.
+  count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[3fff:ffff::1]/a.json\",\"mode\":\"api\"}}","documentation IPv6 block edge");
+  // An ordinary global-unicast destination beyond the /23 this rule enumerates is admitted like any other.
+  count = count+1; await catalogue.decode(definition("live_figure"),JSON.parse("{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://[2001:4860::8888]/a.json\",\"mode\":\"api\"}}"));
   count = count+await rejects("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"A\",\"path\":\"/a\"}],\"source\":{\"url\":\"https://example.com/a.json\",\"mode\":\"browser\"}}","unknown live source mode");
+  // The descriptor panel's identity list carries the shared array bound.
+  count = count+await rejects("intent_panel","{\"actionIds\":[\"a1\",\"a2\",\"a3\",\"a4\",\"a5\",\"a6\",\"a7\",\"a8\",\"a9\",\"a10\",\"a11\",\"a12\",\"a13\"]}","thirteen descriptor identities");
+  count = count+await rejects("intent_panel","{\"actionIds\":[]}","no descriptor identities");
+  count = count+await rejects("intent_panel","{\"actionIds\":[\"a\",\"a\"]}","duplicate descriptor identities");
   // The shared numeric and text domains of the remaining rows.
   count = count+await rejects("rating","{\"initial\":0}","rating below one");
   count = count+await rejects("rating","{\"initial\":11}","rating above ten");
@@ -569,6 +855,8 @@ export async function strictness(): Promise<number> {
   count = count+await rejects("record_log","{\"labels\":[\"a\"],\"currency\":\"\"}","empty currency");
   count = count+await rejects("idea_deck","{\"ideas\":[{\"id\":\"a\",\"title\":\"Walk\",\"level\":\"easy\",\"instructions\":\"\",\"minutes\":0}]}","nonpositive idea duration");
   count = count+await rejects("due_items","{\"rows\":[{\"id\":\"a\",\"name\":\"Tax\",\"day\":1.5}]}","fractional due day");
+  count = count+await rejects("due_items","{\"rows\":[],\"soonDays\":-1}","negative soon days");
+  count = count+await rejects("due_items","{\"rows\":[],\"soonDays\":1.5}","fractional soon days");
   count = count+await rejects("dose_schedule","{\"rows\":[{\"id\":\"a\",\"name\":\"Dose\",\"minute\":-1}]}","negative dose minute");
   return count;
 }

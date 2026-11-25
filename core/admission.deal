@@ -13,10 +13,11 @@ import * as s from "./construction-schema";
 export class Verdict { code: string; message: string; }
 function accepted(): Verdict { return {code:"",message:""}; }
 function refused(code: string, message: string): Verdict { return {code:code,message:code+": "+message}; }
-// Checked standard modules, the nominal graphics declarations and the per-Experience store; a
-// disclosed provider module is admitted because it is part of the frozen contract surface.
+// Checked standard modules, the nominal graphics declarations, the host-timezone day mechanism and the
+// per-Experience store; a disclosed provider module is admitted because it is part of the frozen
+// contract surface.
 function permitted(providers: string[]): string[] {
-  let result: string[] = ["std/math","std/string","std/table","std/time","embedding/graphics","host/storage"];
+  let result: string[] = ["std/math","std/string","std/table","std/time","embedding/graphics","embedding/day","embedding/probe","host/storage"];
   for (let module of providers) { if (!s.contains(result,module)) { result[result.length] = module; } }
   return result;
 }
@@ -114,6 +115,11 @@ export async function instance(value: screens.Instance, providers: string[]): Pr
   }
   let verdict: Verdict = modules(imported,providers);
   if (verdict.code !== "") { return verdict; }
+  // The public probe is the live figure's own mechanism: another fragment that imported it would read a
+  // live source with no live need behind the read, so that import is refused before emission.
+  if (value.kind !== "live_figure") {
+    for (let module of imported) { if (module === "embedding/probe") { return refused("ADMISSION_IMPORT","embedding/probe in "+value.id); } }
+  }
   let functions: Record<string, unknown> = JSON.parse(await syntax.analyzeFunctions(s.encode({source:value.fragment.helpers})));
   let effects: string[] = []; let updates: string[] = [];
   for (let handler of value.fragment.effects) { effects[effects.length] = s.identifier(handler.function); }

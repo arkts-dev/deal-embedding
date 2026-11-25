@@ -1,0 +1,18 @@
+# One preparation bound per content-validated library stage, in seconds, with the coldest cost measured
+# on this toolchain under the gate's `JAVA_OPTS=-Xmx768m` beside it. `build.sh` reads this file and
+# refuses to run a stage it declares no bound for, so a new stage cannot inherit a short default; the
+# isolated standalone proof and the short-check lanes derive their own outer bounds from the same
+# declaration, so a stage's declared bound is always the one that stops it first. A bound is
+# preparation only: no bound accepts, skips or caches an assertion result.
+#
+# name            seconds  measured coldest (s)
+java_base         120      25
+mechanisms        60       5.5
+kotlin            300      142.6
+generation        150      49
+discovery         60       6.7
+assistance_policy 60       6.1
+logging           60       4.1
+protocol          90       24.3
+assistance        60       15.2
+package_aar       60       14.1

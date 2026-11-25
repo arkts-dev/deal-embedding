@@ -9,6 +9,7 @@ import os
 import pathlib
 import shutil
 from host_check import prepare, run, compile_fixture
+import lane_bounds
 import time
 
 started = time.monotonic()
@@ -40,6 +41,6 @@ classes = STAGE / 'classes'
 library = str(ROOT / 'build/embedding-library/classes')
 # The syntax mechanisms are the same tools the production compiler serves; they are compiled from
 # their tracked sources against the library classes so the fixture uses no private seam.
-compile_fixture(ROOT, STAGE, DEAL, [ROOT / 'tools' / f'{name}.java' for name in ('FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentAnalysis', 'FragmentMechanisms')])
-run(['node', str(ROOT / 'tests/tools/test-catalogue.js'), str(STAGE), str(classes) + ':' + library], check=True, timeout=30)
+compile_fixture(ROOT, STAGE, DEAL, [ROOT / 'tools' / f'{name}.java' for name in ('FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentAnalysis', 'FragmentMechanisms')], deal_timeout=lane_bounds.DEAL)
+run(['node', str(ROOT / 'tests/tools/test-catalogue.js'), str(STAGE), str(classes) + ':' + library], check=True, timeout=lane_bounds.CONTRACT_NODE)
 print(f'catalogue contracts: {time.monotonic() - started:.2f}s', flush=True)

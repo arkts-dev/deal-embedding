@@ -1,0 +1,81 @@
+# One destination list for the layers that classify an address: the shipped isolate binding and the native
+# transport are both executed against this file by tests/tools/test-resource-bounds.py, so a rule added to
+# one of them and not the other fails that item instead of drifting. The decode step's list is the live-source
+# block of tests/tools/fixtures/catalogue-contracts.deal: the refused blocks are carried by both, while the
+# admitted values are chosen per layer, because decode admits some spellings the binding and the native URL
+# parser are never handed.
+# Each line is an address literal and the verdict the specification's "reject nonpublic IPs" requires
+# (docs/spec-v0.8.md:480). The refused blocks are the ones a public JSON probe cannot reach: documentation,
+# benchmarking, Teredo, the ORCHID and DET blocks and the reserved IPv4 ranges. Space the transport only
+# fails to reach at connect time (the rest of 2001::/23, and any name that does not resolve) is admitted,
+# because the specification distinguishes a nonpublic address from an unreachable one. A verdict no entry
+# exercises is a verdict nothing proves, so the list carries both directions and the edges of each block.
+#
+# address                 verdict
+8.8.8.8                   public
+1.1.1.1                   public
+172.32.0.1                public
+198.51.101.1              public
+0.0.0.0                   private
+0.0.0.1                   private
+10.0.0.1                  private
+10.255.255.254            private
+127.0.0.1                 private
+169.254.1.1               private
+172.16.0.1                private
+172.31.255.255            private
+192.168.0.1               private
+100.64.0.1                private
+100.127.255.254           private
+192.0.0.1                 private
+192.0.2.1                 private
+192.88.99.1               private
+198.18.0.1                private
+198.19.255.255            private
+198.51.100.7              private
+203.0.113.9               private
+224.0.0.1                 private
+255.255.255.255           private
+2606:4700:4700::1111      public
+2a00:1450:4001:81b::200e  public
+2001:4860::8888           public
+2002::1                   public
+::                        private
+::1                       private
+fe80::1                   private
+fec0::1                   private
+fc00::1                   private
+fd12:3456::1              private
+100::1                    private
+ff02::1                   private
+1fff::1                   private
+2000::1                   public
+3ffe::1                   public
+2001:0db7::1              public
+2001:0db9::1              public
+2001:200::1               public
+::ffff:10.0.0.5           private
+2001:db8::1               private
+2001:0db8:0000::1         private
+2001::1                   private
+2001:1::1                 public
+2001:2::1                 private
+2001:2:ffff::1            private
+2001:5::1                 public
+2001:40::1                public
+2001:0f::1                public
+2001:10::1                private
+2001:1f::1                private
+2001:20::1                private
+2001:30::1                private
+2001:3f::1                private
+3fff::1                   private
+3fff:ffff::1              private
+4000::1                   private
+5fff::1                   private
+64:ff9b::7f00:1           private
+2001:3::1                 public
+2001:4:112::1             public
+# The admitted tail of 2001::/23: the second hextets beside the refused blocks run to 0x01ff.
+2001:0ff::1               public
+2001:1ff::1               public

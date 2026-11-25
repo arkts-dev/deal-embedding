@@ -12,10 +12,78 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'tests/tools'))
 from host_check import prepare, run
+import lane_bounds
 
 STAGES = ['java_base','mechanisms','kotlin','generation','discovery','assistance_policy','logging','protocol','assistance','package_aar']
 PAIRS = ['absent','chat','card','boolean','written','assembly','operation','context-operation','entries','entries-empty','entries-aggregate','row-tap','presentation','numeric-text','foreign','descriptor','trigger','clock','clock-input','numeric']
-GROUPS = ['contracts','timers','reading','quick','points','ideas','drafts','aggregate','lists','issued-bodies']
+GROUPS = ['contracts','timers','reading','quick','points','ideas','drafts','day','calendar','descriptor','live','probe','aggregate','lists','issued-bodies']
+# For the construction, catalogue and composer harnesses a lane bound is the sum of the stages the
+# harness declares for itself, derived from that declaration (`tests/tools/lane_bounds.py`, which those
+# harnesses also pass to their own calls) rather than from a literal beside it: the dependency check, the
+# Java fixture compile, a cold fixture DEAL compile, every assertion stage the lane drives, and the
+# harness's own receipt. A lane bound tighter than a stage inside it kills the lane before the harness
+# names the stage that overran, which is the unnamed-timeout failure mode this derivation removes. The
+# composer runs three Java assertion classes plus one node group per composer group it drives, and a pair
+# lane compiles its own pair and then drives only the assertion harnesses its maps declare for it.
+# A `build:` or `isolation:` lane prepares one declared library stage, so its bound is that stage's
+# declared bound from `tools/stage-bounds.txt` plus the isolated tree's copy and input audit: the stage's
+# own bound stops a runaway stage first, with its name, instead of an outer lane kill. A `boundary:` lane
+# runs one selected standalone proof under the proof's own declared bound. No assertion result is cached
+# by any bound, so a wider preparation bound weakens no check.
+def boundary_module():
+    spec=importlib.util.spec_from_file_location('boundary',ROOT/'tools/boundary-proof.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module
+
+
+def lane_bound(lane):
+    if lane.startswith('build:'):
+        # One declared stage of the library build, bounded by its own declared preparation bound plus the
+        # conformance assertion it may run beside it.
+        return boundary_module().stage_bounds()[lane.split(':', 1)[1]] + 30
+    if lane.startswith('isolation:'):
+        # The same stage prepared in the isolated tree, inside the proof's own outer bound.
+        return boundary_module().stage_bounds()[lane.split(':', 1)[1]] + 60
+    if lane.startswith('boundary:') or lane == 'boundary-plan':
+        # One selected proof, and the preview that plans and prepares the isolated tree it binds, run the
+        # proof's own stages, so each is bounded by the proof itself rather than by an outer number the
+        # proof's inner guard would never reach.
+        return boundary_module().PROOF_SECONDS
+    if lane == 'catalogue':
+        return lane_bounds.catalogue_contract_lane()
+    if lane.startswith('catalogue:'):
+        # One catalogue runtime section group, or one of the `all`/`local` bundles that run every section
+        # in one process, inside the harness's own per-group and per-bundle bound.
+        return lane_bounds.catalogue_lane(lane.split(':', 1)[1])
+    if lane == 'construction':
+        return lane_bounds.construction_lane()
+    if lane == 'renderer':
+        # The renderer rules compile the JVM harness before they assert: a cold run measured 34.8 s here,
+        # 33 s of it compilation, so this lane keeps the headroom the other compiling lanes keep instead of
+        # the shared default.
+        return 120
+    if lane == 'composer':
+        return lane_bounds.composer_lane(len(lane_bounds.COMPOSER_GROUPS))
+    if lane == 'composer-prepare':
+        return lane_bounds.composer_prepare_lane()
+    if lane.startswith('composer:'):
+        return lane_bounds.composer_lane(1)
+    if lane.startswith('pair:'):
+        return lane_bounds.pair_lane(lane.split(':', 1)[1])
+    if lane == 'infra':
+        # The stage-orchestration item drives many fake builds under one cap per stage kind: eight 4 s runs,
+        # eight 10 s runs, eleven 8 s runs, one 20 s proof preview and one 60 s lane refusal. Its own guard
+        # counts those runs against the declaration, and the lane bound is that declaration's sum, so a hung
+        # item is named by its own inner cap instead of being killed by an outer number nobody derived.
+        return lane_bounds.infra_lane()
+    if lane == 'cache':
+        # The cache-control item drives its own fake harnesses and extracted gate blocks under separate
+        # caps, declared and counted the same way: six 10 s, eight 10 s, one 5 s, five 180 s and thirteen
+        # 60 s runs. The lane bound contains that sum rather than the widest cap.
+        return lane_bounds.cache_lane()
+    if lane == 'harness':
+        return 120
+    return 40
 LANES = {
     'infra': ['python3','tests/tools/test-build-stages.py'],
     'harness': ['python3','tests/tools/test-host-check.py'],
@@ -37,18 +105,6 @@ LANES.update({'build:'+s:['bash','build.sh'] for s in STAGES})
 LANES.update({'isolation:'+s:['python3','tools/boundary-proof.py','--prepare-stage',s] for s in STAGES})
 LANES.update({'boundary:'+p.parent.name:['python3','tools/boundary-proof.py','--target',p.parent.name]
               for p in sorted((ROOT/'demos/android/apps').glob('*/AndroidManifest.xml'))})
-# One lane is one command tree, bounded as a whole. A cold compiler stage and a demo repackage must
-# fit (measured: Kotlin analysis 63s, one demo target's compile/dex/package 45s), while a hang still
-# fails. A boundary or isolation lane drives tools/boundary-proof.py, whose own cold bounds stack up to
-# an isolated proof (600s) plus a demo batch, so those lanes keep a bound above that stack.
-LANE_SECONDS = 240
-BOUNDARY_SECONDS = 1500
-
-
-def lane_seconds(lane):
-    return BOUNDARY_SECONDS if lane.startswith(('boundary:', 'isolation:')) else LANE_SECONDS
-
-
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('lane', nargs='?', choices=sorted(LANES))
@@ -57,16 +113,20 @@ def main():
     if args.list or not args.lane:
         for name, command in LANES.items():
             print(name+': '+' '.join(command))
-        print(f'One lane only, {LANE_SECONDS}s wall bound ({BOUNDARY_SECONDS}s for a boundary or isolation lane). '
-              'Selection is not full-gate acceptance. Seams: test-verification-seams.py --list / --seam ID.')
+        print('One lane only, a per-lane wall bound (40s, wider for harnesses with cold compiler preparation). Selection is not full-gate acceptance. Seams: test-verification-seams.py --list / --seam ID.')
         return 0
+    if os.environ.get('DEAL_BUILD_STAGE_SECONDS','').strip() and args.lane.startswith(('build:','isolation:')):
+        # This lane's own bound is derived from the declaration, so an override it cannot contain would be
+        # killed by the outer bound first. The standalone proof refuses the same variable, with this message;
+        # the refusal comes before the lock and the dependency check, so it is the rule that answers.
+        print(boundary_module().STAGE_OVERRIDE_REFUSAL, file=sys.stderr)
+        return 2
     os.chdir(ROOT)
     lock=prepare(ROOT)
     env={**os.environ,'DEAL_BUILD_LOCK_HELD':str(ROOT)}
     if args.lane.startswith('build:'):
         # Read toolchain declarations only, without invoking the packaging builder.
-        spec=importlib.util.spec_from_file_location('boundary',ROOT/'tools/boundary-proof.py')
-        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        module=boundary_module()
         android,aidl,_=module.sdk_paths()
         env.update(ANDROID_JAR=str(android),AIDL=str(aidl),RUNTIME_CP=module.runtime_classpath(),
                    OUTPUT_DIR=str(ROOT/'build/embedding-library'),DEAL_BUILD_STAGE=args.lane.split(':')[1])
@@ -74,10 +134,10 @@ def main():
     name=args.lane.replace(':','-')+'-'+str(time.time_ns())
     log=directory/(name+'.log');receipt=directory/(name+'.json')
     started=time.monotonic()
-    seconds=lane_seconds(args.lane)
-    print(f'[short-check] {args.lane}: bound={seconds}s; log=build/verification/short-checks/{name}.log',flush=True)
+    bound=lane_bound(args.lane)
+    print(f'[short-check] {args.lane}: bound={bound}s; log=build/verification/short-checks/{name}.log',flush=True)
     with log.open('w') as output:
-        result=run(LANES[args.lane], timeout=seconds, env=env, stdout=output, stderr=subprocess.STDOUT)
+        result=run(LANES[args.lane], timeout=bound, env=env, stdout=output, stderr=subprocess.STDOUT)
     elapsed=time.monotonic()-started
     # Always retain the complete log, display only a bounded tail.
     with log.open('rb') as source:

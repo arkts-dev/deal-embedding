@@ -44,6 +44,13 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+# A control's bound only has to outlive its owning test, including that test's own cold preparation: a
+# mutated `core/` source invalidates the owning harness's fixture compile, so the widest owning items are
+# the construction lane at 300 s and the catalogue contract lane at 270 s. `TIMEOUT` is the default
+# control bound, and a seam may name its own smaller bound; `--seconds` raises the ceiling for one run, so
+# a bound smaller than the owning test's own declared preparation would report an infrastructure timeout
+# instead of the broken rule. No bound is ever above the ceiling this run allows.
+TIMEOUT = 300
 BACKUP = ROOT / 'build/verification/seam-backup'
 JOURNAL = BACKUP / 'journal.json'
 
@@ -364,7 +371,7 @@ def observe(seam):
         try:
             environment['DEAL_BUILD_LOCK_HELD'] = str(ROOT)
             result = bounded_run(seam['command'], cwd=ROOT, capture_output=True, text=True,
-                                 timeout=RUN_BOUND, env=environment)
+                                 timeout=min(seam.get('timeout', RUN_BOUND), RUN_BOUND), env=environment)
         finally:
             print(f'[seam] {seam["id"]} elapsed={time.monotonic()-started:.2f}s', flush=True)
         if result.returncode in (75, 124, 137) or result.returncode < 0:
@@ -389,9 +396,7 @@ def observe(seam):
         release()
 
 
-# A control's bound only has to outlive its owning test. A cold owning test compiles first (the renderer
-# rules compile measured 29 s here), so this bound covers compilation, not only assertions.
-RUN_BOUND = 180
+RUN_BOUND = TIMEOUT
 
 
 def main():
@@ -400,10 +405,10 @@ def main():
     parser.add_argument('--recover', action='store_true')
     parser.add_argument('--list', action='store_true')
     parser.add_argument('--seam', action='append', choices=[s['id'] for s in SEAMS])
-    parser.add_argument('--seconds', type=int, default=180)
+    parser.add_argument('--seconds', type=int, default=TIMEOUT)
     args = parser.parse_args()
-    if args.seconds < 1 or args.seconds > 300:
-        parser.error('--seconds must be 1..300')
+    if args.seconds < 1 or args.seconds > 600:
+        parser.error('--seconds must be 1..600')
     RUN_BOUND = args.seconds
     selected = [s for s in SEAMS if not args.seam or s['id'] in args.seam]
     if args.list:

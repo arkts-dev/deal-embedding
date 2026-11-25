@@ -6,6 +6,9 @@ globalThis.openChecking = function(factories, entryId, restoredState = null, app
   globalThis.Date = class extends NativeDate { constructor(...args) { super(...(args.length ? args : [0])); } static now() { return 0; } };
   let providerCalls = 0;
   globalThis.dealCapabilities = Object.freeze({...dealCapabilities,request: () => { providerCalls++; throw Error('Provider access during isolated checking'); }});
+  // A public probe is a read of a live source: isolated checking admits no transport at all, so a
+  // candidate cannot observe a remote document while it is only being checked.
+  globalThis.dealProbe = Object.freeze({request: () => { providerCalls++; throw Error('Probe access during isolated checking'); }});
   let entry, rt, checkpointSchema, app;
   try {
     ({entry, rt, checkpointSchema, app} = dealLoad(factories, entryId, appModule));

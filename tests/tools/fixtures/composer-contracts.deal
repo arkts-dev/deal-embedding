@@ -340,6 +340,9 @@ export async function descriptorDraft(): Promise<string> {
   insist(strings.contains(result.source.deal,"draft_memo: \"seed\""),"the descriptor draft is not seeded with its issued initial");
   insist(strings.contains(result.source.deal,"export function draftAction_memo(state: AppState, action: Draft_memo): AppState"),"the descriptor draft has no issued edit reducer");
   insist(strings.contains(result.source.deal,"export function update_Draft_memo(state: AppState, action: Draft_memo): AppState") && strings.contains(result.source.deal,"recompute(draftAction_memo(state, action))"),"the descriptor draft edit has no recompute/commit wrapper");
+  // No placed panel names this descriptor, so its edit is an ordinary composition action and never a UI
+  // update the compiled pair would advertise without a view that binds it.
+  insist(!strings.contains(result.source.deal,"// @ui-update\nexport function update_Draft_memo"),"a descriptor no panel names advertised a UI update nothing binds");
   insist(result.metadata.operations.length === 1 && s.contains(result.metadata.operations[0].dependencies,"draft_memo") && s.contains(result.metadata.operations[0].dependencies,"ready_memo"),"the descriptor operation lost its draft dependency set");
   return s.encode(result);
 }

@@ -10,12 +10,13 @@ import argparse
 import json
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--group', choices=['all','contracts','local','aggregate','lists','issued-bodies','timers','reading','quick','points','ideas','drafts'], default='all')
+parser.add_argument('--group', choices=['all','contracts','local','aggregate','lists','issued-bodies','timers','reading','quick','points','ideas','drafts','day','calendar','descriptor','live','probe'], default='all')
 args = parser.parse_args()
 import os
 import pathlib
 import shutil
 from host_check import prepare, run, compile_fixture
+import lane_bounds
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 lock = prepare(ROOT)
@@ -41,5 +42,10 @@ for path in (ROOT / 'core/host').glob('*.d.deal'):
 (STAGE / 'deal.json').write_text(json.dumps({'languageVersion': '1.6', 'backend': 'js', 'moduleRoots': ['src', 'ui'], 'externals': externals}))
 classes = STAGE / 'classes'
 library = str(ROOT / 'build/embedding-library/classes')
-compile_fixture(ROOT, STAGE, DEAL, [*[ROOT / 'tools' / f'{name}.java' for name in ('FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentAnalysis', 'FragmentMechanisms', 'PayloadConsumption')], ROOT / 'tests/tools/fixtures/CompileComposer.java'])
-run(['node', str(ROOT / 'tests/tools/test-catalogue-runtime.js'), str(STAGE), str(classes) + ':' + library, args.group], check=True, timeout=180 if args.group in ('all','local') else 45)
+compile_fixture(ROOT, STAGE, DEAL, [*[ROOT / 'tools' / f'{name}.java' for name in ('FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentAnalysis', 'FragmentMechanisms', 'PayloadConsumption')], ROOT / 'tests/tools/fixtures/CompileComposer.java'], deal_timeout=lane_bounds.DEAL)
+# One measured cost per bound on this toolchain, declared in `lane_bounds`: a single behaviour group
+# compiles its own composition through the production compiler and then drives it in the packaged
+# session, and the `local`/`all` bundles run every section in one process. A bound below the measured
+# cost makes a slow host die inside a group instead of reporting the assertion that failed, so a bound
+# is only ever relaxed upward.
+run(['node', str(ROOT / 'tests/tools/test-catalogue-runtime.js'), str(STAGE), str(classes) + ':' + library, args.group], check=True, timeout=lane_bounds.catalogue_seconds(args.group))

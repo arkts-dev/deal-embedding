@@ -1,0 +1,5 @@
+// Host-timezone day mechanism issued to composed source beside the checked standard modules.
+// The frozen host timezone derives the integral local epoch-day, so a daily projection reads one
+// adapter value instead of a UTC epoch-day or a lifetime count. Composed source reads it only from an
+// initializer or an action, exactly like std/time; a recomputation helper may not call it.
+export function localDay(): number;

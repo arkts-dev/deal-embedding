@@ -5,6 +5,7 @@ import os
 import pathlib
 import shutil
 from host_check import prepare, run, compile_fixture
+import lane_bounds
 import time
 
 started = time.monotonic()
@@ -33,6 +34,12 @@ for path in (EMBEDDING / 'core/host').glob('*.d.deal'):
 (STAGE / 'deal.json').write_text(json.dumps({'languageVersion': '1.6', 'backend': 'js', 'moduleRoots': ['src','ui'], 'externals': externals}))
 classes = STAGE / 'classes'
 cp = str(classes) + os.pathsep + str(ROOT / 'build/embedding-library/classes')
-compile_fixture(ROOT, STAGE, DEAL, [ROOT / 'tools' / (name + '.java') for name in ['FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentMechanisms', 'FragmentAnalysis']])
-run(['node', str(ROOT / 'tests/tools/test-construction-contracts.js'), str(STAGE / 'js')], check=True, timeout=20, env={**os.environ, 'DEAL_CONTRACT_CLASSPATH': cp})
+# The fixture DEAL graph is 23 modules; its cold compile is 13 s measured on this toolchain, and a
+# loaded machine has stretched the same compiler by 2.5x (see tools/stage-bounds.txt), so the declared
+# preparation bound keeps headroom instead of turning a passing assertion into an infrastructure
+# timeout. No assertion result is cached by it.
+compile_fixture(ROOT, STAGE, DEAL, [ROOT / 'tools' / (name + '.java') for name in ['FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentMechanisms', 'FragmentAnalysis']], deal_timeout=lane_bounds.DEAL)
+# The assertion lane itself is bounded, never cached: 31 s measured on this toolchain, so the declared
+# bound keeps headroom for a slower machine without changing any assertion.
+run(['node', str(ROOT / 'tests/tools/test-construction-contracts.js'), str(STAGE / 'js')], check=True, timeout=lane_bounds.CONTRACT_NODE, env={**os.environ, 'DEAL_CONTRACT_CLASSPATH': cp})
 print(f'construction contracts: {time.monotonic() - started:.2f}s', flush=True)

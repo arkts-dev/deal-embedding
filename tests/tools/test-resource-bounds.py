@@ -5,6 +5,7 @@ The item compiles the production ``ExecutionLimits`` with its fixture and runs t
 JDK, then asserts the production call sites that have to consume those bounds instead of an adapter
 literal. It needs Kotlin (``KOTLIN_HOME``, default ``/snap/kotlin/current``) and a JDK ``java``.
 """
+import importlib.util
 import os
 import pathlib
 import re
@@ -39,9 +40,76 @@ def compile_and_run():
     return run.stdout
 
 
+def android_jar():
+    """The platform jar the transport compiles against, from the same declaration the build resolves."""
+    declared = os.environ.get('ANDROID_JAR')
+    if declared and pathlib.Path(declared).is_file():
+        return pathlib.Path(declared)
+    spec = importlib.util.spec_from_file_location('boundary_proof', root / 'tools/boundary-proof.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    platform = pathlib.Path(module.sdk_paths()[0])
+    if not platform.is_file():
+        raise AssertionError('the probe transport cannot be compiled without the platform jar')
+    return platform
+
+
+def compile_and_run_probe():
+    """Compile the production probe transport with the fixture that executes its destination rule.
+
+    The classifier decides which addresses a live read may reach, so it is executed here rather than
+    asserted from source text: a rule that refused a public family, or admitted a private block, fails.
+    """
+    platform = android_jar()
+    probe_out = root / 'build/resource-bounds/probe'
+    shutil.rmtree(probe_out, ignore_errors=True)
+    probe_out.mkdir(parents=True, exist_ok=True)
+    sources = [root / 'android/src/ExecutionLimits.kt', root / 'android/src/probe/PublicProbeTransport.kt',
+               root / 'tests/tools/fixtures/ProbeDestinationTest.kt']
+    build = subprocess.run([str(kotlin / 'bin/kotlinc'), '-jvm-target', '21', '-no-reflect', '-nowarn',
+                            '-classpath', str(platform), '-d', str(probe_out)] + [str(source) for source in sources],
+                           capture_output=True, text=True)
+    if build.returncode != 0:
+        raise AssertionError('the probe destination fixture did not compile: ' + build.stderr.strip())
+    destinations = root / 'tests/tools/fixtures/probe-destinations.txt'
+    run = subprocess.run(['java', '-cp', os.pathsep.join([str(probe_out), str(kotlin / 'lib/kotlin-stdlib.jar'),
+                                                           str(platform)]),
+                          'dev.deal.embedding.ProbeDestinationTestKt', str(destinations)],
+                         capture_output=True, text=True, timeout=120)
+    if run.returncode != 0:
+        first = (run.stderr.strip() or run.stdout.strip()).splitlines()
+        raise AssertionError('the probe destination matrix failed: ' + (first[0] if first else 'no output'))
+    # The shipped isolate binding is executed against the same list, so a range added to one layer and not
+    # the other fails here instead of drifting silently.
+    shared = subprocess.run(['node', 'tests/tools/fixtures/probe-binding-check.js', str(destinations)],
+                            cwd=root, capture_output=True, text=True, timeout=120)
+    if shared.returncode != 0:
+        first = (shared.stderr.strip() or shared.stdout.strip()).splitlines()
+        raise AssertionError('the isolate binding classifies the shared list differently: ' +
+                             (first[0] if first else 'no output'))
+    # Both consumers report how many entries they classified: neither may classify fewer than the file holds,
+    # so a shortened list cannot hide behind the floor.
+    entries = [line for line in destinations.read_text().splitlines()
+               if line.split('#')[0].strip() != '']
+    self_count = re.search(r'(\d+) destinations classified twice', shared.stdout)
+    native_count = re.search(r'probe destination: (\d+) addresses and destinations classified', run.stdout)
+    if self_count is None or int(self_count.group(1)) != len(entries):
+        raise AssertionError('the isolate binding classified %s of %d listed destinations'
+                             % (self_count.group(1) if self_count else '?', len(entries)))
+    # The native fixture also states four publicDestination verdicts of its own, so its total is at least the
+    # listed entries and the fixture itself is what asserts the rest.
+    if native_count is None or int(native_count.group(1)) < len(entries):
+        raise AssertionError('the native classifier classified %s of %d listed destinations'
+                             % (native_count.group(1) if native_count else '?', len(entries)))
+    return run.stdout.strip() + '\n' + shared.stdout.strip()
+
+
 class ResourceBoundsTest(unittest.TestCase):
     def test_bounds_are_host_configuration_and_nonpositive_values_reject(self):
         print(compile_and_run().strip())
+
+    def test_the_probe_transport_classifies_only_reachable_destinations(self):
+        print(compile_and_run_probe().strip())
 
 
 class ProductionCallSiteTest(unittest.TestCase):
@@ -71,6 +139,19 @@ class ProductionCallSiteTest(unittest.TestCase):
         self.assertTrue('CapabilityDiscovery(application,trustProvider,config.execution' in embedding, 'discovery must receive the host-configured block')
         self.assertTrue('capabilities,config.execution' in embedding, 'the capability registry must receive the host-configured block')
         self.assertNotIn('CapabilityDiscovery(application,trustProvider)', embedding, 'discovery must not be constructed without the configured block')
+
+    def test_the_public_probe_takes_its_bounds_from_the_configured_block(self):
+        session = self.read('android/src/execution/UiSession.kt')
+        self.assertTrue('ProbeSession(config.execution)' in session, 'the probe lane must receive the host-configured block')
+        self.assertTrue('probes.receive(' in session and 'probes.drain()' in session, 'the probe lane must answer its own requests')
+        probe = self.read('android/src/probe/PublicProbeTransport.kt')
+        self.assertTrue('minOf(requested,limits.probeBytes)' in probe, 'a probe request must not exceed the configured byte bound')
+        self.assertTrue('minOf(timeoutMs.toLong(),limits.probeTimeoutMs)' in probe, 'a probe request must not exceed the configured deadline')
+        self.assertTrue('InetAddress.getAllByName' in probe, 'the probe transport must resolve the destination before it connects')
+        self.assertTrue('publicDestination(addresses)' in probe, 'the probe transport must refuse a nonpublic resolved destination')
+        self.assertTrue('instanceFollowRedirects=false' in probe, 'a redirect must fail instead of being followed')
+        self.assertTrue('sslSocketFactory=pinned' in probe and 'valpeer=socket.inetAddress' in probe and '!publicAddress(peer)' in probe, 'the read must validate the peer the connection really reached instead of trusting a second resolution')
+        self.assertTrue('parameters.endpointIdentificationAlgorithm="HTTPS"' in probe, 'the validated connection must keep the name certificate identity')
 
     def test_the_block_has_one_owner_and_stays_host_configuration(self):
         config = self.read('android/src/EmbeddingConfig.kt')

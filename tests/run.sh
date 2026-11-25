@@ -11,6 +11,9 @@ python3 tests/tools/test-verification-seams.py --recover
 python3 tools/preservation.py begin
 preservation_end() {
     local status=$?
+    # The marker's name comes from the gate functions below; a lane that failed before they were defined
+    # has nothing to remove.
+    if declare -F gate_segment >/dev/null; then command rm -f "$(gate_segment)"; fi
     command python3 tools/preservation.py end || status=1
     exit "$status"
 }
@@ -24,6 +27,7 @@ timed() {
     if [[ -n "$GATE_WAITING" ]]; then
         [[ ${2:-} == "$GATE_WAITING" ]] || return 0
         printf '[gate] SEGMENT starting at %s; earlier items NOT executed in this invocation\n' "$GATE_WAITING"
+        : > "$(gate_segment)"
         GATE_WAITING=''
     fi
     local started=$SECONDS status=0
@@ -35,56 +39,141 @@ timed() {
 python3() { timed python3 "$@"; }
 node() { timed node "$@"; }
 bash() { timed bash "$@"; }
+# The concurrent sequences below run in subshells, so the `timed` call that resumes a segment can
+# clear only that subshell's copy of the flag. The resumed item records itself in this run's marker and
+# this shell reads it once every sequence is reaped, so the exclusive items still start and the trailing
+# check still reports only a name no item of this lane declares. The marker carries this shell's pid, so
+# two runs on one host never read each other's resumption.
+gate_segment() { printf '%s/deal-gate-segment.%s' "${TMPDIR:-/tmp}" "$$"; }
+command rm -f "$(gate_segment)"
 python3 tools/dependencies.py check
-python3 tests/tools/test-generation-guidance.py
-python3 tests/tools/test-compiler-diagnostics.py
-node tests/tools/test-protocol.js
-python3 tests/tools/test-admission-policy.py
-python3 tests/tools/test-capability-boundary.py
-python3 tests/tools/test-cursor.py
-# The acceptance journeys read typed time evidence with these rules; the device lane runs the same
-# assertions, so a wrapped instant or a lone window end is refused deterministically too.
-python3 tests/tools/test-journey-rules.py
-node tests/tools/test-discovery.js
-node tests/tools/test-discovery-handoff.js
-node tests/tools/test-syntax-cache.js
-python3 tests/tools/test-host-check.py
-python3 tests/tools/test-build-stages.py
-python3 tests/tools/test-construction-contracts.py
-# Session execution policy: dependency revisions, currentness, expiry trust, authority and text admission.
-python3 tests/tools/test-execution-contracts.py
-# Host-configured containment: provider, discovery, evaluation, heap, input and transfer bounds.
-python3 tests/tools/test-resource-bounds.py
-python3 tests/tools/test-source-edits.py
-python3 tests/tools/test-catalogue.py
-# Catalogue emission through the real composer, the shipped pack and the packaged runtime: transitions,
-# published ports, issued hole bodies and the exact aggregate arithmetic.
-python3 tests/tools/test-catalogue-runtime.py
-python3 tests/tools/test-composer.py
-node tests/tools/test-persistence.js build/v08-cutover/composer-pairs/numeric/composed-executable/js
-python3 tests/tools/test-fragment-semantics.py
-node tests/tools/test-generation-cutover.js
-node tests/tools/test-persistence-provider.js build/v08-cutover/emitted/scalar-read/js
-node tests/tools/test-emitted-runtime.js
-node tests/tools/test-assistance.js
-node tests/tools/test-assistance-lifecycle.js
-python3 tests/tools/test-generation-gateway.py
-python3 tools/vocabulary-inventory.py
+# One lock for the whole lane, held across every item below. Two consequences, both required: no item
+# can race a build that would replace the inputs it reads, and no child re-acquires a lock its parent
+# owns. A caller that already owns it (`tests/host.sh gate`) keeps ownership; otherwise a lane reports a
+# concurrent build (`exit 75`) here, before any item starts.
+if [[ "${DEAL_BUILD_LOCK_HELD:-}" != "$PWD" ]]; then
+    mkdir -p build
+    exec 9>build/.demos-build.lock
+    flock -E 75 -n 9 || { printf '[gate] another build/check owns build/.demos-build.lock; nothing started\n' >&2; exit 75; }
+fi
+export DEAL_BUILD_LOCK_HELD="$PWD"
+
+# --- concurrent sequences ---
+# Extracted and exercised by tests/tools/test-build-cache.py, which stubs the commands below and
+# observes this block's overlap, its ordering and its failure behaviour.
+# Every deterministic item keeps its own command, bound, assertion and receipt; only the wall time
+# overlaps. Items that write disjoint output trees run at the same time instead of one after another,
+# because the gate's serial cost no longer fits the wall bound the verification gate gives it while
+# every assertion still has to execute. Sequence membership is by shared output tree, never by subject,
+# and no sequence is longer than the tree its items write: the composer owns `composer-test` and its
+# private pair trees, the generation cutover owns `generation-entry`, `composed-executable` and
+# `emitted`, and each catalogue harness, the construction harness and the policy lanes owns a staging
+# tree nothing else names.
+#
+# The whole-tree items stay exclusive and ordered after every sequence: the standalone proof compares
+# the packaged AAR with an isolated build and repackages demos from the shared AAR extraction, the seam
+# controls mutate a production source or a packaged asset and restore it byte-identically, and the
+# vocabulary item reads what the composer and the cutover both produced, so it can belong to neither
+# sequence. The matrix audit reads what every item above declared, so it is last. None of them may
+# observe another item's work.
+gate_sequence_composed() {
+    python3 tests/tools/test-composer.py
+    # The persistence replay reads the last numeric pair the composer emitted, from the pair's own tree.
+    node tests/tools/test-persistence.js build/v08-cutover/composer-pairs/numeric/composed-executable/js
+    node tests/tools/test-assistance.js
+    node tests/tools/test-assistance-lifecycle.js
+    python3 tests/tools/test-generation-gateway.py
+}
+gate_sequence_generation() {
+    # The generation cutover owns `composed-executable` and `emitted`, and emits the pairs the
+    # emitted-runtime and provider items drive, so those follow it in this sequence alone.
+    node tests/tools/test-generation-cutover.js
+    node tests/tools/test-persistence-provider.js build/v08-cutover/emitted/scalar-read/js
+    node tests/tools/test-emitted-runtime.js
+}
+gate_sequence_catalogue() {
+    # Compiled catalogue contracts over the `catalogue-tests` staging tree.
+    python3 tests/tools/test-catalogue.py
+}
+gate_sequence_catalogue_runtime() {
+    # Catalogue emission through the real composer, the shipped pack and the packaged runtime: transitions,
+    # published ports, issued hole bodies and the exact aggregate arithmetic. Its own staging tree and its
+    # own `catalogue-runtime` output tree, so it shares nothing with the compiled contracts above.
+    python3 tests/tools/test-catalogue-runtime.py
+}
+gate_sequence_contracts() {
+    python3 tests/tools/test-construction-contracts.py
+    # Session execution policy: dependency revisions, currentness, expiry trust, authority and text admission.
+    python3 tests/tools/test-execution-contracts.py
+    # Host-configured containment: provider, discovery, evaluation, heap, input and transfer bounds.
+    python3 tests/tools/test-resource-bounds.py
+    python3 tests/tools/test-source-edits.py
+    python3 tests/tools/test-fragment-semantics.py
+    bash tests/tools/test-renderer-rules.sh
+    # Exact shipped ECMAScript mechanism and precommit boundary ordering.
+    node tests/tools/test-renderer-patterns.js
+    node tests/tools/test-renderer-admission.js
+}
+gate_sequence_policy() {
+    # The acceptance journeys read typed time evidence with these rules; the device lane runs the same
+    # assertions, so a wrapped instant or a lone window end is refused deterministically too.
+    python3 tests/tools/test-generation-guidance.py
+    python3 tests/tools/test-compiler-diagnostics.py
+    node tests/tools/test-protocol.js
+    python3 tests/tools/test-admission-policy.py
+    python3 tests/tools/test-capability-boundary.py
+    python3 tests/tools/test-cursor.py
+    python3 tests/tools/test-journey-rules.py
+    node tests/tools/test-discovery.js
+    node tests/tools/test-discovery-handoff.js
+    node tests/tools/test-syntax-cache.js
+    python3 tests/tools/test-host-check.py
+    python3 tools/vocabulary-inventory.py
+    python3 tests/tools/test-dependencies.py
+    python3 tests/tools/test-preservation.py
+}
+# A sequence stops at its first failing item, and the lane fails once every launched sequence is reaped.
+# The exclusive items below never start on a failed sequence, so a failing gate reports items that were
+# observed and never reports a stale artifact of a run that broke earlier.
+gate_sequences=(composed generation catalogue catalogue_runtime contracts policy)
+gate_pids=()
+for gate_name in "${gate_sequences[@]}"; do
+    ( set -e; "gate_sequence_${gate_name}" ) 2>&1 | sed -u "s|^|[gate:${gate_name}] |" &
+    gate_pids+=("$!")
+done
+gate_status=0
+for gate_index in "${!gate_pids[@]}"; do
+    wait "${gate_pids[$gate_index]}" || gate_status=1
+done
+# A sequence item that resumed this run has already cleared its own subshell's flag, and the marker is
+# the only evidence of it in this shell. The exclusive items below run in this shell, so they read this
+# flag; without this line a correct sequence item would be reported as an unknown segment.
+if [[ -n "$GATE_WAITING" && -e "$(gate_segment)" ]]; then
+    GATE_WAITING=''
+fi
+if (( gate_status != 0 )); then
+    printf '[gate] a concurrent sequence failed; the exclusive items below did not start\n' >&2
+    exit 1
+fi
+# The exclusive items below run on an idle host, because each one either replaces an input another
+# item reads or asserts a bound that only means something without a competitor for the CPU.
+# The vocabulary item is first: it compiles through the composer's staging tree and writes the shared
+# `composed-executable`, so it observes both sequences that own those trees, and it runs here instead of
+# in either of them.
 python3 tests/tools/test-vocabulary.py
-bash tests/tools/test-renderer-rules.sh
-# Exact shipped ECMAScript mechanism and precommit boundary ordering.
-node tests/tools/test-renderer-patterns.js
-node tests/tools/test-renderer-admission.js
+# The two fake-build harnesses belong here: they drive stub builds under their own caps (4 s and 8 s
+# for one fake stage) to observe a hang, so they stay sequential like every other timed diagnostic.
+python3 tests/tools/test-build-stages.py
 python3 tests/tools/test-build-cache.py
-python3 tests/tools/test-dependencies.py
-python3 tests/tools/test-preservation.py
 # The standalone boundary is a property of the build, proven in both directions.
 python3 tests/tools/test-standalone-boundary.py
 # Break one production seam per covered family and observe the owning test fail.
 python3 tests/tools/test-verification-seams.py
 # The matrix is checked last: every covered row must name a test this lane already executed.
 python3 tests/tools/test-matrix.py
+# --- end of the concurrent gate items ---
 if [[ -n "$GATE_WAITING" ]]; then
     printf '[gate] unknown segment: %s\n' "$GATE_WAITING" >&2
     exit 2
 fi
+# --- end of the extracted gate block: tests/tools/test-build-cache.py stubs the commands above ---

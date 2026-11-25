@@ -41,6 +41,14 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             val externals = JSONObject()
             File(project,"graphics.d.deal").writeText(context.assets.open("protocol/graphics.d.deal").bufferedReader().use { it.readText() })
             externals.put("embedding/graphics",JSONObject().put("declaration","graphics.d.deal"))
+            // The host-timezone day mechanism is a checked module of composed source, not a provider:
+            // its declaration compiles like the graphics declarations and the isolate supplies the reading.
+            File(project,"day.d.deal").writeText(context.assets.open("protocol/day.d.deal").bufferedReader().use { it.readText() })
+            externals.put("embedding/day",JSONObject().put("declaration","day.d.deal"))
+            // The public-probe mechanism is a checked module of composed source beside the day mechanism:
+            // its declaration compiles like the graphics declarations and the isolate supplies the binding.
+            File(project,"probe.d.deal").writeText(context.assets.open("protocol/probe.d.deal").bufferedReader().use { it.readText() })
+            externals.put("embedding/probe",JSONObject().put("declaration","probe.d.deal"))
             config.contracts.forEachIndexed { index, module ->
                 val declaration = "host-$index.d.deal"
                 File(project, declaration).writeText(dev.deal.embedding.capabilities.CapabilityBindings.declaration(module))

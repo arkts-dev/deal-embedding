@@ -43,5 +43,15 @@ fun main() {
     rejects("a negative heap bound") { ExecutionLimits(heapBytes = -1) }
     rejects("a zero input bound") { ExecutionLimits(inputBytes = 0) }
     rejects("a negative transfer bound") { ExecutionLimits(transferBytes = -4096) }
-    println("resource bounds: provider, discovery, evaluation, heap, input and transfer bounds are host configuration and a nonpositive value is rejected before work")
+
+    // A public probe declares its own finite bounds: the response byte bound, the document depth bound, the
+    // selected-character bound, the selected-path bound and one wall-clock deadline per read.
+    check(defaults.probeBytes > 0 && defaults.probeDepth > 0) { "default probe size bounds must be positive" }
+    check(defaults.probeCharacters > 0 && defaults.probePaths > 0 && defaults.probeTimeoutMs > 0) { "default probe selection bounds and deadline must be positive" }
+    rejects("a zero probe byte bound") { ExecutionLimits(probeBytes = 0) }
+    rejects("a negative probe depth bound") { ExecutionLimits(probeDepth = -1) }
+    rejects("a zero probe character bound") { ExecutionLimits(probeCharacters = 0) }
+    rejects("a zero probe path bound") { ExecutionLimits(probePaths = 0) }
+    rejects("a zero probe deadline") { ExecutionLimits(probeTimeoutMs = 0) }
+    println("resource bounds: provider, discovery, evaluation, heap, input, transfer and public-probe bounds are host configuration and a nonpositive value is rejected before work")
 }

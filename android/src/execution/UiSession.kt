@@ -12,6 +12,9 @@ internal class UiSession(private val context: Context, private val broker: Capab
     internal fun logTrace(): String = log.run
     private val program = SandboxProgram(engine, 256 * 1024, config.execution)
     private var capabilitySession: dev.deal.embedding.capabilities.CapabilitySession? = null
+    // Public probes are a mechanism beside the provider boundary: they own no grant, no typed
+    // capability contract and no application-provider read, so they run on their own lane.
+    private val probes = ProbeSession(config.execution) { closed }
     private var closed = false
     private var lastVersion = -1
     private var lastFault = false
@@ -74,6 +77,11 @@ internal class UiSession(private val context: Context, private val broker: Capab
         check(requests.length() <= 8) { "Capability request batch too large: " + requests.length() + " pending" }
         val now = android.os.SystemClock.elapsedRealtime()
         val capabilities = checkNotNull(capabilitySession) { "UI session is not mounted" }
+        // A public probe is admitted on this lane and answered on a later one, so a slow destination
+        // never delays an action, a frame or another request.
+        val probeRequests = JSONArray(evaluate(DealSessionBindings.probes))
+        check(probeRequests.length() <= 3) { "Public probe batch too large: " + probeRequests.length() }
+        for (i in 0 until probeRequests.length()) { probes.receive(probeRequests.getJSONObject(i)) }
         for (i in 0 until requests.length()) {
             val request = requests.getJSONObject(i)
             val id = request.getInt("id")
@@ -91,6 +99,11 @@ internal class UiSession(private val context: Context, private val broker: Capab
                 reply.optJSONObject("error")?.optString("code") ?: "", now - started, parentOperation = requestParents.remove(id) ?: "", detail = reply.toString(), span = "${capabilities.identity}:$id")
         }
         if (replies.isNotEmpty()) log.stage("effect-delivery", candidate, workspace, replies.joinToString(",") { it.getInt("id").toString() }) { evaluate("dealCapabilities.deliver(${JSONArray(replies)})") }
+        val probeReplies = probes.drain()
+        if (probeReplies.isNotEmpty()) {
+            log.event("probe", "completed", candidate, workspace, probeReplies.joinToString(",") { it.getInt("id").toString() })
+            evaluate("dealProbe.deliver(${JSONArray(probeReplies)})")
+        }
         val snapshot = JSONObject(evaluate(DealSessionBindings.snapshot))
         if (snapshot.getInt("version") != lastVersion || snapshot.optString("fault").isNotEmpty() != lastFault) recordSnapshot(snapshot)
         return snapshot
@@ -114,7 +127,7 @@ internal class UiSession(private val context: Context, private val broker: Capab
             requestStarts.keys.forEach { log.event("capability", "cancelled", candidate, workspace, it.toString()) }
             requestStarts.clear(); requestParents.clear()
             try { program.evaluate(DealSessionBindings.dispose) } catch (_: Exception) { /* Terminated isolates cannot be disposed. */ }
-            finally { try { program.close() } finally { capabilitySession?.close(); capabilitySession = null } }
+            finally { try { probes.close(); program.close() } finally { capabilitySession?.close(); capabilitySession = null } }
         }
     }
 }

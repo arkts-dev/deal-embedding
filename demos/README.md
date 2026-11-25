@@ -30,7 +30,7 @@ JAVA_OPTS=-Xmx768m DEAL_GENERATION_BACKEND=cerebras DEAL_DISCOVERY_BACKEND=nano 
 bash tests/run.sh
 ```
 
-`demos/build.sh` is also callable from any working directory. APKs: `build/calendar.apk`, `vehicle.apk`, `todo.apk`, `organizer.apk`, `rental.apk`, `pizza.apk`; instrumentation: `build/v08-cutover/device-test/tests.apk`. With no targets, all six apps and tests are built. No automatic installation, data reset or inference.
+`demos/build.sh` is also callable from any working directory. APKs: `build/calendar.apk`, `vehicle.apk`, `todo.apk`, `organizer.apk`, `rental.apk`, `pizza.apk`; instrumentation: `build/v08-cutover/device-test/tests.apk`. With no targets, all six apps and tests are built. Independent demo targets are packaged concurrently (up to three jobs; `DEAL_BUILD_JOBS` sets the count) and the test APK keeps the serial lane after them. No automatic installation, data reset or inference.
 
 ## Gateway and device use
 

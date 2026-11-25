@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Real compiled DEAL composer with JVM syntax mechanisms; no model or alternate emitter."""
-import argparse, json, os, pathlib, shutil, time
+import argparse, concurrent.futures, json, os, pathlib, shutil, threading, time
 from host_check import prepare, run as bounded_run, compile_artifact
+import lane_bounds
 parser=argparse.ArgumentParser(description=__doc__)
-GROUPS=['validation','basics','clocks','operations','entries','presentation']
+GROUPS=list(lane_bounds.COMPOSER_GROUPS)
 parser.add_argument('--group',choices=GROUPS,help='one assertion group; all group receipts required for pair snapshot')
 parser.add_argument('--prepare-only',action='store_true',help='prepare compiler artifacts only, no assertion or snapshot claim')
 parser.add_argument('--contracts-only',action='store_true',help='compile and run construction/assembly assertions; do not compile emitted pairs')
@@ -11,10 +12,19 @@ parser.add_argument('--pair',choices=['numeric','chat','card','absent','boolean'
 args=parser.parse_args()
 if args.pair and (args.contracts_only or args.prepare_only or args.group): parser.error('--pair and --contracts-only are exclusive')
 started=time.monotonic()
+# One pair lane compiles and drives its own private directories, so the lanes are independent of each
+# other and run concurrently: only the wall time overlaps, every assertion still executes. A lane's
+# compiler call is bounded by the same 120 s as the fixture compile, because three lanes now contend
+# for the same host where one did before; the bound only stops a runaway compile, it never caches one.
+PAIR_WORKERS=3
+PAIR_COMPILE_SECONDS=lane_bounds.PAIR_COMPILE
+stage_context=threading.local()
 def run(command, **kwargs):
+    lane=getattr(stage_context,'lane','')
+    bound=kwargs.pop('seconds',PAIR_COMPILE_SECONDS if lane else lane_bounds.ASSERTION)
     before=time.monotonic()
-    try: return bounded_run(command, timeout=45, **kwargs)
-    finally: print(f'composer stage {command[0]} {command[-1]}: {time.monotonic()-before:.2f}s',flush=True)
+    try: return bounded_run(command, timeout=bound, **kwargs)
+    finally: print(f'composer stage {lane}{command[0]} {command[-1]}: {time.monotonic()-before:.2f}s',flush=True)
 root=pathlib.Path(__file__).resolve().parents[2]
 deal=pathlib.Path(os.environ.get('DEAL_ROOT',root/'dependencies/deal')).resolve()
 deal_ui=pathlib.Path(os.environ.get('DEAL_UI_ROOT',root/'dependencies/deal-ui')).resolve()
@@ -59,7 +69,7 @@ else:
     compile_artifact(root,'composer-java',[*java_sources,cp,root/'tests/tools/host_check.py',pathlib.Path(shutil.which('javac')).resolve().parents[1]/'release'],[classes],
         ['bash','-euc','rm -rf "$1"; mkdir -p "$1"; shift; exec "$@"','compile',str(classes),'javac','--release','21','-cp',cp,'-d',str(classes),*map(str,java_sources)])
     compile_artifact(root,'composer-deal',[source,stage/'ui',*stage.glob('*.d.deal'),stage/'deal.json',deal/'std',cp,pathlib.Path(shutil.which('java')).resolve().parents[1]/'release'],[stage/'js'],
-        ['bash','-euc','rm -rf "$1"; shift; exec "$@"','compile',str(stage/'js'),'java','-Ddeal.home='+str(deal),'-cp',cp,'deal.Main','compile',str(source/'checks.deal'),'--backend','js','--output',str(stage/'js')])
+        ['bash','-euc','rm -rf "$1"; shift; exec "$@"','compile',str(stage/'js'),'java','-Ddeal.home='+str(deal),'-cp',cp,'deal.Main','compile',str(source/'checks.deal'),'--backend','js','--output',str(stage/'js')],timeout=lane_bounds.DEAL)
     if args.prepare_only:
         print('composer preparation only; assertions and contracts snapshot NOT produced',flush=True)
         raise SystemExit(0)
@@ -91,9 +101,10 @@ else:
         raise SystemExit(0)
 
 # Each lane gets private input/output directories: compiling a pair never overwrites the
-# numeric fixture consumed by persistence, nor the frozen snapshot used by later lanes.
+# numeric pair the persistence item reads, nor the frozen snapshot used by later lanes. No lane
+# republishes a pair outside its own tree: `build/v08-cutover/composed-executable` belongs to the
+# generation cutover and the vocabulary item, which is why neither may run beside the composer.
 pairs=stage.parent/'composer-pairs'
-executable=stage.parent/'composed-executable/js'
 def node(name, *arguments):
     run(['node',str(root/name if name.startswith('tests/') else root/'tests/tools'/name),*map(str,arguments)],check=True)
 def compile_pair(name,target='screen'):
@@ -109,7 +120,7 @@ def compile_pair(name,target='screen'):
         assert rejected.returncode!=0 and 'ADMISSION_TARGET' in rejected.stdout+rejected.stderr,rejected.stdout+rejected.stderr
         assert not (output/'admission.json').exists(),'a rejected compile input writes no manifest'
         return
-    run(['java','-Ddeal.home='+str(deal),'-cp',str(classes)+':'+cp,'CompileComposer',str(root),str(directory),target,str(directory/'metadata.json'),'true'],check=True)
+    run(['java','-Ddeal.home='+str(deal),'-cp',str(classes)+':'+cp,'CompileComposer',str(root),str(directory),target,str(directory/'metadata.json'),'true'],check=True,seconds=PAIR_COMPILE_SECONDS)
     manifest=json.loads((output/'admission.json').read_text())
     assert manifest['target']==target
     admission={'numeric','assembly','context-operation','entries-aggregate','row-tap','presentation','foreign','descriptor','trigger','clock'}
@@ -118,11 +129,30 @@ def compile_pair(name,target='screen'):
     runtime={'numeric':'tests/tools/test-composed-runtime.js','assembly':'tests/tools/test-assembly.js','context-operation':'test-issued-data.js','entries':'test-entries-part.js','entries-aggregate':'test-entry-aggregate.js','row-tap':'test-row-tap.js','numeric-text':'test-numeric-text.js','foreign':'test-foreign-binding.js','clock':'test-clock-part.js','clock-input':'test-clock-input.js'}
     if name in runtime: node(runtime[name],output)
     if name=='trigger': node('tests/tools/test-draft-revision.js',output)
-    if name=='numeric':
-        # Existing downstream persistence items consume this exact last numeric compile.
-        shutil.rmtree(executable,ignore_errors=True)
-        shutil.copytree(output,executable)
 lanes=['absent','chat','card','boolean','written','assembly','operation','context-operation','entries','entries-empty','entries-aggregate','row-tap','presentation','numeric-text','foreign','descriptor','trigger','clock','clock-input','numeric']
-for name in ([args.pair] if args.pair else lanes):
-    compile_pair(name,'chat' if name in ('chat','assembly') else 'card' if name=='card' else 'screen')
+def lane_target(name):
+    return 'chat' if name in ('chat','assembly') else 'card' if name=='card' else 'screen'
+def compile_lane(name):
+    stage_context.lane=name
+    lane_started=time.monotonic()
+    try: compile_pair(name,lane_target(name))
+    finally:
+        print(f'composer lane {name}: {time.monotonic()-lane_started:.2f}s',flush=True)
+        stage_context.lane=''
+selected=[args.pair] if args.pair else lanes
+# `numeric` publishes nothing outside its own tree, but it stays serial and last because the
+# persistence item replays the pair it leaves behind, and every other lane owns all of its output
+# directories.
+parallel_lanes=[name for name in selected if name!='numeric']
+if parallel_lanes:
+    failures=[]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(PAIR_WORKERS,len(parallel_lanes))) as pool:
+        futures={pool.submit(compile_lane,name):name for name in parallel_lanes}
+        for future in concurrent.futures.as_completed(futures):
+            try: future.result()
+            except Exception as error: failures.append((futures[future],error))
+    for name,error in sorted(failures,key=lambda item: item[0]):
+        print(f'composer lane {name} FAILED: {error}',flush=True)
+    if failures: raise SystemExit(1)
+if 'numeric' in selected: compile_lane('numeric')
 print(f'composer lane complete: {time.monotonic()-started:.2f}s',flush=True)

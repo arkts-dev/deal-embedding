@@ -21,6 +21,9 @@ if [[ "${TARGETS[0]:-}" == "print-inputs" ]]; then
     PRINT_INPUTS=1
     TARGETS=("${TARGETS[@]:1}")
 fi
+# The default batch is every demo declared under demos/android/apps except the live-demo app, which is built
+# only when named because it exists to exercise a live probe against a real destination and is not part of the
+# deterministic gate. tests/tools/test-build-stages.py checks that every default target is declared.
 [[ ${#TARGETS[@]} -eq 0 ]] && TARGETS=(calendar vehicle todo organizer rental pizza tests)
 # One selection function feeds both the build loop and the standalone boundary audit.
 EMBEDDING_JAR=build/embedding-consumer/classes.jar
@@ -161,46 +164,6 @@ sign() {
     "$TOOLS/apksigner" sign --ks build/debug.keystore --ks-pass pass:android --out "build/$app.apk" "build/$app/aligned.apk"
     printf 'Built build/%s.apk\n' "$app"
 }
-# Fingerprint consumed inputs, not checkout metadata or generated guidance.
-library_inputs_text=$(python3 tools/library-inputs.py --lines) || exit 1
-mapfile -t library_inputs <<< "$library_inputs_text"
-library_key=$(python3 tools/build-cache.py "${library_inputs[@]}" "$ANDROID" \
-    "$KOTLIN_HOME/bin/kotlinc" "$KOTLIN_HOME/lib" \
-    "${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}/release" \
-    "$TOOLS/aidl" "${RUNTIME_JARS[@]}")
-library_stamp=build/embedding-consumer/.inputs.sha256
-library_output_stamp=build/embedding-consumer/.outputs.sha256
-library_output_key=''
-if [[ -f build/embedding-library/deal-embedding.aar && -f build/capability-api.jar && -f build/embedding-consumer/classes.jar && -d build/embedding-consumer/assets ]]; then
-    library_output_key=$(python3 tools/build-cache.py build/embedding-library/deal-embedding.aar build/capability-api.jar build/embedding-consumer/classes.jar build/embedding-consumer/assets)
-fi
-mkdir -p build/embedding-consumer
-if [[ -z "$library_output_key" || ! -f "$library_stamp" || "$(<"$library_stamp")" != "$library_key" || ! -f "$library_output_stamp" || "$(<"$library_output_stamp")" != "$library_output_key" ]]; then
-    started=$SECONDS
-    printf 'Embedding library: rebuilding (inputs changed or outputs missing)\n'
-    DEAL_ROOT="$DEAL" DEAL_UI_ROOT="$DEAL_UI" ANDROID_JAR="$ANDROID" \
-        AIDL="$TOOLS/aidl" RUNTIME_CP="$RUNTIME_CP" OUTPUT_DIR="$ROOT/build/embedding-library" KOTLIN_HOME="$KOTLIN_HOME" \
-        "$ROOT/build.sh"
-    rm -rf build/embedding-consumer build/capability-api
-    mkdir -p build/embedding-consumer build/capability-api
-    unzip -q build/embedding-library/deal-embedding.aar -d build/embedding-consumer
-    (cd build/capability-api && unzip -q ../embedding-consumer/classes.jar \
-        'dev/deal/embedding/Wire*' 'dev/deal/embedding/CapabilityContract*' \
-        'dev/deal/embedding/CapabilityFunction*' 'dev/deal/embedding/Parameter*' \
-        'dev/deal/embedding/capabilities/CapabilityService*' 'dev/deal/embedding/capabilities/NativeCapabilities*' \
-        'dev/deal/embedding/capabilities/ICapability*')
-    jar --create --file build/capability-api.jar -C build/capability-api .
-    printf '%s\n' "$library_key" > "$library_stamp"
-    python3 tools/build-cache.py build/embedding-library/deal-embedding.aar build/capability-api.jar build/embedding-consumer/classes.jar build/embedding-consumer/assets > "$library_output_stamp"
-    printf 'Embedding library: %s s\n' "$((SECONDS - started))"
-else
-    printf 'Embedding library: cache hit\n'
-fi
-# Local policy/bridge checks consume the packaged AAR but need neither dex nor an APK.
-if [[ ${#TARGETS[@]} -eq 1 && "${TARGETS[0]}" == library ]]; then
-    exit 0
-fi
-EMBEDDING_JAR=build/embedding-consumer/classes.jar
 # Stable third-party runtime dex never includes the changing embedding/compiler JAR.
 # Release dex avoids D8's per-invocation LambdaMethod debug annotation definition,
 # which would otherwise be duplicated when independently compiled dex is packaged.
@@ -230,6 +193,67 @@ profile_dex() {
     printf '%s\n' "$key" > "$out/.inputs.sha256"
     printf 'Runtime dex (%s): %s s\n' "$profile" "$((SECONDS - started))"
 }
+# Fingerprint consumed inputs, not checkout metadata or generated guidance.
+library_inputs_text=$(python3 tools/library-inputs.py --lines) || exit 1
+mapfile -t library_inputs <<< "$library_inputs_text"
+library_key=$(python3 tools/build-cache.py "${library_inputs[@]}" "$ANDROID" \
+    "$KOTLIN_HOME/bin/kotlinc" "$KOTLIN_HOME/lib" \
+    "${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}/release" \
+    "$TOOLS/aidl" "${RUNTIME_JARS[@]}")
+library_stamp=build/embedding-consumer/.inputs.sha256
+library_output_stamp=build/embedding-consumer/.outputs.sha256
+library_output_key=''
+if [[ -f build/embedding-library/deal-embedding.aar && -f build/capability-api.jar && -f build/embedding-consumer/classes.jar && -d build/embedding-consumer/assets ]]; then
+    library_output_key=$(python3 tools/build-cache.py build/embedding-library/deal-embedding.aar build/capability-api.jar build/embedding-consumer/classes.jar build/embedding-consumer/assets)
+fi
+# The runtime dex is third-party only: it reads the toolchain, the Kotlin stdlib and the compose jars,
+# never the embedding library, so it is prepared at the same time as a library rebuild instead of after
+# it. The two write disjoint trees, both are cache-validated by their own consumed inputs, and nothing is
+# skipped or accepted by overlapping them: a library failure is still the failure, reported after the dex
+# finished with the library's own log.
+library_only=0
+if [[ ${#TARGETS[@]} -eq 1 && "${TARGETS[0]}" == library ]]; then library_only=1; fi
+library_pid=''
+if [[ -z "$library_output_key" || ! -f "$library_stamp" || "$(<"$library_stamp")" != "$library_key" || ! -f "$library_output_stamp" || "$(<"$library_output_stamp")" != "$library_output_key" ]]; then
+    started=$SECONDS
+    printf 'Embedding library: rebuilding (inputs changed or outputs missing)\n'
+    (
+        DEAL_ROOT="$DEAL" DEAL_UI_ROOT="$DEAL_UI" ANDROID_JAR="$ANDROID" \
+            AIDL="$TOOLS/aidl" RUNTIME_CP="$RUNTIME_CP" OUTPUT_DIR="$ROOT/build/embedding-library" KOTLIN_HOME="$KOTLIN_HOME" \
+            "$ROOT/build.sh"
+        rm -rf build/embedding-consumer build/capability-api
+        mkdir -p build/embedding-consumer build/capability-api
+        unzip -q build/embedding-library/deal-embedding.aar -d build/embedding-consumer
+        (cd build/capability-api && unzip -q ../embedding-consumer/classes.jar \
+            'dev/deal/embedding/Wire*' 'dev/deal/embedding/CapabilityContract*' \
+            'dev/deal/embedding/CapabilityFunction*' 'dev/deal/embedding/Parameter*' \
+            'dev/deal/embedding/capabilities/CapabilityService*' 'dev/deal/embedding/capabilities/NativeCapabilities*' \
+            'dev/deal/embedding/capabilities/ICapability*')
+        jar --create --file build/capability-api.jar -C build/capability-api .
+        printf '%s\n' "$library_key" > "$library_stamp"
+        python3 tools/build-cache.py build/embedding-library/deal-embedding.aar build/capability-api.jar build/embedding-consumer/classes.jar build/embedding-consumer/assets > "$library_output_stamp"
+        printf 'Embedding library: %s s\n' "$((SECONDS - started))"
+    ) > build/library-build.log 2>&1 &
+    library_pid=$!
+else
+    printf 'Embedding library: cache hit\n'
+fi
+if (( ! library_only )); then
+    profile_dex host-stable "${RUNTIME_JARS[@]}"
+fi
+if [[ -n "$library_pid" ]]; then
+    if ! wait "$library_pid"; then
+        printf 'Embedding library: build failed\n' >&2
+        cat build/library-build.log >&2
+        exit 1
+    fi
+    cat build/library-build.log
+fi
+# Local policy/bridge checks consume the packaged AAR but need neither dex nor an APK.
+if (( library_only )); then
+    exit 0
+fi
+EMBEDDING_JAR=build/embedding-consumer/classes.jar
 embedding_dex() {
     local out=build/embedding-dex key started=$SECONDS
     key=$(python3 tools/build-cache.py tools/build-demos.sh tools/build-cache.py "$ANDROID" \
@@ -346,17 +370,27 @@ build_target() {
     sign "$app"
     printf 'App (%s), compile/dex/package: %s s\n' "$app" "$((SECONDS - app_started))"
 }
-# Targets are compiled one at a time unless a batch asks for jobs. The batches that ask are demo
-# repackages whose targets are independent build trees; the test target shares the composed executable
-# with the cutover items, so it always stays in the serial path. A failed target fails the batch and
-# every target's log is printed in target order, so a concurrent failure is as readable as a serial one.
-JOBS="${DEAL_BUILD_JOBS:-1}"
+# Independent demo targets are packaged concurrently by default; a caller asks for a number with
+# DEAL_BUILD_JOBS. Each job owns one target's build tree and log, and the batch is still one lock-holding
+# build, so only the wall time overlaps: nothing is compiled twice, skipped or reordered. Measured on this
+# toolchain, three targets take 230 s one at a time and 135 s over three jobs, which is the difference
+# between the deterministic gate finishing inside the wall bound it is given and not. The test target
+# shares the composed executable with the cutover items and no demo target does, so it is never a batch
+# job: it keeps the serial lane, after the batch. A failed target fails the batch and every target's log is
+# printed in target order, so a concurrent failure is as readable as a serial one.
+DEMO_JOB_CEILING=3
+DEMO_CORES=$(nproc 2>/dev/null || printf '1')
+JOBS="${DEAL_BUILD_JOBS:-$(( DEMO_CORES < DEMO_JOB_CEILING ? DEMO_CORES : DEMO_JOB_CEILING ))}"
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo 'DEAL_BUILD_JOBS must be a positive integer' >&2; exit 1; }
-if (( JOBS > 1 )) && (( ${#TARGETS[@]} > 1 )) && [[ " ${TARGETS[*]} " != *' tests '* ]]; then
+BATCH_TARGETS=()
+for app in "${TARGETS[@]}"; do
+    [[ "$app" == tests ]] || BATCH_TARGETS+=("$app")
+done
+if (( JOBS > 1 )) && (( ${#BATCH_TARGETS[@]} > 1 )); then
     # Each job owns one target's build tree and log, so a repeated target would be raced by two jobs
     # on one directory. The serial path merely builds it twice; a batch refuses it before any work.
     seen=' '
-    for app in "${TARGETS[@]}"; do
+    for app in "${BATCH_TARGETS[@]}"; do
         [[ "$seen" != *" $app "* ]] || { echo "DEAL_BUILD_JOBS batches need distinct targets: $app" >&2; exit 1; }
         seen="$seen$app "
     done
@@ -364,7 +398,7 @@ if (( JOBS > 1 )) && (( ${#TARGETS[@]} > 1 )) && [[ " ${TARGETS[*]} " != *' test
     # that prepared them. `target_selection` is the one place that decides the profile; today every
     # demo target is the host profile, so this check is a tripwire for a future provider-profile
     # target rather than a live branch, and refusing here keeps it from racing a second profile.
-    for app in "${TARGETS[@]}"; do
+    for app in "${BATCH_TARGETS[@]}"; do
         target_selection "$app"
         [[ "$profile" == host ]] || { echo "DEAL_BUILD_JOBS batches support host demo targets only: $app" >&2; exit 1; }
     done
@@ -372,9 +406,9 @@ if (( JOBS > 1 )) && (( ${#TARGETS[@]} > 1 )) && [[ " ${TARGETS[*]} " != *' test
     # before any job can want them. A job then only reads the prepared dex.
     profile_dex host-stable "${RUNTIME_JARS[@]}"
     embedding_dex
-    printf 'Demo packaging: %s target(s) over %s job(s)\n' "${#TARGETS[@]}" "$JOBS"
+    printf 'Demo packaging: %s target(s) over %s job(s)\n' "${#BATCH_TARGETS[@]}" "$JOBS"
     pending=0 status=0
-    for app in "${TARGETS[@]}"; do
+    for app in "${BATCH_TARGETS[@]}"; do
         mkdir -p "build/$app"
         printf 'Demo packaging: starting %s\n' "$app" >&2
         ( build_target "$app" ) > "build/$app/build.log" 2>&1 &
@@ -388,8 +422,12 @@ if (( JOBS > 1 )) && (( ${#TARGETS[@]} > 1 )) && [[ " ${TARGETS[*]} " != *' test
         wait -n || status=1
         pending=$((pending - 1))
     done
-    for app in "${TARGETS[@]}"; do cat "build/$app/build.log"; done
+    for app in "${BATCH_TARGETS[@]}"; do cat "build/$app/build.log"; done
     (( status == 0 )) || exit 1
+    # The test target keeps the serial lane after the batch, in the order the caller named it.
+    for app in "${TARGETS[@]}"; do
+        if [[ "$app" == tests ]]; then build_target "$app"; fi
+    done
 else
     for app in "${TARGETS[@]}"; do build_target "$app"; done
 fi

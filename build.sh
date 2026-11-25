@@ -25,12 +25,24 @@ case ${DEAL_BUILD_STAGE:-} in
     *) echo "Unknown DEAL_BUILD_STAGE" >&2; exit 2;;
 esac
 # No assertion results are cached: RendererConformance always executes after compilation.
-# A bound must exceed this toolchain's measured cold compiler cost (Java and Kotlin analysis dominate
-# at 52s and 63s here), so a cold gate can finish. A stage that overruns still stops with its name,
-# preserving validated predecessors, and is never reported as a pass.
+# Every stage declares its own preparation bound in `tools/stage-bounds.txt`, measured on this toolchain
+# with the gate's JAVA_OPTS=-Xmx768m. One shared default cannot contain every cold stage - the Kotlin
+# compile alone measured 41-57 s here, 142 s on a loaded machine - so a short default stopped the gate
+# inside a stage instead of reporting a real failure. `DEAL_BUILD_STAGE_SECONDS` still overrides one run
+# here; the isolated proof (tools/boundary-proof.py) and the short-check `build:`/`isolation:` lanes
+# (tests/check.py) refuse it instead, because their own outer bound is derived from the declaration and
+# could not contain the override. A bound stops a runaway stage with its
+# own name, preserving validated predecessors, and never accepts a result it did not compute.
+stage_bound() {
+    local bound
+    bound=$(awk -v name="$1" '$1 == name && $2 ~ /^[0-9]+$/ { print $2 }' "$ROOT/tools/stage-bounds.txt")
+    if [[ -z $bound ]]; then echo "No declared preparation bound for build stage: $1" >&2; exit 2; fi
+    printf '%s' "$bound"
+}
 stage() {
-    local name=$1; shift
+    local name=$1 bound; shift
     if [[ ${SELECTED_DONE:-0} == 1 ]]; then return; fi
+    bound=$(stage_bound "$name")
     local args=(--input "$JDK_RELEASE") item prerequisite=0
     if [[ -n ${DEAL_BUILD_STAGE:-} && "$DEAL_BUILD_STAGE" != "$name" ]]; then prerequisite=1; args+=(--plan); fi
     for item in "${INPUTS[@]}"; do args+=(--input "$item"); done
@@ -40,7 +52,7 @@ stage() {
     export -f "$name"
     local status=0
     python3 "$ROOT/tools/build-stage.py" "$name" --record "$OUTPUT_DIR/stages/$name.json" \
-        --seconds "${DEAL_BUILD_STAGE_SECONDS:-180}" "${args[@]}" -- bash -euo pipefail -c "$name" || status=$?
+        --seconds "${DEAL_BUILD_STAGE_SECONDS:-$bound}" "${args[@]}" -- bash -euo pipefail -c "$name" || status=$?
     if [[ $prerequisite == 1 && $status != 0 ]]; then
         echo "Prepare prerequisite first: DEAL_BUILD_STAGE=$name" >&2; return "$status"
     fi
@@ -171,7 +183,12 @@ OUTPUTS=("$OUTPUT_DIR/protocol-build/aar/assets"); stage protocol
 INPUTS=("$OUTPUT_DIR/java-classes" "$ROOT/tools/AssistanceUi.java" "$ROOT/ui/assistance" "$ROOT/core/assistance.deal" "$ROOT/ui/platform.dealui-pack" "$ROOT/api/graphics.d.deal" "$DEAL_UI_ROOT/ui" "$DEAL_ROOT/std")
 OUTPUTS=("$OUTPUT_DIR/bundles/assistance"); stage assistance
 if [[ ${DEAL_BUILD_PLAN:-0} != 1 && ( -z ${DEAL_BUILD_STAGE:-} || ${DEAL_BUILD_STAGE:-} == kotlin || ${DEAL_BUILD_STAGE:-} == package_aar ) ]]; then
-    timeout --kill-after=2s 10s java -cp "$OUTPUT_DIR/java-classes:$OUTPUT_DIR/mechanism-classes:$OUTPUT_DIR/kotlin-classes:$KOTLIN_HOME/lib/kotlin-stdlib.jar" dev.deal.embedding.RendererConformance "$ROOT/ui/platform.dealui-pack"
+    # Conformance is an assertion, not a cached stage, so its bound must be wide enough that a slower
+    # machine cannot turn a passing pack check into a nameless timeout: a cold JVM reads the whole pack in
+    # 1-2 s here, and 25 s keeps more than ten times that room. It also has to stay inside the 30 s slack
+    # each owner rounds its stage bound up by (`tests/check.py`'s `build:` lanes and the isolated proof's
+    # one-stage preparation), because this assertion runs in the same command tree as `kotlin`/`package_aar`.
+    timeout --kill-after=2s 25s java -cp "$OUTPUT_DIR/java-classes:$OUTPUT_DIR/mechanism-classes:$OUTPUT_DIR/kotlin-classes:$KOTLIN_HOME/lib/kotlin-stdlib.jar" dev.deal.embedding.RendererConformance "$ROOT/ui/platform.dealui-pack"
 fi
 INPUTS=("$OUTPUT_DIR/java-classes" "$OUTPUT_DIR/mechanism-classes" "$OUTPUT_DIR/kotlin-classes" "$OUTPUT_DIR/bundles" "$OUTPUT_DIR/projections" "$OUTPUT_DIR/protocol-build/aar/assets" "$ROOT/android/assets" "$ROOT/android/AndroidManifest.xml" "$ROOT/ui" "$ROOT/api" "$ROOT/tools/GenerationBindings.java" "$DEAL_UI_ROOT/runtime-js" "$DEAL_UI_ROOT/ui" "$DEAL_ROOT/std" "$DEAL_ROOT/deal/runtime.js")
 OUTPUTS=("$OUTPUT_DIR/deal-embedding.aar" "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar" "$OUTPUT_DIR/generated/CapabilityApi.kt" "$OUTPUT_DIR/generated/PackTheme.kt"); stage package_aar

@@ -1,4 +1,5 @@
 import * as catalogue from "./catalogue";
+import * as embedding from "embedding";
 import * as screens from "./screen";
 import * as composer from "./composer";
 import * as bindings from "./bindings";
@@ -57,13 +58,17 @@ async function localGroup(group: string): Promise<string> {
     {need:"ideas",kind:"idea_deck",json:"{\"ideas\":[{\"id\":\"a\",\"title\":\"Walk\",\"level\":\"easy\",\"instructions\":\"Around the block\",\"minutes\":5},{\"id\":\"b\",\"title\":\"Read\",\"level\":\"hard\",\"instructions\":\"A chapter\",\"minutes\":30},{\"id\":\"c\",\"title\":\"Stretch\",\"level\":\"easy\",\"instructions\":\"\",\"minutes\":5}]}"},
     {need:"points",kind:"points_ledger",json:"{\"people\":[\"Ada\",\"Bo\"],\"tasks\":[{\"id\":\"t\",\"label\":\"Chores\",\"points\":5}],\"rewards\":[{\"id\":\"r\",\"label\":\"Film\",\"points\":8},{\"id\":\"s\",\"label\":\"Sticker\",\"points\":3}]}"},
     {need:"quick",kind:"quick_log",json:"{\"amount\":2.5,\"unit\":\"glasses\",\"goal\":8,\"extraAmounts\":[1]}"},
+    {need:"reminders",kind:"reminders",json:"{\"rows\":[{\"id\":\"pill\",\"title\":\"Pill\",\"minute\":600,\"daily\":true},{\"id\":\"appt\",\"title\":\"Appointment\",\"minute\":540,\"day\":4}]}"},
+    {need:"dose",kind:"dose_schedule",json:"{\"rows\":[{\"id\":\"m\",\"name\":\"Morning\",\"minute\":480},{\"id\":\"e\",\"name\":\"Evening\",\"minute\":1200}]}"},
+    {need:"due",kind:"due_items",json:"{\"rows\":[{\"id\":\"tax\",\"name\":\"Tax\",\"day\":0},{\"id\":\"rent\",\"name\":\"Rent\",\"day\":0}],\"soonDays\":7}"},
     {need:"choose",kind:"actions",json:"{\"labels\":[\"First\",\"Second\"]}"},
     {need:"memo",kind:"note",json:"{\"text\":\"Remember this\"}"},
     {need:"filter",kind:"filter_box",json:"{\"title\":\"Filter\"}"}
   ];
   let selected: Piece[] = [];
   for (let item of items) {
-    if ((group === "timers" && ["timer","goal","rating","interval"].includes(item.need)) || item.need === group || (group === "drafts" && ["choose","memo","filter"].includes(item.need))) { selected[selected.length] = item; }
+    let dayScoped: boolean = s.contains(["reminders","dose","due"],item.need);
+    if ((group === "timers" && ["timer","goal","rating","interval"].includes(item.need)) || item.need === group || (group === "drafts" && ["choose","memo","filter"].includes(item.need)) || (group === "day" && dayScoped)) { selected[selected.length] = item; }
   }
   return await compose(selected,[]);
 }
@@ -73,6 +78,32 @@ export async function quick(): Promise<string> { return await localGroup("quick"
 export async function points(): Promise<string> { return await localGroup("points"); }
 export async function ideas(): Promise<string> { return await localGroup("ideas"); }
 export async function drafts(): Promise<string> { return await localGroup("drafts"); }
+export async function day(): Promise<string> { return await localGroup("day"); }
+// One section per disclosed operation: the calendar event, per-row reminder scheduling, dose
+// reconciliation and both itinerary integrations dispatch the operations the Bind stage issued, so the
+// emitted effects, the packaged session and a stubbed capability adapter prove the executed behavior.
+function wireType(kind: string): embedding.WireType { return {kind:kind,fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0}; }
+function contract(module: string, functions: embedding.CapabilityFunction[]): embedding.CapabilityContract { return {module:module,description:"",version:1,functions:functions}; }
+export async function calendar(): Promise<string> {
+  let issued: bindings.Registry = bindings.create([
+    contract("host/calendar",[{name:"create",description:"Create the selected event",parameters:[],result:wireType("null")}]),
+    contract("host/navigation",[{name:"open",description:"Open directions to the selected stop",parameters:[],result:wireType("null")}])
+  ]);
+  issued.bindings[0] = {id:"calendar_op",module:"host/calendar",function:"create",arguments:{},parameterOrder:[],owner:"host",evidence:{request:"",facts:"",quote:"",sources:[]}};
+  issued.bindings[1] = {id:"nav_op",module:"host/navigation",function:"open",arguments:{},parameterOrder:[],owner:"host",evidence:{request:"",facts:"",quote:"",sources:[]}};
+  let composition: screens.Composition = {screen:{title:"Catalogue",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[]},bindings:{},actions:{},connections:[]};
+  let pieces: Piece[] = [
+    {need:"event",kind:"calendar_event",json:"{\"eventTitle\":\"Show\",\"description\":\"Doors at seven\",\"day\":4,\"minute\":570,\"durationMinutes\":90,\"calendarBinding\":\"calendar_op\"}"},
+    {need:"remind",kind:"reminders",json:"{\"rows\":[{\"id\":\"pill\",\"title\":\"Pill\",\"minute\":600,\"daily\":true},{\"id\":\"appt\",\"title\":\"Appointment\",\"minute\":540,\"day\":4},{\"id\":\"rem4\",\"title\":\"Fourth\",\"minute\":700,\"daily\":true}],\"scheduleBinding\":\"calendar_op\"}"},
+    {need:"dose",kind:"dose_schedule",json:"{\"rows\":[{\"id\":\"m\",\"name\":\"Morning\",\"minute\":480},{\"id\":\"e\",\"name\":\"Evening\",\"minute\":1200}],\"calendarBinding\":\"calendar_op\"}"},
+    {need:"trip",kind:"itinerary",json:"{\"stops\":[{\"id\":\"a\",\"label\":\"Home\",\"minutes\":5},{\"id\":\"b\",\"label\":\"Venue\",\"minutes\":10}],\"navigationBinding\":\"nav_op\",\"calendarBinding\":\"calendar_op\"}"}
+  ];
+  for (let item of pieces) { composition.screen.instances[composition.screen.instances.length] = await piece(item.need,item.kind,item.json,issued); }
+  let computations: composer.Computation[] = [];
+  for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
+  let assembled: composer.Result = await composer.assembleWith(composition,computations,issued,null);
+  return s.encode(assembled.source);
+}
 // Exact aggregate arithmetic: one record log publishes every aggregate port, and four read-only
 // sections consume them through issued connections.
 export async function aggregate(): Promise<string> {
@@ -229,5 +260,52 @@ export async function aliasedBinding(): Promise<number> {
   catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } reason = error.message; refused = error.message.includes("Aliased import"); }
   if (!refused) { throw {name:"TEST_FAILED",message:"Aliased import admitted into a read-only summary: "+reason}; }
   return 1;
+}
+// The descriptor panel: the Bind stage issues two descriptors, one with a seeded draft its binding reads
+// and one without an input, and the panel renders and dispatches exactly those issued identities.
+export async function descriptor(): Promise<string> {
+  // The frozen contract's text domain is the descriptor draft's declared wire domain: a narrower one would
+  // refuse the issued draft instead of binding it.
+  let text: embedding.WireType = {kind:"string",fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0};
+  let issued: bindings.Registry = bindings.create([
+    contract("host/notes",[
+      {name:"send",description:"Send the drafted note",parameters:[{name:"text",type:text}],result:text},
+      {name:"ping",description:"Read the desk status",parameters:[],result:wireType("number")}
+    ])
+  ]);
+  let noteArguments: Record<string, unknown> = {}; noteArguments.text = "note_draft";
+  let noteOperation: Record<string, unknown> = {module:"host/notes",function:"send",arguments:noteArguments};
+  let pingArguments: Record<string, unknown> = {};
+  let pingOperation: Record<string, unknown> = {module:"host/notes",function:"ping",arguments:pingArguments};
+  let draftInput: Record<string, unknown> = {sourceId:"note_draft",label:"Note",initial:"Hello"};
+  let sendAction: Record<string, unknown> = {id:"send_note",label:"Send note",binding:"note_op",input:draftInput};
+  let pingAction: Record<string, unknown> = {id:"status_check",label:"Check status",binding:"ping_op"};
+  let bindingsRaw: Record<string, unknown> = {}; bindingsRaw.note_op = noteOperation; bindingsRaw.ping_op = pingOperation;
+  let actionsRaw: Record<string, unknown> = {}; actionsRaw.send_note = sendAction; actionsRaw.status_check = pingAction;
+  let rejected: string[] = await bindings.issueComposition(issued,bindingsRaw,actionsRaw,"","");
+  if (rejected.length !== 0) { throw {name:"TEST_FAILED",message:"Descriptor issuance rejected: "+rejected.join(", ")}; }
+  let issuedIds: string[] = []; for (let descriptor of issued.actions) { issuedIds[issuedIds.length] = descriptor.id; }
+  if (issuedIds.length !== 2) { throw {name:"TEST_FAILED",message:"Descriptor issuance count: "+issuedIds.join(",")}; }
+  let composition: screens.Composition = {screen:{title:"Catalogue",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[]},bindings:{},actions:{},connections:[]};
+  composition.screen.instances[0] = await piece("panel","intent_panel","{\"actionIds\":[\"send_note\",\"status_check\"]}",issued);
+  let computations: composer.Computation[] = [];
+  for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
+  let assembled: composer.Result = await composer.assembleWith(composition,computations,issued,null);
+  return s.encode(assembled.source);
+}
+// The live figure: one panel publishes its five ports and reads them through the public-probe mechanism.
+export async function live(): Promise<string> {
+  let composition: screens.Composition = {screen:{title:"Catalogue",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[]},bindings:{},actions:{},connections:[]};
+  let source: string = "{\"figures\":[{\"id\":\"temp\",\"label\":\"Temperature\",\"unit\":\"C\",\"path\":\"/current/temp\"},{\"id\":\"wind\",\"label\":\"Wind\",\"unit\":\"km/h\",\"path\":\"/current/wind\"}],\"source\":{\"url\":\"https://example.com/data.json\",\"mode\":\"api\",\"asofPath\":\"/updated\"}}";
+  let registry: bindings.Registry = bindings.create([]);
+  composition.screen.instances[0] = await piece("live","live_figure",source,registry);
+  // A second panel reads a search-mode source with no observation path, so its own 300 s interval and its
+  // unavailable observation time are exercised through the same packaged runtime.
+  let searchSource: string = "{\"figures\":[{\"id\":\"hits\",\"label\":\"Hits\",\"path\":\"/total\"}],\"source\":{\"url\":\"https://example.com/search.json\",\"mode\":\"search\"}}";
+  composition.screen.instances[1] = await piece("search","live_figure",searchSource,registry);
+  let computations: composer.Computation[] = [];
+  for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
+  let assembled: composer.Result = await composer.assembleWith(composition,computations,registry,null);
+  return s.encode(assembled.source);
 }
 export function main(): void { return; }

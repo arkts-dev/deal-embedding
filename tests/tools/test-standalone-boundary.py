@@ -4,6 +4,7 @@ tests consume the packaged AAR only, both negative controls are observed failing
 identical-input rerun reproduces the same proof from cache.
 """
 import json
+import importlib.util
 import re
 from pathlib import Path
 import subprocess
@@ -15,8 +16,19 @@ CACHE = ROOT / 'build/verification/standalone-boundary.json'
 DIGEST = re.compile(r'classes ([0-9a-f]{16}) assets ([0-9a-f]{16})')
 
 
+# A cold proof compiles the library in an isolated tree and repackages every demo target that has no
+# validated-input stamp, so the owning bound is the proof's own declared bound: the sum of the declared
+# per-stage bounds plus the demo batch plus the audits. The stage and batch bounds inside the proof stay
+# the inner guards that name what stopped; this one only stops a runaway proof.
+def proof_bound():
+    spec = importlib.util.spec_from_file_location('boundary_proof', ROOT / 'tools/boundary-proof.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.PROOF_SECONDS
+
+
 def prove(*arguments):
-    result = subprocess.run(['timeout', '--kill-after=2s', '2100s', sys.executable, 'tools/boundary-proof.py', *arguments], cwd=ROOT,
+    result = subprocess.run(['timeout', '--kill-after=2s', f'{proof_bound()}s', sys.executable, 'tools/boundary-proof.py', *arguments], cwd=ROOT,
                             capture_output=True, text=True)
     # unittest otherwise hides successful child diagnostics, including where the time went.
     for line in result.stderr.splitlines():

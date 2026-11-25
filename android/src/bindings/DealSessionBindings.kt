@@ -17,7 +17,12 @@ internal object DealSessionBindings {
         val composition = manifest.optJSONObject("composition")
             ?: manifest.optString("composition").takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() }
         val drivers = composition?.optJSONArray("clockDrivers")?.toString() ?: "[]"
-        return SandboxBundle.build(
+        // The configured probe bounds reach the isolate once, so the probe binding enforces the host's
+        // numbers instead of deciding its own.
+        val probeLimits = JSONObject().put("bytes", config.execution.probeBytes).put("depth", config.execution.probeDepth)
+            .put("characters", config.execution.probeCharacters).put("paths", config.execution.probePaths)
+            .put("timeoutMs", config.execution.probeTimeoutMs)
+        return "globalThis.dealProbeLimits = $probeLimits;" + SandboxBundle.build(
             context, listOf("dealui-session.js", "text-pattern.js", "renderer-admission.js", "ui-session.js"),
             CapabilityBindings.script(config.contracts) + RendererContract.script(context, config.target),
             "mountDealUi(factories,\"$ENTRY_NAME.js\",${record(restored)},${appModule(config)?.let { JSONObject.quote(it) } ?: "null"},null,$drivers)", output = output)
@@ -29,6 +34,8 @@ internal object DealSessionBindings {
     const val checkpoint = "persistDealUi()"
     const val snapshot = "dealUi.snapshot()"
     const val requests = "dealCapabilities.take()"
+    /** The probe lane of the same isolate: the public-probe mechanism, not a provider call. */
+    const val probes = "dealProbe.take()"
     const val dispose = "if (globalThis.dealUi) dealUi.dispose(); ''"
     fun dispatch(slot: Int, payload: String?) = "dealUi.dispatch($slot, ${payload?.let { JSONObject.quote(it) } ?: "null"})"
     /** Paired adapter readings prepared for the admitted action; compiled policy decides their meaning. */

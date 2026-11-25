@@ -22,10 +22,22 @@ data class ExecutionLimits(
     val providerTimeoutMs: Long = 5_000,
     /** The binding wait of one disclosure refresh; the contract fetch that follows is not timed. */
     val discoveryTimeoutMs: Long = 5_000,
+    /** One public probe: the byte bound of its response, the nesting bound of the selected document and
+     * the wall-clock deadline of one read. A probe is a mechanism outside the provider boundary, so it
+     * declares its own bounds rather than borrowing a provider deadline. */
+    val probeBytes: Int = 65_536,
+    val probeDepth: Int = 32,
+    val probeTimeoutMs: Long = 5_000,
+    /** The selected response characters one probe may read and the paths it may resolve from them. */
+    val probeCharacters: Int = 6_000,
+    val probePaths: Int = 3,
 ) {
     init {
         require(evaluationTimeoutMs > 0 && heapBytes > 0 && inputBytes > 0 && transferBytes > 0 &&
             providerTimeoutMs > 0 && discoveryTimeoutMs > 0) { "Execution limits and deadlines must be positive" }
+        require(probeBytes > 0 && probeDepth > 0 && probeTimeoutMs > 0 && probeCharacters > 0 && probePaths > 0) {
+            "Probe bounds and deadlines must be positive"
+        }
     }
 
     /** The terminal instant of one provider call admitted at [now]. The adapter never decides it. */

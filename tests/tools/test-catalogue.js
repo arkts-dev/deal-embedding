@@ -233,9 +233,11 @@ assert(!offered.items.includes('list_summary'),'a need that reads nothing is off
 assert(!offered.seeded.includes('list_summary'),'a need that reads only an input is offered a reader kind: '+JSON.stringify(offered.seeded));
 assert(offered.summary.includes('list_summary'),'a need that reads a publisher is refused its reader kind: '+JSON.stringify(offered.summary));
 assert(offered.items.includes('checklist'),'the standalone kinds stay issued: '+JSON.stringify(offered.items));
-// --- a supplied navigation/calendar reference is refused before emission: a resolvable reference has no
-// executable seam in this build and an unissued reference is unresolved, each locating the need.
-assert.strictEqual(results.registryRefusals,3,'every itinerary registry refusal ran, none silently dropped');
+// --- a supplied navigation, calendar or schedule reference is dispatched when the composition issued it
+// and is an unresolved registry reference when it did not, each locating the reference; the dispatches
+// cover itinerary navigation, itinerary calendar, per-row reminder scheduling, dose reconciliation and
+// the calendar event, plus the three unresolved refusals.
+assert.strictEqual(results.registryRefusals,13,'every issued dispatch, unready refusal, unissued reference, descriptor panel and live figure emission ran, none silently dropped');
 // A kind whose readers are all optional takes its declared assembly fallbacks, so it is issued for a
 // standalone need too; a kind with a required reader waits for the publisher the need requests.
 assert(offered.items.includes('search_list')&&offered.items.includes('master_list')&&offered.items.includes('itinerary'),'an optional-reader kind is offered for a standalone need: '+JSON.stringify(offered.items));
@@ -249,7 +251,21 @@ const required=['note','spotlight','metrics','timer','calendar_event','actions',
 assert.equal(owned.count,36,'the table declares all 36 specification kinds');
 assert.deepEqual([...owned.kinds].sort(),[...required].sort(),'the declared kinds are exactly the specification table');
 assert.ok(owned.executable.includes('timer')&&owned.executable.includes('record_log')&&owned.executable.includes('reading_status'),'the implemented kinds issue executable definitions');
-assert.ok(!owned.executable.includes('live_figure')&&!owned.executable.includes('calendar_event'),'a kind without an implementation stays open and is never substituted');
+// The descriptor panel and the live figure are executable: the panel dispatches the issued descriptor
+// operations and the live figure reads through the public-probe mechanism, so neither stays open.
+assert.ok(owned.executable.includes('intent_panel')&&owned.executable.includes('live_figure'),'the descriptor panel and the live figure issue executable definitions');
+assert.ok(owned.panelFacts.includes('requires [descriptor]')&&owned.panelFacts.includes('publishes []'),'the panel publishes no port and requires issued descriptors: '+owned.panelFacts);
+assert.ok(['live1:number','live2:number','live3:number','live_source:string','live_asof:string'].every(port=>owned.liveFacts.includes(port)),'the live figure publishes its five specification ports: '+owned.liveFacts);
+assert.ok(owned.liveFacts.includes('requires [probe]'),'the live figure declares the public probe it needs: '+owned.liveFacts);
+// calendar_event is executable: its explicit Add dispatches the disclosed calendar operation and the
+// section reconciles the reply, so it is offered rather than left open.
+assert.ok(owned.executable.includes('calendar_event'),'the implemented calendar event issues an executable definition');
+// The day-scoped kinds are executable: each publishes the ports of its specification row, and the
+// daily projections of the quick log and the idea deck are executable publications, not declarations.
+for (const kind of ['reminders','dose_schedule','due_items']) assert.ok(owned.executable.includes(kind),'the day-scoped kind issues an executable definition: '+kind);
+assert.ok(owned.dueFacts.includes('soon_names:string')&&owned.dueFacts.includes('expired_count:number')&&owned.dueFacts.includes('soon_count:number'),'the due-items row publishes its soon and expired ports: '+owned.dueFacts);
+assert.ok(owned.reminderFacts.includes('scheduled:number'),'the reminders row publishes its scheduled port');
+assert.ok(owned.doseFacts.includes('taken_today:number')&&owned.doseFacts.includes('streak:number'),'the dose schedule row publishes its taken-today and streak ports');
 assert.deepEqual(owned.decimals,{name:'decimals',type:'decimals',required:false,origin:'configuration',owner:'host',fallback:-1},'the reading_status decimals parameter publishes its origin, owner and default');
 assert.ok(owned.facts.includes('count:number')&&owned.facts.includes('status_level:number'),'the eligibility facts publish the ports of the kind: '+owned.facts);
 assert.ok(owned.facts.includes('decimals:decimals optional origin configuration default -1'),'the eligibility facts publish a parameter with its required flag, origin and default: '+owned.facts);
@@ -261,11 +277,12 @@ assert.ok(owned.facts.includes('requires [clock'),'the eligibility facts publish
 assert.strictEqual(owned.readers,'','every reader port carries the optionality of its specification row: '+owned.readers);
 assert.equal(owned.unowned,true,'a parameter declaration without an origin rejects');
 assert.ok(owned.located.includes('probe')&&owned.located.includes('text'),'an unachievable required owner locates the need, kind and parameter: '+owned.located);
-assert.ok(owned.offered.length>0&&!owned.offered.includes('live_figure'),'only executable kinds are offered');
+assert.ok(owned.offered.length>0&&owned.offered.includes('live_figure'),'the live figure is offered because the public probe is a host mechanism, not a discovered provider contract');
+assert.ok(owned.offered.includes('intent_panel'),'the descriptor panel is offered because it needs no provider contract');
 for (const pair of ['earn/points_ledger','measure/reading_status','tap/quick_log']) assert.ok(owned.preference.includes(pair),'the preferred kind is offered for its need: '+pair+' in '+JSON.stringify(owned.preference));
 // --- decode strictness over the full row and domain table, including the shared decimals field.
 const strict=await step('strictness');
-assert.equal(strict,48,'the strictness matrix runs every listed row and domain case exactly once');
+assert.equal(strict,148,'the strictness matrix runs every listed row and domain case exactly once');
 const transportExit=await transport.close();assert.equal(transportExit,0);
 console.log('catalogue sections: closed decode, row bounds, exact order and UTF-16 text, shared disclosure, reader eligibility, immutable initialization, empty states, kind-table ownership facts, eligibility facts, row/domain strictness and computation-free assembly passed');
 })().catch(error=>{transport.close().catch(()=>{});console.error(error);process.exitCode=1;});

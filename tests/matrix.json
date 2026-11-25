@@ -1498,7 +1498,7 @@
       "requirement": "All 36 catalogue kinds are declared once with their parameter schema, row schema, initialization, transitions, published and read ports and holes; coverage is measured against the spec, never against fixtures.",
       "status": "partial",
       "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
-      "blocker": "All 36 kinds are declared once with their parameter/row schemas, ownership facts, ports and holes. Thirty have executable definitions: their decode, initialization, transitions, published ports and issued holes are driven through the composer, the shipped pack and the packaged runtime, except the daily projections noted below. Six remain without an executable definition and are therefore not offered: calendar_event, intent_panel and live_figure need provider/public-probe transports, while reminders, dose_schedule and due_items need the frozen host-timezone day and calendar reconciliation. The reading_status chart is unbounded by history, so a card-target instance over sixty readings exceeds the card picture bound and faults rather than truncating; no catalogue vector drives that renderer bound, so it stays a stated limitation, not proof here. quick_log and idea_deck retain timestamped tap and completion history, but their daily projections (today_total, today_count, done_today) stay declared with a null value and a published located reason: the issued section surface exposes only std/time.nowMillis(), no host-timezone adapter day, and a recomputation may not read a clock at all, so an adapter day alone would not unlock the projection - the day has to arrive through an action into authoritative state. No UTC epoch-day or lifetime count stands in for the daily value, which is why both rows are partial. No vector drives a structural addition, and hole authoring/repair belongs to the generation rows. Every kind stays its own row instead of being substituted.",
+      "blocker": "All 36 kinds are declared once with their parameter/row schemas, ownership facts, ports and holes, and all 36 now have executable definitions: decode, initialization, transitions, published ports and issued holes are driven through the composer, the shipped pack and the packaged runtime, including the day-scoped reminders, dose_schedule and due_items sections, the daily projections of quick_log and idea_deck, the calendar_event dispatch, the per-row reminder scheduling, the dose calendar reconciliation, both itinerary integrations, the ledger task/reward creation, the aggregate sections, the intent_panel descriptor workflow (its seeded draft edited through the composition-owned nominal update and each tap dispatched through the issued descriptor binding) and the live_figure public-probe read, whose destination, redirect, media-type, encoding, byte, character and depth rules run in the shipped binding and whose transport reports the validated address. The reading_status chart is unbounded by history, so a card-target instance over sixty readings exceeds the card picture bound and faults rather than truncating; no catalogue vector drives that renderer bound, so it stays a stated limitation, not proof here. Every kind stays its own row instead of being substituted. A catalogue section's dispatch correlates its own attempt in its own state fields; the operation correlation fields the assembly emits for the same binding (status/revision/sequence/phase and the currentness hook) stay at their initial values because no session lane writes them yet, so the compiled operation-admission model is not what authorizes these section dispatches.",
       "asserts": [
         "the table declares all 36 specification kinds",
         "the strictness matrix runs every listed row and domain case exactly once"
@@ -1816,8 +1816,23 @@
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind calendar_event: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "calendar_event decodes its disclosed event fields, but no executable transition is issued: the explicit Add and its pending/result reconciliation need the disclosed calendar operation and the provider workflow seam, neither of which this build issues. The kind is not offered."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "calendar_event is executable: it decodes the disclosed event title, description, day, minute and integral duration, resolves its required calendarBinding against the issued registry and emits one explicit Add that carries the current attempt identity. The start reducer records the pending attempt; the asynchronous effect calls exactly the disclosed operation with the argument sources the binding was issued with; the completion reducer records the classified outcome, code and message for the attempt that started it, so a stale or duplicated reply is dropped and an unissued reference is still refused as unresolved. The packaged runtime drives Add twice through the compiled module with a stubbed host/calendar adapter and reads back both recorded successes.",
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ],
+      "asserts": [
+        "calendar_event issued no explicit Add over the disclosed operation",
+        "the Add dispatched exactly the issued calendar operation",
+        "a successful reply is recorded as the result",
+        "the added event is reported",
+        "a dispatch admitted an unready argument",
+        "a refused attempt claimed the live attempt identity"
+      ]
     },
     {
       "id": "catalogue-progress_goal",
@@ -2027,8 +2042,7 @@
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind itinerary: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "partial",
-      "blocker": "Per-stop reached flags, advance/reset, the reached markers, cumulative minutes from the published start, a missing start as unavailable and the deadline comparison all run through the packaged runtime. A supplied navigationBinding or calendarBinding is refused before emission - a resolvable reference names that missing seam and an unissued one is an unresolved registry reference - because the disclosed navigation/calendar operation has no executable producer/consumer seam in this build.",
+      "status": "covered",
       "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
       "asserts": [
         "the schedule accumulates from the published start",
@@ -2037,15 +2051,23 @@
         "Disclosed stop coordinates refused",
         "Unlocated stop latitude refusal",
         "Unlocated stop longitude refusal",
-        "Itinerary binding was admitted or unlocated",
-        "Unissued itinerary binding admitted or unlocated"
+        "Itinerary binding issued no dispatch",
+        "Unissued itinerary binding admitted or unlocated",
+        "the stop navigation dispatched the issued operation",
+        "the trip scheduling dispatched the issued operation",
+        "navigating does not mark a stop reached",
+        "the second stop navigation dispatched the issued operation",
+        "a refused reply retires the pending attempt",
+        "the provider error code is preserved",
+        "an explicit retry recovers the success result"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
         "tests/tools/test-catalogue.js",
         "tests/tools/fixtures/catalogue-runtime.deal",
         "tests/tools/test-catalogue-runtime.js"
-      ]
+      ],
+      "evidence": "Itinerary decodes its stops and both optional bindings. Per-stop reached flags, advance, reset, the reached markers, cumulative minutes from the published start, a missing start as unavailable and the deadline comparison all run through the packaged runtime. A supplied navigationBinding emits one per-stop Navigate control and a calendarBinding emits Schedule trip; the tapped stop or trip identity is recorded with the attempt, each dispatches exactly the issued operation with the argument sources the binding names (never an invented stop argument), records the classified reply, and marks no stop reached on a navigation reply. A refused scheduling reply is recorded as a failure with its provider code and an explicit retry recovers. An unresolved reference is refused before emission and the disclosed operations are never called automatically."
     },
     {
       "id": "catalogue-progress_line",
@@ -2073,110 +2095,182 @@
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind intent_panel: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "intent_panel decodes its unique actionIds but emits no transition or view and never resolves those ids against the issued descriptor registry, so the action-descriptor workflow (label, binding and draft issuance) has no executable path. The kind is not offered."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "intent_panel decodes its unique actionIds, refuses an id the composition never issued, and renders every issued descriptor in actionIds order with its label, the seeded draft its binding reads and one tap per descriptor; the packaged runtime dispatches exactly the issued module and function with the descriptor argument source, records pending, status and result per descriptor and drops a refused duplicate. The pending marker is a runtime resource and never enters the persisted projection, and a checkpoint is withheld while an effect is in flight, so no reopen carries an attempt no effect can retire; each classified reply stays authoritative, and the live figure's row drives the compiled restore path for its own runtime markers.",
+      "asserts": [
+        "intent_panel rendered no issued descriptor workflow",
+        "intent_panel did not render its descriptors in actionIds order",
+        "Unissued descriptor admitted or mislocated",
+        "the tap dispatched the issued operation with the descriptor draft",
+        "a text result is displayed literally",
+        "the refused duplicate never advanced the attempt"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-quick_log",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind quick_log: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "partial",
+      "status": "covered",
       "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
-      "evidence": "quick_log captures the instant of each declared amount tap, keeps one instant per logged amount, undoes only the last tap with its instant and publishes the configured goal; today's total and count stay declared with a null value and a located reason instead of an invented day.",
+      "evidence": "quick_log captures the instant and the frozen host timezone's local epoch-day of each declared amount tap, keeps one instant and one day per logged amount, undoes only the last tap with its instant and day, and projects today_total and today_count from the taps recorded on the adapter day. A cold reopen through the compiled persistence codec re-derives the day and excludes taps recorded on another day, so the filter is proven on a recorded day that differs from the captured one. The captured day is a runtime resource, never persisted; recomputation reads it instead of a clock.",
       "asserts": [
-        "the declared amount is logged",
-        "the tap keeps the epoch instant it captured",
-        "the daily total is unavailable without a local-day clock",
-        "the unavailable count keeps its located reason",
-        "the configured goal is published"
+        "a tap recorded on another day is excluded from the total",
+        "a tap recorded on another day is excluded from the count",
+        "the captured day is not a persisted field",
+        "the recorded days are persisted",
+        "undo removes the last tap with its local day"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
         "tests/tools/test-catalogue.js",
         "tests/tools/fixtures/catalogue-runtime.deal",
         "tests/tools/test-catalogue-runtime.js"
-      ],
-      "blocker": "The tap history is timestamped, but today_total and today_count cannot be projected: the daily projection runs under the frozen host timezone and the checked adapter day (spec 358/414), the issued section surface exposes only std/time.nowMillis(), and a recomputation may not read a clock, so the day would have to arrive through an action into authoritative state. Both ports stay declared with a null value and the reason naming the missing local-day clock, rendered by the view, instead of substituting a UTC epoch-day or the latest recorded day."
+      ]
     },
     {
       "id": "catalogue-reminders",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind reminders: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "reminders decodes its daily and one-shot rows (one-shot requires a day, daily omits it) and admits each supplied title, minute and one-shot day only from evidence, locating a fabricated one, but no executable transition is issued: completion marks, completed/scheduled counts and per-row calendar reconciliation need the frozen host-timezone day and the disclosed calendar operation. The kind is not offered.",
+      "status": "covered",
       "asserts": [
-        "Disclosed one-shot reminder refused",
-        "Unlocated reminder day refusal",
-        "Unlocated reminder title refusal",
-        "Unlocated reminder minute refusal",
-        "A daily reminder demanded a day",
-        "one-shot reminder without a day",
-        "daily reminder with a day"
+        "the reminder total counts the disclosed rows",
+        "a daily completion key is the row and its local day",
+        "a one-shot completion key is the row identity",
+        "the edited title reaches its row",
+        "Reminder schedule binding issued no per-row dispatch",
+        "The reminder scheduled count does not read the recorded replies",
+        "the scheduled reminder is counted",
+        "the scheduled row is recorded by identity",
+        "scheduling is not completion",
+        "the second reminder schedule dispatched the issued operation",
+        "both scheduled rows are counted",
+        "both scheduled rows are recorded",
+        "the refused reminder reply is classified",
+        "a refused reply schedules no row",
+        "the failure names the row it was about",
+        "a title over the shared bound commits no row",
+        "a created row takes a key no configured row holds",
+        "the retried reminder schedule dispatched the issued operation",
+        "the retry records exactly the refused row",
+        "the over-bound draft stays visible",
+        "a refused addition does not advance the add sequence"
       ],
-      "test": "python3 tests/tools/test-catalogue.py",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
-        "tests/tools/test-catalogue.js"
-      ]
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ],
+      "evidence": "Reminders decodes daily and one-shot rows, adds a row from bounded drafts, edits a title, removes a row by identity, toggles a completion mark keyed by the row for a retained one-shot reminder and by row/day for a daily one, and publishes done, total and scheduled as separate counts: done counts completed rows and scheduled counts the rows whose scheduling reply succeeded. A supplied scheduleBinding is resolved and dispatched per row: the tapped row identity is recorded with the attempt, the asynchronous effect calls the disclosed scheduling operation, only its success reply records the row, and a refused reply is recorded against the same row identity and shown by name, so the two outcomes stay distinguishable. The packaged runtime schedules two rows, refuses a third and retries it successfully, and creates a row whose generated key would otherwise repeat a configured id."
     },
     {
       "id": "catalogue-dose_schedule",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind dose_schedule: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "dose_schedule decodes its doses, but no executable transition is issued: daily taken marks, the streak over fully completed scheduled days and calendar reply reconciliation need the frozen host-timezone day and the calendar workflow. The kind is not offered."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "Dose schedule decodes its doses, adds and removes a dose by identity, and publishes taken_today, doses and the streak of consecutive fully completed nonempty days. With a disclosed calendarBinding the daily taken mark is the calendar reply: the explicit take dispatches the issued operation and the mark key is recorded only after its success reply, from the one local-day reading the completion took, so a refused reply records no dose; without a calendar operation the section keeps the local daily mark. The packaged runtime drives a refused take and its successful retry through the compiled module with a stubbed adapter and reads the reconciled marks and streak.",
+      "asserts": [
+        "the taken mark is counted for today",
+        "a fully completed day starts the streak",
+        "a complete previous day starts the streak",
+        "consecutive complete days ending yesterday count",
+        "the history marks the taken dose",
+        "Dose calendar binding did not reconcile the taken mark through the reply",
+        "the calendar reply reconciles the taken mark",
+        "the refused dose reply is classified",
+        "a refused reply records no dose",
+        "the retried reply records the mark"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-due_items",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind due_items: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "due_items decodes its rows and soonDays, but no executable transition is issued: the expired/soon classification needs the frozen host-timezone day from the adapter. The kind is not offered."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "due_items captures the frozen host timezone's local epoch-day at initialization and again in every action, decodes its disclosed rows and nonnegative soon window, adds an item from its name and day drafts, removes an item by identity, changes a row's date, and publishes count, soon_count, expired_count and soon_names: expired is strictly before today, soon runs from today through today plus soonDays, and the supplied row order is kept.",
+      "asserts": [
+        "the changed row is no longer expired",
+        "a day inside the soon window is soon",
+        "a day beyond the soon window is not soon",
+        "the soon names list the soon row",
+        "the added item receives a stable local key",
+        "negative soon days",
+        "fractional soon days"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "catalogue-points_ledger",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind points_ledger: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "partial",
-      "blocker": "The selected person, signed award history, insufficient-balance refusal, an affordable redemption, undo and the published balance ports run through the packaged runtime, with one initial balance per person. The published labels and count carry the configured people and the recorded entries, but no reader consumes them in this build. The row's \"add tasks/rewards\" behavior has no emitted control: the shipped pack view is static source, so an appended task or reward could not be offered for award or redeem.",
+      "status": "covered",
       "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
       "asserts": [
-        "the ledger publishes balances per person",
-        "8 points cannot be spent from a 5 point balance"
+        "a fresh ledger publishes one balance per person",
+        "the configured task seeds one row",
+        "the added task is a row",
+        "the added task awards its own points",
+        "a nonpositive reward draft commits no row",
+        "the added reward is a row",
+        "6 points cannot be spent from a 1 point balance",
+        "undo steps back through the signed history"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
         "tests/tools/test-catalogue.js",
         "tests/tools/fixtures/catalogue-runtime.deal",
         "tests/tools/test-catalogue-runtime.js"
-      ]
+      ],
+      "evidence": "The selected person, signed award history, insufficient-balance refusal, an affordable redemption, undo and the published balance ports run through the packaged runtime. Configured tasks and rewards seed one mutable nominal row each, and the ledger adds a task or a reward from bounded drafts: a nonblank label of at most 32 UTF-16 units and a positive integral points amount. Award and redeem resolve the tapped row by issued identity and post its own points, so a row added after the fact awards or redeems exactly its configured amount."
     },
     {
       "id": "catalogue-idea_deck",
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind idea_deck: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "partial",
-      "blocker": "The time and level filters, wrapping Another, the match re-seek and the Done mark run through the packaged runtime, and each mark keeps the instant it happened, once per idea. \"Done marks today\" needs the frozen host-timezone adapter day: no adapter day is issued and a recomputation may not read a clock, so done_today stays declared with a null value and that located reason, rendered by the view, instead of the lifetime number of marks. The kind stays offered with that daily projection visibly missing.",
+      "status": "covered",
       "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
       "asserts": [
         "Done marks the idea it showed",
         "each mark keeps one instant",
-        "done today is unavailable without a local-day clock",
-        "Another advances to the next unfinished match",
-        "a narrowed time filter re-seeks an unfinished matching idea"
+        "done today is projected from the adapter day",
+        "a mark recorded on another day is not counted today",
+        "the idea deck day is not a persisted field",
+        "the reopened idea deck re-derives the adapter day"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
         "tests/tools/test-catalogue.js",
         "tests/tools/fixtures/catalogue-runtime.deal",
         "tests/tools/test-catalogue-runtime.js"
-      ]
+      ],
+      "evidence": "The time and level filters, wrapping Another, the match re-seek and the Done mark run through the packaged runtime; each mark keeps the instant and the local day it happened, once per idea, and done_today counts the marks of the adapter day. A cold reopen through the compiled persistence codec re-derives the day and excludes a mark recorded on another day. The lifetime number of marks is never presented as today's count."
     },
     {
       "id": "catalogue-interval_timer",
@@ -2234,8 +2328,24 @@
       "family": "catalogue-kinds",
       "owner": "catalogue-sections",
       "requirement": "Catalogue kind live_figure: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
-      "status": "missing",
-      "blocker": "live_figure decodes one to three figures plus a credential-free public HTTPS source and validates JSON Pointers, but no probe is issued: the public-probe transport, connected-destination/media-type/encoding/bounds validation and the observation timestamp from asofPath need the native probe adapter. The kind is not offered and no value is fabricated."
+      "status": "covered",
+      "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
+      "evidence": "live_figure decodes one to three figures and a credential-free public HTTPS source, starts unavailable and publishes live1, live2, live3, live_source and live_asof only after a validated public-probe read; an explicit Refresh and the mode interval poll dispatch the probe, a failed or refused read stays unavailable and pauses polling, and the observation time is the source asof value. The decode step refuses a destination this build could never read: a nonpublic, documentation, benchmarking or malformed bracketed IPv6 literal, a name whose final label begins with a digit or ends in a root dot, an out-of-range or spelled port, a fragment, userinfo and URL text that cannot be requested as written (tests/tools/fixtures/catalogue-contracts.deal); decode's IPv6 block list covers the same blocks the probe binding's list carries, including the /28 edges, while the path and query shapes are not inspected by the isolate binding, so decode is the stricter side there (the native URL parser would accept path text decode refuses, for example a raw non-ASCII path unit), and the empty (colon, no digits), zero and spelled port spellings are refused by the binding as well; a legacy single-number IPv4 authority is refused as that legacy spelling, not because the transport cannot read it. The shipped isolate binding (executed in this lane) refuses a non-HTTPS, loopback, private IPv4, private or mapped IPv6, credentialed, redirected, non-JSON, non-UTF-8, oversized or over-deep response and a connected address that is not public; the native transport refuses every resolved and every really connected address that is not public before a request byte is written, fails a redirect, clamps both bounds and reports the socket peer, and its destination classifier is executed over tests/tools/fixtures/probe-destinations.txt by tests/tools/test-resource-bounds.py, which runs the same list through the shipped isolate binding while its redirect, byte, deadline and peer clamping is asserted at its call sites. A live socket read of a real public destination is not part of the deterministic lane, and this build issues no search mechanism, so a LiveSource arrives as the decoded live parameter its plan issued and is validated at read time instead of being resolved from a search result.",
+      "asserts": [
+        "live_figure issued no public-probe read",
+        "live_figure did not publish its five specification ports",
+        "every public-probe policy case ran, none silently dropped",
+        "the refresh probed the issued source under the configured byte bound",
+        "the observation time is the source asof value",
+        "a poll before its interval is refused",
+        "a refused read pauses polling"
+      ],
+      "sources": [
+        "tests/tools/fixtures/catalogue-contracts.deal",
+        "tests/tools/test-catalogue.js",
+        "tests/tools/fixtures/catalogue-runtime.deal",
+        "tests/tools/test-catalogue-runtime.js"
+      ]
     },
     {
       "id": "aggregates",

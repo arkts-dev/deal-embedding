@@ -26,11 +26,12 @@ export class Definition { kind: string; criteria: string; parameters: Parameter[
 // an instance keeps when the fill never answered for it.
 export function notFilled(): string { return "Catalogue parameters were not filled"; }
 // A daily projection runs under the frozen host timezone and the checked adapter day
-// (`docs/spec-v0.8.md:358,414`). This build issues `std/time.nowMillis()` only and no host-timezone day,
-// so a captured instant cannot be projected onto the host's current day: a UTC epoch-day or a lifetime
-// count would publish a daily value no adapter produced. The projection stays unavailable and its
-// reason names the missing clock instead of presenting a substitute as a daily value.
-function dailyProjection(what: string): string { return what+" is unavailable: the local-day clock is not available in this build"; }
+// (`docs/spec-v0.8.md:358,414`). A day-scoped kind captures that local epoch-day at initialization and
+// again in every action, so its daily projection reads authoritative state and recomputation never
+// reads a clock. The captured day is a runtime resource: a restored store re-derives it from the
+// adapter instead of reusing the saved day, so a timezone change invalidates the projection instead of
+// silently keeping the old day. A UTC epoch-day or a lifetime count is never substituted.
+function dayField(id: string): screens.Field { return {name:"today",type:"number",role:"runtime",dependencies:[],initial:"embeddingDay.localDay()",owner:id}; }
 export class Configured { need: string; definition: Definition; parameters: Record<string, unknown>; accepted: boolean; reason: string; }
 // AC-02 ownership facts: every parameter carries where its value comes from (`origin`) and the owner
 // stage that may supply it (`owner`). `owner` is derived from `origin` so the two can never drift.
@@ -61,7 +62,7 @@ export function definitions(): Definition[] {
     kind("checklist","Keyed toggles with checked and total counts; not records, assignments or external operations.",true,[param("items","entries",false,null,12,"disclosed")],[publish("done","number"),publish("total","number")],[],[],[] ,true),
     kind("metrics","Read-only summary of disclosed labelled facts, not generated estimates, calculations or provider records.",false,[param("values","facts",true,null,12,"disclosed")],[],[],[],[],true),
     kind("timer","Countdown of one to six duration presets with selected preset, elapsed, running, start/pause/reset and one end action.",true,[param("presets","presets",false,[{label:"Timer",seconds:1500}],6,"configuration")],[],[],[whenFinished()],["clock"],true),
-    kind("calendar_event","Explicit add of one disclosed event through the bound calendar operation with pending and result.",true,[param("eventTitle","string",true,"",512,"disclosed"),param("description","string",false,"",512,"disclosed"),param("day","day",true,null,0,"configuration"),param("minute","minute",true,null,0,"configuration"),param("durationMinutes","duration",true,null,0,"configuration"),param("calendarBinding","binding",true,null,0,"configuration")],[],[],[],["calendar"],false),
+    kind("calendar_event","Explicit add of one disclosed event through the bound calendar operation with pending and result.",true,[param("eventTitle","string",true,"",512,"disclosed"),param("description","string",false,"",512,"disclosed"),param("day","day",true,null,0,"configuration"),param("minute","minute",true,null,0,"configuration"),param("durationMinutes","duration",true,null,0,"configuration"),param("calendarBinding","binding",true,null,0,"configuration")],[],[],[],["calendar"],true),
     kind("actions","Local label selection and last-tapped label only. No external operation or completion claims.",true,[param("labels","labels",true,null,12,"content")],[],[],[],[],true),
     kind("progress_goal","Goal progress with start at zero, increment/reset and a displayed ratio clamped only in display.",true,[param("goal","positive",true,null,0,"configuration"),param("step","positive",true,null,0,"configuration")],[],[],[],[],true),
     kind("key_facts","Read-only labelled facts from disclosed data; no calculation, timer, action or external data.",false,[param("items","facts",true,null,12,"disclosed")],[],[],[],[],true),
@@ -81,19 +82,19 @@ export function definitions(): Definition[] {
     kind("settle_up","Cent-exact debtor/creditor transfers in label order from published balances.",false,[],[], [reads("labels","string[]"),reads("balances","number[]"),optionalRead("currency","string")],[],[],true),
     kind("itinerary","Reached flags, advance/reset and cumulative schedule over disclosed stops from an optional start.",true,[param("stops","stops",true,null,12,"disclosed"),param("navigationBinding","binding",false,"",0,"configuration"),param("calendarBinding","binding",false,"",0,"configuration")],[publish("done","number"),publish("total","number")],[optionalRead("start","number"),optionalRead("deadline","number")],[],["clock"],true),
     kind("progress_line","Completion text and bar of the published done/total; an invalid total is unavailable.",false,[],[], [reads("done","number"),reads("total","number")],[],[],true),
-    kind("intent_panel","Action-descriptor workflow over unique controller-issued descriptor identities.",true,[param("actionIds","actionIds",true,null,0,"configuration")],[],[],[],["descriptor"],false),
+    kind("intent_panel","Action-descriptor workflow over unique controller-issued descriptor identities.",true,[param("actionIds","actionIds",true,null,12,"configuration")],[],[],[],["descriptor"],true),
     kind("data_table","Read-only disclosed cells in three columns whose rows match their headers; never calculations, estimates or provider data.",false,[param("headers","headers",true,null,3,"content"),param("rows","cells",true,null,12,"disclosed")],[],[],[],[],true),
     kind("timeline","Read-only chronological rail of disclosed minute-ordered rows in their supplied order; no records, actions or external data.",false,[param("rows","timeline",true,null,12,"disclosed")],[],[],[],[],true),
     kind("bar_chart","Read-only zero-based labelled bars of disclosed values inside one declared positive scale; never an estimate or calculation.",false,[param("points","points",true,null,12,"disclosed"),param("maximum","positive",true,null,0,"configuration")],[],[],[],[],true),
     kind("quick_log","Timestamped one-tap amount logging with undo/remove and today's total and count.",true,[param("amount","positive",true,null,0,"configuration"),param("unit","string",true,"",32,"configuration"),param("goal","positive",true,null,0,"configuration"),param("extraAmounts","numbers",false,null,0,"configuration")],[publish("goal","number"),publish("today_total","number"),publish("today_count","number")],[],[],["clock"],true),
-    kind("reminders","Add/edit/remove/complete with daily or retained one-shot marks and completed/scheduled counts.",true,[param("rows","reminders",false,null,0,"disclosed"),param("scheduleBinding","binding",false,"",0,"configuration")],[publish("done","number"),publish("total","number"),publish("scheduled","number")],[],[],["calendar"],false),
-    kind("dose_schedule","Add/remove doses, daily taken marks and history with taken_today, doses and streak.",true,[param("rows","doses",false,null,0,"disclosed"),param("calendarBinding","binding",false,"",0,"configuration")],[publish("taken_today","number"),publish("doses","number"),publish("streak","number")],[],[],["calendar"],false),
-    kind("due_items","Add/remove/change item dates with expired/soon/count and soon names.",true,[param("rows","due",false,null,0,"disclosed"),param("soonDays","count",false,7,0,"configuration")],[publish("count","number"),publish("soon_count","number"),publish("expired_count","number"),publish("soon_names","string")],[],[],["clock"],false),
+    kind("reminders","Add/edit/remove/complete with daily or retained one-shot marks and completed/scheduled counts.",true,[param("rows","reminders",false,null,0,"disclosed"),param("scheduleBinding","binding",false,"",0,"configuration")],[publish("done","number"),publish("total","number"),publish("scheduled","number")],[],[],["calendar"],true),
+    kind("dose_schedule","Add/remove doses, daily taken marks and history with taken_today, doses and streak.",true,[param("rows","doses",false,null,0,"disclosed"),param("calendarBinding","binding",false,"",0,"configuration")],[publish("taken_today","number"),publish("doses","number"),publish("streak","number")],[],[],["calendar"],true),
+    kind("due_items","Add/remove/change item dates with expired/soon/count and soon names.",true,[param("rows","due",false,null,0,"disclosed"),param("soonDays","count",false,7,0,"configuration")],[publish("count","number"),publish("soon_count","number"),publish("expired_count","number"),publish("soon_names","string")],[],[],["clock"],true),
     kind("points_ledger","Selected person with signed award/redeem/undo history over the configured tasks and rewards, insufficient balance blocks spending.",true,[param("people","people",true,null,4,"disclosed"),param("tasks","tasks",false,null,0,"disclosed"),param("rewards","tasks",false,null,0,"disclosed")],[publish("labels","string[]"),publish("totals","number[]"),publish("total","number"),publish("count","number")],[],[],["money"],true),
     kind("idea_deck","Time and level filtered idea deck whose Another wraps and Done marks today.",true,[param("ideas","ideas",true,null,12,"disclosed")],[publish("done_today","number")],[],[],["clock"],true),
     kind("interval_timer","Work/rest/complete interval rounds with elapsed, running, start/pause/skip/reset and once-only signals.",true,[param("workSeconds","seconds",true,null,0,"configuration"),param("restSeconds","seconds",true,null,0,"configuration"),param("rounds","rounds",true,null,0,"configuration")],[publish("round","number"),publish("focus_seconds_done","number")],[],[],["clock"],true),
     kind("reading_status","Timestamped readings with latest/status/history/chart and the shared decimals presentation field.",true,[param("unit","string",true,"",32,"configuration"),param("bands","bands",true,null,0,"configuration"),param("decimals","decimals",false,-1,6,"configuration")],[publish("count","number"),publish("latest","number"),publish("status_level","number")],[],[],["clock"],true),
-    kind("live_figure","Authorized public-probe figures refreshed explicitly; initially unavailable.",false,[param("figures","figures",true,null,3,"live"),param("source","source",true,null,0,"live")],[publish("live1","number"),publish("live2","number"),publish("live3","number"),publish("live_source","string"),publish("live_asof","string")],[],[],["probe"],false)
+    kind("live_figure","Authorized public-probe figures refreshed explicitly; initially unavailable.",true,[param("figures","figures",true,null,3,"live"),param("source","source",true,null,0,"live")],[publish("live1","number"),publish("live2","number"),publish("live3","number"),publish("live_source","string"),publish("live_asof","string")],[],[],["probe"],true)
   ];
   for (let definition of table) { checkDefinition(definition); }
   return table;
@@ -125,11 +126,22 @@ export function definitionOf(name: string): Definition { for (let entry of defin
 // Eligibility facts published for the generation consumer: the parameter requirements, ports and
 // holes this build issues for a kind. Selection itself stays generation's decision.
 export function eligibility(name: string): Definition { return definitionOf(name); }
+// The public probe is a mechanism of this build, not a discovered provider contract: a live figure reads
+// its values through the host probe transport, so its live parameters are achievable without a frozen
+// capability contract while a provider-owned parameter of any other kind still needs one. The fact is
+// declared in the kind table (`requires [probe]`), never inferred from the emitted source.
+export function probed(definition: Definition): boolean { return s.contains(definition.requirements,"probe"); }
+// A live figure parameter is owned by the public-probe mechanism of this build rather than by a discovered
+// provider contract, so the frozen-contract precondition does not apply to it; every other provider-owned
+// parameter keeps it.
+export function probeOwned(definition: Definition, parameter: Parameter): boolean {
+  return parameter.owner === "provider" && parameter.origin === "live" && probed(definition);
+}
 export function offered(definition: Definition): boolean {
   if (!definition.executable) { return false; }
   // A required live parameter needs a frozen provider contract; without one the owner is unachievable
   // and the kind is never offered, so no default silently stands in for missing grounded data.
-  for (let parameter of definition.parameters) { if (parameter.required && parameter.owner === "provider") { return false; } }
+  for (let parameter of definition.parameters) { if (parameter.required && parameter.owner === "provider" && !probeOwned(definition,parameter)) { return false; } }
   return true;
 }
 // A reader kind can only be wired when the need requests a dependency another need publishes: a plan
@@ -238,18 +250,170 @@ function coordinate(latitude: unknown, longitude: unknown, name: string): void {
 }
 // RFC 6901 JSON Pointer: empty is the whole document, otherwise every reference token begins with "/"
 // and escapes "~" as "~0" and "/" as "~1". No percent escapes or array shorthand are admitted.
-// A live source is credential-free HTTPS on a public host: userinfo, loopback, link-local and the
-// private IPv4 ranges are refused before any probe can be issued.
+// A live source is credential-free HTTPS on a public host: userinfo, fragments, loopback, link-local and
+// the private IPv4 ranges are refused before any probe can be issued, and a bracketed IPv6 authority is
+// unwrapped and classified with the same public-address rule the probe binding applies. The address must
+// also be one the transport can parse: the scheme, the authority, the host, the port and the URL text are
+// held to the rules the layers below apply, so an admitted figure is never one a parser or an address
+// classifier refuses. Whether a name resolves to a public address remains a read-time fact, which is what
+// the transport's connected-peer check exists for.
+// One decimal digit run: a dotted quad is an address literal only when every component is one, so a name
+// that merely begins with digits stays a name.
+function digitRun(text: string): boolean {
+  let cursor: number = 0;
+  while (cursor < text.length) { let ch: string = text.substring(cursor,cursor+1); if (ch < "0" || ch > "9") { return false; } cursor = cursor+1; }
+  return text !== "";
+}
+function hexGroup(text: string): boolean {
+  if (text === "" || text.length > 4) { return false; }
+  let cursor: number = 0;
+  while (cursor < text.length) { let ch: string = text.substring(cursor,cursor+1); if (!((ch >= "0" && ch <= "9") || (ch >= "a" && ch <= "f"))) { return false; } cursor = cursor+1; }
+  return true;
+}
+// One to four hex digits per group, eight groups, and at most one "::" standing for the rest: the literal
+// shape the address parser admits. A malformed bracketed authority is refused here instead of admitted as
+// a figure whose every read fails to parse.
+function ipv6Literal(value: string): boolean {
+  let compression: number = value.indexOf("::");
+  if (compression < 0) {
+    if (value.startsWith(":") || value.endsWith(":")) { return false; }
+    let plain: string[] = value.split(":"); if (plain.length !== 8) { return false; }
+    for (let group of plain) { if (!hexGroup(group)) { return false; } }
+    return true;
+  }
+  if (value.substring(compression+2,compression+3) === ":") { return false; }
+  if (value.indexOf("::",compression+2) >= 0) { return false; }
+  if (value.startsWith(":") && !value.startsWith("::")) { return false; }
+  if (value.endsWith(":") && !value.endsWith("::")) { return false; }
+  let present: number = 0;
+  for (let group of value.split(":")) { if (group !== "") { if (!hexGroup(group)) { return false; } present = present+1; } }
+  return present <= 7;
+}
+// Global unicast is 2000::/3, so the range rule refuses by range instead of by the spelling this file
+// happens to name: the second hextet of 2001:: is refused when it is 0x0000 (Teredo), 0x0002
+// (benchmarking, refused as its whole 2001:2::/32), 0x0010-0x003f (the ORCHID and DET spans 2001:10::/28,
+// 2001:20::/28 and 2001:30::/28) or 0x0db8 (documentation), and 3fff::/16 is refused whole, which contains
+// documentation's 3fff::/20. Outside global unicast the unspecified, loopback, unique-local, link-local,
+// multicast, IPv4-mapped/compatible, translated and NAT64 forms are refused. The rest of 2001::/23 (second
+// hextets 0x0001, 0x0003-0x000f and 0x0040-0x01ff) is left to the transport the way an unresolvable name is:
+// the network refuses it, and the read reports unavailable. The hextets are parsed, so a padded or
+// differently cased spelling decides here as it decides in the isolate binding and the socket layer.
+function publicV6(text: string): boolean {
+  let value: string = text.toLowerCase();
+  if (value.startsWith("[") && value.endsWith("]")) { value = value.substring(1,value.length-1); }
+  if (!ipv6Literal(value)) { return false; }
+  let parts: string[] = value.split(":");
+  let head: string = parts[0]; if (head === "") { head = "0"; }
+  let first: number = Number("0x"+head); if (Number.isNaN(first)) { return false; }
+  if (first < 0x2000 || first > 0x3fff) { return false; }
+  if (first === 0x3fff) { return false; }
+  let trailing: string = "0"; if (parts.length > 1) { trailing = parts[1]; if (trailing === "") { trailing = "0"; } }
+  let second: number = Number("0x"+trailing); if (Number.isNaN(second)) { return false; }
+  if (first === 0x2001 && (second === 0x0000 || second === 0x0002 || (second >= 0x0010 && second <= 0x003f))) { return false; }
+  return !(first === 0x2001 && second === 0x0db8);
+}
+// A name the transport can look up: labels of letters, digits and internal hyphens whose final label begins
+// with a letter. The transport's URL parser reads an authority whose final label begins with a digit as an
+// address and reports no host at all, and its TLS handshake refuses a trailing dot in the server name, so
+// neither spelling is a name this build can read. A bare integer authority is the legacy single-number IPv4
+// spelling rather than a name, and is refused for that reason.
+function hostName(value: string): boolean {
+  let labels: string[] = value.split(".");
+  for (let label of labels) {
+    if (label === "" || label.length > 63) { return false; }
+    if (label.startsWith("-") || label.endsWith("-")) { return false; }
+    let cursor: number = 0;
+    while (cursor < label.length) { let ch: string = label.substring(cursor,cursor+1); if (!((ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "-")) { return false; } cursor = cursor+1; }
+  }
+  let last: string = labels[labels.length-1];
+  return !(last.substring(0,1) >= "0" && last.substring(0,1) <= "9");
+}
+// A port is a colon and one to five digits inside the transport's own range. A spelled or out-of-range port
+// is refused because no transport can connect to it; the empty (a colon with no digits) and zero spellings
+// are refused because the isolate binding refuses them, and decode admits nothing a layer below rejects.
+function portSpelling(text: string): boolean {
+  if (text === "") { return true; }
+  if (!text.startsWith(":")) { return false; }
+  let digits: string = text.substring(1);
+  if (digits.length < 1 || digits.length > 5 || !digitRun(digits)) { return false; }
+  let value: number = Number(digits);
+  return value >= 1 && value <= 65535;
+}
+function hexPair(text: string): boolean {
+  if (text.length !== 2) { return false; }
+  let cursor: number = 0;
+  while (cursor < 2) { let ch: string = text.substring(cursor,cursor+1); if (!((ch >= "0" && ch <= "9") || (ch >= "a" && ch <= "f") || (ch >= "A" && ch <= "F"))) { return false; } cursor = cursor+1; }
+  return true;
+}
+// The transport parses this address with a URL parser before any request exists, and a request target is
+// ASCII, so the text after the authority is held to the parser's own alphabet: unreserved and
+// sub-delimiter characters, the path separators, and every escape a completed "%HH". A space, a generic
+// delimiter, a truncated escape or a raw non-ASCII character (which would have to be percent-encoded)
+// cannot be requested as written, and refusing it here keeps an admitted live figure one this build can
+// actually read. Square brackets and "?" belong to the query, not to the path.
+function urlText(value: string, query: boolean): boolean {
+  let cursor: number = 0;
+  while (cursor < value.length) {
+    let ch: string = value.substring(cursor,cursor+1);
+    if (ch === "%") {
+      if (!hexPair(value.substring(cursor+1,cursor+3))) { return false; }
+      cursor = cursor+3;
+    }
+    else if ((ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9") || "-._~:/@!$&'()*+,;=".includes(ch)) { cursor = cursor+1; }
+    else if (query && (ch === "?" || ch === "[" || ch === "]")) { cursor = cursor+1; }
+    else { return false; }
+  }
+  return true;
+}
 function publicHttps(url: string): boolean {
-  if (!url.startsWith("https://")) { return false; }
-  let rest: string = url.substring(8); let end: number = rest.length; let slash: number = rest.indexOf("/"); if (slash >= 0) { end = slash; }
-  let authority: string = rest.substring(0,end); if (authority === "" || authority.includes("@")) { return false; }
-  let host: string = authority; let colon: number = authority.indexOf(":"); if (colon >= 0) { host = authority.substring(0,colon); }
+  if (url.length < 8 || url.substring(0,8).toLowerCase() !== "https://") { return false; }
+  let rest: string = url.substring(8); let end: number = rest.length;
+  let slash: number = rest.indexOf("/"); if (slash >= 0) { end = slash; }
+  let asked: number = rest.indexOf("?"); if (asked >= 0 && asked < end) { end = asked; }
+  // The authority ends where the path or the query begins, exactly as the URL parser splits it. Userinfo is
+  // refused because the source is credential-free, and a fragment is refused because the probe binding
+  // refuses one: a decode-admitted source must never be one a layer below refuses.
+  let authority: string = rest.substring(0,end); if (authority === "" || authority.includes("@") || rest.includes("#")) { return false; }
+  let tail: string = rest.substring(end); let mark: number = tail.indexOf("?");
+  let path: string = tail; let query: string = "";
+  if (mark >= 0) { path = tail.substring(0,mark); query = tail.substring(mark+1); }
+  if (!urlText(path,false) || !urlText(query,true)) { return false; }
+  if (authority.startsWith("[")) {
+    let close: number = authority.indexOf("]"); if (close < 0) { return false; }
+    if (!portSpelling(authority.substring(close+1))) { return false; }
+    return publicV6(authority.substring(0,close+1));
+  }
+  let host: string = authority; let colon: number = authority.indexOf(":");
+  if (colon >= 0) { host = authority.substring(0,colon); if (!portSpelling(authority.substring(colon))) { return false; } }
   if (host === "" ) { return false; }
   let lowered: string = host.toLowerCase();
-  if (lowered === "localhost" || lowered === "[::1]" || lowered === "::1") { return false; }
-  if (lowered.startsWith("127.") || lowered.startsWith("10.") || lowered.startsWith("192.168.") || lowered.startsWith("169.254.")) { return false; }
-  if (lowered.startsWith("172.")) { let second: string = lowered.substring(4,5); if (second === "1" || second === "2" || second === "3") { let value: number = Number(lowered.substring(4,6)); if (value >= 16 && value <= 31) { return false; } } }
+  if (lowered === "localhost" || lowered.endsWith(".localhost")) { return false; }
+  let octets: string[] = lowered.split(".");
+  let literal: boolean = octets.length === 4;
+  // A dotted quad admits one to three digits per component, the width the isolate binding's address test
+  // applies: a longer component is not a literal there, so admitting it here would admit a source the layer
+  // below refuses.
+  if (literal) { for (let octet of octets) { if (octet.length > 3 || !digitRun(octet)) { literal = false; } } }
+  if (!literal) { return hostName(lowered); }
+  let values: number[] = [];
+  for (let octet of octets) {
+    let value: number = Number(octet);
+    // An out-of-range component makes this a literal that no transport can connect to, so it is refused
+    // here instead of admitting a live figure whose every read must fail.
+    if (value > 255) { return false; }
+    values[values.length] = value;
+  }
+  let first: number = values[0]; let second: number = values[1]; let third: number = values[2];
+  if (first === 0 || first === 10 || first === 127 || first >= 224) { return false; }
+  if (first === 169 && second === 254) { return false; }
+  if (first === 172 && second >= 16 && second <= 31) { return false; }
+  if (first === 192 && second === 168) { return false; }
+  if (first === 192 && second === 0 && third <= 2) { return false; }
+  if (first === 100 && second >= 64 && second <= 127) { return false; }
+  if (first === 198 && (second === 18 || second === 19)) { return false; }
+  if (first === 198 && second === 51 && third === 100) { return false; }
+  if (first === 203 && second === 0 && third === 113) { return false; }
+  if (first === 192 && second === 88 && third === 99) { return false; }
   return true;
 }
 function pointer(value: string, name: string): void {
@@ -378,7 +542,9 @@ export async function decode(definition: Definition, raw: unknown): Promise<Reco
     }
     else if (parameter.type === "actionIds") {
       list(value,parameter.name); const entries: readonly unknown[] = value as readonly unknown[]; within(entries,1,parameter.maximum,parameter.name);
-      let issued: string[] = []; for (let entry of entries) { let id: string = rowIdentity(entry,"actionIds"); s.unique(issued,id); issued[issued.length] = id; }
+      // The identity list is the issued order itself: `s.unique` appends what it admits, so a repeated or
+      // malformed descriptor identity rejects instead of being appended a second time.
+      let issued: string[] = []; for (let entry of entries) { s.unique(issued,rowIdentity(entry,"actionIds")); }
       result[parameter.name] = issued;
     }
     else if (parameter.type === "headers") {
@@ -657,6 +823,73 @@ function resolve(registry: bindings.Registry, name: string): void {
   for (let binding of registry.bindings) { if (binding.id === name) { return; } }
   s.reject("Unresolved catalogue registry reference: "+name);
 }
+// One disclosed operation a section may dispatch, resolved from issued metadata: a kind names a binding
+// (or the descriptor that wraps one), so the module, function, parameter order and argument sources are
+// the ones the Bind stage issued from the frozen contract. A model string never becomes a provider call.
+class Issue { module: string; function: string; sources: string[]; types: string[]; ready: string[]; }
+function issuedOperation(registry: bindings.Registry, name: string, depth: number): Issue {
+  if (depth > 4) { s.reject("Unresolved catalogue registry reference: "+name); }
+  for (let descriptor of registry.actions) { if (descriptor.id === name) { return issuedOperation(registry,descriptor.binding,depth+1); } }
+  for (let binding of registry.bindings) { if (binding.id === name) {
+    let sources: string[] = []; let types: string[] = []; let ready: string[] = [];
+    for (let parameter of binding.parameterOrder) {
+      let source: bindings.Source = bindings.source(registry,binding.arguments[parameter] as string);
+      sources[sources.length] = source.getter; types[types.length] = source.type; ready[ready.length] = source.ready;
+    }
+    return {module:binding.module,function:binding.function,sources:sources,types:types,ready:ready};
+  } }
+  s.reject("Unresolved catalogue registry reference: "+name);
+  throw {name:"CONSTRUCTION_SCHEMA",message:"Unresolved catalogue registry reference"};
+}
+// One dispatched operation as a section fragment. The start reducer admits one explicit attempt and
+// records its row identity, the asynchronous effect calls the disclosed operation with the issued
+// argument sources, and the completion reducer records the classified reply. A completion is admitted
+// only for the attempt that started it, so a late or duplicated reply never rewrites a newer one, and no
+// reducer writes an external system.
+class Exchange { declarations: string; fields: screens.Field[]; updates: screens.Handler[]; effects: screens.Handler[]; helpers: string; }
+// A created row's key is a stable local identity that neither a configured row nor an earlier created
+// row already holds: supplied row ids are plan identifiers, so a fixed "<prefix><sequence>" spelling
+// could repeat one of them and two rows sharing a key would make a keyed control ambiguous.
+function keyHelpers(prefix: string, collection: string): string {
+  let used: string = "export function used_"+prefix+"(state: AppState, key: string): boolean { for (let row of state."+collection+") { if (row.id === key) { return true; } } return false; }";
+  let free: string = "export function free_"+prefix+"(state: AppState, start: number): string { let key: string = \""+prefix+"\"+String(start); let guard: number = 0; while (guard <= state."+collection+".length && used_"+prefix+"(state, key)) { guard = guard+1; key = \""+prefix+"\"+String(start+guard); } return key; }";
+  return used+"\n"+free+"\n";
+}
+function exchange(id: string, prefix: string, start: string, completion: string, issued: Issue, success: string): Exchange {
+  return exchangeWith(id,prefix,start,completion,issued,success,"");
+}
+// The success snippet may read a clock, so a kind that records a day passes the statement that takes the
+// one reading here: the completion then writes the recorded key and the captured day from that reading.
+function exchangeWith(id: string, prefix: string, start: string, completion: string, issued: Issue, success: string, setup: string): Exchange {
+  let alias: string = "provider_"+prefix;
+  let result: Exchange = {declarations:"import * as "+alias+" from "+s.encode(issued.module)+"; export class "+start+" { sequence: number; id: string; } export class "+completion+" { sequence: number; ok: boolean; code: string; outcome: string; message: string; } ",fields:[],updates:[],effects:[],helpers:""};
+  result.fields[result.fields.length] = authoredField(id,prefix+"_sequence","number","0");
+  // The admitted action and its pending marker are one live attempt, never authoritative business state:
+  // the compiled checkpoint is written only while no effect is in flight, and a restored section starts
+  // idle so an explicit retry is admitted instead of inheriting an attempt no effect can retire.
+  result.fields[result.fields.length] = {name:prefix+"_action",type:start+" | null",role:"runtime",dependencies:[],initial:"null",owner:id};
+  result.fields[result.fields.length] = authoredField(id,prefix+"_target","string","\"\"");
+  result.fields[result.fields.length] = {name:prefix+"_pending",type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:id};
+  result.fields[result.fields.length] = authoredField(id,prefix+"_code","string","\"\"");
+  result.fields[result.fields.length] = authoredField(id,prefix+"_outcome","string","\"none\"");
+  result.fields[result.fields.length] = authoredField(id,prefix+"_message","string","\"\"");
+  result.updates[result.updates.length] = handler(start,"start_"+prefix);
+  result.updates[result.updates.length] = handler(completion,"complete_"+prefix);
+  result.effects[result.effects.length] = {action:start,function:"run_"+prefix};
+  // Readiness of a derived argument is part of the admission guard, so an unavailable source is never
+  // dispatched as its placeholder; an ordinary source is ready by construction.
+  let guard: string = ""; let call: string = ""; let separator: string = "";
+  let index: number = 0;
+  while (index < issued.sources.length) {
+    if (issued.ready[index] !== "true" && issued.ready[index] !== "") { guard = guard+" || !(state."+issued.ready[index]+")"; }
+    call = call+separator+"(state."+issued.sources[index]+" as "+issued.types[index]+")"; separator = ", ";
+    index = index+1;
+  }
+  result.helpers = result.helpers+"export function start_"+prefix+"(state: AppState, action: "+start+"): AppState { if (action.sequence !== state."+prefix+"_sequence || state."+prefix+"_pending || state."+prefix+"_sequence >= 9007199254740991"+guard+") { return state; } return {"+prefix+"_sequence: state."+prefix+"_sequence+1, "+prefix+"_action: action, "+prefix+"_target: action.id, "+prefix+"_pending: true, "+prefix+"_code: \"\", "+prefix+"_outcome: \"none\", "+prefix+"_message: \"\"}; }";
+  result.helpers = result.helpers+"export async function run_"+prefix+"(state: AppState, action: "+start+"): Promise<"+completion+"> { if (!state."+prefix+"_pending || state."+prefix+"_action === null || (state."+prefix+"_action as "+start+") !== action || state."+prefix+"_sequence !== action.sequence+1) { return {sequence: -1, ok: false, code: \"NOT_ADMITTED\", outcome: \"none\", message: \"Not admitted\"}; } try { await "+alias+"."+issued.function+"("+call+"); return {sequence: state."+prefix+"_sequence, ok: true, code: \"\", outcome: \"success\", message: \"\"}; } catch (unknownError) { let error: Error = unknownError as Error; return {sequence: state."+prefix+"_sequence, ok: false, code: error.name, outcome: \"failure\", message: error.message}; } }";
+  result.helpers = result.helpers+"export function complete_"+prefix+"(state: AppState, action: "+completion+"): AppState { if (!state."+prefix+"_pending || action.sequence !== state."+prefix+"_sequence) { return state; } if (!action.ok) { return {"+prefix+"_pending: false, "+prefix+"_action: null, "+prefix+"_code: action.code, "+prefix+"_outcome: action.outcome, "+prefix+"_message: action.message}; } "+setup+" return {"+prefix+"_pending: false, "+prefix+"_action: null, "+prefix+"_code: action.code, "+prefix+"_outcome: action.outcome, "+prefix+"_message: action.message"+success+"}; }";
+  return result;
+}
 // The level filter offers each declared idea level once, in first-seen order.
 function distinctLevels(values: string[]): string[] { let result: string[] = []; for (let value of values) { if (!s.contains(result,value)) { result[result.length] = value; } } return result; }
 function numberArray(values: number[]): string { let result: string = "["; let separator: string = ""; for (let value of values) { result = result+separator+String(value); separator = ", "; } return result+"]"; }
@@ -667,10 +900,10 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
   // fragment is emitted, and the refusal locates the need, kind and parameter.
   for (let parameter of entry.definition.parameters) {
     if (!parameter.required) { continue; }
-    if (parameter.owner === "provider" && registry.contracts.length === 0) { s.reject("Unachievable required owner: "+entry.need+" "+kind+" "+parameter.name); }
+    if (parameter.owner === "provider" && registry.contracts.length === 0 && !probeOwned(entry.definition,parameter)) { s.reject("Unachievable required owner: "+entry.need+" "+kind+" "+parameter.name); }
     if (!Object.hasOwn(parameters,parameter.name)) { s.reject("Missing required owner value: "+entry.need+" "+kind+" "+parameter.name); }
   }
-  let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let ports: screens.Port[] = []; let holes: Record<string, unknown>[] = []; let helpers: string = ""; let declarations: string = "";
+  let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let effects: screens.Handler[] = []; let ports: screens.Port[] = []; let holes: Record<string, unknown>[] = []; let helpers: string = ""; let declarations: string = "";
   let body: string = ""; let title: string = s.text(parameters.title); if (title !== "") { body = body+"ui.Text(text: "+await literal(title,"string")+")"; }
   let subtitle: string = s.text(parameters.subtitle); if (subtitle !== "") { body = body+"ui.Text(text: "+await literal(subtitle,"string")+")"; }
   if (kind === "note" || kind === "filter_box") {
@@ -916,14 +1149,60 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     helpers = helpers+"export function transfersText(state: AppState): string { let labels: string[] = state.labels as string[]; let balances: number[] = state.balances as number[]; let currency: string = state.currency as string; if (balances.length !== labels.length) { return \"Aggregate rows differ in length\"; } let suffix: string = \"\"; if (currency !== \"\") { suffix = \" \"+currency; } let debtor: number = 0; let creditor: number = 0; let debt: number = 0; let credit: number = 0; let result: string = \"\"; let guard: number = 0; while (guard < labels.length*2+1) { guard = guard+1; if (!(debt > 0)) { let found: boolean = false; while (debtor < balances.length && !found) { let cents: number = Math.round(balances[debtor]*100); if (Math.abs(balances[debtor]*100-cents) > 0.000001) { return \"Unsafe aggregate amount\"; } if (cents < 0) { debt = -cents; found = true; } debtor = debtor+1; } if (!found) { break; } } if (!(credit > 0)) { let found: boolean = false; while (creditor < balances.length && !found) { let cents: number = Math.round(balances[creditor]*100); if (Math.abs(balances[creditor]*100-cents) > 0.000001) { return \"Unsafe aggregate amount\"; } if (cents > 0) { credit = cents; found = true; } creditor = creditor+1; } if (!found) { break; } } let amount: number = debt; if (credit < amount) { amount = credit; } debt = debt-amount; credit = credit-amount; if (result !== \"\") { result = result+\"\\n\"; } result = result+labels[debtor-1]+\" pays \"+labels[creditor-1]+\" \"+String(amount/100)+suffix; } if (result === \"\") { return \"All balances settled\"; } return result; }";
       body = body+"When(state.transfers_ready) {ui.Text(text: state.transfers_display)} When(!state.transfers_ready) {ui.Text(text: state.transfers_reason, style: \"muted\")}";
     }
+  } else if (kind === "calendar_event") {
+    // The disclosed calendar operation is the only write path of this section: the explicit Add
+    // dispatches it, the start reducer records the attempt and the completion reducer records the
+    // classified reply. The section invents no event and no reducer writes a calendar.
+    let issued: Issue = issuedOperation(registry,s.text(parameters.calendarBinding),0);
+    let event: Exchange = exchange(id,"event","AddEvent","CompletedEvent",issued,"");
+    declarations = declarations+event.declarations;
+    for (let entry of event.fields) { fields[fields.length] = entry; }
+    for (let entry of event.updates) { updates[updates.length] = entry; }
+    for (let entry of event.effects) { effects[effects.length] = entry; }
+    helpers = helpers+event.helpers;
+    // The disclosed event fields are the section's own content and are shown as issued configuration;
+    // the operation carries the event it was bound to, never a value this summary derives.
+    let summary: string = s.text(parameters.eventTitle)+", day "+String(s.integral(parameters.day))+" at "+clock(s.integral(parameters.minute))+" for "+String(s.integral(parameters.durationMinutes))+" minutes";
+    body = body+"ui.Text(text: "+await literal(summary,"string")+")";
+    let description: string = s.text(parameters.description);
+    if (description !== "") { body = body+"ui.Text(text: "+await literal(description,"string")+")"; }
+    body = body+"ui.Button(text: \"Add event\", value: state.event_sequence, onClick: action app.AddEvent {sequence: payload, id: \"\"})";
+    body = body+"When(state.event_pending) {ui.Text(text: \"Adding the event\", style: \"muted\")} When(!state.event_pending && state.event_outcome === \"success\") {ui.Text(text: \"Added\")} When(!state.event_pending && state.event_outcome === \"failure\") {ui.Text(text: state.event_message, style: \"muted\")} When(!state.event_pending && state.event_outcome === \"none\") {ui.Text(text: \"Not added yet\", style: \"muted\")}";
   } else if (kind === "itinerary") {
     let stops: Record<string, unknown>[] = s.records(parameters,"stops");
     let labels2: string[] = []; let minutes: number[] = [];
     for (let stop of stops) { labels2[labels2.length] = s.text(stop.label); minutes[minutes.length] = s.integral(stop.minutes); }
-    resolve(registry,s.text(parameters.navigationBinding)); resolve(registry,s.text(parameters.calendarBinding));
-    if (s.text(parameters.navigationBinding) !== "" || s.text(parameters.calendarBinding) !== "") { s.reject("Catalogue itinerary navigation/calendar binding is not executable: "+entry.need); }
+    // A disclosed navigation or calendar operation is dispatched only when the user taps it, and it is
+    // dispatched exactly as the Bind stage issued it. Reached flags and the cumulative schedule stay
+    // local; nothing is written to a calendar or navigation system by a reducer.
+    let navigationName: string = s.text(parameters.navigationBinding);
+    let tripName: string = s.text(parameters.calendarBinding);
+    let navigating: boolean = navigationName !== ""; let scheduling: boolean = tripName !== "";
     fields[fields.length] = authoredField(id,"stop_labels","string[]",await literal(labels2,"string[]"));
     fields[fields.length] = authoredField(id,"stop_minutes","number[]",numberArray(minutes));
+    if (navigating) {
+      // The per-stop control needs one nominal row per supplied stop, so the tapped stop reaches the
+      // operation by issued identity instead of a display index.
+      let stopRows: string = "["; let stopSeparator: string = "";
+      for (let stop of stops) { stopRows = stopRows+stopSeparator+"{key: "+s.encode(s.identifier(stop.id))+", label: "+s.encode(s.text(stop.label))+"}"; stopSeparator = ", "; }
+      stopRows = stopRows+"]";
+      declarations = declarations+"export class ItineraryStop { key: string; label: string; }";
+      fields[fields.length] = authoredField(id,"stop_rows","ItineraryStop[]",stopRows);
+      let navigation: Exchange = exchange(id,"navigate","Navigate","Navigated",issuedOperation(registry,navigationName,0),"");
+      declarations = declarations+navigation.declarations;
+      for (let entry of navigation.fields) { fields[fields.length] = entry; }
+      for (let entry of navigation.updates) { updates[updates.length] = entry; }
+      for (let entry of navigation.effects) { effects[effects.length] = entry; }
+      helpers = helpers+navigation.helpers;
+    }
+    if (scheduling) {
+      let trip: Exchange = exchange(id,"trip","ScheduleTrip","ScheduledTrip",issuedOperation(registry,tripName,0),"");
+      declarations = declarations+trip.declarations;
+      for (let entry of trip.fields) { fields[fields.length] = entry; }
+      for (let entry of trip.updates) { updates[updates.length] = entry; }
+      for (let entry of trip.effects) { effects[effects.length] = entry; }
+      helpers = helpers+trip.helpers;
+    }
     // Reached is one flag per stop, advanced in supplied order and cleared by reset.
     let flagIndex: number = 0; while (flagIndex < labels2.length) { fields[fields.length] = authoredField(id,"reached_"+String(flagIndex),"boolean","false"); flagIndex = flagIndex+1; }
     fields[fields.length] = derivedField(id,"schedule","string");
@@ -965,6 +1244,8 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     helpers = helpers+"export function scheduleText(state: AppState): string { let start: number = state.start as number; let deadline: number = state.deadline as number; let total: number = 0; let result: string = \"\"; let index: number = 0; while (index < state.stop_minutes.length) { let next: number = total+state.stop_minutes[index]; if (!(next >= total)) { return \"Schedule unavailable: total overflow\"; } total = next; if (result !== \"\") { result = result+\"\\n\"; } result = result+state.stop_labels[index]; if (isReached(state,index)) { result = result+\" (reached)\"; } if (start >= 0) { let at: number = start+total; if (!(at >= start)) { return \"Schedule unavailable: total overflow\"; } result = result+\" at \"+String(at); } index = index+1; } if (result === \"\") { return \"No stops\"; } if (start < 0) { return result+\"\\nTimes unavailable without a start\"; } if (deadline >= 0 && start+total > deadline) { return result+\"\\nAfter the deadline\"; } return result; }";
     body = body+"When(state.schedule_ready) {ui.Text(text: state.schedule_display)} When(!state.schedule_ready) {ui.Text(text: state.schedule_reason, style: \"muted\")}";
     body = body+"When(state.done_ready) {ui.NumberText(value: state.done_display)} ui.Button(text: \"Advance\", onClick: action app.Advance {value: payload}) ui.Button(text: \"Reset trip\", onClick: action app.ResetItinerary {value: payload})";
+    if (navigating) { body = body+"ForEach(state.stop_rows, row: app.f_"+id+"_ItineraryStop, key: row.key) { ui.Button(text: \"Navigate\", accessibilityLabel: row.label, value: state.navigate_sequence, onClick: action app.Navigate {sequence: payload, id: row.key}) } When(state.navigate_pending) {ui.Text(text: \"Opening directions\", style: \"muted\")} When(!state.navigate_pending && state.navigate_outcome === \"failure\") {ui.Text(text: state.navigate_message, style: \"muted\")}"; }
+    if (scheduling) { body = body+"ui.Button(text: \"Schedule trip\", value: state.trip_sequence, onClick: action app.ScheduleTrip {sequence: payload, id: \"\"}) When(state.trip_pending) {ui.Text(text: \"Scheduling the trip\", style: \"muted\")} When(!state.trip_pending && state.trip_outcome === \"failure\") {ui.Text(text: state.trip_message, style: \"muted\")}"; }
   } else if (kind === "progress_line") {
     ports[ports.length] = requiredReader("done","number"); ports[ports.length] = requiredReader("total","number");
     fields[fields.length] = derivedField(id,"line","string"); fields[fields.length] = derivedField(id,"percent","number");
@@ -976,6 +1257,8 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     let extras: number[] = []; for (let extra of parameters.extraAmounts as number[]) { extras[extras.length] = s.finite(extra); }
     fields[fields.length] = authoredField(id,"amounts","number[]","[]");
     fields[fields.length] = authoredField(id,"stamps","number[]","[]");
+    fields[fields.length] = authoredField(id,"log_days","number[]","[]");
+    fields[fields.length] = dayField(id);
     fields[fields.length] = derivedField(id,"goal_value","number");
     fields[fields.length] = derivedField(id,"today_total","number");
     fields[fields.length] = derivedField(id,"today_count","number");
@@ -986,19 +1269,22 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     declarations = declarations+"export class Log { value: number; } export class UndoLog { value: number; }";
     if (extras.length > 0) { declarations = declarations+" export class LogExtra { amount: number; rank: number; }"; }
     updates[updates.length] = handler("Log","logTap"); if (extras.length > 0) { updates[updates.length] = handler("LogExtra","logExtra"); } updates[updates.length] = handler("UndoLog","undoLog");
-    // A tap captures its own instant once in the action, and the tap history keeps that instant, so the
-    // daily projection has the timestamped history it needs. The day itself comes from the frozen
-    // host-timezone adapter this build does not issue, so no epoch day is derived here.
-    helpers = helpers+"export function appendTap(state: AppState, value: number, now: number): AppState { if (!(now >= 0) || !(value > 0)) { return state; } let amounts: number[] = []; for (let amount of state.amounts) { amounts[amounts.length] = amount; } let stamps: number[] = []; for (let stamp of state.stamps) { stamps[stamps.length] = stamp; } amounts[amounts.length] = value; stamps[stamps.length] = now; return {amounts: amounts, stamps: stamps}; }";
-    helpers = helpers+"export function logTap(state: AppState, action: Log): AppState { return appendTap(state, "+String(amount)+", embeddingClock.nowMillis()); }";
-    if (extras.length > 0) { helpers = helpers+"export function logExtra(state: AppState, action: LogExtra): AppState { return appendTap(state, action.amount, embeddingClock.nowMillis()); }"; }
-    helpers = helpers+"export function undoLog(state: AppState, action: UndoLog): AppState { let size: number = state.amounts.length; if (size === 0) { return state; } return {amounts: state.amounts.slice(0,size-1), stamps: state.stamps.slice(0,size-1)}; }";
+    // A tap captures its own instant and the local day it was made on, once, so the daily projection
+    // reads the recorded day of each tap and never derives one from an instant at recomputation time.
+    helpers = helpers+"export function appendTap(state: AppState, value: number, now: number, day: number): AppState { if (!(now >= 0) || !(value > 0) || Math.floor(day) !== day) { return state; } let amounts: number[] = []; for (let amount of state.amounts) { amounts[amounts.length] = amount; } let stamps: number[] = []; for (let stamp of state.stamps) { stamps[stamps.length] = stamp; } let days: number[] = []; for (let logged of state.log_days) { days[days.length] = logged; } amounts[amounts.length] = value; stamps[stamps.length] = now; days[days.length] = day; return {amounts: amounts, stamps: stamps, log_days: days, today: day}; }";
+    helpers = helpers+"export function logTap(state: AppState, action: Log): AppState { return appendTap(state, "+String(amount)+", embeddingClock.nowMillis(), embeddingDay.localDay()); }";
+    if (extras.length > 0) { helpers = helpers+"export function logExtra(state: AppState, action: LogExtra): AppState { return appendTap(state, action.amount, embeddingClock.nowMillis(), embeddingDay.localDay()); }"; }
+    helpers = helpers+"export function undoLog(state: AppState, action: UndoLog): AppState { let size: number = state.amounts.length; if (size === 0) { return state; } return {amounts: state.amounts.slice(0,size-1), stamps: state.stamps.slice(0,size-1), log_days: state.log_days.slice(0,size-1), today: embeddingDay.localDay()}; }";
+    // Today's total sums the amounts recorded on the captured local day and today's count counts the
+    // same taps; an out-of-range sum is reported as an unavailable projection instead of wrapping.
+    helpers = helpers+"export function todayTotal(state: AppState): number { let total: number = 0; let index: number = 0; while (index < state.amounts.length) { if (state.log_days[index] === state.today) { total = total+state.amounts[index]; if (!(total >= 0) || total > 9007199254740991) { return -1; } } index = index+1; } return total; }";
+    helpers = helpers+"export function todayCount(state: AppState): number { let result: number = 0; let index: number = 0; while (index < state.log_days.length) { if (state.log_days[index] === state.today) { result = result+1; } index = index+1; } return result; }";
     body = body+"ui.Text(text: "+await literal("Log "+String(amount)+" "+unit,"string")+")";
     body = body+"ui.Button(text: \"Log\", onClick: action app.Log {value: payload}) ui.Button(text: \"Undo log\", onClick: action app.UndoLog {value: payload})";
-    // The daily total and count render their located reason while the adapter day is not issued, and
-    // the configured goal is published like any other ready projection.
+    // The configured goal and the two daily projections are published like any other ready projection;
+    // an unready projection renders its located reason instead of a placeholder daily value.
     body = body+"When(state.today_total_ready) {ui.NumberStat(label: \"Today\", value: state.today_total_display, suffix: "+await literal(unit,"string")+")} When(!state.today_total_ready) {ui.Text(text: state.today_total_reason, style: \"muted\")}";
-    body = body+"When(state.today_count_ready) {ui.NumberText(value: state.today_count_display)} When(!state.today_count_ready) {ui.Text(text: state.today_count_reason, style: \"muted\")} When(state.goal_value_ready) {ui.NumberText(value: state.goal_value_display)}";
+    body = body+"When(state.today_count_ready) {ui.NumberText(value: state.today_count_display)} When(state.goal_value_ready) {ui.NumberText(value: state.goal_value_display)}";
     for (let extra of extras) { body = body+"ui.Button(text: "+await literal("Log +"+String(extra),"string")+", onClick: action app.LogExtra {amount: "+String(extra)+", rank: payload})"; }
   } else if (kind === "reading_status") {
     let bands: Record<string, unknown>[] = s.records(parameters,"bands");
@@ -1044,7 +1330,24 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
   } else if (kind === "points_ledger") {
     let people: string[] = s.stringArray(parameters.people);
     let tasks: Record<string, unknown>[] = s.records(parameters,"tasks"); let rewards: Record<string, unknown>[] = s.records(parameters,"rewards");
+    // Configured tasks and rewards seed one mutable nominal row each, so the ledger can add a task or a
+    // reward after the fact: the rows are the records the award and redeem actions resolve, never a copy
+    // of the configuration beside them.
+    let taskRows: string = "["; let taskSeparator: string = "";
+    for (let row of tasks) { taskRows = taskRows+taskSeparator+"{id: "+s.encode(s.identifier(row.id))+", label: "+s.encode(s.text(row.label))+", points: "+s.encode(s.finite(row.points))+"}"; taskSeparator = ", "; }
+    taskRows = taskRows+"]";
+    let rewardRows: string = "["; let rewardSeparator: string = "";
+    for (let row of rewards) { rewardRows = rewardRows+rewardSeparator+"{id: "+s.encode(s.identifier(row.id))+", label: "+s.encode(s.text(row.label))+", points: "+s.encode(s.finite(row.points))+"}"; rewardSeparator = ", "; }
+    rewardRows = rewardRows+"]";
     fields[fields.length] = authoredField(id,"people","string[]",await literal(people,"string[]"));
+    fields[fields.length] = authoredField(id,"tasks","PointRow[]",taskRows);
+    fields[fields.length] = authoredField(id,"rewards","PointRow[]",rewardRows);
+    fields[fields.length] = authoredField(id,"task_label_draft","string","\"\"");
+    fields[fields.length] = authoredField(id,"task_points_draft","number","0");
+    fields[fields.length] = authoredField(id,"reward_label_draft","string","\"\"");
+    fields[fields.length] = authoredField(id,"reward_points_draft","number","0");
+    fields[fields.length] = authoredField(id,"task_sequence","number",String(tasks.length+1));
+    fields[fields.length] = authoredField(id,"reward_sequence","number",String(rewards.length+1));
     fields[fields.length] = authoredField(id,"selected","number","0");
     fields[fields.length] = authoredField(id,"history_people","string[]","[]");
     fields[fields.length] = authoredField(id,"history_points","number[]","[]");
@@ -1053,21 +1356,39 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     fields[fields.length] = authoredField(id,"total","number","0"); fields[fields.length] = authoredField(id,"count","number","0");
     ports[ports.length] = publishPort("labels","string[]"); ports[ports.length] = publishPort("totals","number[]");
     ports[ports.length] = publishPort("total","number"); ports[ports.length] = publishPort("count","number");
-    declarations = declarations+"export class SelectPerson { index: number; } export class Award { points: number; rank: number; } export class Redeem { points: number; rank: number; } export class UndoPoints { value: number; }";
+    declarations = declarations+"export class PointRow { id: string; label: string; points: number; } export class SelectPerson { index: number; } export class Award { id: string; value: number; } export class Redeem { id: string; value: number; } export class UndoPoints { value: number; } export class DraftTaskLabel { value: string; } export class DraftTaskPoints { value: number; } export class DraftRewardLabel { value: string; } export class DraftRewardPoints { value: number; } export class AddTask { value: number; } export class AddReward { value: number; }";
     updates[updates.length] = handler("SelectPerson","selectPerson"); updates[updates.length] = handler("Award","award");
     updates[updates.length] = handler("Redeem","redeem"); updates[updates.length] = handler("UndoPoints","undoPoints");
+    updates[updates.length] = handler("DraftTaskLabel","draftTaskLabel"); updates[updates.length] = handler("DraftTaskPoints","draftTaskPoints");
+    updates[updates.length] = handler("DraftRewardLabel","draftRewardLabel"); updates[updates.length] = handler("DraftRewardPoints","draftRewardPoints");
+    updates[updates.length] = handler("AddTask","addTask"); updates[updates.length] = handler("AddReward","addReward");
+    helpers = helpers+keyHelpers("task","tasks")+keyHelpers("reward","rewards");
     helpers = helpers+"export function selectPerson(state: AppState, action: SelectPerson): AppState { if (action.index < 0 || action.index >= state.people.length) { return state; } return {selected: action.index}; }";
     helpers = helpers+"export function balanceOf(state: AppState, person: string): number { let total: number = 0; let index: number = 0; while (index < state.history_people.length) { if (state.history_people[index] === person) { total = total+state.history_points[index]; } index = index+1; } return total; }";
     // One signed-history post also recomputes the per-person balances and the totals from the actual
     // records, so a redeemed balance can never be recomputed from a stale copy.
     helpers = helpers+"export function post(state: AppState, person: string, points: number): AppState { let names: string[] = []; for (let name of state.history_people) { names[names.length] = name; } let values: number[] = []; for (let value of state.history_points) { values[values.length] = value; } names[names.length] = person; values[values.length] = points; let totals: number[] = []; let total: number = 0; for (let name of state.people) { let sum: number = 0; let index: number = 0; while (index < names.length) { if (names[index] === name) { sum = sum+values[index]; } index = index+1; } totals[totals.length] = sum; total = total+sum; } return {history_people: names, history_points: values, totals: totals, total: total, count: names.length}; }";
-    helpers = helpers+"export function award(state: AppState, action: Award): AppState { if (!(action.points > 0) || Math.floor(action.points) !== action.points) { return state; } if (state.selected < 0 || state.selected >= state.people.length) { return state; } return post(state, state.people[state.selected], action.points); }";
+    // A task row is resolved by issued identity: the tapped control carries the row, so a row added after
+    // the fact awards exactly its own configured points.
+    helpers = helpers+"export function taskPoints(state: AppState, id: string): number { for (let row of state.tasks) { if (row.id === id) { return row.points; } } return -1; }";
+    helpers = helpers+"export function rewardPoints(state: AppState, id: string): number { for (let row of state.rewards) { if (row.id === id) { return row.points; } } return -1; }";
+    helpers = helpers+"export function award(state: AppState, action: Award): AppState { let points: number = taskPoints(state, action.id); if (!(points > 0)) { return state; } if (state.selected < 0 || state.selected >= state.people.length) { return state; } return post(state, state.people[state.selected], points); }";
     // Insufficient balance blocks spending: nothing is posted and no history is rewritten.
-    helpers = helpers+"export function redeem(state: AppState, action: Redeem): AppState { if (!(action.points > 0) || Math.floor(action.points) !== action.points) { return state; } if (state.selected < 0 || state.selected >= state.people.length) { return state; } let person: string = state.people[state.selected]; if (balanceOf(state, person) < action.points) { return state; } return post(state, person, -action.points); }";
+    helpers = helpers+"export function redeem(state: AppState, action: Redeem): AppState { let points: number = rewardPoints(state, action.id); if (!(points > 0)) { return state; } if (state.selected < 0 || state.selected >= state.people.length) { return state; } let person: string = state.people[state.selected]; if (balanceOf(state, person) < points) { return state; } return post(state, person, -points); }";
     helpers = helpers+"export function undoPoints(state: AppState, action: UndoPoints): AppState { if (state.selected < 0 || state.selected >= state.people.length) { return state; } let person: string = state.people[state.selected]; let found: number = -1; let index: number = 0; while (index < state.history_people.length) { if (state.history_people[index] === person) { found = index; } index = index+1; } if (found < 0) { return state; } let names: string[] = []; let values: number[] = []; index = 0; while (index < state.history_people.length) { if (index !== found) { names[names.length] = state.history_people[index]; values[values.length] = state.history_points[index]; } index = index+1; } let totals: number[] = []; let total: number = 0; for (let name of state.people) { let sum: number = 0; let cursor: number = 0; while (cursor < names.length) { if (names[cursor] === name) { sum = sum+values[cursor]; } cursor = cursor+1; } totals[totals.length] = sum; total = total+sum; } return {history_people: names, history_points: values, totals: totals, total: total, count: names.length}; }";
+    // A drafted task or reward is a local personal record: its label is nonblank and bounded and its
+    // points are a positive integral amount, exactly the domain the configured rows already hold.
+    helpers = helpers+"export function draftTaskLabel(state: AppState, action: DraftTaskLabel): AppState { return {task_label_draft: action.value}; }";
+    helpers = helpers+"export function draftTaskPoints(state: AppState, action: DraftTaskPoints): AppState { if (!(action.value > 0) || Math.floor(action.value) !== action.value) { return state; } return {task_points_draft: action.value}; }";
+    helpers = helpers+"export function draftRewardLabel(state: AppState, action: DraftRewardLabel): AppState { return {reward_label_draft: action.value}; }";
+    helpers = helpers+"export function draftRewardPoints(state: AppState, action: DraftRewardPoints): AppState { if (!(action.value > 0) || Math.floor(action.value) !== action.value) { return state; } return {reward_points_draft: action.value}; }";
+    helpers = helpers+"export function addTask(state: AppState, action: AddTask): AppState { if (state.task_label_draft.trim() === \"\" || state.task_label_draft.length > 32 || state.task_sequence >= 9007199254740991) { return state; } if (!(state.task_points_draft > 0) || Math.floor(state.task_points_draft) !== state.task_points_draft) { return state; } let rows: PointRow[] = []; for (let row of state.tasks) { rows[rows.length] = {id: row.id, label: row.label, points: row.points}; } rows[rows.length] = {id: free_task(state, state.task_sequence), label: state.task_label_draft, points: state.task_points_draft}; return {tasks: rows, task_label_draft: \"\", task_sequence: state.task_sequence+1}; }";
+    helpers = helpers+"export function addReward(state: AppState, action: AddReward): AppState { if (state.reward_label_draft.trim() === \"\" || state.reward_label_draft.length > 32 || state.reward_sequence >= 9007199254740991) { return state; } if (!(state.reward_points_draft > 0) || Math.floor(state.reward_points_draft) !== state.reward_points_draft) { return state; } let rows: PointRow[] = []; for (let row of state.rewards) { rows[rows.length] = {id: row.id, label: row.label, points: row.points}; } rows[rows.length] = {id: free_reward(state, state.reward_sequence), label: state.reward_label_draft, points: state.reward_points_draft}; return {rewards: rows, reward_label_draft: \"\", reward_sequence: state.reward_sequence+1}; }";
     body = body+"ui.Select(labels: state.people, selected: state.selected, onChange: action app.SelectPerson {index: payload})";
-    for (let task of tasks) { body = body+"ui.Button(text: "+await literal("Award "+s.text(task.label),"string")+", onClick: action app.Award {points: "+String(s.finite(task.points))+", rank: payload})"; }
-    for (let reward of rewards) { body = body+"ui.Button(text: "+await literal("Redeem "+s.text(reward.label),"string")+", onClick: action app.Redeem {points: "+String(s.finite(reward.points))+", rank: payload})"; }
+    body = body+"ui.TextField(label: \"Task\", value: state.task_label_draft, onChange: action app.DraftTaskLabel {value: payload}) ui.NumberField(label: \"Task points\", value: state.task_points_draft, minimum: 1, maximum: 9007199254740991, onChange: action app.DraftTaskPoints {value: payload}) ui.Button(text: \"Add task\", onClick: action app.AddTask {value: payload})";
+    body = body+"ui.TextField(label: \"Reward\", value: state.reward_label_draft, onChange: action app.DraftRewardLabel {value: payload}) ui.NumberField(label: \"Reward points\", value: state.reward_points_draft, minimum: 1, maximum: 9007199254740991, onChange: action app.DraftRewardPoints {value: payload}) ui.Button(text: \"Add reward\", onClick: action app.AddReward {value: payload})";
+    body = body+"ForEach(state.tasks, row: app.f_"+id+"_PointRow, key: row.id) { ui.Button(text: row.label, accessibilityLabel: row.label, onClick: action app.Award {id: row.id, value: payload}) }";
+    body = body+"ForEach(state.rewards, row: app.f_"+id+"_PointRow, key: row.id) { ui.Button(text: row.label, accessibilityLabel: row.label, onClick: action app.Redeem {id: row.id, value: payload}) }";
     body = body+"ui.Button(text: \"Undo\", onClick: action app.UndoPoints {value: payload})";
     body = body+"ui.NumberText(value: state.total) ui.NumberText(value: state.count)";
   } else if (kind === "idea_deck") {
@@ -1083,9 +1404,11 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     fields[fields.length] = authoredField(id,"level_filter","string","\"\"");
     fields[fields.length] = authoredField(id,"cursor","number","0");
     fields[fields.length] = authoredField(id,"done_ids","string[]","[]");
-    // Each mark keeps the instant it happened, so the completion history is timestamped while the
-    // day-scoped projection waits for the host-timezone adapter day.
+    // Each mark keeps the instant it happened and the local day it was made on, so the completion
+    // history is timestamped and today's count projects the marks of the captured adapter day.
     fields[fields.length] = authoredField(id,"done_stamps","number[]","[]");
+    fields[fields.length] = authoredField(id,"done_days","number[]","[]");
+    fields[fields.length] = dayField(id);
     fields[fields.length] = derivedField(id,"current","string"); fields[fields.length] = derivedField(id,"done_today","number");
     ports[ports.length] = publishPort("done_today","number");
     declarations = declarations+"export class FilterTime { value: number; rank: number; } export class FilterLevel { value: string; rank: number; } export class Another { value: number; } export class DoneIdea { value: number; }";
@@ -1096,17 +1419,18 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     // Another wraps forward to the next matching idea, preferring unfinished matches before it
     // repeats a completed one in the same pass; a filter change starts from the filtered cursor.
     helpers = helpers+"export function nextCursor(state: AppState, from: number, time: number, level: string): number { let total: number = state.idea_ids.length; if (total === 0) { return 0; } let step: number = 0; while (step < total) { let index: number = (from+step) % total; if (matchesIdea(state,index,time,level) && !doneBefore(state,index)) { return index; } step = step+1; } step = 0; while (step < total) { let index: number = (from+step) % total; if (matchesIdea(state,index,time,level)) { return index; } step = step+1; } return -1; }";
-    helpers = helpers+"export function filterTime(state: AppState, action: FilterTime): AppState { if (action.value !== 0 && action.value !== 5 && action.value !== 15 && action.value !== 30) { return state; } return {time_filter: action.value, cursor: nextCursor(state,0,action.value,state.level_filter)}; }";
-    helpers = helpers+"export function filterLevel(state: AppState, action: FilterLevel): AppState { return {level_filter: action.value, cursor: nextCursor(state,0,state.time_filter,action.value)}; }";
-    helpers = helpers+"export function another(state: AppState, action: Another): AppState { let total: number = state.idea_ids.length; if (total === 0) { return state; } let next: number = nextCursor(state,(state.cursor+1) % total,state.time_filter,state.level_filter); return {cursor: next}; }";
-    helpers = helpers+"export function doneIdea(state: AppState, action: DoneIdea): AppState { if (state.cursor < 0 || state.cursor >= state.idea_ids.length) { return state; } let ids: string[] = []; for (let id of state.done_ids) { ids[ids.length] = id; } let stamps: number[] = []; for (let stamp of state.done_stamps) { stamps[stamps.length] = stamp; } if (!doneBefore(state,state.cursor)) { ids[ids.length] = state.idea_ids[state.cursor]; stamps[stamps.length] = embeddingClock.nowMillis(); } let total: number = state.idea_ids.length; return {done_ids: ids, done_stamps: stamps, cursor: nextCursor(state,(state.cursor+1) % total,state.time_filter,state.level_filter)}; }";
+    helpers = helpers+"export function filterTime(state: AppState, action: FilterTime): AppState { if (action.value !== 0 && action.value !== 5 && action.value !== 15 && action.value !== 30) { return state; } return {time_filter: action.value, cursor: nextCursor(state,0,action.value,state.level_filter), today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function filterLevel(state: AppState, action: FilterLevel): AppState { return {level_filter: action.value, cursor: nextCursor(state,0,state.time_filter,action.value), today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function another(state: AppState, action: Another): AppState { let total: number = state.idea_ids.length; if (total === 0) { return state; } let next: number = nextCursor(state,(state.cursor+1) % total,state.time_filter,state.level_filter); return {cursor: next, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function doneIdea(state: AppState, action: DoneIdea): AppState { if (state.cursor < 0 || state.cursor >= state.idea_ids.length) { return state; } let ids: string[] = []; for (let id of state.done_ids) { ids[ids.length] = id; } let stamps: number[] = []; for (let stamp of state.done_stamps) { stamps[stamps.length] = stamp; } let days: number[] = []; for (let day of state.done_days) { days[days.length] = day; } let today: number = embeddingDay.localDay(); if (!doneBefore(state,state.cursor)) { ids[ids.length] = state.idea_ids[state.cursor]; stamps[stamps.length] = embeddingClock.nowMillis(); days[days.length] = today; } let total: number = state.idea_ids.length; return {done_ids: ids, done_stamps: stamps, done_days: days, cursor: nextCursor(state,(state.cursor+1) % total,state.time_filter,state.level_filter), today: today}; }";
+    helpers = helpers+"export function doneToday(state: AppState): number { let result: number = 0; let index: number = 0; while (index < state.done_days.length) { if (state.done_days[index] === state.today) { result = result+1; } index = index+1; } return result; }";
     helpers = helpers+"export function currentIdea(state: AppState): string { if (state.idea_ids.length === 0) { return \"No ideas\"; } if (state.cursor < 0 || state.cursor >= state.idea_ids.length) { return \"No idea matches the current filter\"; } let result: string = state.idea_titles[state.cursor]+\" (\"+String(state.idea_minutes[state.cursor])+\" min, \"+state.idea_levels[state.cursor]+\")\"; if (state.idea_instructions[state.cursor] !== \"\") { result = result+\"\\n\"+state.idea_instructions[state.cursor]; } if (doneBefore(state,state.cursor)) { result = result+\"\\nDone\"; } return result; }";
-    body = body+"When(state.current_ready) {ui.Text(text: state.current_display)} When(!state.current_ready) {ui.Text(text: state.current_reason, style: \"muted\")}";
+    body = body+"When(state.current_ready) {ui.Text(text: state.current_display)}";
     body = body+"ui.Button(text: \"5 min\", onClick: action app.FilterTime {value: 5, rank: payload}) ui.Button(text: \"15 min\", onClick: action app.FilterTime {value: 15, rank: payload}) ui.Button(text: \"30 min\", onClick: action app.FilterTime {value: 30, rank: payload}) ui.Button(text: \"Any\", onClick: action app.FilterTime {value: 0, rank: payload})";
     for (let level of distinctLevels(levels2)) { body = body+"ui.Button(text: "+await literal("Level "+level,"string")+", onClick: action app.FilterLevel {value: "+await literal(level,"string")+", rank: payload})"; }
     body = body+"ui.Button(text: \"Any level\", onClick: action app.FilterLevel {value: \"\", rank: payload})";
     body = body+"ui.Button(text: \"Another\", onClick: action app.Another {value: payload}) ui.Button(text: \"Done\", onClick: action app.DoneIdea {value: payload})";
-    body = body+"When(state.done_today_ready) {ui.NumberText(value: state.done_today_display)} When(!state.done_today_ready) {ui.Text(text: state.done_today_reason, style: \"muted\")}";
+    body = body+"When(state.done_today_ready) {ui.NumberText(value: state.done_today_display)}";
   } else if (kind === "interval_timer") {
     let workSeconds: number = s.integral(parameters.workSeconds); let restSeconds: number = s.integral(parameters.restSeconds); let roundsValue: number = s.integral(parameters.rounds);
     if (workSeconds <= 0 || restSeconds <= 0 || roundsValue <= 0) { s.reject("Catalogue interval bounds"); }
@@ -1133,13 +1457,321 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     body = body+"ui.Text(text: state.phase) ui.NumberText(value: state.seconds_display)";
     body = body+"ui.Button(text: \"Start interval\", enabled: !state.running && state.phase !== \"done\", onClick: action app.StartInterval {value: payload}) ui.Button(text: \"Pause interval\", enabled: state.running, onClick: action app.PauseInterval {value: payload}) ui.Button(text: \"Skip interval\", enabled: state.phase !== \"done\", onClick: action app.SkipInterval {value: payload}) ui.Button(text: \"Reset interval\", enabled: !state.running, onClick: action app.ResetInterval {value: payload})";
     body = body+"ui.Ticker(id: \"intervals\", intervalMs: 250, running: state.running, onTick: action app.IntervalTick {now: payload})";
-  } else if (kind === "reminders" || kind === "dose_schedule" || kind === "due_items") {
-    s.reject("Unsupported catalogue kind: "+kind);
+  } else if (kind === "due_items") {
+    let rows: Record<string, unknown>[] = s.records(parameters,"rows");
+    let soonDays: number = s.integral(parameters.soonDays); if (soonDays < 0) { s.reject("Catalogue due soon days must be nonnegative"); }
+    // The supplied rows are one nominal array in the view grammar's exact item shape, so a row control
+    // carries the row identity the reducers resolve instead of a display index.
+    let initialRows: string = "["; let rowSeparator: string = "";
+    for (let row of rows) { initialRows = initialRows+rowSeparator+"{id: "+s.encode(s.identifier(row.id))+", name: "+s.encode(s.text(row.name))+", day: "+s.encode(s.integral(row.day))+"}"; rowSeparator = ", "; }
+    initialRows = initialRows+"]";
+    declarations = declarations+"export class DueRow { id: string; name: string; day: number; } export class DraftDueName { value: string; } export class DraftDueDay { value: number; } export class AddDue { value: number; } export class RemoveDue { value: number; id: string; } export class ChangeDueDay { value: number; id: string; }";
+    fields[fields.length] = authoredField(id,"rows","DueRow[]",initialRows);
+    fields[fields.length] = authoredField(id,"name_draft","string","\"\"");
+    fields[fields.length] = authoredField(id,"day_draft","number","0");
+    fields[fields.length] = authoredField(id,"sequence","number",String(rows.length+1));
+    fields[fields.length] = dayField(id);
+    fields[fields.length] = derivedField(id,"count","number"); fields[fields.length] = derivedField(id,"soon_count","number"); fields[fields.length] = derivedField(id,"expired_count","number"); fields[fields.length] = derivedField(id,"soon_names","string"); fields[fields.length] = derivedField(id,"summary","string");
+    ports[ports.length] = publishPort("count","number"); ports[ports.length] = publishPort("soon_count","number"); ports[ports.length] = publishPort("expired_count","number"); ports[ports.length] = publishPort("soon_names","string");
+    updates[updates.length] = handler("DraftDueName","draftDueName"); updates[updates.length] = handler("DraftDueDay","draftDueDay");
+    updates[updates.length] = handler("AddDue","addDue"); updates[updates.length] = handler("RemoveDue","removeDue"); updates[updates.length] = handler("ChangeDueDay","changeDueDay");
+    // Every action re-captures the adapter day, so a projection is scoped to the current local day
+    // instead of the day the section was opened on. The captured day is never a stored fact.
+    helpers = helpers+"export function draftDueName(state: AppState, action: DraftDueName): AppState { return {name_draft: action.value, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function draftDueDay(state: AppState, action: DraftDueDay): AppState { if (Math.floor(action.value) !== action.value || Math.abs(action.value) > 9007199254740991) { return state; } return {day_draft: action.value, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function addDue(state: AppState, action: AddDue): AppState { if (state.name_draft.trim() === \"\" || state.name_draft.length > 32 || Math.floor(state.day_draft) !== state.day_draft || Math.abs(state.day_draft) > 9007199254740991 || state.sequence >= 9007199254740991) { return state; } let rows: DueRow[] = []; for (let row of state.rows) { rows[rows.length] = {id: row.id, name: row.name, day: row.day}; } rows[rows.length] = {id: free_due(state, state.sequence), name: state.name_draft, day: state.day_draft}; return {rows: rows, name_draft: \"\", sequence: state.sequence+1, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function removeDue(state: AppState, action: RemoveDue): AppState { let found: boolean = false; let rows: DueRow[] = []; for (let row of state.rows) { if (row.id === action.id) { found = true; } else { rows[rows.length] = {id: row.id, name: row.name, day: row.day}; } } if (!found) { return state; } return {rows: rows, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function changeDueDay(state: AppState, action: ChangeDueDay): AppState { if (Math.floor(action.value) !== action.value || Math.abs(action.value) > 9007199254740991) { return state; } let found: boolean = false; let rows: DueRow[] = []; for (let row of state.rows) { if (row.id === action.id) { found = true; rows[rows.length] = {id: row.id, name: row.name, day: action.value}; } else { rows[rows.length] = {id: row.id, name: row.name, day: row.day}; } } if (!found) { return state; } return {rows: rows, today: embeddingDay.localDay()}; }";
+    // Expired is strictly before today, soon runs through today plus the configured window, and the
+    // comparison never rewrites a supplied day.
+    helpers = helpers+keyHelpers("due","rows");
+    helpers = helpers+"export function dueSoon(state: AppState, day: number): boolean { return day >= state.today && day <= state.today+"+String(soonDays)+"; }";
+    helpers = helpers+"export function dueCount(state: AppState): number { return state.rows.length; }";
+    helpers = helpers+"export function soonCount(state: AppState): number { let result: number = 0; for (let row of state.rows) { if (dueSoon(state, row.day)) { result = result+1; } } return result; }";
+    helpers = helpers+"export function expiredCount(state: AppState): number { let result: number = 0; for (let row of state.rows) { if (row.day < state.today) { result = result+1; } } return result; }";
+    helpers = helpers+"export function soonNames(state: AppState): string { let result: string = \"\"; for (let row of state.rows) { if (dueSoon(state, row.day)) { if (result !== \"\") { result = result+\", \"; } result = result+row.name; } } return result; }";
+    helpers = helpers+"export function dueSummary(state: AppState): string { let total: number = state.rows.length; if (total === 0) { return \"No due items\"; } return String(total)+\" items; \"+String(soonCount(state))+\" soon; \"+String(expiredCount(state))+\" expired\"; }";
+    body = body+"ui.TextField(label: \"Due item\", value: state.name_draft, onChange: action app.DraftDueName {value: payload})";
+    body = body+"ui.NumberField(label: \"Due day\", value: state.day_draft, minimum: -9007199254740991, maximum: 9007199254740991, onChange: action app.DraftDueDay {value: payload})";
+    body = body+"ui.Button(text: \"Add item\", onClick: action app.AddDue {value: payload})";
+    body = body+"When(state.summary_ready) {ui.Text(text: state.summary_display)}";
+    body = body+"When(state.soon_count_ready) {ui.NumberStat(label: \"Soon\", value: state.soon_count_display)} When(state.expired_count_ready) {ui.NumberStat(label: \"Expired\", value: state.expired_count_display)}";
+    body = body+"ForEach(state.rows, row: app.f_"+id+"_DueRow, key: row.id) { ui.NumberField(label: row.name, value: row.day, minimum: -9007199254740991, maximum: 9007199254740991, onChange: action app.ChangeDueDay {value: payload, id: row.id}) ui.Button(text: \"Remove\", accessibilityLabel: row.name, onClick: action app.RemoveDue {value: payload, id: row.id}) }";
+  } else if (kind === "reminders") {
+    // A section with a disclosed scheduling operation dispatches exactly that issued operation per row:
+    // the row identity is recorded with the attempt and the row counts as scheduled only after the
+    // operation's success reply. No event is written locally and a reply never schedules another row.
+    let scheduleName: string = s.text(parameters.scheduleBinding);
+    let scheduled: boolean = scheduleName !== "";
+    let rows: Record<string, unknown>[] = s.records(parameters,"rows");
+    let initialRows: string = "["; let rowSeparator: string = "";
+    for (let row of rows) {
+      let daily: boolean = flag(row,"daily",false); let day: number = 0; if (!daily) { day = s.integral(row.day); }
+      let rowText: string = "{id: "+s.encode(s.identifier(row.id))+", title: "+s.encode(s.text(row.title))+", minute: "+s.encode(s.integral(row.minute))+", daily: ";
+      if (daily) { rowText = rowText+"true"; } else { rowText = rowText+"false"; }
+      rowText = rowText+", day: "+s.encode(day)+"}";
+      initialRows = initialRows+rowSeparator+rowText; rowSeparator = ", ";
+    }
+    initialRows = initialRows+"]";
+    declarations = declarations+"export class ReminderRow { id: string; title: string; minute: number; daily: boolean; day: number; } export class DraftReminderTitle { value: string; } export class DraftReminderMinute { value: number; } export class DraftReminderDay { value: number; } export class DraftReminderDaily { value: boolean; } export class AddReminder { value: number; } export class RemoveReminder { value: number; id: string; } export class EditReminderTitle { value: string; id: string; } export class ToggleReminderDone { value: number; id: string; }";
+    fields[fields.length] = authoredField(id,"rows","ReminderRow[]",initialRows);
+    fields[fields.length] = authoredField(id,"done_keys","string[]","[]");
+    fields[fields.length] = authoredField(id,"title_draft","string","\"\"");
+    fields[fields.length] = authoredField(id,"minute_draft","number","0");
+    fields[fields.length] = authoredField(id,"day_draft","number","0");
+    fields[fields.length] = authoredField(id,"daily_draft","boolean","false");
+    fields[fields.length] = authoredField(id,"sequence","number",String(rows.length+1));
+    fields[fields.length] = dayField(id);
+    fields[fields.length] = authoredField(id,"scheduled_keys","string[]","[]");
+    if (scheduled) {
+      let schedule: Exchange = exchange(id,"schedule","ScheduleReminder","ScheduledReminder",issuedOperation(registry,scheduleName,0),", scheduled_keys: scheduleKeys(state, state.schedule_target)");
+      declarations = declarations+schedule.declarations;
+      for (let entry of schedule.fields) { fields[fields.length] = entry; }
+      for (let entry of schedule.updates) { updates[updates.length] = entry; }
+      for (let entry of schedule.effects) { effects[effects.length] = entry; }
+      helpers = helpers+schedule.helpers;
+      helpers = helpers+"export function hasScheduled(state: AppState, id: string): boolean { for (let key of state.scheduled_keys) { if (key === id) { return true; } } return false; }";
+      helpers = helpers+"export function scheduledCount(state: AppState): number { let result: number = 0; for (let row of state.rows) { if (hasScheduled(state, row.id)) { result = result+1; } } return result; }";
+      helpers = helpers+"export function scheduleKeys(state: AppState, id: string): string[] { let keys: string[] = []; let found: boolean = false; for (let key of state.scheduled_keys) { keys[keys.length] = key; if (key === id) { found = true; } } if (!found) { keys[keys.length] = id; } return keys; }";
+      fields[fields.length] = derivedField(id,"schedule_status","string");
+      helpers = helpers+"export function reminderTitle(state: AppState, id: string): string { for (let row of state.rows) { if (row.id === id) { return row.title; } } return \"\"; }";
+      helpers = helpers+"export function scheduleStatus(state: AppState): string { if (state.schedule_pending) { return \"Scheduling \"+reminderTitle(state, state.schedule_target); } if (state.schedule_outcome === \"failure\") { return \"Scheduling \"+reminderTitle(state, state.schedule_target)+\" failed: \"+state.schedule_message; } return \"\"; }";
+    }
+    fields[fields.length] = derivedField(id,"done","number"); fields[fields.length] = derivedField(id,"total","number"); fields[fields.length] = derivedField(id,"scheduled","number"); fields[fields.length] = derivedField(id,"summary","string");
+    ports[ports.length] = publishPort("done","number"); ports[ports.length] = publishPort("total","number"); ports[ports.length] = publishPort("scheduled","number");
+    updates[updates.length] = handler("DraftReminderTitle","draftReminderTitle"); updates[updates.length] = handler("DraftReminderMinute","draftReminderMinute");
+    updates[updates.length] = handler("DraftReminderDay","draftReminderDay"); updates[updates.length] = handler("DraftReminderDaily","draftReminderDaily");
+    updates[updates.length] = handler("AddReminder","addReminder"); updates[updates.length] = handler("RemoveReminder","removeReminder");
+    updates[updates.length] = handler("EditReminderTitle","editReminderTitle"); updates[updates.length] = handler("ToggleReminderDone","toggleReminderDone");
+    helpers = helpers+"export function draftReminderTitle(state: AppState, action: DraftReminderTitle): AppState { return {title_draft: action.value, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function draftReminderMinute(state: AppState, action: DraftReminderMinute): AppState { if (Math.floor(action.value) !== action.value || action.value < 0 || action.value > 1439) { return state; } return {minute_draft: action.value, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function draftReminderDay(state: AppState, action: DraftReminderDay): AppState { if (Math.floor(action.value) !== action.value || Math.abs(action.value) > 9007199254740991) { return state; } return {day_draft: action.value, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function draftReminderDaily(state: AppState, action: DraftReminderDaily): AppState { return {daily_draft: action.value, today: embeddingDay.localDay()}; }";
+    // A one-shot reminder carries the day it is due on; a daily reminder omits it, so an addition keeps
+    // the two shapes apart instead of inventing a day for a daily row.
+    helpers = helpers+"export function addReminder(state: AppState, action: AddReminder): AppState { if (state.title_draft.trim() === \"\" || state.title_draft.length > 32 || state.sequence >= 9007199254740991) { return state; } if (!(state.minute_draft >= 0) || !(state.minute_draft <= 1439) || Math.floor(state.minute_draft) !== state.minute_draft) { return state; } if (!state.daily_draft && (Math.floor(state.day_draft) !== state.day_draft || Math.abs(state.day_draft) > 9007199254740991)) { return state; } let rows: ReminderRow[] = []; for (let row of state.rows) { rows[rows.length] = {id: row.id, title: row.title, minute: row.minute, daily: row.daily, day: row.day}; } let day: number = 0; if (!state.daily_draft) { day = state.day_draft; } rows[rows.length] = {id: free_rem(state, state.sequence), title: state.title_draft, minute: state.minute_draft, daily: state.daily_draft, day: day}; return {rows: rows, title_draft: \"\", sequence: state.sequence+1, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function removeReminder(state: AppState, action: RemoveReminder): AppState { let found: boolean = false; let rows: ReminderRow[] = []; for (let row of state.rows) { if (row.id === action.id) { found = true; } else { rows[rows.length] = {id: row.id, title: row.title, minute: row.minute, daily: row.daily, day: row.day}; } } if (!found) { return state; } return {rows: rows, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function editReminderTitle(state: AppState, action: EditReminderTitle): AppState { if (action.value.trim() === \"\" || action.value.length > 32) { return state; } let found: boolean = false; let rows: ReminderRow[] = []; for (let row of state.rows) { if (row.id === action.id) { found = true; rows[rows.length] = {id: row.id, title: action.value, minute: row.minute, daily: row.daily, day: row.day}; } else { rows[rows.length] = {id: row.id, title: row.title, minute: row.minute, daily: row.daily, day: row.day}; } } if (!found) { return state; } return {rows: rows, today: embeddingDay.localDay()}; }";
+    // A one-shot completion key is the row; a daily completion key is the row and its local day, so a
+    // retained one-shot mark survives the day while a daily mark belongs to the day it was made.
+    helpers = helpers+keyHelpers("rem","rows");
+    helpers = helpers+"export function reminderKey(row: ReminderRow, today: number): string { let key: string = row.id; if (row.daily) { key = key+\"/\"+String(today); } return key; }";
+    helpers = helpers+"export function reminderDone(state: AppState, row: ReminderRow): boolean { let key: string = reminderKey(row, state.today); for (let done of state.done_keys) { if (done === key) { return true; } } return false; }";
+    helpers = helpers+"export function toggleReminderDone(state: AppState, action: ToggleReminderDone): AppState { let daily: boolean = false; let found: boolean = false; for (let row of state.rows) { if (row.id === action.id) { found = true; daily = row.daily; } } if (!found) { return state; } let today: number = embeddingDay.localDay(); let key: string = action.id; if (daily) { key = key+\"/\"+String(today); } let matched: boolean = false; let keys: string[] = []; for (let done of state.done_keys) { if (done === key) { matched = true; } else { keys[keys.length] = done; } } if (!matched) { keys[keys.length] = key; } return {done_keys: keys, today: today}; }";
+    helpers = helpers+"export function reminderDoneCount(state: AppState): number { let result: number = 0; for (let row of state.rows) { if (reminderDone(state, row)) { result = result+1; } } return result; }";
+    helpers = helpers+"export function reminderSummary(state: AppState): string { let total: number = state.rows.length; if (total === 0) { return \"No reminders\"; } return String(reminderDoneCount(state))+\" of \"+String(total)+\" done\"; }";
+    body = body+"ui.TextField(label: \"Reminder\", value: state.title_draft, onChange: action app.DraftReminderTitle {value: payload})";
+    body = body+"ui.NumberField(label: \"Reminder minute\", value: state.minute_draft, minimum: 0, maximum: 1439, onChange: action app.DraftReminderMinute {value: payload})";
+    body = body+"ui.Toggle(label: \"Daily\", checked: state.daily_draft, onChange: action app.DraftReminderDaily {value: payload})";
+    body = body+"ui.NumberField(label: \"Reminder day\", value: state.day_draft, minimum: -9007199254740991, maximum: 9007199254740991, onChange: action app.DraftReminderDay {value: payload})";
+    body = body+"ui.Button(text: \"Add reminder\", onClick: action app.AddReminder {value: payload})";
+    body = body+"When(state.summary_ready) {ui.Text(text: state.summary_display)}";
+    if (scheduled) { body = body+"When(state.schedule_status_ready) {ui.Text(text: state.schedule_status_display)}"; }
+    body = body+"When(state.done_ready) {ui.NumberStat(label: \"Done\", value: state.done_display)} When(state.total_ready) {ui.NumberStat(label: \"Total\", value: state.total_display)} When(state.scheduled_ready) {ui.NumberStat(label: \"Scheduled\", value: state.scheduled_display)}";
+    body = body+"ForEach(state.rows, row: app.f_"+id+"_ReminderRow, key: row.id) { ui.TextField(label: row.title, value: row.title, onChange: action app.EditReminderTitle {value: payload, id: row.id}) ui.Button(text: \"Done\", accessibilityLabel: row.title, onClick: action app.ToggleReminderDone {value: payload, id: row.id})"+(scheduled ? " ui.Button(text: \"Schedule\", accessibilityLabel: row.title, value: state.schedule_sequence, onClick: action app.ScheduleReminder {sequence: payload, id: row.id})" : "")+" ui.Button(text: \"Remove\", accessibilityLabel: row.title, onClick: action app.RemoveReminder {value: payload, id: row.id}) }";
+  } else if (kind === "dose_schedule") {
+    // A disclosed calendar operation reconciles the daily taken marks: the explicit take dispatches that
+    // issued operation and the mark is recorded only after its success reply, so a refused or failed
+    // reply records no dose. A section with no calendar operation keeps the local daily mark.
+    let calendarName: string = s.text(parameters.calendarBinding);
+    let reconciled: boolean = calendarName !== "";
+    let rows: Record<string, unknown>[] = s.records(parameters,"rows");
+    let initialRows: string = "["; let rowSeparator: string = "";
+    for (let row of rows) { initialRows = initialRows+rowSeparator+"{id: "+s.encode(s.identifier(row.id))+", name: "+s.encode(s.text(row.name))+", minute: "+s.encode(s.integral(row.minute))+"}"; rowSeparator = ", "; }
+    initialRows = initialRows+"]";
+    declarations = declarations+"export class DoseRow { id: string; name: string; minute: number; } export class DraftDoseName { value: string; } export class DraftDoseMinute { value: number; } export class AddDose { value: number; } export class RemoveDose { value: number; id: string; } ";
+    if (!reconciled) { declarations = declarations+"export class MarkDose { value: number; id: string; } "; }
+    fields[fields.length] = authoredField(id,"rows","DoseRow[]",initialRows);
+    fields[fields.length] = authoredField(id,"taken_keys","string[]","[]");
+    fields[fields.length] = authoredField(id,"name_draft","string","\"\"");
+    fields[fields.length] = authoredField(id,"minute_draft","number","0");
+    fields[fields.length] = authoredField(id,"sequence","number",String(rows.length+1));
+    fields[fields.length] = dayField(id);
+    if (reconciled) {
+      let take: Exchange = exchangeWith(id,"take","TakeDose","TookDose",issuedOperation(registry,calendarName,0),", taken_keys: takenKeys(state, state.take_target, takeDay), today: takeDay","let takeDay: number = embeddingDay.localDay();");
+      declarations = declarations+take.declarations;
+      for (let entry of take.fields) { fields[fields.length] = entry; }
+      for (let entry of take.updates) { updates[updates.length] = entry; }
+      for (let entry of take.effects) { effects[effects.length] = entry; }
+      helpers = helpers+take.helpers;
+    }
+    fields[fields.length] = derivedField(id,"taken_today","number"); fields[fields.length] = derivedField(id,"doses","number"); fields[fields.length] = derivedField(id,"streak","number"); fields[fields.length] = derivedField(id,"history","string");
+    ports[ports.length] = publishPort("taken_today","number"); ports[ports.length] = publishPort("doses","number"); ports[ports.length] = publishPort("streak","number");
+    updates[updates.length] = handler("DraftDoseName","draftDoseName"); updates[updates.length] = handler("DraftDoseMinute","draftDoseMinute");
+    updates[updates.length] = handler("AddDose","addDose"); updates[updates.length] = handler("RemoveDose","removeDose");
+    if (!reconciled) { updates[updates.length] = handler("MarkDose","markDose"); }
+    helpers = helpers+"export function draftDoseName(state: AppState, action: DraftDoseName): AppState { return {name_draft: action.value, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function draftDoseMinute(state: AppState, action: DraftDoseMinute): AppState { if (Math.floor(action.value) !== action.value || action.value < 0 || action.value > 1439) { return state; } return {minute_draft: action.value, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function addDose(state: AppState, action: AddDose): AppState { if (state.name_draft.trim() === \"\" || state.name_draft.length > 32 || state.sequence >= 9007199254740991) { return state; } if (!(state.minute_draft >= 0) || !(state.minute_draft <= 1439) || Math.floor(state.minute_draft) !== state.minute_draft) { return state; } let rows: DoseRow[] = []; for (let row of state.rows) { rows[rows.length] = {id: row.id, name: row.name, minute: row.minute}; } rows[rows.length] = {id: free_dose(state, state.sequence), name: state.name_draft, minute: state.minute_draft}; return {rows: rows, name_draft: \"\", sequence: state.sequence+1, today: embeddingDay.localDay()}; }";
+    helpers = helpers+"export function removeDose(state: AppState, action: RemoveDose): AppState { let found: boolean = false; let rows: DoseRow[] = []; for (let row of state.rows) { if (row.id === action.id) { found = true; } else { rows[rows.length] = {id: row.id, name: row.name, minute: row.minute}; } } if (!found) { return state; } return {rows: rows, today: embeddingDay.localDay()}; }";
+    helpers = helpers+keyHelpers("dose","rows");
+    helpers = helpers+"export function doseKey(row: DoseRow, day: number): string { return row.id+\"/\"+String(day); }";
+    helpers = helpers+"export function markedOn(state: AppState, row: DoseRow, day: number): boolean { let key: string = doseKey(row, day); for (let taken of state.taken_keys) { if (taken === key) { return true; } } return false; }";
+    // A daily taken mark records the dose and the local day it was taken on; the history keeps every
+    // earlier day, so a streak is counted from the recorded marks instead of a stored total.
+    if (reconciled) {
+      // The reconciled mark is the calendar reply: the same recorded key, written only on success.
+      helpers = helpers+"export function takenKeys(state: AppState, id: string, day: number): string[] { let key: string = id+\"/\"+String(day); let keys: string[] = []; let matched: boolean = false; for (let taken of state.taken_keys) { keys[keys.length] = taken; if (taken === key) { matched = true; } } if (!matched) { keys[keys.length] = key; } return keys; }";
+    } else {
+      helpers = helpers+"export function markDose(state: AppState, action: MarkDose): AppState { let found: boolean = false; for (let row of state.rows) { if (row.id === action.id) { found = true; } } if (!found) { return state; } let today: number = embeddingDay.localDay(); let key: string = action.id+\"/\"+String(today); let matched: boolean = false; let keys: string[] = []; for (let taken of state.taken_keys) { keys[keys.length] = taken; if (taken === key) { matched = true; } } if (!matched) { keys[keys.length] = key; } return {taken_keys: keys, today: today}; }";
+    }
+    helpers = helpers+"export function takenToday(state: AppState): number { let result: number = 0; for (let row of state.rows) { if (markedOn(state, row, state.today)) { result = result+1; } } return result; }";
+    helpers = helpers+"export function completedOn(state: AppState, day: number): boolean { if (state.rows.length === 0) { return false; } for (let row of state.rows) { if (!markedOn(state, row, day)) { return false; } } return true; }";
+    // The streak counts consecutive fully completed nonempty days ending today when today is complete,
+    // otherwise ending yesterday; an empty schedule is zero, and the walk is bounded by the recorded
+    // history so it terminates without a clock.
+    helpers = helpers+"export function streakOf(state: AppState): number { if (state.rows.length === 0) { return 0; } let day: number = state.today; if (!completedOn(state, day)) { day = day-1; if (!completedOn(state, day)) { return 0; } } let count: number = 0; let guard: number = 0; let limit: number = state.taken_keys.length+1; while (guard < limit && completedOn(state, day)) { count = count+1; day = day-1; guard = guard+1; } return count; }";
+    helpers = helpers+"export function doseHistory(state: AppState): string { if (state.rows.length === 0) { return \"No doses scheduled\"; } let result: string = \"\"; for (let row of state.rows) { if (result !== \"\") { result = result+\"\\n\"; } result = result+row.name; if (markedOn(state, row, state.today)) { result = result+\" taken\"; } } return result; }";
+    body = body+"ui.TextField(label: \"Dose\", value: state.name_draft, onChange: action app.DraftDoseName {value: payload})";
+    body = body+"ui.NumberField(label: \"Dose minute\", value: state.minute_draft, minimum: 0, maximum: 1439, onChange: action app.DraftDoseMinute {value: payload})";
+    body = body+"ui.Button(text: \"Add dose\", onClick: action app.AddDose {value: payload})";
+    body = body+"When(state.taken_today_ready) {ui.NumberStat(label: \"Taken today\", value: state.taken_today_display)} When(state.doses_ready) {ui.NumberStat(label: \"Doses\", value: state.doses_display)} When(state.streak_ready) {ui.NumberStat(label: \"Streak\", value: state.streak_display)}";
+    body = body+"When(state.history_ready) {ui.Text(text: state.history_display)}";
+    body = body+"ForEach(state.rows, row: app.f_"+id+"_DoseRow, key: row.id) { ui.Text(text: row.name) "+(reconciled ? "ui.Button(text: \"Take\", accessibilityLabel: row.name, value: state.take_sequence, onClick: action app.TakeDose {sequence: payload, id: row.id})" : "ui.Button(text: \"Take\", accessibilityLabel: row.name, onClick: action app.MarkDose {value: payload, id: row.id})")+" ui.Button(text: \"Remove\", accessibilityLabel: row.name, onClick: action app.RemoveDose {value: payload, id: row.id}) }";
+    if (reconciled) { body = body+"When(state.take_pending) {ui.Text(text: \"Recording the dose\", style: \"muted\")} When(!state.take_pending && state.take_outcome === \"failure\") {ui.Text(text: state.take_message, style: \"muted\")}"; }
+  } else if (kind === "intent_panel") {
+    // The panel renders the controller-issued descriptors by identity, in actionIds order: each label, the
+    // seeded draft of the descriptor's own input and one tap that carries that identity through the provider
+    // workflow the Bind stage froze. An id the composition never issued is an unresolved reference, so a
+    // panel can never name an operation that was not issued.
+    let actionIds: string[] = s.stringArray(parameters.actionIds);
+    let named: bindings.Descriptor[] = [];
+    for (let wanted of actionIds) {
+      let resolved: boolean = false;
+      for (let candidate of registry.actions) { if (candidate.id === wanted) { named[named.length] = candidate; resolved = true; } }
+      if (!resolved) { s.reject("Unresolved catalogue registry reference: "+wanted); }
+    }
+    declarations = declarations+"export class TapDescriptor { id: string; sequence: number; } export class DescriptorReply { id: string; sequence: number; ok: boolean; outcome: string; code: string; message: string; text: string; }";
+    // A reply is displayed as its own text literally, as validated JSON for any other JSON value and as
+    // nothing for an undefined result; a failure is shown separately by the descriptor's own status.
+    helpers = helpers+"export function replyText(value: unknown): string { if (typeof value === \"string\") { return value; } let encoded: string | undefined = JSON.stringify(value); if (encoded === undefined) { return \"\"; } return encoded; }";
+    helpers = helpers+"export function replyStatus(pending: boolean, outcome: string, message: string, text: string): string { if (pending) { return \"Working\"; } if (outcome === \"failure\") { return message; } if (outcome === \"success\") { return text; } return \"\"; }";
+    let imports: string = ""; let dispatch: string = ""; let calls: string = ""; let recorded: string = ""; let controls: string = "";
+    let aliasesByModule: Record<string, unknown> = {}; let moduleCount: number = 0;
+    let index: number = 0;
+    while (index < named.length) {
+      let descriptor: bindings.Descriptor = named[index];
+      // A descriptor identity is the issued plan identifier, so the attempt state of one descriptor can
+      // never be spelled as another descriptor's: labels, keys and fields all come from that identity.
+      let key: string = s.identifier(descriptor.id);
+      let issued: Issue = issuedOperation(registry,descriptor.binding,0);
+      // One module alias per issued module, shared by the descriptors that reach it: two descriptors of the
+      // same frozen contract import it once, while two contracts stay distinct imports.
+      let alias: string = "";
+      if (Object.hasOwn(aliasesByModule,issued.module)) { alias = s.text(aliasesByModule[issued.module]); }
+      else { alias = "descriptor_module_"+String(moduleCount); moduleCount = moduleCount+1; aliasesByModule[issued.module] = alias; imports = imports+"import * as "+alias+" from "+s.encode(issued.module)+"; "; }
+      // The issued argument sources, in frozen contract order: the descriptor's own draft is the
+      // composition's field, so the panel edits exactly the value the call reads. An unready source blocks
+      // the attempt with the same guard the exchange uses instead of dispatching its placeholder.
+      let guard: string = ""; let call: string = ""; let separator: string = "";
+      let source: number = 0;
+      while (source < issued.sources.length) {
+        if (issued.ready[source] !== "true" && issued.ready[source] !== "") { guard = guard+" || !(state."+issued.ready[source]+")"; }
+        call = call+separator+"(state."+issued.sources[source]+" as "+issued.types[source]+")"; separator = ", ";
+        source = source+1;
+      }
+      fields[fields.length] = authoredField(id,"tap_attempt_"+key,"number","0");
+      // The pending marker is a live attempt like the exchange's: a restored panel starts idle, so the
+      // descriptor's explicit tap retries instead of waiting for an effect that no longer exists.
+      fields[fields.length] = {name:"tap_pending_"+key,type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:id};
+      fields[fields.length] = authoredField(id,"tap_outcome_"+key,"string","\"none\"");
+      fields[fields.length] = authoredField(id,"tap_code_"+key,"string","\"\"");
+      fields[fields.length] = authoredField(id,"tap_message_"+key,"string","\"\"");
+      fields[fields.length] = authoredField(id,"tap_result_"+key,"string","\"\"");
+      fields[fields.length] = derivedField(id,"tap_status_"+key,"string");
+      // One explicit attempt per descriptor: a tap on a pending descriptor is ignored, a tap on another
+      // descriptor is admitted, and the attempt identity the control carries decides which reply lands.
+      dispatch = dispatch+"if (action.id === "+await literal(descriptor.id,"string")+") { if (action.sequence !== state.tap_attempt_"+key+" || state.tap_pending_"+key+" || state.tap_attempt_"+key+" >= 9007199254740991"+guard+") { return state; } return {tap_attempt_"+key+": state.tap_attempt_"+key+"+1, tap_pending_"+key+": true, tap_outcome_"+key+": \"none\", tap_code_"+key+": \"\", tap_message_"+key+": \"\", tap_result_"+key+": \"\"}; } ";
+      calls = calls+"if (action.id === "+await literal(descriptor.id,"string")+") { if (!state.tap_pending_"+key+" || state.tap_attempt_"+key+" !== action.sequence+1) { return {id: action.id, sequence: -1, ok: false, outcome: \"none\", code: \"NOT_ADMITTED\", message: \"Not admitted\", text: \"\"}; } try { let value: unknown = await "+alias+"."+issued.function+"("+call+"); return {id: action.id, sequence: state.tap_attempt_"+key+", ok: true, outcome: \"success\", code: \"\", message: \"\", text: replyText(value)}; } catch (unknownError) { let error: Error = unknownError as Error; return {id: action.id, sequence: state.tap_attempt_"+key+", ok: false, outcome: \"failure\", code: error.name, message: error.message, text: \"\"}; } } ";
+      recorded = recorded+"if (action.id === "+await literal(descriptor.id,"string")+") { if (!state.tap_pending_"+key+" || action.sequence !== state.tap_attempt_"+key+") { return state; } return {tap_pending_"+key+": false, tap_outcome_"+key+": action.outcome, tap_code_"+key+": action.code, tap_message_"+key+": action.message, tap_result_"+key+": action.text}; } ";
+      controls = controls+"ui.Text(text: "+await literal(descriptor.label,"string")+")";
+      if (Object.hasOwn(descriptor,"input")) { let draft: bindings.Draft = descriptor.input as bindings.Draft;
+        // The descriptor's seeded draft is composition state: the panel edits it through the issued nominal
+        // update of that draft, so the value the binding reads and the value the field shows are one field.
+        controls = controls+"ui.TextField(label: "+await literal(draft.label,"string")+", value: state.draft_"+s.identifier(draft.sourceId)+", onChange: action app.Draft_"+s.identifier(draft.sourceId)+" {value: payload})"; }
+      controls = controls+"ui.Button(text: "+await literal(descriptor.label,"string")+", value: state.tap_attempt_"+key+", onClick: action app.TapDescriptor {id: "+await literal(descriptor.id,"string")+", sequence: payload}) When(state.tap_status_"+key+"_ready) {ui.Text(text: state.tap_status_"+key+"_display)}";
+      index = index+1;
+    }
+    declarations = declarations+imports;
+    helpers = helpers+"export function tapDescriptor(state: AppState, action: TapDescriptor): AppState { "+dispatch+"return state; }";
+    helpers = helpers+"export async function runDescriptor(state: AppState, action: TapDescriptor): Promise<DescriptorReply> { "+calls+"return {id: action.id, sequence: -1, ok: false, outcome: \"none\", code: \"NOT_ADMITTED\", message: \"Not admitted\", text: \"\"}; }";
+    helpers = helpers+"export function completeDescriptor(state: AppState, action: DescriptorReply): AppState { "+recorded+"return state; }";
+    updates[updates.length] = handler("TapDescriptor","tapDescriptor"); updates[updates.length] = handler("DescriptorReply","completeDescriptor");
+    effects[effects.length] = {action:"TapDescriptor",function:"runDescriptor"};
+    body = body+controls;
+  } else if (kind === "live_figure") {
+    // The figures are read through the host public-probe mechanism and never fabricated: the section starts
+    // unavailable, one explicit Refresh (or the read-only poll a successful read enables) dispatches the
+    // probe, and only a validated reply publishes values. The observation time is the source's own asof
+    // value, never a fetch time, so an absent, unresolved, empty or nonstring asof keeps that port unavailable.
+    let figures: Record<string, unknown>[] = s.records(parameters,"figures");
+    let source: Record<string, unknown> = parameters.source as Record<string, unknown>;
+    let labels: string[] = []; let units: string[] = []; let paths: string[] = [];
+    for (let figure of figures) { labels[labels.length] = s.text(figure.label); units[units.length] = s.text(figure.unit); paths[paths.length] = s.text(figure.path); }
+    let url: string = s.text(source.url); let mode: string = s.text(source.mode); let asofPath: string = s.text(source.asofPath);
+    // Read-only polling is the interval the specification names for the declared mode: an API source polls
+    // every 60 s and a search source every 300 s. A failed read pauses polling until an explicit Refresh.
+    let intervalMs: number = 60000; if (mode === "search") { intervalMs = 300000; }
+    declarations = declarations+"import * as probe_"+id+" from \"embedding/probe\"; export class ProbeRead { values: number[]; asof: string; } export class RefreshLive { sequence: number; } export class PollLive { now: number; } export class RefreshedLive { sequence: number; ok: boolean; outcome: string; code: string; message: string; values: number[]; asof: string; }";
+    fields[fields.length] = authoredField(id,"figure_labels","string[]",await literal(labels,"string[]"));
+    fields[fields.length] = authoredField(id,"figure_units","string[]",await literal(units,"string[]"));
+    fields[fields.length] = authoredField(id,"figure_paths","string[]",await literal(paths,"string[]"));
+    fields[fields.length] = authoredField(id,"source_url","string",await literal(url,"string"));
+    fields[fields.length] = authoredField(id,"source_mode","string",await literal(mode,"string"));
+    fields[fields.length] = authoredField(id,"source_asof_path","string",await literal(asofPath,"string"));
+    fields[fields.length] = authoredField(id,"refresh_attempt","number","0");
+    // Admission markers and the activation they enable are runtime resources of one live session: a cold
+    // restore re-derives them (paused, no attempt, no read instant) instead of resuming a pending effect or
+    // polling from a stale instant, while the last validated read stays visible and needs an explicit Refresh.
+    fields[fields.length] = {name:"refresh_pending",type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:id};
+    fields[fields.length] = authoredField(id,"refresh_outcome","string","\"none\"");
+    fields[fields.length] = authoredField(id,"refresh_code","string","\"\"");
+    fields[fields.length] = authoredField(id,"refresh_message","string","\"\"");
+    fields[fields.length] = authoredField(id,"refresh_values","number[]","[]");
+    fields[fields.length] = authoredField(id,"refresh_asof","string","\"\"");
+    fields[fields.length] = {name:"refresh_polling",type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:id};
+    fields[fields.length] = {name:"refresh_polled",type:"number",role:"runtime",dependencies:[],initial:"0",owner:id};
+    // The admitted action itself is the admission identity: a duplicate dispatch of a control never equals
+    // the instance this reducer stored, so its effect reports no attempt and can retire nothing.
+    fields[fields.length] = {name:"refresh_action",type:"RefreshLive | null",role:"runtime",dependencies:[],initial:"null",owner:id};
+    fields[fields.length] = {name:"poll_action",type:"PollLive | null",role:"runtime",dependencies:[],initial:"null",owner:id};
+    fields[fields.length] = derivedField(id,"live1","number"); fields[fields.length] = derivedField(id,"live2","number"); fields[fields.length] = derivedField(id,"live3","number");
+    fields[fields.length] = derivedField(id,"live_source","string"); fields[fields.length] = derivedField(id,"live_asof","string"); fields[fields.length] = derivedField(id,"status","string");
+    ports[ports.length] = publishPort("live1","number"); ports[ports.length] = publishPort("live2","number"); ports[ports.length] = publishPort("live3","number");
+    ports[ports.length] = publishPort("live_source","string"); ports[ports.length] = publishPort("live_asof","string");
+    updates[updates.length] = handler("RefreshLive","refreshLive"); updates[updates.length] = handler("PollLive","pollLive"); updates[updates.length] = handler("RefreshedLive","completeLive");
+    effects[effects.length] = {action:"RefreshLive",function:"runRefresh"}; effects[effects.length] = {action:"PollLive",function:"runPoll"};
+    // One reading of the adapter clock per explicit attempt and the tick's own instant per poll decide
+    // whether a read is due, exactly as the day-scoped kinds take one local-day reading per action;
+    // recomputation never reads a clock. Only one read is ever pending, so a poll never overlaps a Refresh.
+    helpers = helpers+"export function refreshLive(state: AppState, action: RefreshLive): AppState { if (state.refresh_pending || action.sequence !== state.refresh_attempt || state.refresh_attempt >= 9007199254740991) { return state; } return {refresh_attempt: state.refresh_attempt+1, refresh_pending: true, refresh_polled: embeddingClock.nowMillis(), refresh_action: action, poll_action: null, refresh_code: \"\", refresh_outcome: \"none\", refresh_message: \"\"}; }";
+    // A poll is admitted only when read-only polling is enabled and the tick's own instant is at or past the
+    // declared interval; a tick that arrives during a pending read or before its interval changes nothing.
+    helpers = helpers+"export function pollLive(state: AppState, action: PollLive): AppState { if (state.refresh_pending || !state.refresh_polling || state.refresh_attempt >= 9007199254740991) { return state; } if (action.now < state.refresh_polled+"+String(intervalMs)+") { return state; } return {refresh_attempt: state.refresh_attempt+1, refresh_pending: true, refresh_polled: action.now, refresh_action: null, poll_action: action, refresh_code: \"\", refresh_outcome: \"none\", refresh_message: \"\"}; }";
+    helpers = helpers+"export async function runRefresh(state: AppState, action: RefreshLive): Promise<RefreshedLive> { if (!state.refresh_pending || (state.refresh_action as RefreshLive) !== action) { return {sequence: -1, ok: false, outcome: \"none\", code: \"NOT_ADMITTED\", message: \"Not admitted\", values: [], asof: \"\"}; } try { let paths: string[] = []; for (let path of state.figure_paths) { paths[paths.length] = path; } let read: ProbeRead = JSON.parse(await probe_"+id+".fetch(state.source_url, state.source_mode, paths, state.source_asof_path)); return {sequence: state.refresh_attempt, ok: true, outcome: \"success\", code: \"\", message: \"\", values: read.values, asof: read.asof}; } catch (unknownError) { let error: Error = unknownError as Error; return {sequence: state.refresh_attempt, ok: false, outcome: \"failure\", code: error.name, message: error.message, values: [], asof: \"\"}; } }";
+    // A poll is admitted by the tick's own instant, so the effect of a poll that was not admitted reports
+    // no attempt identity and can never retire a read another action started.
+    helpers = helpers+"export async function runPoll(state: AppState, action: PollLive): Promise<RefreshedLive> { if (!state.refresh_pending || (state.poll_action as PollLive) !== action) { return {sequence: -1, ok: false, outcome: \"none\", code: \"NOT_ADMITTED\", message: \"Not admitted\", values: [], asof: \"\"}; } try { let paths: string[] = []; for (let path of state.figure_paths) { paths[paths.length] = path; } let read: ProbeRead = JSON.parse(await probe_"+id+".fetch(state.source_url, state.source_mode, paths, state.source_asof_path)); return {sequence: state.refresh_attempt, ok: true, outcome: \"success\", code: \"\", message: \"\", values: read.values, asof: read.asof}; } catch (unknownError) { let error: Error = unknownError as Error; return {sequence: state.refresh_attempt, ok: false, outcome: \"failure\", code: error.name, message: error.message, values: [], asof: \"\"}; } }";
+    // A successful read records the values and keeps read-only polling enabled; a failure records its
+    // classification, publishes nothing and pauses polling until an explicit Refresh.
+    helpers = helpers+"export function completeLive(state: AppState, action: RefreshedLive): AppState { if (!state.refresh_pending || action.sequence !== state.refresh_attempt) { return state; } if (!action.ok) { return {refresh_pending: false, refresh_code: action.code, refresh_outcome: action.outcome, refresh_message: action.message, refresh_values: [], refresh_asof: \"\", refresh_polling: false}; } return {refresh_pending: false, refresh_code: action.code, refresh_outcome: action.outcome, refresh_message: action.message, refresh_values: action.values, refresh_asof: action.asof, refresh_polling: true}; }";
+    helpers = helpers+"export function liveAt(state: AppState, index: number): number { return state.refresh_values[index]; }";
+    helpers = helpers+"export function liveStatus(state: AppState): string { if (state.refresh_pending) { return \"Refreshing\"; } if (state.refresh_outcome === \"failure\") { return state.refresh_message; } if (state.refresh_outcome === \"success\") { return \"Updated\"; } return \"Unavailable\"; }";
+    let figure: number = 0;
+    while (figure < figures.length && figure < 3) {
+      let name: string = "live"+String(figure+1);
+      let unit: string = units[figure];
+      body = body+"When(state."+name+"_ready) {ui.NumberStat(label: "+await literal(labels[figure],"string")+", value: state."+name+"_display, suffix: "+await literal(unit,"string")+")} When(!state."+name+"_ready) {ui.Text(text: "+await literal(labels[figure]+" unavailable","string")+", style: \"muted\")}";
+      figure = figure+1;
+    }
+    body = body+"ui.Button(text: \"Refresh\", value: state.refresh_attempt, onClick: action app.RefreshLive {sequence: payload})";
+    body = body+"ui.Ticker(id: \"live_"+id+"\", intervalMs: "+String(intervalMs)+", running: state.refresh_polling, onTick: action app.PollLive {now: payload})";
+    body = body+"When(state.status_ready) {ui.Text(text: state.status_display)} When(state.live_source_ready) {ui.Text(text: state.live_source_display, style: \"muted\")} When(state.live_asof_ready) {ui.Text(text: state.live_asof_display, style: \"muted\")}";
   } else {
     s.reject("Unsupported catalogue kind: "+kind);
   }
   let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){"+body+"}}";
-  let instance: screens.Instance = {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:[],helpers:helpers,view:view,options:[],content:[],ports:ports,holes:holes,covers:[entry.need],owns:[id]},bodies:{}};
+  let instance: screens.Instance = {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:effects,helpers:helpers,view:view,options:[],content:[],ports:ports,holes:holes,covers:[entry.need],owns:[id]},bodies:{}};
   instance.definition = screens.issueDefinition(instance.fragment);
   return instance;
 }
@@ -1211,13 +1843,12 @@ export function computations(instance: screens.Instance, connections: screens.Co
     result[result.length] = computation(instance,"percent","percentOf(state)","(state.total as number) > 0 && (state.done as number) >= 0","\"Total unavailable\"",sources);
   } else if (instance.kind === "quick_log") {
     result[result.length] = computation(instance,"goal_value",s.encode(s.finite(instance.parameters.goal)),"true","\"Unavailable\"",[]);
-    // The tap history is retained, but today's total and count stay unavailable with their located
-    // reason: no host-timezone adapter day is issued to project the captured instants onto. The value
-    // expression is deliberately unreachable because the readiness is the literal `false`, so no
-    // computed daily number can reach a consumer either.
-    let history: string[] = ["f_"+instance.id+"_amounts","f_"+instance.id+"_stamps"];
-    result[result.length] = computation(instance,"today_total","0","false",s.encode(dailyProjection("Today's total")),history);
-    result[result.length] = computation(instance,"today_count","0","false",s.encode(dailyProjection("Today's count")),history);
+    // The tap history and the local day each tap was made on are retained, so today's total and count
+    // project the taps of the captured adapter day; a UTC epoch-day or a lifetime count is never
+    // substituted for it.
+    let history: string[] = ["f_"+instance.id+"_amounts","f_"+instance.id+"_log_days","f_"+instance.id+"_today"];
+    result[result.length] = computation(instance,"today_total","todayTotal(state)","todayTotal(state) >= 0",s.encode("Today's total is unavailable: the recorded taps are outside the exact amount range"),history);
+    result[result.length] = computation(instance,"today_count","todayCount(state)","true","\"Unavailable\"",history);
   } else if (instance.kind === "reading_status") {
     let sources: string[] = ["f_"+instance.id+"_readings","f_"+instance.id+"_band_uppers","f_"+instance.id+"_band_labels","f_"+instance.id+"_band_levels"];
     result[result.length] = computation(instance,"latest","latestOf(state)","state.readings.length > 0","\"No reading\"",sources);
@@ -1230,16 +1861,67 @@ export function computations(instance: screens.Instance, connections: screens.Co
   } else if (instance.kind === "idea_deck") {
     let sources: string[] = ["f_"+instance.id+"_idea_ids","f_"+instance.id+"_idea_titles","f_"+instance.id+"_idea_levels","f_"+instance.id+"_idea_minutes","f_"+instance.id+"_idea_instructions","f_"+instance.id+"_time_filter","f_"+instance.id+"_level_filter","f_"+instance.id+"_cursor","f_"+instance.id+"_done_ids"];
     result[result.length] = computation(instance,"current","currentIdea(state)","true","\"Unavailable\"",sources);
-    // The recorded marks keep their instants; the count of the marks made today stays unavailable with
-    // its located reason because no host-timezone adapter day is issued to scope them. The value
-    // expression is deliberately unreachable behind the literal `false` readiness.
-    result[result.length] = computation(instance,"done_today","0","false",s.encode(dailyProjection("Done today")),["f_"+instance.id+"_done_ids","f_"+instance.id+"_done_stamps"]);
+    // Each Done mark records the local day it was made on, so the daily count projects the marks of the
+    // captured adapter day; the lifetime number of marks is never presented as today's count.
+    result[result.length] = computation(instance,"done_today","doneToday(state)","true","\"Unavailable\"",["f_"+instance.id+"_done_ids","f_"+instance.id+"_done_days","f_"+instance.id+"_today"]);
   } else if (instance.kind === "interval_timer") {
     result[result.length] = computation(instance,"round","state.round_value","true","\"Unavailable\"",["f_"+instance.id+"_round_value"]);
     result[result.length] = computation(instance,"focus_seconds_done","state.focus_done","true","\"Unavailable\"",["f_"+instance.id+"_focus_done"]);
     result[result.length] = computation(instance,"seconds","state.elapsed/1000","true","\"Unavailable\"",["f_"+instance.id+"_elapsed"]);
   } else if (instance.kind === "timer") {
     result[result.length] = computation(instance,"seconds","state.elapsed/1000","true","\"Unavailable\"",["f_"+instance.id+"_elapsed"]);
+  } else if (instance.kind === "due_items") {
+    let dueSources: string[] = ["f_"+instance.id+"_rows","f_"+instance.id+"_today"];
+    result[result.length] = computation(instance,"count","dueCount(state)","true","\"Unavailable\"",["f_"+instance.id+"_rows"]);
+    result[result.length] = computation(instance,"soon_count","soonCount(state)","true","\"Unavailable\"",dueSources);
+    result[result.length] = computation(instance,"expired_count","expiredCount(state)","true","\"Unavailable\"",dueSources);
+    result[result.length] = computation(instance,"soon_names","soonNames(state)","true","\"Unavailable\"",dueSources);
+    result[result.length] = computation(instance,"summary","dueSummary(state)","true","\"Unavailable\"",dueSources);
+  } else if (instance.kind === "reminders") {
+    let reminderSources: string[] = ["f_"+instance.id+"_rows","f_"+instance.id+"_done_keys","f_"+instance.id+"_today"];
+    result[result.length] = computation(instance,"done","reminderDoneCount(state)","true","\"Unavailable\"",reminderSources);
+    result[result.length] = computation(instance,"total","state.rows.length","true","\"Unavailable\"",["f_"+instance.id+"_rows"]);
+    // Reminders count completed and successfully scheduled rows. A section with no disclosed scheduling
+    // operation schedules nothing, so the published count is the observed zero rather than an unavailable
+    // placeholder; a bound operation counts the rows whose scheduling reply succeeded.
+    if (s.text(instance.parameters.scheduleBinding) !== "") { result[result.length] = computation(instance,"scheduled","scheduledCount(state)","true","\"Unavailable\"",["f_"+instance.id+"_scheduled_keys","f_"+instance.id+"_rows"]); }
+    if (s.text(instance.parameters.scheduleBinding) !== "") { result[result.length] = computation(instance,"schedule_status","scheduleStatus(state)","state.schedule_pending || state.schedule_outcome === \"failure\"","\"Unavailable\"",["f_"+instance.id+"_schedule_pending","f_"+instance.id+"_schedule_outcome","f_"+instance.id+"_schedule_target","f_"+instance.id+"_schedule_message","f_"+instance.id+"_rows"]); }
+    else { result[result.length] = computation(instance,"scheduled","0","true","\"Unavailable\"",[]); }
+    result[result.length] = computation(instance,"summary","reminderSummary(state)","true","\"Unavailable\"",reminderSources);
+  } else if (instance.kind === "dose_schedule") {
+    let doseSources: string[] = ["f_"+instance.id+"_rows","f_"+instance.id+"_taken_keys","f_"+instance.id+"_today"];
+    result[result.length] = computation(instance,"taken_today","takenToday(state)","true","\"Unavailable\"",doseSources);
+    result[result.length] = computation(instance,"doses","state.rows.length","true","\"Unavailable\"",["f_"+instance.id+"_rows"]);
+    result[result.length] = computation(instance,"streak","streakOf(state)","true","\"Unavailable\"",doseSources);
+    result[result.length] = computation(instance,"history","doseHistory(state)","true","\"Unavailable\"",doseSources);
+  } else if (instance.kind === "intent_panel") {
+    // One status per descriptor: the panel renders the descriptor's own pending, classification and reply
+    // text, so a reply about one descriptor never appears as another descriptor's result.
+    let descriptors: string[] = s.stringArray(instance.parameters.actionIds);
+    let index: number = 0;
+    while (index < descriptors.length) {
+      let key: string = s.identifier(descriptors[index]);
+      let sources: string[] = [];
+      for (let field of ["tap_pending_","tap_outcome_","tap_message_","tap_result_"]) { sources[sources.length] = "f_"+instance.id+"_"+field+key; }
+      result[result.length] = computation(instance,"tap_status_"+key,"replyStatus(state.tap_pending_"+key+", state.tap_outcome_"+key+", state.tap_message_"+key+", state.tap_result_"+key+")","true","\"Unavailable\"",sources);
+      index = index+1;
+    }
+  } else if (instance.kind === "live_figure") {
+    // A figure is available only after a validated reply, and the observation time is the source's own
+    // asof value: an absent, unresolved, empty or nonstring asof leaves that port unavailable, so no port
+    // ever publishes a fetch time in place of the source's observation time.
+    let readings: string[] = ["f_"+instance.id+"_refresh_values","f_"+instance.id+"_refresh_outcome"];
+    let index: number = 0;
+    // All three figure ports are issued: a panel with fewer figures leaves the remaining ports unavailable
+    // instead of publishing a placeholder value for a figure that was never selected.
+    while (index < 3) {
+      let name: string = "live"+String(index+1);
+      result[result.length] = computation(instance,name,"liveAt(state, "+String(index)+")","state.refresh_outcome === \"success\" && state.refresh_values.length > "+String(index),"\"Live figure unavailable\"",readings);
+      index = index+1;
+    }
+    result[result.length] = computation(instance,"live_source","state.source_url","state.refresh_outcome === \"success\"","\"Live source unavailable\"",readings.concat(["f_"+instance.id+"_source_url"]));
+    result[result.length] = computation(instance,"live_asof","state.refresh_asof","state.refresh_outcome === \"success\" && state.refresh_asof !== \"\"","\"Observation time unavailable\"",readings.concat(["f_"+instance.id+"_refresh_asof"]));
+    result[result.length] = computation(instance,"status","liveStatus(state)","true","\"Unavailable\"",readings.concat(["f_"+instance.id+"_refresh_pending","f_"+instance.id+"_refresh_message"]));
   }
   return result;
 }

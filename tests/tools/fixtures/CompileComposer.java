@@ -26,12 +26,18 @@ public final class CompileComposer {
         Files.writeString(app,UiSourceGenerator.compilerSource(appSource)+result.augmentation());Files.writeString(ui,uiSource);
         Files.writeString(src.resolve("experience_entry.deal"),result.source());
         Files.copy(root.resolve("api/graphics.d.deal"),src.getParent().resolve("graphics.d.deal"),StandardCopyOption.REPLACE_EXISTING);
+        // The host-timezone day mechanism compiles exactly as the packaged compiler compiles it.
+        Files.copy(root.resolve("api/day.d.deal"),src.getParent().resolve("day.d.deal"),StandardCopyOption.REPLACE_EXISTING);
+        // The public-probe mechanism is a checked external of composed source, exactly as packaged.
+        Files.copy(root.resolve("api/probe.d.deal"),src.getParent().resolve("probe.d.deal"),StandardCopyOption.REPLACE_EXISTING);
         Path stagedUi=src.getParent().resolve("ui");
         try(var paths=Files.walk(framework.resolve("ui"))){for(Path file:paths.toList()){Path targetPath=stagedUi.resolve(framework.resolve("ui").relativize(file));if(Files.isDirectory(file))Files.createDirectories(targetPath);else Files.copy(file,targetPath,StandardCopyOption.REPLACE_EXISTING);}}
         // The compiler writes each frozen contract's declaration and adds its external, so the
         // emitted provider import compiles exactly as the production compiler compiles it.
         var externals=new LinkedHashMap<String,Object>();
         externals.put("embedding/graphics",Map.of("declaration","graphics.d.deal"));
+        externals.put("embedding/day",Map.of("declaration","day.d.deal"));
+        externals.put("embedding/probe",Map.of("declaration","probe.d.deal"));
         var providerModules=new ArrayList<String>();
         Path providers=stage.resolve("providers.txt");
         if(Files.exists(providers)) {

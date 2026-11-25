@@ -6,6 +6,7 @@ build.sh
 docs/spec-v0.8.md
 tools/build-stage.py
 tools/build-cache.py
+tools/stage-bounds.txt
 android
 core
 api
