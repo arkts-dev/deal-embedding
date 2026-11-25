@@ -53,7 +53,7 @@ function fieldSlot(tree){let slot;nodes(tree,node=>{const p=props(node);if(node.
 
 function rejects(run,pattern,message){let thrown=null;try{run();}catch(error){thrown=error;}assert.ok(thrown!==null,message||'expected rejection');if(pattern!==undefined)assert.ok(pattern.test((thrown&&thrown.message)||(thrown&&thrown.code)||String(thrown)),'unexpected rejection: '+((thrown&&thrown.message)||String(thrown)));}
 
-const AUTHORITATIVE=['f_calculation_value','f_calculation_flag','f_calculation_sequence','f_calculation_display','f_calculation_head','f_calculation_mirror','f_calculation_leaf'];
+const AUTHORITATIVE=['f_calculation_value','f_calculation_flag','f_calculation_sequence','f_calculation_display','f_calculation_head','f_calculation_mirror','f_calculation_leaf','f_calculation_samples','f_calculation_matrix'];
 function entries(envelope){assert.equal(envelope.value[0],'record','the projection root is the issued record, not the live class');assert.equal(envelope.value[2],'record');return new Map(envelope.value[3]);}
 function wireNodes(root){const found=new Map();(function visit(node){if(!Array.isArray(node))return;const tag=node[0];
   if(tag==='class'||tag==='record'){found.set(node[1],node);for(const pair of node[3])visit(pair[1]);}
@@ -106,6 +106,8 @@ readState(restored);
 const identity=JSON.parse(vm.runInContext('JSON.stringify({alias:__state.f_calculation_head.next===__state.f_calculation_mirror,cycle:__state.f_calculation_mirror.next===__state.f_calculation_head,nodes:[__state.f_calculation_head.value,__state.f_calculation_mirror.value,__state.f_calculation_leaf.value],absent:__state.f_calculation_leaf!==null&&!Object.hasOwn(__state.f_calculation_leaf,"next"),value:__state.f_calculation_value,flag:__state.f_calculation_flag,sequence:__state.f_calculation_sequence,triple:__state.f_calculation_triple})',restored));
 assert.deepEqual(identity,{alias:true,cycle:true,nodes:[7,8,9],absent:true,value:4,flag:false,sequence:0,triple:24},'authoritative identity, aliases, cycles, absence and recomputation survive');
 
+assert.equal(vm.runInContext('JSON.stringify(__state.f_calculation_samples)',restored),'[1,null,3]','nullable numeric elements survive cold restore');
+assert.equal(vm.runInContext('JSON.stringify(__state.f_calculation_matrix)',restored),'[[1,null],null,[]]','nested nullable arrays retain each null layer');
 assert.equal(vm.runInContext('__state.f_calculation_leaf.labels.get("__proto__")',restored),'safe');
 assert.equal(vm.runInContext('__state.f_calculation_leaf.labels.get("text")',restored),'\ud800');
 assert.equal(vm.runInContext('__runtime.checkType("record[string]",__state.f_calculation_leaf.labels)===__state.f_calculation_leaf.labels',restored),true);
@@ -121,6 +123,16 @@ assert.equal(numberText(tree(changed)),18,'the edited authoritative value surviv
 readState(changed);
 assert.equal(vm.runInContext('__state.f_calculation_triple',changed),54,'the derived chain is recomputed from the edited input');
 assert.deepEqual(JSON.parse(projected(changed)),edited,'a persisted record round-trips without acquiring derived values');
+
+// Element nullability is independent of the enclosing array; poisoned scalar members still reject.
+const badElement=JSON.parse(saved);
+const sampleArray=new Map(badElement.value[3]).get('f_calculation_samples');
+sampleArray[3][1]=['string','not a number'];
+rejects(()=>open(badElement),undefined,'nullable numeric elements do not admit strings');
+const nullMatrix=JSON.parse(saved);
+nullMatrix.value[3]=nullMatrix.value[3].map(pair=>pair[0]==='f_calculation_matrix'?[pair[0],['null']]:pair);
+const nullRestored=open(nullMatrix);readState(nullRestored);
+assert.equal(vm.runInContext('__state.f_calculation_matrix',nullRestored),null,'outer nullability survives independently');
 
 // A saved derived value is never an input: the record carries no derived field, and a record that
 // names one is rejected atomically while the retained bytes stay usable.

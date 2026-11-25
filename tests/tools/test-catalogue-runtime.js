@@ -193,6 +193,7 @@ for(const localGroup of localGroups) {
   assert.strictEqual(s().f_section_interval_running,false);
  }
  if(localGroup==='reading') {
+  assert.deepEqual(s().f_section_reading_band_uppers,[5,9,null],'unbounded bands retain null, not a numeric sentinel');
   assert.strictEqual(s().f_section_reading_latest_ready,false,'an absent reading is unavailable');
   assert.strictEqual(app.hasText('No reading'),true,'the missing reading explains itself');
   // Reading status: the control keeps a draft and the explicit add commits it, then latest and the

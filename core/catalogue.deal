@@ -1002,13 +1002,13 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     for (let extra of extras) { body = body+"ui.Button(text: "+await literal("Log +"+String(extra),"string")+", onClick: action app.LogExtra {amount: "+String(extra)+", rank: payload})"; }
   } else if (kind === "reading_status") {
     let bands: Record<string, unknown>[] = s.records(parameters,"bands");
-    let uppers: number[] = []; let bandNames: string[] = []; let levels: number[] = [];
+    let uppers: (number | null)[] = []; let bandNames: string[] = []; let levels: number[] = [];
     for (let band of bands) {
-      if (s.encode(band.upper) === "null") { uppers[uppers.length] = 9007199254740991; } else { uppers[uppers.length] = s.finite(band.upper); }
+      uppers[uppers.length] = band.upper === null ? null : s.finite(band.upper);
       bandNames[bandNames.length] = s.text(band.label); levels[levels.length] = s.integral(band.level);
     }
     let decimals: number = s.integral(parameters.decimals);
-    fields[fields.length] = authoredField(id,"band_uppers","number[]",numberArray(uppers));
+    fields[fields.length] = authoredField(id,"band_uppers","(number | null)[]",await literal(uppers,"(number | null)[]"));
     fields[fields.length] = authoredField(id,"band_labels","string[]",await literal(bandNames,"string[]"));
     fields[fields.length] = authoredField(id,"band_levels","number[]",numberArray(levels));
     fields[fields.length] = authoredField(id,"readings","number[]","[]");
@@ -1031,9 +1031,9 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     helpers = helpers+"export function removeReading(state: AppState, action: RemoveReading): AppState { let size: number = state.readings.length; if (size === 0) { return state; } return {readings: state.readings.slice(0,size-1), stamps: state.stamps.slice(0,size-1)}; }";
     helpers = helpers+"export function latestOf(state: AppState): number { if (state.readings.length === 0) { return -1; } return state.readings[state.readings.length-1]; }";
     // The first exclusive upper match decides the level; the final declared band is unbounded.
-    helpers = helpers+"export function levelOf(state: AppState, value: number): number { let index: number = 0; while (index < state.band_uppers.length) { if (value < state.band_uppers[index]) { return state.band_levels[index]; } index = index+1; } if (state.band_levels.length === 0) { return 0; } return state.band_levels[state.band_levels.length-1]; }";
+    helpers = helpers+"export function levelOf(state: AppState, value: number): number { let index: number = 0; while (index < state.band_uppers.length) { let upper: number | null = state.band_uppers[index]; if (upper === null) { return state.band_levels[index]; } if (value < upper) { return state.band_levels[index]; } index = index+1; } if (state.band_levels.length === 0) { return 0; } return state.band_levels[state.band_levels.length-1]; }";
     helpers = helpers+"export function historyOf(state: AppState): string { if (state.readings.length === 0) { return \"No readings\"; } let result: string = \"\"; let index: number = 0; while (index < state.readings.length) { if (result !== \"\") { result = result+\"\\n\"; } result = result+String(state.readings[index]); index = index+1; } return result; }";
-    helpers = helpers+"export function statusOf(state: AppState, value: number): string { let index: number = 0; while (index < state.band_uppers.length) { if (value < state.band_uppers[index]) { return state.band_labels[index]; } index = index+1; } if (state.band_labels.length === 0) { return \"\"; } return state.band_labels[state.band_labels.length-1]; }";
+    helpers = helpers+"export function statusOf(state: AppState, value: number): string { let index: number = 0; while (index < state.band_uppers.length) { let upper: number | null = state.band_uppers[index]; if (upper === null) { return state.band_labels[index]; } if (value < upper) { return state.band_labels[index]; } index = index+1; } if (state.band_labels.length === 0) { return \"\"; } return state.band_labels[state.band_labels.length-1]; }";
     helpers = helpers+"export function chartLow(state: AppState): number { let result: number = 0; let index: number = 0; while (index < state.readings.length) { if (index === 0) { result = state.readings[index]; } else if (state.readings[index] < result) { result = state.readings[index]; } index = index+1; } return result; }";
     helpers = helpers+"export function chartHigh(state: AppState): number { let low: number = chartLow(state); let result: number = low; let index: number = 0; while (index < state.readings.length) { if (state.readings[index] > result) { result = state.readings[index]; } index = index+1; } if (!(result > low)) { return low+1; } return result; }";
     body = body+"ui.NumberField(label: \"Reading\", value: state.draft, minimum: -1000000, maximum: 1000000, onChange: action app.DraftReading {value: payload}) ui.Button(text: \"Add reading\", onClick: action app.Read {value: payload}) ui.Button(text: \"Remove reading\", onClick: action app.RemoveReading {value: payload})";

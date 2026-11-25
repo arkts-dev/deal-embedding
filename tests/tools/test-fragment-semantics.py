@@ -1,49 +1,37 @@
 #!/usr/bin/env python3
-"""Compile and execute original source and both real embedding rewrites.
-
-Default: exact packaged/pinned compiler. Optional --compiler-source checks newer
-syntax against a separately built compiler without modifying dependency pins.
-"""
+"""Compile and execute original source and both real rewrites with the pinned packaged compiler."""
 import argparse
 import json
+import os
 import pathlib
-import subprocess
+from host_check import prepare, run
 
+argparse.ArgumentParser(description=__doc__).parse_args()
 root = pathlib.Path(__file__).resolve().parents[2]
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--compiler-source', type=pathlib.Path)
-args = parser.parse_args()
-packaged = root / 'build/embedding-library/classes'
-stage = root / 'build/fragment-semantics' / ('extended' if args.compiler_source else 'pinned')
+lock = prepare(root)
+compiler = root / 'build/embedding-library/classes'
+stage = root / 'build/fragment-semantics/pinned'
 stage.mkdir(parents=True, exist_ok=True)
-compiler = packaged
-home = root / 'dependencies/deal'
-if args.compiler_source:
-    home = args.compiler_source.resolve()
-    compiler = stage / 'compiler'
-    compiler.mkdir(exist_ok=True)
-    sources = stage / 'compiler-sources.txt'
-    sources.write_text('\n'.join(str(p) for p in sorted((home / 'deal').rglob('*.java'))))
-    subprocess.run(['javac', '--release', '25', '-proc:none', '-d', str(compiler), '@' + str(sources)], check=True)
-classpath = str(compiler) + ':' + str(packaged)
+home = pathlib.Path(os.environ.get('DEAL_ROOT', root / 'dependencies/deal')).resolve()
 classes = stage / 'classes'
 classes.mkdir(exist_ok=True)
-subprocess.run(['javac', '--release', '25', '-cp', classpath, '-d', str(classes),
+run(['javac', '--release', '21', '-cp', str(compiler), '-d', str(classes),
                 str(root / 'tools/FragmentSyntax.java'), str(root / 'tools/FragmentQualifier.java'),
                 str(root / 'tests/tools/fixtures/FragmentSemanticsTest.java')], check=True)
 source = stage / 'src'
-subprocess.run(['java', '-cp', str(classes) + ':' + classpath, 'FragmentSemanticsTest', str(source)]
-               + (['extended'] if args.compiler_source else []), check=True)
+run(['java', '-cp', str(classes) + ':' + str(compiler), 'FragmentSemanticsTest', str(source)], check=True)
 (stage / 'deal.json').write_text(json.dumps({'languageVersion': '1.6', 'backend': 'js', 'moduleRoots': ['src']}))
-results = {}
-for variant in ['original', 'syntax', 'qualified']:
-    output = stage / ('js-' + variant)
-    subprocess.run(['java', '-Ddeal.home=' + str(home), '-cp', classpath, 'deal.Main', 'compile',
-                    str(source / (variant + '.deal')), '--backend', 'js', '--output', str(output)], check=True)
-    results[variant] = subprocess.check_output(['node', '-e',
-        'process.stdout.write(JSON.stringify(require(process.argv[1]).run.$f()))',
-        str(output / (variant + '.js'))], text=True)
-assert len(set(results.values())) == 1, results
-expected = '😀 1:1:3:3:1:10:2:11:24:9:value 4' if args.compiler_source else 'value 4  `:outer inner 3 😀:'
-assert json.loads(results['original']) == expected, results
-print('fragment semantics: original == structural printer == contextual qualifier (compiled and executed)')
+for case, expected in [('templates', 'value 4  `:outer inner 3 😀:'),
+                       ('updates', '😀 1:1:3:3:1:10:2:11:24:9:value 4')]:
+    results = {}
+    for variant in ['original', 'syntax', 'qualified']:
+        name = case + '_' + variant
+        output = stage / ('js-' + name)
+        run(['java', '-Ddeal.home=' + str(home), '-cp', str(compiler), 'deal.Main', 'compile',
+                        str(source / (name + '.deal')), '--backend', 'js', '--output', str(output)], check=True)
+        results[variant] = run(['node', '-e',
+            'process.stdout.write(JSON.stringify(require(process.argv[1]).run.$f()))',
+            str(output / (name + '.js'))], capture_output=True, text=True, check=True).stdout
+    assert len(set(results.values())) == 1, results
+    assert json.loads(results['original']) == expected, results
+print('fragment semantics: templates and updates; original == structural printer == contextual qualifier')

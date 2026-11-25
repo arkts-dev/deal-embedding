@@ -70,8 +70,9 @@ export async function rejects(): Promise<null> {
 }
 export async function construct(): Promise<string> {
   let instance: screens.Instance = fragment("calculation","3");
-  // The view binds prepared fields; nullable assertions are DEAL, not Deal UI syntax.
   cleanView(instance);
+  instance.fragment.fields[instance.fragment.fields.length] = {name:"samples",type:"(number | null)[]",role:"authoritative",dependencies:[],initial:"[1, null, 3]",owner:instance.id};
+  instance.fragment.fields[instance.fragment.fields.length] = {name:"matrix",type:"((number | null)[] | null)[] | null",role:"authoritative",dependencies:[],initial:"[[1, null], null, []]",owner:instance.id};
   instance.fragment.fields[instance.fragment.fields.length] = {name:"triple",type:"number",role:"derived",dependencies:["double"],initial:"null",owner:instance.id};
   let record: screens.Composition = composition([instance]);
   let calculations: composer.Computation[] = [{instance:"calculation",field:"double",value:"state.value * 2",ready:"state.value >= 0",reason:"\"Value must be nonnegative\"",dependencies:["f_calculation_value"]}];

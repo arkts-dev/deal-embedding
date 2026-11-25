@@ -7,7 +7,7 @@ walk(base);const context=vm.createContext({sources});
 vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/sandbox.js','utf8'),context);
 vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js/checkpoint.js'),'utf8'),context);
 vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js/session.js'),'utf8'),context);
-vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));const {entry,rt,checkpointSchema}=dealLoad(factories,'experience_entry.js');const session=createDealUiSession(entry,rt,null,()=>{throw Error('No effect expected');},checkpointSchema);`,context);
+vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));const {entry,rt,checkpointSchema,app:compiled}=dealLoad(factories,'experience_entry.js','experience.js');const session=createDealUiSession(entry,rt,null,()=>{throw Error('No effect expected');},checkpointSchema);`,context);
 const state=()=>vm.runInContext("createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f()).decode(JSON.parse(session.checkpoint()),entry.bridgeInitialState.$sig.substring(4))",context);
 assert.equal(state().f_calculation_triple,18);assert.equal(state().f_calculation_double,6);assert.equal(state().f_calculation_double_ready,true);
 const tree=JSON.parse(vm.runInContext('session.snapshot()',context)).tree;
@@ -41,8 +41,7 @@ assert.strictEqual(numberTextValue(JSON.parse(vm.runInContext('session.snapshot(
 assert.equal(JSON.parse(vm.runInContext('session.snapshot()',context)).fault,'');
 // The compiled persistence roles project the live state; restore rebuilds the typed state and
 // recomputes derived values before the session publishes its tree (see test-persistence.js).
-vm.runInContext(`const {app:compiled}=dealLoad(factories,'experience_entry.js','experience.js');
-const codec=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f());
+vm.runInContext(`const codec=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f());
 const live=codec.decode(JSON.parse(session.checkpoint()),entry.bridgeInitialState.$sig.substring(4));
 const projection=codec.encode(compiled.bridgePersistedState.$f(live));
 if(Object.keys(projection).length!==2||projection.value[0]!=='record')throw Error('Projection is not the authoritative record');

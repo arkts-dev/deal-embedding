@@ -40,6 +40,15 @@ public final class FragmentQualifierTest {
                 if(outer.readonly()!=layers.get(1)||((deal.ast.ArrayType)outer.elementType()).readonly()!=layers.get(0))throw new AssertionError("Array layers erased: "+preserved);
             }
         }
+        // Every null/readonly layer survives nominal qualification; none moves to the outer array.
+        for(int rank=1;rank<=3;rank++)for(int nulls=0;nulls<(1<<(rank+1));nulls++)for(int mask=0;mask<(1<<rank);mask++) {
+            var type=new deal.ui.UiModel.TypeRef("app.Row",(nulls&1)!=0,false);
+            for(int depth=0;depth<rank;depth++)type=type.arrayOf((mask&(1<<depth))!=0).withOptional((nulls&(1<<(depth+1)))!=0);
+            String arrays="import * as app from \"./experience\"; export view Panel(values: "+type.sourceType(type.name())+"): View { }";
+            String rewritten=(String)FragmentQualifier.qualify("","",arrays,names,fields,types).get("view");
+            var actual=UiParser.parseViews(Path.of("nullable.dealui"),rewritten).views().getFirst().parameters().getFirst().type();
+            if(!actual.equals(type.withName("app.f_a_Row")))throw new AssertionError("Nullable layer changed: "+arrays+" -> "+rewritten);
+        }
         if(args.length>0){Files.createDirectories(Path.of(args[0]));Files.writeString(Path.of(args[0],"qualified.deal"),(String)result.get("declarations")+"export class AppState { f_a_value: number; f_a_rows: f_a_Row[]; }\n"+code);}
         System.out.println("fragment qualifier: contextual state/member/action identities, locals, Unicode and parsed views passed");
     }
