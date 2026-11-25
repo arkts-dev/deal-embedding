@@ -253,7 +253,7 @@ function issueLiteral(instance: screens.Instance, registry: bindings.Registry, i
 // of its sources, so an emitted operation never names a resource the composition lacks.
 export function places(built: Built, registry: bindings.Registry): boolean {
   if (built.instance.fragment.covers.length > 0) { return true; }
-  for (let binding of registry.bindings) { for (let key of tables.keys(binding.arguments)) { if (bindings.source(registry,binding.arguments[key] as string).owner === "parts") { return true; } } }
+  for (let binding of registry.bindings) { for (let key of Object.keys(binding.arguments)) { if (bindings.source(registry,binding.arguments[key] as string).owner === "parts") { return true; } } }
   return false;
 }
 export function define(plan: plans.Plan): Definitions { return defineWithProviders(plan,[]); }
@@ -287,7 +287,7 @@ export function defineWithProviders(plan: plans.Plan, providerOperands: formula.
     }
     if (need.type === "live") { definitions.alternatives[definitions.alternatives.length] = {id:"unavailable_"+need.id,need:need.id,origin:"part",kind:"figure",criteria:"No issued implementation is offered by this composer part set.",eligible:false,reason:"Live publications are issued by the scalar read part"}; }
   }
-  for (let operand of providerOperands) { issued[issued.length] = operand; } let added: string[] = []; let refused: Record<string, unknown> = {}; let progress: boolean = true;
+  for (let operand of providerOperands) { issued[issued.length] = operand; } let added: string[] = []; let refused: Record<string, string> = {}; let progress: boolean = true;
   while (progress) {
     progress = false;
     for (let need of plan.needs) { if (need.type === "figure" && !s.contains(added,need.id)) {

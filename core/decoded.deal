@@ -11,6 +11,18 @@ export function records(value: unknown): Record<string, unknown>[] {
         refuse("Expected record at index "+String(index));
     });
 }
+// Unknown records and string records are invariant. Validate and copy decoded wire
+// dictionaries; never assert an already-admitted unknown record to a new descriptor.
+export function stringRecord(value: unknown): Record<string, string> {
+    const source: Record<string, unknown> = value as Record<string, unknown>;
+    let result: Record<string, string> = {};
+    for (let key of Object.keys(source)) {
+        let item: unknown = source[key];
+        if (typeof item !== "string") { refuse("Expected text at key "+key); }
+        result[key] = item;
+    }
+    return result;
+}
 export function strings(value: unknown): string[] {
     const source: readonly unknown[] = elements(value);
     return Array.from(source, (item: unknown, index: number): string => {

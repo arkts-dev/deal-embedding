@@ -58,7 +58,7 @@ const issued=JSON.parse(fs.readFileSync(path.join(base,'admission.json'),'utf8')
   assert.equal(liveState('f_parts_scalar_0_value'),42);
   assert.equal(liveState('f_parts_read'),42,'the live derived value follows the completed read');
   const completed=projection(live);
-  const completedFields=new Map(completed.value[2]);
+  const completedFields=new Map(completed.value[3]);
   assert.deepEqual(issued.filter(owner=>owner.role==='authoritative').map(owner=>owner.name).sort(),[...AUTHORITATIVE].sort(),'the composition issues these authoritative resources');
   assert.deepEqual([...completedFields.keys()],AUTHORITATIVE,'the record holds the issued authoritative fields only');
   assert.deepEqual(completedFields.get('f_parts_request'),['string','Double the edited value'],'the record holds the request the generation harness issued');
@@ -74,8 +74,8 @@ const issued=JSON.parse(fs.readFileSync(path.join(base,'admission.json'),'utf8')
   // An authoritative source is read back from the record, not re-seeded from the compiled initializer:
   // the saved request literal comes back as the record spells it.
   const edited=JSON.parse(JSON.stringify(completed));
-  assert.ok(edited.value[2].some(pair=>pair[0]==='f_parts_request'),'the record carries the issued request literal');
-  edited.value[2]=edited.value[2].map(pair=>pair[0]==='f_parts_request'?[pair[0],['string','Edited request literal']]:pair);
+  assert.ok(edited.value[3].some(pair=>pair[0]==='f_parts_request'),'the record carries the issued request literal');
+  edited.value[3]=edited.value[3].map(pair=>pair[0]==='f_parts_request'?[pair[0],['string','Edited request literal']]:pair);
   const savedLiteral=open(edited);
   await quiet(savedLiteral,20);
   assert.equal(savedState(savedLiteral)('f_parts_request'),'Edited request literal','the saved request literal is authoritative record data');

@@ -46,7 +46,7 @@ const codec=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.
 const live=codec.decode(JSON.parse(session.checkpoint()),entry.bridgeInitialState.$sig.substring(4));
 const projection=codec.encode(compiled.bridgePersistedState.$f(live));
 if(Object.keys(projection).length!==2||projection.value[0]!=='record')throw Error('Projection is not the authoritative record');
-if(projection.value[2].some(pair=>pair[0]==='f_calculation_double'))throw Error('Projection carried a derived value');
+if(projection.value[3].some(pair=>pair[0]==='f_calculation_double'))throw Error('Projection carried a derived value');
 const restored=createDealUiSession(entry,rt,codec.encode(compiled.bridgeRestoredState.$f(codec.decode(projection,'record'))),()=>{throw Error('No effect expected');},checkpointSchema);
 if(JSON.stringify(JSON.parse(restored.snapshot()).tree)!==JSON.stringify(JSON.parse(session.snapshot()).tree))throw Error('Restored display changed');
 restored.dispose();`,context);

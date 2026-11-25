@@ -12,7 +12,7 @@ export class Source {
 // frozen request and disclosed facts and the issued argument sources. It grants no authority, and a
 // model quote, a substring match or a boolean never authorizes a mutation.
 export class Evidence { request: string; facts: string; quote: string; sources: string[]; }
-export class Binding { id: string; module: string; function: string; arguments: Record<string, unknown>; parameterOrder: string[]; owner: string; evidence: Evidence; }
+export class Binding { id: string; module: string; function: string; arguments: Record<string, string>; parameterOrder: string[]; owner: string; evidence: Evidence; }
 export class Draft { sourceId: string; label: string; initial: string; }
 export class Descriptor { id: string; label: string; binding: string; input?: Draft; evidence: Evidence; }
 export class Registry { sources: Source[]; bindings: Binding[]; actions: Descriptor[]; contracts: embedding.CapabilityContract[]; }
@@ -93,7 +93,7 @@ function prepareBinding(registry: Registry, id: string, raw: Record<string, unkn
   let operation: embedding.CapabilityFunction = selectedFunction(registry,module,name);
   let argumentsByName: Record<string, unknown> = raw.arguments as Record<string, unknown>; let names: string[] = [];
   for (let parameter of operation.parameters) { names[names.length] = parameter.name; }
-  s.closed(argumentsByName,names,[]); let copied: Record<string, unknown> = {};
+  s.closed(argumentsByName,names,[]); let copied: Record<string, string> = {};
   for (let parameter of operation.parameters) {
     let sourceId: string = s.identifier(argumentsByName[parameter.name]); let selected: Source | null = null;
     if (extra !== null && sourceId === (extra as Source).id) { selected = extra as Source; } else { selected = source(registry,sourceId); }
@@ -142,7 +142,7 @@ export async function issueDescriptorWith(registry: Registry, raw: Record<string
     descriptor.input = {sourceId:sourceId,label:inputLabel,initial:initial};
   }
   let issued: Binding = prepareBinding(registry,bindingId,bindingRaw,id,draft,evidence);
-  if (draft !== null) { let used: boolean = false; for (let key of tables.keys(issued.arguments)) { if ((issued.arguments[key] as string) === (draft as Source).id) { used = true; } } if (!used) { s.reject("Descriptor input unused by its binding"); } }
+  if (draft !== null) { let used: boolean = false; for (let key of Object.keys(issued.arguments)) { if ((issued.arguments[key] as string) === (draft as Source).id) { used = true; } } if (!used) { s.reject("Descriptor input unused by its binding"); } }
   // Recheck after adapters: another awaited issuance may have committed meanwhile.
   for (let prior of registry.actions) { if (prior.id === id) { s.reject("Descriptor identity collision"); } }
   for (let prior of registry.bindings) { if (prior.id === bindingId) { s.reject("Binding identity collision"); } }

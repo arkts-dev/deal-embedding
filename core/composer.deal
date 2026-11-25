@@ -24,7 +24,7 @@ export class Source { deal: string; dealui: string; }
 // field list are compiler metadata. They are rebuilt on every assembly and never emitted into
 // generated source.
 export class SlotRecord { id: string; need: string; status: string; reads: string[]; writes: string[]; outputs: string[]; event: string; trigger: string; action: string; provider: boolean; allowedKinds: string[]; instance: string; reason: string; }
-export class OperationRecord { id: string; owner: string; module: string; function: string; trigger: string; triggerResource: string; rowKey: string; dependencies: string[]; arguments: Record<string, unknown>; expires: string; expired: string; }
+export class OperationRecord { id: string; owner: string; module: string; function: string; trigger: string; triggerResource: string; rowKey: string; dependencies: string[]; arguments: Record<string, string>; expires: string; expired: string; }
 export class CompositeRecord { action: string; type: string; update: string; arms: string[]; }
 // The ownership matrix assembly decided over written resources, carried as compiler metadata so
 // admission can re-check every slot against the compiled declarations instead of a source scan. A
@@ -101,7 +101,7 @@ function primitive(type: string): boolean { return s.contains(["string","boolean
 // A derived array binds a nonnullable prepared `_display` companion initialized empty, exactly as a
 // derived primitive does; readiness still guards it so an empty array is never a displayed fact.
 function displayable(type: string): boolean { return primitive(type) || type.endsWith("[]"); }
-function copyExpression(fields: Field[], changes: Record<string, unknown>, state: string): string {
+function copyExpression(fields: Field[], changes: Record<string, string>, state: string): string {
   let result: string = "{"; let separator: string = "";
   for (let item of fields) {
     let expression: string = state+"."+item.name;
@@ -117,8 +117,8 @@ function copyExpression(fields: Field[], changes: Record<string, unknown>, state
   }
   return result+"}";
 }
-async function expression(value: string, expected: string, instance: Prepared, names: Record<string, unknown>, fields: Record<string, unknown>, types: Record<string, unknown>, variable: string): Promise<string> {
-  let variables: Record<string, unknown> = {}; if (variable !== "") { variables[variable] = "AppState"; }
+async function expression(value: string, expected: string, instance: Prepared, names: Record<string, string>, fields: Record<string, string>, types: Record<string, string>, variable: string): Promise<string> {
+  let variables: Record<string, string> = {}; if (variable !== "") { variables[variable] = "AppState"; }
   return await syntax.expression(s.encode({source:value,expected:expected,names:names,fields:fields,types:types,variables:variables}));
 }
 // The permitted module surface of generated source. Assembly admits it before emitting anything;
@@ -137,9 +137,9 @@ function effectNames(instance: screens.Instance): string[] {
 // rejects. The mechanism returns call facts; this policy decides. A field's initial expression is
 // emitted into `initialState()`, so its calls are analyzed exactly like a function body: a storage
 // call there would run at mount, outside every effect.
-async function storageConfined(instance: screens.Instance, aliases: Record<string, unknown>, facts: Record<string, unknown>): Promise<void> {
+async function storageConfined(instance: screens.Instance, aliases: Record<string, string>, facts: Record<string, unknown>): Promise<void> {
   let storage: string = "";
-  for (let alias of tables.keys(aliases)) { if ((aliases[alias] as string) === "host/storage") { storage = alias; } }
+  for (let alias of Object.keys(aliases)) { if ((aliases[alias] as string) === "host/storage") { storage = alias; } }
   if (storage === "") { return; }
   let effects: string[] = effectNames(instance);
   for (let name of tables.keys(facts)) {
@@ -167,7 +167,7 @@ async function storageConfined(instance: screens.Instance, aliases: Record<strin
 // The provider flag of a filled slot derives from the resolved external provider calls of its
 // implementation, never from the need type: a local implementation of a live need performs no
 // provider call and a custom implementation that calls a frozen contract does.
-function providerCalls(facts: Record<string, unknown>, modules: Record<string, unknown>, registry: bindings.Registry): boolean {
+function providerCalls(facts: Record<string, unknown>, modules: Record<string, string>, registry: bindings.Registry): boolean {
   for (let name of tables.keys(facts)) {
     let fact: Record<string, unknown> = facts[name] as Record<string, unknown>;
     for (let call of decoded.strings(fact.calls)) {
@@ -190,7 +190,7 @@ async function holeFunctions(instance: screens.Instance): Promise<string> {
   // the identifier instead of being dropped, so an issued body is never silently ignored.
   let declaredHoles: string[] = [];
   for (let hole of instance.fragment.holes) { declaredHoles[declaredHoles.length] = s.identifier(hole.id); }
-  for (let key of tables.keys(instance.bodies)) { if (!s.contains(declaredHoles,key)) { s.reject("Unissued body: "+key); } s.text(instance.bodies[key]); }
+  for (let key of Object.keys(instance.bodies)) { if (!s.contains(declaredHoles,key)) { s.reject("Unissued body: "+key); } s.text(instance.bodies[key]); }
   for (let hole of instance.fragment.holes) {
     let id: string = s.identifier(hole.id);
     let signature: string = screens.holeSignature(hole);
@@ -239,7 +239,7 @@ export async function assembleWith(composition: screens.Composition, computation
   let prepared: Prepared[] = []; let allFields: Field[] = []; let namesByInstance: Record<string, unknown> = {}; let fieldsByInstance: Record<string, unknown> = {}; let typesByInstance: Record<string, unknown> = {}; let factsByInstance: Record<string, unknown> = {}; let modulesByInstance: Record<string, unknown> = {}; let completionsByInstance: Record<string, unknown> = {}; let exportedByInstance: Record<string, unknown> = {};
   let instances: string[] = []; let storageNames: string[] = [];
   // Parsed syntax facts per instance: ownership and storage admission decide over these.
-  let ownershipFacts: Record<string, unknown> = {}; let holesByInstance: Record<string, unknown> = {};
+  let ownershipFacts: Record<string, unknown> = {}; let holesByInstance: Record<string, string> = {};
   for (let instance of composition.screen.instances) {
     let holes: string = await holeFunctions(instance); holesByInstance[instance.id] = holes;
     ownershipFacts[instance.id] = JSON.parse(await syntax.analyzeFunctions(s.encode({source:instance.fragment.declarations+"\n"+instance.fragment.helpers+"\n"+holes})));
@@ -281,12 +281,12 @@ export async function assembleWith(composition: screens.Composition, computation
     // An effect completion must also be an action class this owner exports; a result action no
     // declaration carries cannot be constructed or dispatched.
     for (let completion of completions) { if (!s.contains(exported,completion)) { s.reject("Undeclared effect completion: "+instance.id+"."+completion); } }
-    let names: Record<string, unknown> = {}; let fieldNames: Record<string, unknown> = {}; let types: Record<string, unknown> = {};
+    let names: Record<string, string> = {}; let fieldNames: Record<string, string> = {}; let types: Record<string, string> = {};
     for (let category of ["classes","functions","views"]) {
       for (let declaration of decoded.records(raw[category])) { let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent" || name === "expireOperations" || name === "recordExpiry" || name === "bump" || name === "bridgePersistedState" || name === "bridgeRestoredState") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
     }
     for (let hole of instance.fragment.holes) { let name: string = s.identifier(hole.id); if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
-    let aliases: Record<string, unknown> = {};
+    let aliases: Record<string, string> = {};
     for (let item of decoded.records(raw.imports)) {
       let alias: string = s.identifier(item.alias); let module: string = s.nonblank(item.module);
       if (Object.hasOwn(names,alias)) { s.reject("Import/declaration conflict"); }
@@ -333,7 +333,7 @@ export async function assembleWith(composition: screens.Composition, computation
       fieldNames[port.getter] = qualified(instance.id,port.getter); types[port.getter] = port.type;
       unsupplied[unsupplied.length] = port;
     } }
-    let importModules: Record<string, unknown> = {}; for (let item of decoded.records(raw.imports)) { let alias: string = item.alias as string; importModules[alias] = item.module; }
+    let importModules: Record<string, string> = {}; for (let item of decoded.records(raw.imports)) { let alias: string = s.text(item.alias); importModules[alias] = s.text(item.module); }
     modulesByInstance[instance.id] = importModules;
     factsByInstance[instance.id] = await policy.inspect(instance.fragment.helpers+(holesByInstance[instance.id] as string),importModules);
     namesByInstance[instance.id] = names; fieldsByInstance[instance.id] = fieldNames; typesByInstance[instance.id] = types;
@@ -347,7 +347,7 @@ export async function assembleWith(composition: screens.Composition, computation
     // The syntax mechanism reports every fragment-declared root; compiled ownership policy decides and
     // names the instance and the view it refuses.
     for (let declaredRoot of decoded.strings(qualifiedSource.roots)) { s.reject("Fragment declares a root view: "+instance.id+"."+declaredRoot); }
-    let resolvedTypes: Record<string, unknown> = qualifiedSource.types as Record<string, unknown>;
+    let resolvedTypes: Record<string, string> = decoded.stringRecord(qualifiedSource.types);
     let item: Prepared = {id:instance.id,declarations:qualifiedSource.declarations as string,helpers:qualifiedSource.helpers as string,view:qualifiedSource.view as string,fields:[],updates:instance.fragment.updates,effects:instance.fragment.effects,viewName:qualified(instance.id,views[0].name as string)};
     for (let source of instance.fragment.fields) {
       let initial: string = "null"; if (source.role !== "derived") { initial = await expression(source.initial,source.type,item,names,fieldNames,types,""); }
@@ -408,7 +408,7 @@ export async function assembleWith(composition: screens.Composition, computation
   let operations: OperationRecord[] = []; let conditions: string[] = [];
   for (let binding of registry.bindings) {
     let dependencies: string[] = []; let ready: string[] = [];
-    for (let key of tables.keys(binding.arguments)) {
+    for (let key of Object.keys(binding.arguments)) {
       let selected: bindings.Source = bindings.source(registry,binding.arguments[key] as string);
       addUnique(dependencies,selected.getter);
       if (selected.ready !== "true" && selected.ready !== "") { addUnique(dependencies,selected.ready); }
@@ -442,7 +442,7 @@ export async function assembleWith(composition: screens.Composition, computation
       closeReads(dependencies,triggerValue,producerReads);
       addUnique(dependencies,triggerValue);
     }
-    if (tables.keys(binding.arguments).length > 0 && dependencies.length === 0) { s.reject("Operation constructs arguments from state without a dependency set: "+binding.id); }
+    if (Object.keys(binding.arguments).length > 0 && dependencies.length === 0) { s.reject("Operation constructs arguments from state without a dependency set: "+binding.id); }
     for (let dependency of dependencies) {
       let issued: boolean = false;
       for (let entry of allFields) { if (entry.name === dependency || (entry.role === "derived" && (entry.name+"_ready" === dependency || entry.name+"_reason" === dependency))) { issued = true; } }
@@ -529,17 +529,17 @@ export async function assembleWith(composition: screens.Composition, computation
   // (an id may contain an underscore) would emit two declarations of that name, so the collision is
   // refused once here, naming both owners, before any view, effect or composite resolves it. Every value
   // in `names` is the qualified spelling of its own instance, so a legal composition never collides.
-  let emittedNames: Record<string, unknown> = {};
+  let emittedNames: Record<string, string> = {};
   for (let instance of composition.screen.instances) {
-    let declared: Record<string, unknown> = namesByInstance[instance.id] as Record<string, unknown>;
-    for (let local of tables.keys(declared)) {
+    let declared: Record<string, string> = namesByInstance[instance.id] as Record<string, string>;
+    for (let local of Object.keys(declared)) {
       let emitted: string = s.text(declared[local]); let claimed: string = instance.id+"."+local;
       if (Object.hasOwn(emittedNames,emitted)) { s.reject("Ambiguous qualified declaration name: "+emitted+" for "+s.text(emittedNames[emitted])+" and "+claimed); }
       emittedNames[emitted] = claimed;
     }
   }
   for (let item of prepared) {
-    let names: Record<string, unknown> = namesByInstance[item.id] as Record<string, unknown>;
+    let names: Record<string, string> = namesByInstance[item.id] as Record<string, string>;
     for (let bound of decoded.strings(viewActionsByInstance[item.id])) {
       let emitted: string = bound; if (Object.hasOwn(names,bound)) { emitted = names[bound] as string; }
       let matched: boolean = false;
@@ -587,13 +587,13 @@ export async function assembleWith(composition: screens.Composition, computation
     if (!Object.hasOwn(descriptor,"input")) { continue; }
     let input: bindings.Draft = descriptor.input as bindings.Draft;
     let draftName: string = "draft_"+input.sourceId; let readyName: string = "ready_"+input.sourceId;
-    let changes: Record<string, unknown> = {}; changes[draftName] = "action.value"; changes[readyName] = "true";
+    let changes: Record<string, string> = {}; changes[draftName] = "action.value"; changes[readyName] = "true";
     declarations = declarations+"export class Draft_"+input.sourceId+" { value: string; }\nexport function draftAction_"+input.sourceId+"(state: AppState, action: Draft_"+input.sourceId+"): AppState { return "+copyExpression(allFields,changes,"state")+"; }\nexport function update_Draft_"+input.sourceId+"(state: AppState, action: Draft_"+input.sourceId+"): AppState { let updated: AppState = recompute(draftAction_"+input.sourceId+"(state, action)); return bump(updated, state); }\n";
   }
   let viewImports: Import[] = [{module:"./experience",alias:"app"},{module:"./platform.dealui-pack",alias:"ui"}];
   for (let instance of composition.screen.instances) {
     let facts: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:instance.fragment.declarations,fields:"",functions:instance.fragment.helpers,view:instance.fragment.view})));
-    let names: Record<string, unknown> = namesByInstance[instance.id] as Record<string, unknown>;
+    let names: Record<string, string> = namesByInstance[instance.id] as Record<string, string>;
     for (let item of decoded.records(facts.viewImports)) { let alias: string = item.alias as string; if (Object.hasOwn(names,alias)) { alias = names[alias] as string; } if (!permitted(registry,item.module as string)) { s.reject("unissued module "+(item.module as string)+" in "+instance.id); } // A view is never an effect function, so the Experience store is not reachable from it.
       if ((item.module as string) === "host/storage") { s.reject("effect-bound storage: "+instance.id+"/"+alias+" in view"); }
       addImport(viewImports,item.module as string,alias); }
@@ -648,7 +648,7 @@ export async function assembleWith(composition: screens.Composition, computation
   let expirySource: string = "export function expireOperations(state: AppState, at: number): AppState {\n";
   if (operations.length === 0) { expirySource = expirySource+"  return state;\n}\n"; }
   else {
-    let expiredChanges: Record<string, unknown> = {};
+    let expiredChanges: Record<string, string> = {};
     for (let operation of operations) {
       let name: string = operation.expired;
       expirySource = expirySource+"  let "+name+": boolean = state."+name+";\n  if (!"+name+" && state."+operation.expires+" !== 0 && (!Number.isFinite(at) || at >= state."+operation.expires+")) { "+name+" = true; }\n";
@@ -668,7 +668,7 @@ export async function assembleWith(composition: screens.Composition, computation
   else {
     recordExpiry = recordExpiry+"  if (expiresAt !== 0 && (!Number.isFinite(expiresAt) || expiresAt < 0 || expiresAt < admittedAt)) { return state; }\n";
     for (let operation of operations) {
-      let changes: Record<string, unknown> = {}; changes[operation.expires] = "expiresAt"; changes[operation.expired] = "false";
+      let changes: Record<string, string> = {}; changes[operation.expires] = "expiresAt"; changes[operation.expired] = "false";
       recordExpiry = recordExpiry+"  if (operationId === "+literals.quote(operation.id)+") { return recompute("+copyExpression(allFields,changes,"state")+"); }\n";
     }
     recordExpiry = recordExpiry+"  return state;\n}\n";
@@ -677,7 +677,7 @@ export async function assembleWith(composition: screens.Composition, computation
   // dependency unchanged (an equivalent draft spelling, self-pending bookkeeping, an unrelated row)
   // bumps nothing.
   let bumpSource: string = "export function bump(next: AppState, previous: AppState): AppState {\n";
-  let revisions: Record<string, unknown> = {};
+  let revisions: Record<string, string> = {};
   for (let operation of operations) {
     let name: string = "revision_"+operation.id;
     let condition: string = "false";
@@ -703,7 +703,7 @@ export async function assembleWith(composition: screens.Composition, computation
         if (readyToEmit) {
           let owner: Prepared | null = null; for (let item of prepared) { if (item.id === computation.instance) { owner = item; } }
           let instance: Prepared = owner as Prepared;
-          let names: Record<string, unknown> = namesByInstance[instance.id] as Record<string, unknown>; let fields: Record<string, unknown> = fieldsByInstance[instance.id] as Record<string, unknown>; let types: Record<string, unknown> = typesByInstance[instance.id] as Record<string, unknown>;
+          let names: Record<string, string> = namesByInstance[instance.id] as Record<string, string>; let fields: Record<string, string> = fieldsByInstance[instance.id] as Record<string, string>; let types: Record<string, string> = typesByInstance[instance.id] as Record<string, string>;
           let allowedReads: string[] = [];
           // A raw text buffer is a checked read of this computation, so purity admits it, while it never
           // enters the issued dependency set of an operation. Only an authoritative resource of this
@@ -739,7 +739,7 @@ export async function assembleWith(composition: screens.Composition, computation
           }
           let sources: string[] = [computation.ready,computation.value,computation.reason];
           let expected: string[] = ["boolean",types[computation.field] as string,"string"];
-          let variables: Record<string, unknown> = {state:"AppState"};
+          let variables: Record<string, string> = {state:"AppState"};
           for (let index of [0,1,2]) {
             requests[requests.length] = {function:"expression",input:s.encode({source:sources[index],expected:expected[index],names:names,fields:fields,types:types,variables:variables})};
           }
@@ -754,11 +754,11 @@ export async function assembleWith(composition: screens.Composition, computation
           for (let dependency of computation.dependencies) { for (let input of allFields) { if (input.name === dependency && input.role === "derived") { ready = "state."+input.name+"_ready && ("+ready+")"; } } }
           let value: string = syntaxValue(results[4]);
           let reason: string = syntaxValue(results[5]);
-          let changes: Record<string, unknown> = {}; changes[target.name] = "null"; changes[target.name+"_ready"] = "false"; changes[target.name+"_reason"] = reason; if (displayable(target.type)) { changes[target.name+"_display"] = placeholder(target.type); }
+          let changes: Record<string, string> = {}; changes[target.name] = "null"; changes[target.name+"_ready"] = "false"; changes[target.name+"_reason"] = reason; if (displayable(target.type)) { changes[target.name+"_display"] = placeholder(target.type); }
           recompute = recompute+"  if ("+ready+") {\n    let value: "+target.type+" = "+value+";\n";
           let finite: string = "true"; if (target.type === "number") { finite = "Number.isFinite(value)"; }
           recompute = recompute+"    if ("+finite+") {\n";
-          let available: Record<string, unknown> = {}; available[target.name] = "value"; available[target.name+"_ready"] = "true"; available[target.name+"_reason"] = "\"\""; if (displayable(target.type)) { available[target.name+"_display"] = "value"; }
+          let available: Record<string, string> = {}; available[target.name] = "value"; available[target.name+"_ready"] = "true"; available[target.name+"_reason"] = "\"\""; if (displayable(target.type)) { available[target.name+"_display"] = "value"; }
           recompute = recompute+"      state = "+copyExpression(allFields,available,"state")+";\n    } else {\n      state = "+copyExpression(allFields,changes,"state")+";\n    }\n  } else {\n    state = "+copyExpression(allFields,changes,"state")+";\n  }\n";
           ordered[ordered.length] = target.name; progress = true;
         }
@@ -767,13 +767,13 @@ export async function assembleWith(composition: screens.Composition, computation
     if (!progress) { s.reject("Derived dependency cycle"); }
   }
   recompute = recompute+"  return state;\n}\n";
-  let initial: Record<string, unknown> = {};
+  let initial: Record<string, string> = {};
   for (let item of allFields) { initial[item.name] = item.initial; if (item.role === "derived") { initial[item.name+"_ready"] = "false"; initial[item.name+"_reason"] = "\"Not ready\""; if (displayable(item.type)) { initial[item.name+"_display"] = placeholder(item.type); } } }
   declarations = declarations+recompute+initialStateSource(allFields,initial)+hook+expirySource+recordExpiry+bumpSource+"export function main(): void { return; }\n";
   // The compiled app module owns the persisted authoritative projection: only authoritative fields are
   // written, restore allocates the typed state and rebuilds derived fields with the same recompute
   // before any view exists. A saved record with an unsupported or missing field is refused atomically.
-  let projection: string = ""; let unsupported: string = ""; let required: string = ""; let restored: Record<string, unknown> = {};
+  let projection: string = ""; let unsupported: string = ""; let required: string = ""; let restored: Record<string, string> = {};
   for (let item of allFields) {
     if (item.role === "authoritative") {
       projection = projection+"  result["+literals.quote(item.name)+"] = state."+item.name+";\n";
@@ -835,7 +835,7 @@ export async function assembleWith(composition: screens.Composition, computation
     }
   }
   if (chat && prepared.length > 1) {
-    let selectionChange: Record<string, unknown> = {}; selectionChange["chat_selected"] = "action.value";
+    let selectionChange: Record<string, string> = {}; selectionChange["chat_selected"] = "action.value";
     declarations = declarations+"export class ChangeChat { value: number; }\nexport function changeChat(state: AppState, action: ChangeChat): AppState {\n  if (Math.floor(action.value) !== action.value || action.value < 0 || action.value >= "+String(prepared.length)+") { return state; }\n  return recompute("+copyExpression(allFields,selectionChange,"state")+");\n}\n// @ui-update\nexport function update_chat(state: AppState, action: ChangeChat): AppState {\n  let updated: AppState = changeChat(state, action);\n  return bump(updated, state);\n}\n";
     viewSource = viewSource+"// @ui-root\nexport view Main(state: app.AppState): View {\n  ui.Tabs(labels: state.chat_labels, selected: state.chat_selected, onChange: action app.ChangeChat {value: payload}) {\n";
     for (let item of prepared) { viewSource = viewSource+"    "+item.viewName+"(state: state)\n"; }
@@ -870,7 +870,7 @@ export async function assembleWith(composition: screens.Composition, computation
       if (found === null) { s.reject("Filled slot names an absent instance: "+slot.id); }
       let filled: screens.Instance = found as screens.Instance;
       writes = ownership.writes(map,filled,ownershipFacts);
-      provider = providerCalls(ownershipFacts[instance] as Record<string, unknown>,modulesByInstance[instance] as Record<string, unknown>,registry);
+      provider = providerCalls(ownershipFacts[instance] as Record<string, unknown>,modulesByInstance[instance] as Record<string, string>,registry);
       // A catalogue slot declares exactly its instance kind, a part slot its part kind, and a custom
       // or notice implementation declares none; every other set rejects.
       if (filled.origin === "catalogue") { if (slot.allowedKinds.length !== 1 || slot.allowedKinds[0] !== filled.kind) { s.reject("Filled catalogue slot kind outside allowedKinds: "+slot.id); } }
@@ -975,7 +975,7 @@ export async function assembleWith(composition: screens.Composition, computation
   }
   return {source:{deal:declarations,dealui:viewSource},fields:allFields,computations:ordered,metadata:{slots:slots,operations:operations,runtime:map.runtime,publications:publications,drivers:drivers,clockDrivers:clockDrivers,sessionClock:sessionClock,composites:compositeActions,chatRoot:chat,notices:notices,declarations:storageNames,owners:ownerRecords,composerOwned:composerOwned,instances:instanceRecords,sources:sourceIds}};
 }
-function initialStateSource(fields: Field[], initial: Record<string, unknown>): string {
+function initialStateSource(fields: Field[], initial: Record<string, string>): string {
   return "export function initialState(): AppState {\n  let capturedTime: number = embeddingClock.nowMillis();\n  let candidate: AppState = "+copyExpression(fields,initial,"")+";\n  return recompute(candidate);\n}\n";
 }
 export async function assemble(composition: screens.Composition, computations: Computation[]): Promise<Result> {

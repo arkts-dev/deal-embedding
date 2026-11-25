@@ -1,4 +1,3 @@
-import * as tables from "std/table";
 import * as decoded from "./decoded";
 import * as s from "./construction-schema";
 import * as syntax from "embedding/fragment-syntax";
@@ -34,9 +33,9 @@ function boundAlias(source: string, alias: string): boolean {
   }
   return false;
 }
-export async function inspect(source: string, imports: Record<string, unknown>): Promise<Facts> {
+export async function inspect(source: string, imports: Record<string, string>): Promise<Facts> {
   let pure: string[] = []; let aliases: string[] = []; let aliased: boolean = false;
-  for (let alias of tables.keys(imports)) {
+  for (let alias of Object.keys(imports)) {
     let module: string = imports[alias] as string;
     aliases[aliases.length] = alias;
     if (boundAlias(source,alias)) { aliased = true; }

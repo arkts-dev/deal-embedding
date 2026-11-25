@@ -153,9 +153,13 @@ export async function rejectedBodies(): Promise<number> {
   try { await composer.assemble({screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer]},bindings:{},actions:{},connections:[]},[]); }
   catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } unissued = true; }
   if (!unissued) { throw {name:"TEST_FAILED",message:"Unissued hole body admitted"}; } count = count+1;
-  timer.bodies = {"whenFinished": 5};
+  // Typed production maps reject non-text writes at compile time. Exercise untrusted
+  // composition admission instead of constructing an invalid typed value.
+  timer.bodies = {"whenFinished": "NON_TEXT_BODY"};
+  let malformedComposition: screens.Composition = {screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer]},bindings:{},actions:{},connections:[]};
+  let malformed: string = s.encode(malformedComposition).replace("\"NON_TEXT_BODY\"","5");
   let nontext: boolean = false;
-  try { await composer.assemble({screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer]},bindings:{},actions:{},connections:[]},[]); }
+  try { screens.decode(malformed,"screen",[]); }
   catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } nontext = true; }
   if (!nontext) { throw {name:"TEST_FAILED",message:"Non-text hole body admitted"}; } count = count+1;
   let long: string = ""; let index: number = 0; while (index < 601) { long = long+"a"; index = index+1; }

@@ -39,7 +39,19 @@ function insist(value: boolean, message: string): void { if (!value) { throw {na
 function rejectsPlan(raw: string): void { let rejected: boolean = false; try { plans.decode(raw,[],[],"",""); } catch (error) { rejected = true; } insist(rejected,"Invalid plan admitted"); }
 function planFailure(raw: string, original: string, facts: string): string { try { plans.decode(raw,[],[],original,facts); } catch (errorUnknown) { let error: Error = errorUnknown as Error; return error.message; } return ""; }
 function refusesPlan(raw: string, original: string, facts: string, located: string): void { let message: string = planFailure(raw,original,facts); insist(message !== "","Invalid plan admitted: "+located); insist(strings.contains(message,located),"Plan rejection "+located+" missing, got: "+message); }
+function unknownRecord(value: unknown): Record<string, unknown> { return value as Record<string, unknown>; }
 export function schemas(): null {
+  const rawLabels: Record<string, unknown> = JSON.parse("{\"2\":\"two\",\"__proto__\":\"safe\",\"text\":\"\\ud800\"}");
+  const labels: Record<string, string> = decoded.stringRecord(rawLabels);
+  insist((labels["__proto__"] as string) === "safe" && (labels.text as string) === "\ud800" && labels.absent === undefined,"String dictionary key/text/absence changed");
+  rawLabels.text = "changed";
+  insist((labels.text as string) === "\ud800","String dictionary conversion aliases decoded input");
+  let badDictionary: boolean = false;
+  try { decoded.stringRecord(JSON.parse("{\"bad\":1}")); } catch(error) { badDictionary = true; }
+  insist(badDictionary,"Non-string dictionary value admitted");
+  badDictionary = false;
+  try { unknownRecord(labels); } catch(error) { badDictionary = true; }
+  insist(badDictionary,"String dictionary descriptor was erased");
   for (const path of ["M +.5 -.5 L 1. 2.","M 001 000.5 L 1.e2 .5E+1","M -0 +0 A 01 02 0 0 1 3 4 Z"]) { graphics.path(path); }
   for (const path of ["M 1e 0","M 1e+ 0","M . 0","M 1e999 0","M 0 0 A 1 1 0 2 0 3 4"]) {
     let rejected: boolean = false; try { graphics.path(path); } catch(error) { rejected = true; } insist(rejected,"Malformed SVG number admitted: "+path);

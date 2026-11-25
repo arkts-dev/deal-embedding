@@ -44,7 +44,7 @@ function checked(saved,appModule='experience.js'){
 const tree=context=>JSON.parse(vm.runInContext('dealUi.snapshot()',context)).tree;
 const projected=context=>vm.runInContext('persistDealUi()',context);
 const readState=context=>vm.runInContext(`if(!globalThis.__state){const loaded=dealLoad(factories,'experience_entry.js','experience.js');
-  globalThis.__state=createDealUiCheckpoint(loaded.rt,loaded.checkpointSchema,loaded.entry.bridgeSchemaDigest.$f()).decode(JSON.parse(dealUi.checkpoint()),loaded.entry.bridgeInitialState.$sig.substring(4));}''`,context);
+  globalThis.__runtime=loaded.rt;globalThis.__state=createDealUiCheckpoint(loaded.rt,loaded.checkpointSchema,loaded.entry.bridgeSchemaDigest.$f()).decode(JSON.parse(dealUi.checkpoint()),loaded.entry.bridgeInitialState.$sig.substring(4));}''`,context);
 function nodes(node,visit){visit(node);for(const child of node.children)nodes(child,visit);}
 const props=node=>Object.fromEntries(node.props.map(prop=>[prop.name,prop]));
 function numberText(tree){let found;nodes(tree,node=>{const p=props(node);if(node.component.split('.').pop()==='NumberText'&&found===undefined)found=p.value.numberValue;});return found;}
@@ -54,9 +54,9 @@ function fieldSlot(tree){let slot;nodes(tree,node=>{const p=props(node);if(node.
 function rejects(run,pattern,message){let thrown=null;try{run();}catch(error){thrown=error;}assert.ok(thrown!==null,message||'expected rejection');if(pattern!==undefined)assert.ok(pattern.test((thrown&&thrown.message)||(thrown&&thrown.code)||String(thrown)),'unexpected rejection: '+((thrown&&thrown.message)||String(thrown)));}
 
 const AUTHORITATIVE=['f_calculation_value','f_calculation_flag','f_calculation_sequence','f_calculation_display','f_calculation_head','f_calculation_mirror','f_calculation_leaf'];
-function entries(envelope){assert.equal(envelope.value[0],'record','the projection root is the issued record, not the live class');return new Map(envelope.value[2]);}
+function entries(envelope){assert.equal(envelope.value[0],'record','the projection root is the issued record, not the live class');assert.equal(envelope.value[2],'record');return new Map(envelope.value[3]);}
 function wireNodes(root){const found=new Map();(function visit(node){if(!Array.isArray(node))return;const tag=node[0];
-  if(tag==='class'||tag==='record'){found.set(node[1],node);for(const pair of node[tag==='class'?3:2])visit(pair[1]);}
+  if(tag==='class'||tag==='record'){found.set(node[1],node);for(const pair of node[3])visit(pair[1]);}
   else if(tag==='array'){found.set(node[1],node);for(const item of node[3])visit(item);}})(root);return found;}
 
 // A live Session with an edited authoritative value, a graph alias, a cycle and optional absence.
@@ -106,11 +106,16 @@ readState(restored);
 const identity=JSON.parse(vm.runInContext('JSON.stringify({alias:__state.f_calculation_head.next===__state.f_calculation_mirror,cycle:__state.f_calculation_mirror.next===__state.f_calculation_head,nodes:[__state.f_calculation_head.value,__state.f_calculation_mirror.value,__state.f_calculation_leaf.value],absent:__state.f_calculation_leaf!==null&&!Object.hasOwn(__state.f_calculation_leaf,"next"),value:__state.f_calculation_value,flag:__state.f_calculation_flag,sequence:__state.f_calculation_sequence,triple:__state.f_calculation_triple})',restored));
 assert.deepEqual(identity,{alias:true,cycle:true,nodes:[7,8,9],absent:true,value:4,flag:false,sequence:0,triple:24},'authoritative identity, aliases, cycles, absence and recomputation survive');
 
+assert.equal(vm.runInContext('__state.f_calculation_leaf.labels.get("__proto__")',restored),'safe');
+assert.equal(vm.runInContext('__state.f_calculation_leaf.labels.get("text")',restored),'\ud800');
+assert.equal(vm.runInContext('__runtime.checkType("record[string]",__state.f_calculation_leaf.labels)===__state.f_calculation_leaf.labels',restored),true);
+rejects(()=>vm.runInContext('__runtime.tableSet(__state.f_calculation_leaf.labels,"bad",42)',restored));
+
 // An edited authoritative value is the restore input; derived outputs follow it.
 const edited=JSON.parse(saved);
-const editedFields=new Map(edited.value[2]);
+const editedFields=new Map(edited.value[3]);
 editedFields.set('f_calculation_value',['number','9']);
-edited.value[2]=[...editedFields];
+edited.value[3]=[...editedFields];
 const changed=open(edited);
 assert.equal(numberText(tree(changed)),18,'the edited authoritative value survives cold reopen');
 readState(changed);
@@ -120,10 +125,10 @@ assert.deepEqual(JSON.parse(projected(changed)),edited,'a persisted record round
 // A saved derived value is never an input: the record carries no derived field, and a record that
 // names one is rejected atomically while the retained bytes stay usable.
 const poisoned=JSON.parse(saved);
-poisoned.value[2].push(['f_calculation_double',['number','999']]);
+poisoned.value[3].push(['f_calculation_double',['number','999']]);
 rejects(()=>open(poisoned),/Unsupported/,'a saved derived value is refused, never trusted');
 const poisonedSupport=JSON.parse(saved);
-poisonedSupport.value[2].push(['f_calculation_double_ready',['boolean',true]]);
+poisonedSupport.value[3].push(['f_calculation_double_ready',['boolean',true]]);
 rejects(()=>open(poisonedSupport),/Unsupported/);
 const fullState=JSON.parse(vm.runInContext('dealUi.checkpoint()',live));
 assert.equal(fullState.value[0],'class');
@@ -148,9 +153,9 @@ rejects(()=>open(envelope,null),/PERSISTENCE_ROLES/,'restore never infers field 
 const digest=JSON.parse(saved);digest.schemaDigest='incompatible';
 rejects(()=>open(digest),/Schema mismatch/);
 const missing=JSON.parse(saved);
-missing.value[2]=missing.value[2].filter(pair=>pair[0]!=='f_calculation_flag');
+missing.value[3]=missing.value[3].filter(pair=>pair[0]!=='f_calculation_flag');
 rejects(()=>open(missing),/Missing/);
 const wrongType=JSON.parse(saved);
-wrongType.value[2]=wrongType.value[2].map(pair=>pair[0]==='f_calculation_value'?['f_calculation_value',['string','4']]:pair);
+wrongType.value[3]=wrongType.value[3].map(pair=>pair[0]==='f_calculation_value'?['f_calculation_value',['string','4']]:pair);
 rejects(()=>open(wrongType),undefined,'an incompatible authoritative type rejects the record');
 console.log('persistence: authoritative projection, cold restore before mount, recomputed derived values, graph identity and fail-closed records passed');
