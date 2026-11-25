@@ -109,22 +109,24 @@ JAVA_OPTS=-Xmx768m bash demos/build.sh tests
 bash tests/run.sh
 ```
 
-`tests/run.sh` takes the build lock for the whole lane and then runs its items as six declared
-concurrent sequences (`composed`, `generation`, `catalogue`, `catalogue_runtime`, `contracts`,
-`policy`) plus the exclusive items that must see no other item's work. Every item keeps its command,
+`tests/run.sh` takes the build lock for the whole lane and then runs its items as seven declared
+concurrent sequences (`composed`, `generation`, `catalogue`, `catalogue_runtime`, `constructive`,
+`contracts`, `policy`) plus the exclusive items that must see no other item's work. Every item keeps its command,
 bound, assertion and receipt; only the wall time overlaps, and every `start`/`exit`/`elapsed` line is
 prefixed with the sequence that reached it. Sequence membership is by shared output tree, never by
 subject, and no sequence is longer than the tree its items write: the composer owns `composer-test`
 and its private pair trees, the generation cutover owns `generation-entry`, `composed-executable` and
-`emitted`, and each catalogue harness, the construction harness and the policy lanes owns a staging
-tree nothing else names. A sequence reads what the item before it in the same sequence wrote. The
+`emitted`, and each catalogue harness, the construction and constructive harnesses and the policy
+lanes owns a staging tree nothing else names. A sequence reads what the item before it in the same sequence wrote. The
 exclusive items run on an idle host, in order: the vocabulary item (it compiles through the composer's
 staging tree and writes `composed-executable`, so it observes both of the sequences that own those
 trees), the two fake-build harnesses (whose inner caps observe a hang at 4-8 seconds), the standalone
 proof, the seam controls and the matrix audit. A sequence stops at its
 first failing item, and no exclusive item starts behind a failed sequence, so a failing gate reports
 only items it observed. Measured on this toolchain the concurrent phase takes 330 s over the six
-sequences and the exclusive tail 350 s while the demo and fixture caches are warm. One run whose demo
+sequences it declared then and the exclusive tail 350 s while the demo and fixture caches are warm;
+the constructive sequence is a seventh, measured at 39 s warm, still shorter than the longest declared
+sequence, so it adds no wall time to the phase that sequence already bounds. One run whose demo
 and fixture caches were all cold took 914 s of tail, 595 s of it the standalone proof repackaging every
 declared demo target over the batch's two jobs; the proof now repackages over the three jobs the
 production batch itself declares, which measured 68 s for the same seven targets against a warm

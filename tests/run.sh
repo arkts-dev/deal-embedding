@@ -101,6 +101,13 @@ gate_sequence_catalogue_runtime() {
     # own `catalogue-runtime` output tree, so it shares nothing with the compiled contracts above.
     python3 tests/tools/test-catalogue-runtime.py
 }
+gate_sequence_constructive() {
+    # Constructive calculations over actual records: a complete Food allocation and a whole-basket
+    # Equipment comparison recomputed after edits, with the refundable deposit kept separate. Its own
+    # `constructive-runtime-tests` staging tree and its own `constructive-runtime` compile output, so it
+    # shares no output tree with the sequences above.
+    python3 tests/tools/test-constructive-runtime.py
+}
 gate_sequence_contracts() {
     python3 tests/tools/test-construction-contracts.py
     # Session execution policy: dependency revisions, currentness, expiry trust, authority and text admission.
@@ -138,7 +145,7 @@ gate_sequence_policy() {
 # A sequence stops at its first failing item, and the lane fails once every launched sequence is reaped.
 # The exclusive items below never start on a failed sequence, so a failing gate reports items that were
 # observed and never reports a stale artifact of a run that broke earlier.
-gate_sequences=(composed generation catalogue catalogue_runtime contracts policy)
+gate_sequences=(composed generation catalogue catalogue_runtime constructive contracts policy)
 gate_pids=()
 for gate_name in "${gate_sequences[@]}"; do
     ( set -e; "gate_sequence_${gate_name}" ) 2>&1 | sed -u "s|^|[gate:${gate_name}] |" &

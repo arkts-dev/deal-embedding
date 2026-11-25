@@ -43,11 +43,17 @@ export async function inspect(source: string, imports: Record<string, string>): 
   }
   return {functions:JSON.parse(await syntax.analyzeFunctions(s.encode({source:source}))),pureImports:pure,aliases:aliases,aliased:aliased};
 }
+// The call chain to the rejected construct, so a located reason names the helper that carries it. An
+// empty chain (the computation's own expression) adds no clause instead of a dangling separator.
+function chain(path: string[]): string { if (path.length === 0) { return ""; } return " via "+path.join(">"); }
 function check(fact: Record<string, unknown>, facts: Facts, reads: string[], path: string[]): void {
-  if (fact.indirect as boolean) { s.reject("Recomputation requires checked read-only summary for indirect/effectful calls: "+path.join(">")); }
-  // Borrow safety for helpers is additionally checked by the production UI compiler.
-  // Conservatively reject writes here rather than permit a purity escape through an alias.
-  if (decoded.strings(fact.writes).length > 0) { s.reject("Recomputation helper writes require a checked fresh-local summary"); }
+  if (fact.indirect as boolean) { s.reject("Recomputation requires checked read-only summary for indirect/effectful calls"+chain(path)); }
+  // Fresh local computation is legal (docs/spec-v0.8.md:363): a container this helper allocated
+  // itself is written without reaching any committed value, so its element and field writes are the
+  // mechanic a constructive calculation over actual records uses. A write that reaches the state
+  // parameter or a container of unproven provenance stays refused here; a write through a borrowed
+  // local is the borrowed-state write the ownership policy rejects for every helper of the instance.
+  for (let target of decoded.strings(fact.writes)) { s.reject("Recomputation writes state or an unproven container: "+target+chain(path)); }
   for (let read of decoded.strings(fact.reads)) {
     let parts: string[] = read.split(".");
     if (parts[0] === "state") { if (parts.length < 2 || !s.contains(reads,parts[1])) { s.reject("Undeclared computation read: "+read); } }
@@ -67,7 +73,7 @@ function check(fact: Record<string, unknown>, facts: Facts, reads: string[], pat
       if (s.contains(path,call)) { s.reject("Recursive recomputation helper lacks bounded read-only summary"); }
       const next = path.concat([call]);
       check(facts.functions[call] as Record<string, unknown>,facts,reads,next);
-    } else { s.reject("Effectful or unverified recomputation call: "+call+" via "+path.join(">")); }
+    } else { s.reject("Effectful or unverified recomputation call: "+call+chain(path)); }
   }
 }
 export function checkedExpression(encoded: string, facts: Facts, reads: string[]): void {
