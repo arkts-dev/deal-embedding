@@ -1,0 +1,1 @@
+export function read(value: number): Promise<number>;

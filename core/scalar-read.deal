@@ -90,17 +90,23 @@ export function build(plan: plans.Plan, candidates: Candidate[], first: selectin
     built.fields[built.fields.length] = field(candidate.need,"number","null","derived");
     built.fields[built.fields.length] = field(prefix+"text","string","null","derived");
     let start: string = "Load_"+id; let completion: string = "Loaded_"+id;
-    built.declarations = built.declarations+"import * as provider_"+id+" from "+literals.quote(candidate.module)+"; export class "+start+" {sequence:number;} export class "+completion+" {sequence:number;argument:number;ok:boolean;value:number;code:string;outcome:string;message:string;}";
+    // The declared completion carries the terminal classification and the argument snapshot and sequence
+    // of the invocation it answers, which is what the reducer correlates. The captured epoch and Session
+    // lifetime stay in the effect's own scope and are re-read from the host before the reply is admitted,
+    // so no permission or lifetime token enters a declared field, an action payload or saved state.
+    built.declarations = built.declarations+"import * as provider_"+id+" from "+literals.quote(candidate.module)+"; import * as session from \"embedding/session\"; export class "+start+" {sequence:number;} export class "+completion+" {accepted:boolean;sequence:number;argument:number;ok:boolean;value:number;code:string;outcome:string;message:string;}";
     built.updates[built.updates.length] = {action:start,function:"start_"+id};
     built.updates[built.updates.length] = {action:completion,function:"complete_"+id};
     built.effects[built.effects.length] = {action:start,function:"read_"+id};
     // Complete local owner projections are expanded by the same composer as other parts.
     let changes: string = prefix+"sequence:state."+prefix+"sequence+1,"+prefix+"action:action,"+prefix+"pending:true,"+prefix+"argument:"+argument+","+prefix+"valid:false,"+prefix+"code:\"\","+prefix+"outcome:\"none\","+prefix+"status:\"Loading\"";
     built.helpers = built.helpers+"export function start_"+id+"(state:AppState,action:"+start+"):AppState {if(action.sequence !== state."+prefix+"sequence || state."+prefix+"pending || !("+ready+") || state."+prefix+"sequence >= 9007199254740991){return state;} return {"+changes+"};}";
-    let call: string = "provider_"+id+"."+candidate.function+"("; if (candidate.argument !== "") { call = call+"state."+prefix+"argument"; } call = call+")";
-    let completionPrefix: string = "sequence:state."+prefix+"sequence,argument:state."+prefix+"argument,";
-    built.helpers = built.helpers+"export async function read_"+id+"(state:AppState,action:"+start+"):Promise<"+completion+"> {if(!state."+prefix+"pending || state."+prefix+"action === null || (state."+prefix+"action as "+start+") !== action || state."+prefix+"sequence !== action.sequence+1){return {sequence:-1,argument:0,ok:false,value:0,code:\"NOT_ADMITTED\",outcome:\"none\",message:\"Not admitted\"};} try {let value:number=await "+call+";if(!Number.isFinite(value) || value < "+s.encode(candidate.resultMinimum)+" || value > "+s.encode(candidate.resultMaximum)+"){return {"+completionPrefix+"ok:false,value:0,code:\"BAD_RESPONSE\",outcome:\"failure\",message:\"Invalid provider result\"};} return {"+completionPrefix+"ok:true,value:value,code:\"\",outcome:\"success\",message:\"Loaded\"};} catch(unknownError){let error:Error=unknownError as Error;return {"+completionPrefix+"ok:false,value:0,code:error.name,outcome:\"failure\",message:error.message};}}";
-    built.helpers = built.helpers+"export function complete_"+id+"(state:AppState,action:"+completion+"):AppState {if(!state."+prefix+"pending || action.sequence !== state."+prefix+"sequence || action.argument !== state."+prefix+"argument){return state;} if (!("+ready+") || action.argument !== "+argument+"){return {"+prefix+"pending:false,"+prefix+"valid:false,"+prefix+"status:\"Inputs changed; load again\"};}return {"+prefix+"pending:false,"+prefix+"valid:action.ok,"+prefix+"value:action.value,"+prefix+"code:action.code,"+prefix+"outcome:action.outcome,"+prefix+"status:action.message};}";
+    // The invocation itself is the emitted form of the compiled send and reply admission: the
+    // classification, grant, captured epoch and Session lifetime, the validated argument snapshot and
+    // the invocation window are decided before the call leaves, and the reply is admitted only while
+    // that same invocation is still current. A refusal returns the declared unaccepted completion and
+    // starts no call; a stale or unauthorized reply publishes no result.
+    built.helpers = built.helpers+execution.emittedInvocation({id:id,moduleName:candidate.module,functionName:candidate.function,start:start,completion:completion,ready:ready,argument:argument,minimum:candidate.resultMinimum,maximum:candidate.resultMaximum});
     for (let suffix of ["valid","argument","value"]) { dependencies[dependencies.length] = "f_parts_"+prefix+suffix; }
     // The issued set is derived from the fields this part really emits and the plan inputs the
     // instance owns, then checked and returned by the runtime policy: an operation that reads state

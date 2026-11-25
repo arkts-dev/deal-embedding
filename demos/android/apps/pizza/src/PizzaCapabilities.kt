@@ -41,5 +41,5 @@ fun pizzaCapabilities(context: Context): NativeCapabilities {
             JSONObject().put("proposalId", id).put("state", "pending")
         },
         "outcome" to { args -> dev.deal.shell.proposalOutcome(context, "pizza", args.getString(0), "orderId") },
-    ))
+    ), mapOf("menu" to "read", "delivery" to "read", "proposeOrder" to "mutating", "outcome" to "read"))
 }

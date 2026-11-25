@@ -2,6 +2,7 @@ package dev.deal.embedding.capabilities
 
 import dev.deal.embedding.CapabilityContract
 import dev.deal.embedding.CapabilityFunction
+import dev.deal.embedding.InvocationContext
 import dev.deal.embedding.Parameter
 import dev.deal.embedding.WireField
 import dev.deal.embedding.WireType
@@ -19,7 +20,9 @@ import org.json.JSONArray
  * nothing. Declarations are derived on demand from the accepted contracts (`CapabilityBindings`,
  * `ExperienceCompiler`), so preserving the accepted set preserves them; grants live in the registry's
  * permission probe, which disclosure never writes. The registry's own wiring of the live-session flag
- * and its Android session bookkeeping are exercised by the host integration owner, not here.
+ * and its Android session bookkeeping are exercised by the host integration owner, not here; its
+ * classification derivation (`acceptedClasses`) is shared and driven below with both provider shapes it
+ * accepts, a local registration and a discovered contract.
  */
 
 private val scalar = WireType("number", maximum = 0, minimumNumber = -1000.0, maximumNumber = 1000.0)
@@ -29,7 +32,8 @@ private fun function(
     parameters: List<Parameter> = emptyList(),
     result: WireType = scalar,
     description: String = "Read fixture value",
-) = CapabilityFunction(name, description, parameters, result)
+    classification: String = "",
+) = CapabilityFunction(name, description, parameters, result, classification)
 
 private fun contract(
     module: String = "host/probe",
@@ -216,5 +220,102 @@ fun main() {
         check(entries.admit(listOf(Entry(contract("host/probe")), Entry(contract("host/extra"))), live = false).map { it.module } == listOf("host/probe", "host/extra"))
     }
 
-    println("capability boundary: every contract bound rejects with a located INVALID_ARGUMENT and atomic disclosure keeps the accepted set and providers")
+    // The send boundary of the registry: disclosure and a module grant never authorize a mutation, so
+    // each case below is one registry-shaped call - module, function, provider source, grant and the
+    // facts the live Session publishes. The counting handlers are the provider calls that must not
+    // happen; an admitted call is dispatched once. The classification is derived with the production
+    // function the registry's own facts use, from one source per accepted provider: a local registration
+    // contributes its contract beside its class map and a discovered endpoint contributes the contract it
+    // disclosed, so neither shape is hand-written here.
+    var dispatched = 0
+    val staged = nativeCapabilities(contract(functions = listOf(function(name = "read"), function(name = "stage"), function(name = "write", parameters = listOf(Parameter("value", scalar)), result = WireType("boolean")))),
+        mapOf("read" to { _: JSONArray -> dispatched++; 7 }, "stage" to { _: JSONArray -> dispatched++; 8 }, "write" to { _: JSONArray -> dispatched++; true }),
+        mapOf("read" to "read", "stage" to "mutating", "write" to "mutating"))
+    fun sources(vararg entries: Pair<CapabilityContract, Map<String, String>>) = entries.toList()
+    fun local(vararg providers: NativeCapabilities) = providers.map { it.contract to it.classification() }
+    fun facts(
+        providers: List<Pair<CapabilityContract, Map<String, String>>> = local(staged),
+        confirmation: Map<String, String> = emptyMap(),
+        origin: String = "generated",
+        requestAuthorizes: Boolean = false,
+        requestTarget: String = "",
+    ) = CapabilityFacts(acceptedClasses(providers), confirmation, origin, requestAuthorizes, requestTarget)
+    var live = facts()
+    val calls = CapabilityCall { live }
+    fun snapshot(vararg values: Any) = JSONArray(values.toList()).toString()
+    val approved = "host/probe/write#" + snapshot(1.0)
+
+    // A host-classified read is admitted and dispatched exactly once.
+    check(calls.classification("host/probe", "read") == "read" && calls.admit("host/probe", "read", "[]", granted = true) == null) { "the host's read classification did not admit its call" }
+    val read = staged.contract.functions.single { it.name == "read" }
+    check(calls.invoke(staged, read, JSONArray(), InvocationContext(null)) == 7 && dispatched == 1) { "an admitted read did not reach the provider" }
+    // A module grant never authorizes a mutation: the same grant, with the host's mutating class and no
+    // confirmation, refuses before the provider is asked.
+    check(calls.classification("host/probe", "stage") == "mutating") { "a mutating classification was read as a read" }
+    check(calls.admit("host/probe", "stage", "[]", granted = true)?.reason == "Mutation requires host confirmation") { "a mutating-classified function was admitted" }
+    check(calls.admit("host/probe", "read", "[]", granted = false)?.reason == "Capability access not granted") { "an ungranted module was admitted" }
+    check(dispatched == 1) { "a refused call issued a provider call" }
+
+    // The host's approval of exactly one target and validated argument snapshot dispatches that call
+    // once; an approval of another snapshot of the same target dispatches nothing.
+    live = facts(confirmation = mapOf(approved to "approved"))
+    check(calls.admit("host/probe", "write", snapshot(1.0), granted = true) == null) { "an approved mutation was refused" }
+    val write = staged.contract.functions.single { it.name == "write" }
+    check(calls.invoke(staged, write, JSONArray().put(1.0), InvocationContext(null)) == true && dispatched == 2) { "an approved mutation did not dispatch exactly once" }
+    check(calls.admit("host/probe", "write", snapshot(2.0), granted = true)?.reason == "Confirmation approves another argument snapshot") { "an approval of another snapshot admitted the call" }
+    check(dispatched == 2) { "an approval of another snapshot issued a provider call" }
+
+    // A denial is final for its call, a stale approval no longer correlates, and an approval of another
+    // operation or target authorizes nothing.
+    live = facts(confirmation = mapOf(approved to "denied"))
+    check(calls.admit("host/probe", "write", snapshot(1.0), granted = true)?.reason == "Host denied the mutation") { "a host denial admitted the call" }
+    live = facts(confirmation = mapOf(approved to "stale"))
+    check(calls.admit("host/probe", "write", snapshot(1.0), granted = true)?.reason == "Confirmation no longer correlates") { "a stale approval admitted the call" }
+    live = facts(confirmation = mapOf("host/probe/stage#" + snapshot() to "approved"))
+    check(calls.admit("host/probe", "write", snapshot(1.0), granted = true)?.reason == "Approval names another operation or target") { "an approval of another target admitted the call" }
+    live = facts(confirmation = mapOf("host/other/write#" + snapshot(1.0) to "approved"))
+    check(calls.admit("host/probe", "write", snapshot(1.0), granted = true)?.reason == "Approval names another operation or target") { "another module's approval admitted this module's call" }
+    check(dispatched == 2) { "a refused mutation issued a provider call" }
+
+    // The frozen request's determination binds one exact operation and target, and only a generated
+    // Experience holds one; it admits that operation with no confirmation and nothing else.
+    live = facts(origin = "generated", requestAuthorizes = true, requestTarget = "host/probe/write")
+    check(calls.admit("host/probe", "write", snapshot(3.0), granted = true) == null) { "the frozen-request determination did not admit its operation" }
+    live = facts(origin = "generated", requestAuthorizes = true, requestTarget = "host/probe/stage")
+    check(calls.admit("host/probe", "write", snapshot(3.0), granted = true)?.reason == "Mutation requires host confirmation") { "a determination of another target admitted the call" }
+    live = facts(origin = "supplied", requestAuthorizes = true, requestTarget = "host/probe/write")
+    check(calls.admit("host/probe", "write", snapshot(3.0), granted = true)?.reason == "Mutation requires host confirmation") { "a supplied Experience inherited request authority" }
+    check(dispatched == 2) { "a refused determination issued a provider call" }
+
+    // An unclassified function is mutating, and another module's classification does not authorize
+    // this one either, because the classification names the target.
+    val plain = nativeCapabilities(contract(), mapOf("read" to { _: JSONArray -> dispatched++; 9 }))
+    live = facts(providers = local(plain))
+    check(calls.classification("host/probe", "read") == "mutating") { "an unclassified function was read as a read" }
+    check(calls.admit("host/probe", "read", "[]", granted = true)?.reason == "Mutation requires host confirmation") { "an unclassified function was admitted" }
+    live = facts(providers = local(plain), confirmation = mapOf(approved to "approved"))
+    check(calls.admit("host/probe", "read", "[]", granted = true)?.reason == "Approval names another operation or target") { "another module's approval authorized this module's call" }
+    check(dispatched == 2) { "an unclassified function issued a provider call" }
+
+    // Discovery publishes the host's class with the contract, and the consuming boundary reads the
+    // discovered read as a read: the same registration's disclosed text is what a remote app parses, so
+    // the registry derives these classes from the disclosed contract alone, with no local class map.
+    val disclosed = contract(module = "host/discovered", functions = listOf(function(name = "quote", classification = "read"), function(name = "reserve", classification = "mutating"), function(name = "settle")))
+    val discovered = CapabilityContract.parse(nativeCapabilities(disclosed, mapOf("quote" to { _: JSONArray -> dispatched++; 11 }, "reserve" to { _: JSONArray -> dispatched++; 12 }, "settle" to { _: JSONArray -> dispatched++; 13 })).declaration())
+    check(discovered.functions.single { it.name == "quote" }.classification == "read" && discovered.functions.single { it.name == "reserve" }.classification == "mutating") { "discovery did not publish the host classification" }
+    check(acceptedClasses(sources(discovered to emptyMap())) == mapOf("host/discovered/quote" to "read", "host/discovered/reserve" to "mutating", "host/discovered/settle" to "mutating")) { "a discovered contract's disclosed class did not reach the accepted classes" }
+    val remote = nativeCapabilities(discovered, mapOf("quote" to { _: JSONArray -> dispatched++; 11 }, "reserve" to { _: JSONArray -> dispatched++; 12 }, "settle" to { _: JSONArray -> dispatched++; 13 }))
+    live = facts(providers = sources(discovered to emptyMap()))
+    check(calls.classification("host/discovered", "quote") == "read" && calls.admit("host/discovered", "quote", "[]", granted = true) == null) { "a discovered read class was refused" }
+    check(calls.invoke(remote, remote.contract.functions.single { it.name == "quote" }, JSONArray(), InvocationContext(null)) == 11 && dispatched == 3) { "a discovered read did not dispatch once" }
+    check(calls.admit("host/discovered", "reserve", "[]", granted = true)?.reason == "Mutation requires host confirmation") { "a discovered mutating function was admitted" }
+    check(calls.classification("host/discovered", "settle") == "mutating" && calls.admit("host/discovered", "settle", "[]", granted = true)?.reason == "Mutation requires host confirmation") { "a discovered unclassified function was read as a read" }
+    check(dispatched == 3) { "a discovered mutation issued a provider call" }
+
+    // A disclosed class is part of the contract boundary: a third word is refused, located.
+    rejected("an unknown function classification", "functions[0].classification", "read or mutating", "write") {
+        CapabilityBoundary.validate(contract(functions = listOf(function(classification = "write"))))
+    }
+
+    println("capability boundary: every contract bound rejects with a located INVALID_ARGUMENT, atomic disclosure keeps the accepted set and providers, and the send boundary admits only a host-classified read, an exact host confirmation or a frozen-request determination, refusing every stale or unauthorized call before it is invoked")
 }

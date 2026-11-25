@@ -15,7 +15,9 @@ started=time.monotonic()
 # One pair lane compiles and drives its own private directories, so the lanes are independent of each
 # other and run concurrently: only the wall time overlaps, every assertion still executes. A lane's
 # compiler call is bounded by the same 120 s as the fixture compile, because three lanes now contend
-# for the same host where one did before; the bound only stops a runaway compile, it never caches one.
+# for the same host where one did before; the bound only stops a runaway compile. The compile itself is
+# a validated artifact (`compile_artifact`): identical inputs and byte-identical output are reused, and
+# every pair assertion still executes on its result.
 PAIR_WORKERS=3
 PAIR_COMPILE_SECONDS=lane_bounds.PAIR_COMPILE
 stage_context=threading.local()
@@ -120,7 +122,16 @@ def compile_pair(name,target='screen'):
         assert rejected.returncode!=0 and 'ADMISSION_TARGET' in rejected.stdout+rejected.stderr,rejected.stdout+rejected.stderr
         assert not (output/'admission.json').exists(),'a rejected compile input writes no manifest'
         return
-    run(['java','-Ddeal.home='+str(deal),'-cp',str(classes)+':'+cp,'CompileComposer',str(root),str(directory),target,str(directory/'metadata.json'),'true'],check=True,seconds=PAIR_COMPILE_SECONDS)
+    # The pair's production compile is a compiler artifact, not an assertion: it is reused only for
+    # identical validated inputs and outputs, and every assertion below still executes on the result.
+    # The input set is the pair's own compile inputs plus every packaged section CompileComposer copies
+    # (the pack, the frozen host declarations, the shipped projections) and the compiler classpath.
+    compile_artifact(root,'composer-pair-'+name,
+        [directory,classes,pathlib.Path(cp),deal/'std',root/'ui',root/'api/graphics.d.deal',deal_ui/'ui',
+         root/'build/embedding-consumer/assets',root/'build/embedding-library/classes',
+         root/'build/embedding-library/generated',pathlib.Path(shutil.which('javac')).resolve().parents[1]/'release'],
+        [directory.parent/'composed-executable'],
+        ['java','-Ddeal.home='+str(deal),'-cp',str(classes)+':'+cp,'CompileComposer',str(root),str(directory),target,str(directory/'metadata.json'),'true'],timeout=PAIR_COMPILE_SECONDS)
     manifest=json.loads((output/'admission.json').read_text())
     assert manifest['target']==target
     admission={'numeric','assembly','context-operation','entries-aggregate','row-tap','presentation','foreign','descriptor','trigger','clock'}

@@ -792,8 +792,8 @@ for(const localGroup of localGroups) {
 if(group==='all'||group==='calendar') {
   const wire=kind=>({kind,fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0});
   const app=open('calendar',wired,[
-    {module:'host/calendar',description:'',version:1,functions:[{name:'create',description:'Create the selected event',parameters:[],result:wire('null')}]},
-    {module:'host/navigation',description:'',version:1,functions:[{name:'open',description:'Open directions to the selected stop',parameters:[],result:wire('null')}]}
+    {module:'host/calendar',description:'',version:1,functions:[{name:'create',description:'Create the selected event',parameters:[],result:wire('null'),classification:''}]},
+    {module:'host/navigation',description:'',version:1,functions:[{name:'open',description:'Open directions to the selected stop',parameters:[],result:wire('null'),classification:''}]}
   ]),s=()=>app.state();
   // Nothing is scheduled, taken, added or navigated before an explicit tap: the sections start idle and
   // publish the observed counts of the records they actually hold.

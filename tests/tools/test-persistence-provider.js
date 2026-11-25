@@ -19,6 +19,8 @@ function open(persisted=null){
   for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/renderer-admission.js','android/assets/embedding/bindings/ui-session.js'])
     vm.runInContext(fs.readFileSync(file,'utf8'),context);
   vm.runInContext('configureDealCapabilities('+JSON.stringify([providerContract])+')',context);
+  // The host Session facts compiled admission re-reads: a granted, read-classified probe.
+  vm.runInContext("configureDealSession({lifetime:'session-1',epochs:{'host/probe':4},granted:['host/probe'],classification:{'host/probe/read':'read'},confirmation:{},clockTrusted:true,now:1000,expiry:{}});",context);
   vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));
     globalThis.__snapshot=mountDealUi(factories,'experience_entry.js',${persisted===null?'null':JSON.stringify(persisted)},'experience.js');`,context);
   return context;

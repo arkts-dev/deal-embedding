@@ -38,6 +38,11 @@ public final class CompileComposer {
         externals.put("embedding/graphics",Map.of("declaration","graphics.d.deal"));
         externals.put("embedding/day",Map.of("declaration","day.d.deal"));
         externals.put("embedding/probe",Map.of("declaration","probe.d.deal"));
+        // The live Session facts compiled admission reads are a frozen host module, not a capability:
+        // production stages its declaration beside the contracts, so a pair whose emitted part imports
+        // it compiles here too and the module is never reported as a provider.
+        Files.writeString(src.getParent().resolve("session.d.deal"),Files.readString(packaged(root,"generation/session.d.deal")));
+        externals.put("embedding/session",Map.of("declaration","session.d.deal"));
         var providerModules=new ArrayList<String>();
         Path providers=stage.resolve("providers.txt");
         if(Files.exists(providers)) {
@@ -83,6 +88,14 @@ public final class CompileComposer {
                 for(var field:declared.fields())names.add(field.name());
         }
         return names;
+    }
+    /** The packaged host declaration the production compiler copies into the compile input. */
+    private static Path packaged(Path root,String name) {
+        for(String base:List.of("build/embedding-consumer/assets","build/embedding-library/aar/assets")) {
+            Path candidate=root.resolve(base).resolve(name);
+            if(Files.exists(candidate))return candidate;
+        }
+        throw new AssertionError("Packaged host declaration is missing: "+name);
     }
     /** The packaged projection bytes: the same sections the production compiler copies. */
     private static Path projection(Path root,String name) {

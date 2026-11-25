@@ -8,7 +8,7 @@ import java.io.File
 
 /** One live isolate and compiler-owned store, advanced by embedding. */
 internal class UiSession(private val context: Context, private val broker: CapabilityHost, private val engine: JavaScriptSandbox, private val config: RuntimeConfig,
-    private val log: EmbeddingLog = EmbeddingLog(context), private val candidate: String = "", private val workspace: String = "") : AutoCloseable {
+    private val log: EmbeddingLog = EmbeddingLog(context), private val candidate: String = "", private val workspace: String = "", private val origin: String = "supplied") : AutoCloseable {
     internal fun logTrace(): String = log.run
     private val program = SandboxProgram(engine, 256 * 1024, config.execution)
     private var capabilitySession: dev.deal.embedding.capabilities.CapabilitySession? = null
@@ -25,6 +25,17 @@ internal class UiSession(private val context: Context, private val broker: Capab
     private val requestParents = mutableMapOf<Int, String>()
     private val requestStarts = mutableMapOf<Int, Long>()
     private fun evaluate(source: String): String = program.evaluate(source)
+    /** The live Session facts compiled admission re-reads before a send and before a reply are host
+     * configuration installed beside the mounted Session: the Session lifetime, the permission epoch of
+     * each module, the granted modules, the host classification of each disclosed function, clock trust,
+     * the admission instant and the host-configured window. They are installed again at every serialized
+     * transition that can send a call and again before a reply is admitted, so a grant, an epoch, a
+     * lifetime or a window that moved while the call was in flight is what the reply is decided under. A
+     * snapshot taken at mount could never decide that, so no caller installs these facts once. */
+    private fun installSessionFacts() {
+        val facts = checkNotNull(capabilitySession) { "UI session is not mounted" }.authority()
+        evaluate("configureDealSession(" + facts + ")")
+    }
     /** The compiled authoritative projection; the codec envelope is the only persisted state form. */
     fun persistedState(): String? = evaluate(DealSessionBindings.checkpoint).takeUnless { it == "null" }
     fun mount(output: File, restored: String? = null): JSONObject {
@@ -32,9 +43,17 @@ internal class UiSession(private val context: Context, private val broker: Capab
         val bundle = DealSessionBindings.bundle(context, config, output, restored)
         clockIntervalMs = DealSessionBindings.clockInterval(output)
         nextClockPump = 0
-        capabilitySession = broker.openSession(log)
+        capabilitySession = broker.openSession(log, origin)
         log.event("session", "opened", candidate, workspace)
-        try { return JSONObject(evaluate(bundle)).also { recordSnapshot(it) } }
+        try {
+            val mounted = JSONObject(evaluate(bundle))
+            // The Session facts compiled admission re-reads are host configuration installed before any
+            // action can dispatch, so an Experience cannot run an unclassified, ungranted or
+            // lifetime-less call on a placeholder.
+            installSessionFacts()
+            recordSnapshot(mounted)
+            return mounted
+        }
         catch (error: Throwable) { close(); throw error }
     }
     fun dispatch(slot: Int, payload: String?) {
@@ -43,6 +62,9 @@ internal class UiSession(private val context: Context, private val broker: Capab
         lastAction = span
         log.event("action", "started", candidate, workspace, span, detail = payload, span = span)
         try {
+            // A dispatch starts the effects of its committed action, so the admission they decide with is
+            // the live Session, not the one this isolate was mounted under.
+            installSessionFacts()
             evaluate(DealSessionBindings.dispatch(slot, payload))
             // A clock press is admitted with the paired adapter reading taken for that press; the
             // driver resolves the issued control identity from the rendered tree. Compiled policy
@@ -64,11 +86,14 @@ internal class UiSession(private val context: Context, private val broker: Capab
         // A visible surface is a Session activation/resume; the driver lane publishes the epoch change
         // the expiry consumer reads, and the lifecycle transition is traced with the Session.
         if(visible)log.event("session","resumed",candidate,workspace)
+        installSessionFacts()
         evaluate("setFrameVisibility($visible, ${android.os.SystemClock.elapsedRealtime()})")
     }
     fun advance(): JSONObject {
         // Driver progress is independent of renderer events and detachment; a delayed or coalesced
-        // host callback still reports the monotone delta that really passed.
+        // host callback still reports the monotone delta that really passed. Clock and frame drivers
+        // dispatch actions, so the facts of this transition are installed before any of them can send.
+        installSessionFacts()
         pumpClocks(force = false)
         evaluate("advanceFrames(${android.os.SystemClock.elapsedRealtime()})")
         val encoded = evaluate(DealSessionBindings.requests)
@@ -98,7 +123,11 @@ internal class UiSession(private val context: Context, private val broker: Capab
             log.event("capability", if (reply.getBoolean("ok")) "completed" else "failed", candidate, workspace, id.toString(),
                 reply.optJSONObject("error")?.optString("code") ?: "", now - started, parentOperation = requestParents.remove(id) ?: "", detail = reply.toString(), span = "${capabilities.identity}:$id")
         }
-        if (replies.isNotEmpty()) log.stage("effect-delivery", candidate, workspace, replies.joinToString(",") { it.getInt("id").toString() }) { evaluate("dealCapabilities.deliver(${JSONArray(replies)})") }
+        if (replies.isNotEmpty()) {
+            // A reply is admitted under the Session as it is now, never as it was when the call left.
+            installSessionFacts()
+            log.stage("effect-delivery", candidate, workspace, replies.joinToString(",") { it.getInt("id").toString() }) { evaluate("dealCapabilities.deliver(${JSONArray(replies)})") }
+        }
         val probeReplies = probes.drain()
         if (probeReplies.isNotEmpty()) {
             log.event("probe", "completed", candidate, workspace, probeReplies.joinToString(",") { it.getInt("id").toString() })

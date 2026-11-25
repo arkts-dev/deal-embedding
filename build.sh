@@ -139,6 +139,7 @@ package_aar() {
     jar --create --file "$OUTPUT_DIR/aar/classes.jar" -C "$OUTPUT_DIR/classes" .
     cp -r "$OUTPUT_DIR/bundles/." "$OUTPUT_DIR/aar/assets/"
     mkdir -p "$OUTPUT_DIR/aar/assets/generation"
+    cp "$ROOT/core/host/"*.d.deal "$OUTPUT_DIR/aar/assets/generation/"
     cp -r "$ROOT/android/assets/embedding" "$OUTPUT_DIR/aar/assets/"
     cp -r "$OUTPUT_DIR/projections/." "$OUTPUT_DIR/aar/assets/embedding/"
     cp -r "$OUTPUT_DIR/protocol-build/aar/assets/." "$OUTPUT_DIR/aar/assets/"
@@ -190,5 +191,5 @@ if [[ ${DEAL_BUILD_PLAN:-0} != 1 && ( -z ${DEAL_BUILD_STAGE:-} || ${DEAL_BUILD_S
     # one-stage preparation), because this assertion runs in the same command tree as `kotlin`/`package_aar`.
     timeout --kill-after=2s 25s java -cp "$OUTPUT_DIR/java-classes:$OUTPUT_DIR/mechanism-classes:$OUTPUT_DIR/kotlin-classes:$KOTLIN_HOME/lib/kotlin-stdlib.jar" dev.deal.embedding.RendererConformance "$ROOT/ui/platform.dealui-pack"
 fi
-INPUTS=("$OUTPUT_DIR/java-classes" "$OUTPUT_DIR/mechanism-classes" "$OUTPUT_DIR/kotlin-classes" "$OUTPUT_DIR/bundles" "$OUTPUT_DIR/projections" "$OUTPUT_DIR/protocol-build/aar/assets" "$ROOT/android/assets" "$ROOT/android/AndroidManifest.xml" "$ROOT/ui" "$ROOT/api" "$ROOT/tools/GenerationBindings.java" "$DEAL_UI_ROOT/runtime-js" "$DEAL_UI_ROOT/ui" "$DEAL_ROOT/std" "$DEAL_ROOT/deal/runtime.js")
+INPUTS=("$OUTPUT_DIR/java-classes" "$OUTPUT_DIR/mechanism-classes" "$OUTPUT_DIR/kotlin-classes" "$OUTPUT_DIR/bundles" "$OUTPUT_DIR/projections" "$OUTPUT_DIR/protocol-build/aar/assets" "$ROOT/android/assets" "$ROOT/android/AndroidManifest.xml" "$ROOT/ui" "$ROOT/api" "$ROOT/core/host" "$ROOT/tools/GenerationBindings.java" "$DEAL_UI_ROOT/runtime-js" "$DEAL_UI_ROOT/ui" "$DEAL_ROOT/std" "$DEAL_ROOT/deal/runtime.js")
 OUTPUTS=("$OUTPUT_DIR/deal-embedding.aar" "$OUTPUT_DIR/classes" "$OUTPUT_DIR/aar" "$OUTPUT_DIR/generated/CapabilityApi.kt" "$OUTPUT_DIR/generated/PackTheme.kt"); stage package_aar

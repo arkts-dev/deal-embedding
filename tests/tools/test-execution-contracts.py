@@ -15,7 +15,7 @@ shutil.rmtree(STAGE, ignore_errors=True)
 STAGE.mkdir(parents=True, exist_ok=True)
 source = STAGE / 'src'
 source.mkdir(exist_ok=True)
-for name in ['decoded', 'construction-schema', 'operations', 'execution']:
+for name in ['decoded', 'construction-schema', 'operations', 'source-literals', 'execution']:
     shutil.copyfile(EMBEDDING / f'core/{name}.deal', source / f'{name}.deal')
 shutil.copyfile(ROOT / 'tests/tools/fixtures/execution-contracts.deal', source / 'checks.deal')
 shutil.copytree(DEAL_UI / 'ui', STAGE / 'ui', dirs_exist_ok=True)

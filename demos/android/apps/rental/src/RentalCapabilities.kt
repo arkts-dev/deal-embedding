@@ -55,7 +55,7 @@ fun rentalCapabilities(context: Context): NativeCapabilities {
             JSONObject().put("proposalId", id).put("state", "pending")
         },
         "outcome" to { args -> dev.deal.shell.proposalOutcome(context, "rental", args.getString(0), "reservationId") },
-    ))
+    ), mapOf("equipment" to "read", "quote" to "read", "proposeReservation" to "mutating", "outcome" to "read"))
 }
 
 internal fun rentalCatalogueRecord(item: RentalItem, available: Int): JSONObject {

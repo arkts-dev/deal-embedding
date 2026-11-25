@@ -54,6 +54,13 @@ function authorityFacts(granted: string[], epoch: number, currentEpoch: number, 
   facts["requestAuthorizes"] = requestAuthorizes; facts["requestTarget"] = requestAuthorizes ? "host/probe/write" : "";
   facts["confirmation"] = confirmation;
   facts["confirmationTarget"] = target;
+  facts["confirmationArguments"] = "";
+  return execution.authority(JSON.stringify(facts) as string);
+}
+// An approval binds the argument snapshot the host validated with it, not only the target it names.
+function approvedFor(target: string, argumentsJson: string): execution.Authority {
+  let facts: Record<string, unknown> = JSON.parse(JSON.stringify(authorityFacts(["host/probe"],4,4,"supplied",false,"approved",target,true)) as string) as Record<string, unknown>;
+  facts["confirmationArguments"] = argumentsJson;
   return execution.authority(JSON.stringify(facts) as string);
 }
 function generated(): execution.Authority { return authorityFacts(["host/probe"],4,4,"generated",false,"","",true); }
@@ -375,8 +382,8 @@ export function authority(): null {
   let unclassified: execution.Decision = execution.readAuthority(facts,"host/probe","unclassified");
   insist(!unclassified.admitted && unclassified.kind === "mutating","Unclassified function admitted as a read");
   // A host classification that is not a record is a typed refusal, never a coerced default.
-  rejects((): void => { execution.authority("{\"disclosed\":[\"host/probe/read\"],\"classification\":null,\"granted\":[\"host/probe\"],\"epoch\":4,\"currentEpoch\":4,\"lifetime\":\"session-1\",\"sessionLifetime\":\"session-1\",\"argumentsValid\":true,\"origin\":\"generated\",\"requestAuthorizes\":false,\"requestTarget\":\"\",\"confirmation\":\"\",\"confirmationTarget\":\"\"}"); },"A null host classification was coerced");
-  rejects((): void => { execution.authority("{\"disclosed\":[\"host/probe/read\"],\"classification\":[\"read\"],\"granted\":[\"host/probe\"],\"epoch\":4,\"currentEpoch\":4,\"lifetime\":\"session-1\",\"sessionLifetime\":\"session-1\",\"argumentsValid\":true,\"origin\":\"generated\",\"requestAuthorizes\":false,\"requestTarget\":\"\",\"confirmation\":\"\",\"confirmationTarget\":\"\"}"); },"An array host classification was coerced");
+  rejects((): void => { execution.authority("{\"disclosed\":[\"host/probe/read\"],\"classification\":null,\"granted\":[\"host/probe\"],\"epoch\":4,\"currentEpoch\":4,\"lifetime\":\"session-1\",\"sessionLifetime\":\"session-1\",\"argumentsValid\":true,\"origin\":\"generated\",\"requestAuthorizes\":false,\"requestTarget\":\"\",\"confirmation\":\"\",\"confirmationTarget\":\"\",\"confirmationArguments\":\"\"}"); },"A null host classification was coerced");
+  rejects((): void => { execution.authority("{\"disclosed\":[\"host/probe/read\"],\"classification\":[\"read\"],\"granted\":[\"host/probe\"],\"epoch\":4,\"currentEpoch\":4,\"lifetime\":\"session-1\",\"sessionLifetime\":\"session-1\",\"argumentsValid\":true,\"origin\":\"generated\",\"requestAuthorizes\":false,\"requestTarget\":\"\",\"confirmation\":\"\",\"confirmationTarget\":\"\",\"confirmationArguments\":\"\"}"); },"An array host classification was coerced");
   let loaded: execution.Authority = authorityFacts(["host/probe"],4,4,"supplied",false,"","",true);
   let loadedRead: execution.Decision = execution.readAuthority(loaded,"host/probe","read");
   insist(loadedRead.admitted,"Supplied Experience read refused");
@@ -412,6 +419,12 @@ export function authority(): null {
   insist(!revokedMutation.admitted && revokedMutation.code === "REVOKED","Revoked epoch mutation admitted");
   let readAtMutation: execution.Decision = execution.mutationAuthority(loaded,"host/probe","read");
   insist(!readAtMutation.admitted && readAtMutation.kind === "read","A read was admitted as a mutation");
+  // The approval covers one argument snapshot: the same operation and target with another payload is
+  // not the operation the host approved. A request determination binds the frozen request instead.
+  let snapshotApproval: execution.Authority = approvedFor("host/probe/write","{\"value\":1}");
+  insist(execution.confirmationCovers(snapshotApproval,"host/probe","write","{\"value\":1}"),"An approval of this argument snapshot was refused");
+  insist(!execution.confirmationCovers(snapshotApproval,"host/probe","write","{\"value\":2}"),"An approval of another argument snapshot covered this call");
+  insist(execution.confirmationCovers(authorityFacts(["host/probe"],4,4,"generated",true,"","",true),"host/probe","write","{\"value\":2}"),"A request determination was narrowed to one argument snapshot");
   return null;
 }
 
@@ -589,7 +602,63 @@ export function text(): null {
   return null;
 }
 
+// The Session lane's one send decision and one reply decision. Authority comes first, so an ungranted,
+// revoked, undisclosed or unauthorized call never reaches the invocation window or the provider; an
+// admitted call captures its envelope; a reply publishes a result only while its invocation is current.
+function lane(): null {
+  let facts: execution.Authority = generated();
+  let value: execution.Executed = operation("lane",["f_parts_limit"]);
+  let ids: string[] = ["call-1"];
+  let sent: execution.SendResult = execution.send(value,ready(0),facts,"host/probe","read","{\"value\":1}",ids,1000,"{\"relativeMs\":500}");
+  insist(sent.accepted && sent.envelope.operationId === "lane" && sent.envelope.callId === "call-1","A granted read send admitted no envelope");
+  let denied: execution.SendResult = execution.send(value,ready(0),authorityFacts([],4,4,"generated",false,"","",true),"host/probe","read","{}",ids,1000,"");
+  insist(!denied.accepted && denied.code === "DENIED" && denied.envelope.callId === "","An ungranted send carried a call");
+  let revoked: execution.SendResult = execution.send(value,ready(0),authorityFacts(["host/probe"],4,5,"generated",false,"","",true),"host/probe","read","{}",ids,1000,"");
+  insist(!revoked.accepted && revoked.code === "REVOKED","A revoked epoch was dispatched");
+  let mutation: execution.SendResult = execution.send(value,ready(0),facts,"host/probe","write","{}",ids,1000,"");
+  insist(!mutation.accepted && mutation.code === "DENIED","An unauthorized mutation was dispatched");
+  // An approval dispatches the snapshot it names and refuses another payload for the same target.
+  let approvedSnapshot: execution.Authority = approvedFor("host/probe/write","{\"value\":1}");
+  let approvedMutation: execution.SendResult = execution.send(value,ready(0),approvedSnapshot,"host/probe","write","{\"value\":1}",ids,1000,"");
+  insist(approvedMutation.accepted && approvedMutation.kind === "mutating","An approved argument snapshot dispatched no call");
+  let otherSnapshot: execution.SendResult = execution.send(value,ready(0),approvedSnapshot,"host/probe","write","{\"value\":2}",ids,1000,"");
+  insist(!otherSnapshot.accepted && otherSnapshot.code === "DENIED" && otherSnapshot.envelope.callId === "","An approval of another argument snapshot dispatched a call");
+  let stale: execution.SendResult = execution.send(value,ready(1),facts,"host/probe","read","{}",ids,1000,"");
+  insist(!stale.accepted && stale.code === "REVISION","A stale revision was dispatched");
+  let admitted: execution.Executed = sent.executed;
+  let envelope: operations.Envelope = sent.envelope;
+  // The published result is part of the completion it is constructed with: a readonly field is never
+  // assigned after construction.
+  let completion: operations.Completion = {envelope:envelope,accepted:true,status:"ready",outcome:"success",message:"Loaded",result:42};
+  let current: execution.Live = execution.live("{\"ready\":true,\"unexpired\":true,\"revision\":0,\"lifetime\":\"session-1\",\"epoch\":7,\"granted\":true,\"clockTrusted\":true}");
+  let replied: execution.ReplyResult = execution.reply(admitted,envelope,current,facts,"host/probe","read",completion,1200,true,false,false);
+  insist(replied.published && replied.executed.operation.status === "ready" && replied.executed.operation.outcome === "success","A current reply did not publish its result");
+  let movedEpoch: execution.Live = execution.live("{\"ready\":true,\"unexpired\":true,\"revision\":0,\"lifetime\":\"session-1\",\"epoch\":9,\"granted\":true,\"clockTrusted\":true}");
+  let uncurrent: execution.ReplyResult = execution.reply(admitted,envelope,movedEpoch,authorityFacts(["host/probe"],9,9,"generated",false,"","",true),"host/probe","read",completion,1000,true,false,false);
+  insist(!uncurrent.published && uncurrent.code === "REVOKED","A revoked reply published a result");
+  let late: execution.ReplyResult = execution.reply(admitted,envelope,current,facts,"host/probe","read",completion,1600,true,false,false);
+  insist(!late.published,"A reply past its window published a result");
+  // A completion that answers an older invocation changes no bookkeeping of the current one: it
+  // publishes nothing, retires nothing, and the current invocation's own reply still publishes.
+  let superseded: operations.Envelope = {operationId:envelope.operationId,sequence:envelope.sequence-1,phase:envelope.phase,revision:envelope.revision,lifetime:envelope.lifetime,epoch:envelope.epoch,callId:envelope.callId};
+  let supersededCompletion: operations.Completion = {envelope:superseded,accepted:true,status:"ready",outcome:"success",message:"Loaded"};
+  let obsolete: execution.ReplyResult = execution.reply(admitted,superseded,current,facts,"host/probe","read",supersededCompletion,1200,true,false,false);
+  insist(!obsolete.published && obsolete.code === "STALE","An obsolete completion published a result");
+  insist(obsolete.executed.operation.status === "pending" && !obsolete.executed.operation.calls[0].terminal,"An obsolete completion retired the current invocation");
+  // A completion that names no issued call of this invocation is not a reply to it either.
+  let foreign: operations.Envelope = {operationId:envelope.operationId,sequence:envelope.sequence,phase:envelope.phase,revision:envelope.revision,lifetime:envelope.lifetime,epoch:envelope.epoch,callId:"call-foreign"};
+  let foreignCompletion: operations.Completion = {envelope:foreign,accepted:true,status:"ready",outcome:"success",message:"Loaded"};
+  let stray: execution.ReplyResult = execution.reply(obsolete.executed,foreign,current,facts,"host/probe","read",foreignCompletion,1200,true,false,false);
+  insist(!stray.published && stray.code === "STALE","A completion for an unissued call published a result");
+  insist(stray.executed.operation.status === "pending" && !stray.executed.operation.calls[0].terminal,"A completion for an unissued call retired the invocation");
+  let recovered: execution.ReplyResult = execution.reply(stray.executed,envelope,current,facts,"host/probe","read",completion,1200,true,false,false);
+  insist(recovered.published && recovered.executed.operation.status === "ready","The current reply was refused after an obsolete completion");
+  // One call admits one terminal reply: a second completion for the answered call changes nothing.
+  let duplicate: execution.ReplyResult = execution.reply(recovered.executed,envelope,current,facts,"host/probe","read",completion,1200,true,false,false);
+  insist(!duplicate.published && duplicate.executed.operation.status === "ready" && duplicate.executed.operation.outcome === "success","A second terminal reply changed the completed invocation");
+  return null;
+}
 export function contracts(): null {
-  revisions(); admission(); expiry(); authority(); text(); return null;
+  revisions(); admission(); expiry(); authority(); text(); lane(); return null;
 }
 export function main(): void { return; }

@@ -86,8 +86,8 @@ function wireType(kind: string): embedding.WireType { return {kind:kind,fields:[
 function contract(module: string, functions: embedding.CapabilityFunction[]): embedding.CapabilityContract { return {module:module,description:"",version:1,functions:functions}; }
 export async function calendar(): Promise<string> {
   let issued: bindings.Registry = bindings.create([
-    contract("host/calendar",[{name:"create",description:"Create the selected event",parameters:[],result:wireType("null")}]),
-    contract("host/navigation",[{name:"open",description:"Open directions to the selected stop",parameters:[],result:wireType("null")}])
+    contract("host/calendar",[{name:"create",description:"Create the selected event",parameters:[],result:wireType("null"),classification:""}]),
+    contract("host/navigation",[{name:"open",description:"Open directions to the selected stop",parameters:[],result:wireType("null"),classification:""}])
   ]);
   issued.bindings[0] = {id:"calendar_op",module:"host/calendar",function:"create",arguments:{},parameterOrder:[],owner:"host",evidence:{request:"",facts:"",quote:"",sources:[]}};
   issued.bindings[1] = {id:"nav_op",module:"host/navigation",function:"open",arguments:{},parameterOrder:[],owner:"host",evidence:{request:"",facts:"",quote:"",sources:[]}};
@@ -269,8 +269,8 @@ export async function descriptor(): Promise<string> {
   let text: embedding.WireType = {kind:"string",fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0};
   let issued: bindings.Registry = bindings.create([
     contract("host/notes",[
-      {name:"send",description:"Send the drafted note",parameters:[{name:"text",type:text}],result:text},
-      {name:"ping",description:"Read the desk status",parameters:[],result:wireType("number")}
+      {name:"send",description:"Send the drafted note",parameters:[{name:"text",type:text}],result:text,classification:""},
+      {name:"ping",description:"Read the desk status",parameters:[],result:wireType("number"),classification:"read"}
     ])
   ]);
   let noteArguments: Record<string, unknown> = {}; noteArguments.text = "note_draft";

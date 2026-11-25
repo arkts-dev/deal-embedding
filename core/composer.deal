@@ -127,7 +127,7 @@ async function expression(value: string, expected: string, instance: Prepared, n
 // The permitted module surface of generated source. Assembly admits it before emitting anything;
 // checking admission re-derives the same decision from the compiled manifest.
 function permitted(registry: bindings.Registry, module: string): boolean {
-  if (s.contains(["std/math","std/string","std/table","std/time","embedding/graphics","embedding/day","embedding/probe","./experience","./platform.dealui-pack","host/storage"],module)) { return true; }
+  if (s.contains(["std/math","std/string","std/table","std/time","embedding/graphics","embedding/day","embedding/probe","embedding/session","./experience","./platform.dealui-pack","host/storage"],module)) { return true; }
   for (let contract of registry.contracts) { if (contract.module === module) { return true; } }
   return false;
 }

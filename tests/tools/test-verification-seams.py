@@ -171,10 +171,45 @@ SEAMS = [
      'expect': 'Readiness change did not advance a reader revision',
      'command': ['python3', 'tests/tools/test-execution-contracts.py']},
     {'id': 'mutation-authority', 'family': 'mutation-authority', 'path': 'core/execution.deal',
-     'old': 'if (facts.origin === "generated" && facts.requestAuthorizes && facts.requestTarget === module+"/"+fn) {',
-     'new': 'if (facts.requestAuthorizes) {',
+     'old': '  return facts.origin === "generated" && facts.requestAuthorizes && facts.requestTarget === module+"/"+fn;',
+     'new': '  return facts.requestAuthorizes;',
      'expect': 'A request determination authorized another target',
      'command': ['python3', 'tests/tools/test-execution-contracts.py']},
+    # "Disclosure and module grants never authorize mutations": the host dispatch boundary refuses a
+    # function it did not classify as a read before any provider is asked, so a boundary that reads
+    # every disclosed function as a read is the defect this control observes. The owning item drives the
+    # production decision with a registry-shaped call (module, function, provider source, grant).
+    {'id': 'dispatch-classification', 'family': 'mutation-authority', 'path': 'android/src/capabilities/CapabilityCall.kt',
+     'old': 'if (facts().classification[module + "/" + function] == "read") "read" else "mutating"',
+     'new': '"read"',
+     'expect': 'a mutating classification was read as a read',
+     'command': ['python3', 'tests/tools/test-capability-boundary.py']},
+    # The same rule's wiring: the registry's receive path must decide dispatch with the one send
+    # admission and return the refusal before anything becomes pending or reaches a provider. Removing
+    # that guard leaves an unclassified or mutating call dispatchable, so the owning item asserts the
+    # call site the seam breaks.
+    {'id': 'dispatch-wiring', 'family': 'mutation-authority', 'path': 'android/src/capabilities/CapabilityRegistry.kt',
+     'old': 'if (refusal != null) { fail(id, refusal.code, refusal.reason); return@synchronized }',
+     'new': 'if (false) { fail(id, refusal.code, refusal.reason); return@synchronized }',
+     'expect': 'the send admission guards dispatch in Session.receive',
+     'command': ['python3', 'tests/tools/test-capability-boundary.py']},
+    # The classification's one derivation site: the registry states every accepted function's class from
+    # the accepted provider sources - a local registration's class map or a discovered contract's own
+    # disclosure. Deriving it from the local registrations alone is the cycle-2 defect that refused a
+    # discovered read as a mutation, so dropping that call must fail the item that drives the derivation.
+    {'id': 'accepted-classes', 'family': 'mutation-authority', 'path': 'android/src/capabilities/CapabilityRegistry.kt',
+     'old': 'val classes = acceptedClasses(providers.values.map { it.contract to (it.local?.classification() ?: emptyMap()) })',
+     'new': 'val classes = mutableMapOf<String, String>()',
+     'expect': 'the accepted provider sources state the class of every function',
+     'command': ['python3', 'tests/tools/test-capability-boundary.py']},
+    # The derivation itself: the class a provider states inside its disclosed contract is what a discovered
+    # endpoint's class is, so ignoring that field leaves every discovered function mutating - the cycle-2
+    # refusal - and the item that drives the derivation with a discovered contract must observe it.
+    {'id': 'accepted-classes-disclosure', 'family': 'mutation-authority', 'path': 'android/src/capabilities/CapabilityCall.kt',
+     'old': 'val value = registered[function.name]?.takeIf { it.isNotEmpty() } ?: function.classification',
+     'new': 'val value = registered[function.name]?.takeIf { it.isNotEmpty() } ?: ""',
+     'expect': "a discovered contract's disclosed class did not reach the accepted classes",
+     'command': ['python3', 'tests/tools/test-capability-boundary.py']},
     {'id': 'text-admission', 'family': 'text-admission', 'path': 'core/execution.deal',
      'old': 'function reuseWindow(): number { return 3000; }',
      'new': 'function reuseWindow(): number { return 300000; }',

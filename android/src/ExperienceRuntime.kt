@@ -36,9 +36,10 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     }
 
     /** Check saved or host-supplied source without inference; activation remains a separate decision. */
+    /** The Experience origin is a Session fact compiled admission reads; it is never inferred from source. */
+    private fun originName(origin: WorkspaceOrigin): String = when (origin) { WorkspaceOrigin.AI_SOURCE -> "generated"; WorkspaceOrigin.CATALOGUE -> "catalogue"; WorkspaceOrigin.SAVED_SOURCE -> "supplied" }
     /** Provenance is trusted host metadata, never an assertion from application source. */
-    fun check(source: ExperienceSource, origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE, attempts: Int = 0): CheckedCandidate = guarded(live = false) {
-        val log = EmbeddingLog(context)
+    fun check(source: ExperienceSource, origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE, attempts: Int = 0): CheckedCandidate = guarded(live = false) {        val log = EmbeddingLog(context)
         val identity = UUID.randomUUID().toString()
         log.event("route", "saved", candidate = identity)
         CheckedCandidate(context,source, log.operation("check", candidate = identity) { child -> CandidateChecks(context,config,sandbox(),child).use { it.check(source) } }, catalogRevision(config), attempts, log, identity, origin)
@@ -64,7 +65,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
         check(store.persisted){"Prepared store has not been persisted"}
         check(!workspaces.containsKey(store.id)){"Workspace already active"}
         val candidate=store.candidate
-        val live=LiveWorkspace(store.id,store.title,UiSession(context,capabilities,sandbox(),config,candidate.log.bind(store.id,store.session),candidate.identity,store.id),candidate.output,candidate.source,candidate.origin,candidate.attempts)
+        val live=LiveWorkspace(store.id,store.title,UiSession(context,capabilities,sandbox(),config,candidate.log.bind(store.id,store.session),candidate.identity,store.id,originName(candidate.origin)),candidate.output,candidate.source,candidate.origin,candidate.attempts)
         val snapshot=try {
             val restored=if(config.retainState)storage.state(store.id,candidate.source)else null
             live.session.mount(candidate.output,restored)

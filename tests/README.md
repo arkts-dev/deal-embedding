@@ -13,6 +13,26 @@ python3 tests/check.py composer:clocks   # one assertion group, not the combined
 python3 tests/check.py pair:clock       # exact validated composer snapshot required
 python3 tests/check.py catalogue:timers
 python3 tests/check.py renderer-admission
+
+`python3 tests/tools/test-provider-authority.py` compiles one provider-bearing composition through the
+production stages and mounts the emitted pair: grant, host classification, captured epoch, Session
+lifetime, invocation window and send/reply correlation decide every call before it leaves and before a
+reply is published. A refusal dispatches nothing and changes no business result. `UiSession` installs the
+host Session facts at every serialized transition that can send and again before a reply is delivered,
+and `CapabilityRegistry` publishes the host-configured provider deadline as the window of each disclosed
+function, so a grant, epoch, lifetime or window that moved while the call was in flight decides the reply.
+`python3 tests/tools/test-capability-boundary.py` also proves the host dispatch boundary: a provider
+publishes its per-function read or mutating class inside the version-1 contract, the registry derives the
+class of every accepted function - locally registered or discovered - from its provider source, and a
+mutating or unclassified function is refused with `DENIED` before a local provider is invoked unless the
+frozen request determines that exact operation or an approved host confirmation names its target and
+validated argument snapshot. A denial is final, a stale approval no longer correlates, and an approval of
+another snapshot dispatches nothing, so a model-authored effect cannot dispatch a mutation on a module
+grant alone. The item drives the production decision with registry-shaped calls and asserts the registry
+delegates to it before anything is pending or invoked (`dispatch-wiring`), so removing that call site fails
+the item instead of passing on the unit alone. The item's own Kotlin harness is the same
+content-validated compiler artifact as the other harnesses: an unchanged source set reuses the compiled
+harness, and the boundary matrix still runs on every invocation.
 ```
 
 One lane per invocation, a **per-lane command-tree bound** (40 seconds by default; the catalogue and
@@ -126,7 +146,9 @@ Composer `--pair` requires an exact input/output-validated snapshot from `--cont
 current assertion groups (`validation`, `basics`, `clocks`, `operations`, `entries`, `presentation` via
 `tests/check.py composer:GROUP`). Each group executes its assertions; all 33 original fixture calls and
 their output checks remain. Group receipts record only group-owned outputs, and a pair snapshot is
-issued only when all six inputs/outputs agree. It refuses changed inputs, not stale assertions. The default composer command still executes every pair.
+issued only when all six inputs/outputs agree. It refuses changed inputs, not stale assertions. The default composer command still executes every pair, and each pair's production compile is a
+content-validated artifact: an unchanged compile input and a byte-identical output are reused instead of
+re-running the JVM composer, while every pair assertion still executes on the result.
 The pair lanes write only their own `build/v08-cutover/composer-pairs/<pair>/` tree, so the default run
 drives three of them at a time (`PAIR_WORKERS`); `numeric` stays serial and last because the persistence
 item replays the pair it leaves in that tree, and no lane republishes a pair outside it. A pair's
@@ -191,6 +213,12 @@ inside the wall bound it is given and not. It overlaps targets only: every targe
 and the one lock-holding build still compiles, dexes, packages and signs each of them. A caller that sets
 `DEAL_BUILD_JOBS=1` or names one demo target keeps the serial lane, in the caller's own order, and a batch
 refuses a repeated target before any work instead of racing one build tree.
+
+Every package a gate build produces also hands the boundary item its validated compile key
+(`tools/boundary-proof.py --record`), so a lane that already repackaged a target from the AAR extraction
+does not compile identical inputs again: the boundary item repackages only a target no build has proven,
+while its declaration audit, AAR-extraction comparison and negative controls still run in every lane, and
+a changed input, AAR or package byte invalidates the recorded proof exactly as before.
 
 The renderer rule lane also caches compilation by exact source, classpath and toolchain content, with
 separate outputs for each negative-control mutation. It always runs all three assertion executables;

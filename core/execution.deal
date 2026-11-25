@@ -1,6 +1,7 @@
 import * as decoded from "./decoded";
 import * as s from "./construction-schema";
 import * as operations from "./operations";
+import * as literals from "./source-literals";
 
 // Runtime execution policy for one Session: the issued dependency set of every operation, the one
 // authoritative revision field that counts edits to that set, expiry trust, read and mutation
@@ -59,6 +60,7 @@ export class Authority {
   requestTarget: string;
   confirmation: string;
   confirmationTarget: string;
+  confirmationArguments: string;
 }
 
 export class Decision { admitted: boolean; kind: string; code: string; reason: string; }
@@ -66,6 +68,15 @@ export class Decision { admitted: boolean; kind: string; code: string; reason: s
 export class Answer { owner: string; capability: string; scope: string; prompt: string; words: number; text: string; at: number; used: number; }
 
 export class Dispatch { owner: string; at: number; }
+
+// The Session lane's send decision: the authority decision of the call's class followed by admission,
+// so no caller can send under a grant it does not hold or under an expiry it cannot decide. Only an
+// admitted call carries an envelope; a refusal carries the code the contract names and no call.
+export class SendResult { accepted: boolean; code: string; kind: string; reason: string; envelope: operations.Envelope; executed: Executed; }
+
+// The Session lane's reply decision: an expired or unauthorized reply retires matching bookkeeping and
+// publishes nothing, while a current one completes the invocation under the captured correlation.
+export class ReplyResult { published: boolean; code: string; executed: Executed; completion: operations.Completion; }
 
 export class TextRequest { owner: string; capability: string; scope: string; prompt: string; words: number; consent: string; cancelled: boolean; now: number; }
 
@@ -311,7 +322,7 @@ export function retrust(value: Executed, clockTrusted: boolean, periodChanged: b
 
 export function authority(raw: string): Authority {
   const value: Record<string, unknown> = JSON.parse(raw);
-  s.closed(value,["disclosed","classification","granted","epoch","currentEpoch","lifetime","sessionLifetime","argumentsValid","origin","requestAuthorizes","requestTarget","confirmation","confirmationTarget"],[]);
+  s.closed(value,["disclosed","classification","granted","epoch","currentEpoch","lifetime","sessionLifetime","argumentsValid","origin","requestAuthorizes","requestTarget","confirmation","confirmationTarget","confirmationArguments"],[]);
   let disclosed: string[] = []; let seen: string[] = [];
   for (let name of decoded.strings(value.disclosed)) { s.unique(seen,s.nonblank(name)); disclosed[disclosed.length] = name; }
   let epoch: number = s.integral(value.epoch); let currentEpoch: number = s.integral(value.currentEpoch);
@@ -321,7 +332,7 @@ export function authority(raw: string): Authority {
   let origin: string = s.oneOf(value.origin,["generated","supplied","catalogue"]);
   let confirmation: string = s.oneOf(value.confirmation,["approved","denied","absent","stale",""]);
   let granted: string[] = decoded.strings(value.granted);
-  return {disclosed:disclosed,classification:mapOf(value.classification),granted:granted,epoch:epoch,currentEpoch:currentEpoch,lifetime:s.nonblank(value.lifetime),sessionLifetime:s.nonblank(value.sessionLifetime),argumentsValid:argumentsValid,origin:origin,requestAuthorizes:requestAuthorizes,requestTarget:s.text(value.requestTarget),confirmation:confirmation,confirmationTarget:s.text(value.confirmationTarget)};
+  return {disclosed:disclosed,classification:mapOf(value.classification),granted:granted,epoch:epoch,currentEpoch:currentEpoch,lifetime:s.nonblank(value.lifetime),sessionLifetime:s.nonblank(value.sessionLifetime),argumentsValid:argumentsValid,origin:origin,requestAuthorizes:requestAuthorizes,requestTarget:s.text(value.requestTarget),confirmation:confirmation,confirmationTarget:s.text(value.confirmationTarget),confirmationArguments:s.text(value.confirmationArguments)};
 }
 
 function classified(facts: Authority, module: string, fn: string): string {
@@ -357,6 +368,12 @@ export function readAuthority(facts: Authority, module: string, fn: string): Dec
   return {admitted:true,kind:"read",code:"",reason:""};
 }
 
+// The frozen request's host-issued determination names the one operation and target it authorizes, and
+// only a generated Experience can hold one.
+function requestDetermines(facts: Authority, module: string, fn: string): boolean {
+  return facts.origin === "generated" && facts.requestAuthorizes && facts.requestTarget === module+"/"+fn;
+}
+
 // Mutation authority: only an unambiguous host-issued determination binds the frozen request to this
 // operation, target and argument snapshot, and only a generated Experience holds one. Anything else
 // needs the host confirmation surface bound to the same target. A denial is final for that call.
@@ -367,13 +384,169 @@ export function mutationAuthority(facts: Authority, module: string, fn: string):
   if (facts.confirmation === "denied") { return {admitted:false,kind:"mutation",code:"DENIED",reason:"Host denied the mutation"}; }
   // The determination binds the frozen request to this exact operation and target. The confirmed
   // argument snapshot is rechecked by the caller before send, because this decision holds no values.
-  if (facts.origin === "generated" && facts.requestAuthorizes && facts.requestTarget === module+"/"+fn) { return {admitted:true,kind:"mutation",code:"",reason:""}; }
+  if (requestDetermines(facts,module,fn)) { return {admitted:true,kind:"mutation",code:"",reason:""}; }
   // Request authority is a necessary determination only for a generated Experience; a supplied or
   // catalogue Experience has no frozen request, so the flag can never authorize it.
   if (facts.confirmation === "stale") { return {admitted:false,kind:"mutation",code:"DENIED",reason:"Confirmation no longer correlates"}; }
   if (facts.confirmation === "approved" && facts.confirmationTarget === module+"/"+fn) { return {admitted:true,kind:"mutation",code:"",reason:""}; }
   if (facts.confirmation === "approved") { return {admitted:false,kind:"mutation",code:"DENIED",reason:"Approval names another operation or target"}; }
   return {admitted:false,kind:"mutation",code:"DENIED",reason:"Mutation requires host confirmation"};
+}
+
+// A host confirmation binds the argument snapshot it approved as well as the operation and target it
+// names, so an approval of another payload authorizes no call even when the target matches. The
+// snapshot is compared by the caller that holds the validated values, immediately before the send; a
+// request determination binds the frozen request instead and needs no confirmation. A denial or an
+// absent confirmation is not an approval, so it authorizes nothing here either.
+export function confirmationCovers(facts: Authority, module: string, fn: string, argumentsJson: string): boolean {
+  if (facts.confirmation !== "approved") { return true; }
+  // A frozen request determination binds the request itself, so a host approval of another payload for
+  // the same target does not narrow a call the request already authorizes. Only a call the confirmation
+  // authorizes is bound to the snapshot it approved.
+  if (requestDetermines(facts,module,fn)) { return true; }
+  return facts.confirmationTarget === module+"/"+fn && facts.confirmationArguments === argumentsJson;
+}
+
+// One provider-bearing part of a generated Experience: the emitted names of its operation record and
+// the frozen module, function and result bounds of the call it performs.
+export class EmittedPart {
+  id: string; moduleName: string; functionName: string; start: string; completion: string;
+  ready: string; argument: string; minimum: number; maximum: number;
+}
+// The emitted form of the two decisions above, for a generated Experience that performs one provider
+// call. The generated source runs the same identity checks in the same order and captures the same
+// record, so the compiled policy and the running Session never disagree about who may publish a result.
+// Where the emitted form can already decide that a relative window is undecidable, it refuses the
+// dispatch that compiled policy admits and then retires on the reply. Only the correlation it captures
+// (epoch, Session lifetime, admission instant, window) lives outside the persisted fields: permission and
+// lifetime tokens never enter saved state.
+export function emittedInvocation(part: EmittedPart): string {
+  s.identifier(part.id); s.nonblank(part.moduleName); s.identifier(part.functionName);
+  s.identifier(part.start); s.identifier(part.completion); s.finite(part.minimum); s.finite(part.maximum);
+  // Generated source names the part's own fields locally; the qualify mechanism resolves them to the
+  // composed instance exactly as it resolves every other emitted helper.
+  let prefix: string = part.id+"_";
+  let callArguments: string = part.argument === "0" ? "()" : "(argument)";
+  let refused: string = "function refused_"+part.id+"(sequence:number,argument:number,code:string,message:string):"+part.completion+" { return {accepted:false,sequence:sequence,argument:argument,ok:false,value:0,code:code,outcome:\"failure\",message:message}; }";
+  // A not-admitted effect answers the action it was started for, never the live invocation: the
+  // sequence -1 cannot match any issued record, so a duplicate tap's refusal changes no bookkeeping of
+  // the read already in flight and that read's own reply still publishes.
+  let effect: string = "export async function read_"+part.id+"(state:AppState, action:"+part.start+"):Promise<"+part.completion+"> {\n"
+    +"  if(!state."+prefix+"pending || state."+prefix+"action === null || (state."+prefix+"action as "+part.start+") !== action || state."+prefix+"sequence !== action.sequence+1){return refused_"+part.id+"(-1,state."+prefix+"argument,\"NOT_ADMITTED\",\"Not admitted\");}\n"
+    +"  let epoch:number = session.epoch("+literals.quote(part.moduleName)+");\n"
+    +"  let lifetime:string = session.lifetime();\n"
+    +"  let granted:boolean = session.granted("+literals.quote(part.moduleName)+");\n"
+    +"  let classification:string = session.classification("+literals.quote(part.moduleName)+","+literals.quote(part.functionName)+");\n"
+    +"  let argument:number = state."+prefix+"argument;\n"
+    +"  let trusted:boolean = session.clockTrusted();\n"
+    +"  let now:number = session.now();\n"
+    +"  let relative:number = session.relativeMs("+literals.quote(part.moduleName)+","+literals.quote(part.functionName)+");\n"
+    +"  let absolute:number = session.absolute("+literals.quote(part.moduleName)+","+literals.quote(part.functionName)+");\n"
+    // The identity checks run in the order of admittedIdentity above, so an unknown Session lifetime is
+    // REVOKED, a module the host does not grant is DENIED even when it publishes no epoch, and only a
+    // host that answered no instant at all is an unissued admission. A classification is checked before
+    // the arguments, so an unclassified function never reads.
+    +"  if(lifetime === \"\"){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"REVOKED\",\"Session lifetime is unknown\");}\n"
+    +"  if(!granted){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"DENIED\",\"Module is not granted\");}\n"
+    +"  if(!(epoch >= 0) || now < 1){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"INVALID_ARGUMENT\",\"Unissued admission facts\");}\n"
+    +"  if(classification !== \"read\"){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"DENIED\",\"Not an authorized read\");}\n"
+    +"  if(!("+part.ready+")){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"INVALID_ARGUMENT\",\"Invalid arguments\");}\n"
+    // A host that publishes no window answers -1 for both, so a window of zero is the instant of
+    // admission rather than the absence of a window. A relative window needs a decidable clock to be
+    // admitted at all; every window needs one to admit its reply.
+    +"  let windowed:boolean = relative >= 0 || absolute >= 0;\n"
+    +"  let expiresAt:number = -1;\n"
+    +"  if(relative >= 0){ if(!trusted){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"EXPIRED\",\"Time is not decidable\");} expiresAt = now+relative; }\n"
+    +"  else if(absolute >= 0){ expiresAt = absolute; }\n"
+    // An instant that has already passed authorizes no dispatch at all: the compiled lane rejects the
+    // same window before it begins the invocation.
+    +"  if(windowed && expiresAt < now){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"EXPIRED\",\"Invocation window already passed\");}\n"
+
+    +"  let value:number = 0; let ok:boolean = true; let code:string = \"\"; let outcome:string = \"success\"; let message:string = \"Loaded\";\n"
+    +"  try { value = await provider_"+part.id+"."+part.functionName+callArguments+"; }\n"
+    +"  catch(unknownError){ let error:Error = unknownError as Error; ok = false; outcome = \"failure\"; code = error.name; message = error.message; value = 0; }\n"
+    +"  if(ok && (!Number.isFinite(value) || value < "+s.encode(part.minimum)+" || value > "+s.encode(part.maximum)+")){ ok = false; outcome = \"failure\"; code = \"BAD_RESPONSE\"; message = \"Invalid provider result\"; value = 0; }\n"
+    +"  let liveEpoch:number = session.epoch("+literals.quote(part.moduleName)+");\n"
+    +"  let liveLifetime:string = session.lifetime();\n"
+    +"  let liveGranted:boolean = session.granted("+literals.quote(part.moduleName)+");\n"
+    +"  let liveNow:number = session.now();\n"
+    +"  let liveTrusted:boolean = session.clockTrusted();\n"
+    +"  let current:boolean = liveGranted && liveEpoch === epoch && liveLifetime === lifetime;\n"
+    +"  if(!current){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"REVOKED\",\"Invocation no longer authorized\");}\n"
+    // The reply is admitted only inside its window, under a clock that still decides, and only while
+    // the host's reading has not retreated past the admission instant: as in expiry(), an undecidable
+    // window is treated as expired. The Session facts expose no pause fact, so a suspend the host does
+    // not report cannot be decided here; a host that reports an untrusted clock is refused.
+    +"  let unexpired:boolean = !windowed || (liveNow >= now && liveNow < expiresAt && liveTrusted);\n"
+    +"  if(!unexpired){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"EXPIRED\",\"Invocation expired\");}\n"
+    +"  return {accepted:true,sequence:state."+prefix+"sequence,argument:argument,ok:ok,value:value,code:code,outcome:outcome,message:message};\n"
+    +"}";
+  let reducer: string = "export function complete_"+part.id+"(state:AppState, action:"+part.completion+"):AppState {\n"
+    +"  if(!state."+prefix+"pending || action.sequence !== state."+prefix+"sequence || action.argument !== state."+prefix+"argument){return state;}\n"
+    +"  if(!action.accepted){return {"+prefix+"pending:false,"+prefix+"valid:false,"+prefix+"code:action.code,"+prefix+"outcome:action.outcome,"+prefix+"status:action.message};}\n"
+    +"  if(!("+part.ready+") || action.argument !== "+part.argument+"){return {"+prefix+"pending:false,"+prefix+"valid:false,"+prefix+"status:\"Inputs changed; load again\"};}\n"
+    +"  return {"+prefix+"pending:false,"+prefix+"valid:action.ok,"+prefix+"value:action.value,"+prefix+"code:action.code,"+prefix+"outcome:action.outcome,"+prefix+"status:action.message};\n"
+    +"}";
+  return refused+"\n"+effect+"\n"+reducer;
+}
+
+// Send admission: one decision per external call, on the serialized lane, in contract order. The
+// authority decision of the call's own class comes first, so an ungranted, revoked, undisclosed,
+// unclassified or unauthorized call never reaches the invocation window or the provider. An admitted
+// call then runs the ordinary admission of its operation, which captures the arguments, sequence,
+// phase, revision, lifetime, permission epoch, call identity and window in one record.
+function undecided(kind: string, code: string, reason: string, value: Executed): SendResult {
+  let envelope: operations.Envelope = {operationId:value.operation.id,sequence:value.operation.sequence,phase:value.operation.phase,revision:value.operation.revision,lifetime:value.operation.lifetime,epoch:value.operation.epoch,callId:""};
+  return {accepted:false,code:code,kind:kind,reason:reason,envelope:envelope,executed:copy(value)};
+}
+
+export function send(value: Executed, prerequisites: Live, facts: Authority, module: string, fn: string, argumentsJson: string, callIds: string[], admittedAt: number, expiry: string): SendResult {
+  // The host's classification decides which authority contract applies. An unclassified function is
+  // treated as mutating by the classification rule itself, so it never slips through as a read.
+  let identity: Decision = admittedIdentity(facts,module,fn);
+  if (!identity.admitted) { return undecided(identity.kind,identity.code,identity.reason,value); }
+  if (identity.kind === "read") {
+    let read: Decision = readAuthority(facts,module,fn);
+    if (!read.admitted) { return undecided("read",read.code,read.reason,value); }
+  } else {
+    let mutation: Decision = mutationAuthority(facts,module,fn);
+    if (!mutation.admitted) { return undecided("mutation",mutation.code,mutation.reason,value); }
+    // The approval covers one validated argument snapshot, so a host that approved another payload for
+    // this target dispatches nothing.
+    if (!confirmationCovers(facts,module,fn,argumentsJson)) { return undecided(identity.kind,"DENIED","Confirmation approves another argument snapshot",value); }
+  }
+  let admitted: Admission = admit(value,prerequisites,argumentsJson,callIds,admittedAt,expiry);
+  if (!admitted.accepted) { return undecided(identity.kind,admitted.code,"Operation not admitted",admitted.executed); }
+  return {accepted:true,code:"",kind:identity.kind,reason:"",envelope:admitted.envelope,executed:admitted.executed};
+}
+
+// Reply admission: the reply is admitted only while the invocation it belongs to is current under the
+// live store and the live host facts, exactly as the send was. A stale, expired, revoked or
+// unauthorized reply closes its own call as terminal bookkeeping and publishes no result.
+export function reply(value: Executed, envelope: operations.Envelope, prerequisites: Live, facts: Authority, module: string, fn: string, completion: operations.Completion, now: number, clockTrusted: boolean, paused: boolean, retreated: boolean): ReplyResult {
+  // The originating correlation is matched before any bookkeeping: a completion that answers an older
+  // invocation, or names a call this invocation never issued or already answered, publishes nothing and
+  // retires nothing, so the current invocation's own reply can still complete it and no business result
+  // changes. One call admits one terminal reply.
+  if (!operations.originates(value.operation,envelope) || !operations.answers(value.operation,envelope)) {
+    let superseded: operations.Completion = {envelope:envelope,accepted:false,status:"stale",message:"Completion answers no issued call of this invocation",outcome:"none"};
+    return {published:false,code:"STALE",executed:copy(value),completion:superseded};
+  }
+  let identity: Decision = admittedIdentity(facts,module,fn);
+  let expired: Expiry = expiry(value,now,clockTrusted,paused,retreated);
+  let current: boolean = identity.admitted && !expired.expired && invocationCurrent(value,envelope,prerequisites);
+  let completionValue: operations.Completion = completion;
+  if (!current) {
+    let code: string = "STALE";
+    if (!identity.admitted) { code = identity.code; } else if (expired.expired) { code = "EXPIRED"; } else if (prerequisites.epoch !== value.operation.epoch) { code = "REVOKED"; }
+    let refused: operations.Completion = {envelope:envelope,accepted:false,status:"stale",message:"Invocation no longer current",outcome:"none"};
+    return {published:false,code:code,executed:retire(value,"Invocation no longer current"),completion:refused};
+  }
+  let completed: operations.Operation = operations.complete(value.operation,completionValue,{ready:prerequisites.ready,unexpired:prerequisites.unexpired,revision:prerequisites.revision,lifetime:prerequisites.lifetime,epoch:prerequisites.epoch});
+  let next: Executed = executed(completed,value.dependencies,value.expiryKind,value.period);
+  next.trusted = value.trusted; next.stale = value.stale;
+  let published: boolean = completed.status === "ready" && completed.outcome === "success";
+  return {published:published,code:"",executed:next,completion:completionValue};
 }
 
 export function textRequest(raw: string): TextRequest {

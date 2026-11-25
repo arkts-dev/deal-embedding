@@ -41,7 +41,7 @@ fun todoCapabilities(context: Context): NativeCapabilities {
         },
         "proposeTask" to { args -> propozal(context, store, args) },
         "outcome" to { args -> dev.deal.shell.proposalOutcome(context, "todo", args.getString(0), "taskId") },
-    ))
+    ), mapOf("unfinished" to "read", "tasks" to "read", "task" to "read", "proposeTask" to "mutating", "outcome" to "read"))
 }
 
 /** Proposals persist, so the organizer can recover an outcome after either app restarts. */

@@ -332,6 +332,91 @@ globalThis.configureDealCapabilities = function(contracts) {
   }
   dealHostContracts = Object.freeze(modules);
 };
+// The live Session facts compiled admission re-reads before a send and before a reply. The host
+// configures them; the isolate never invents one. An unconfigured host answers the fail-closed
+// default, so an unclassified or ungranted call admits nothing instead of running on a placeholder.
+let dealSessionFacts = Object.freeze({lifetime:'',epochs:Object.freeze({}),granted:Object.freeze([]),classification:Object.freeze({}),confirmation:Object.freeze({}),clockTrusted:false,now:0,expiry:Object.freeze({})});
+function freezeNumbers(value) {
+  const map = Object.create(null);
+  for (const key of Object.keys(value||{})) { const entry = value[key]; if (!Number.isInteger(entry)) throw Error('Session epoch must be an integer'); map[key] = entry; }
+  return Object.freeze(map);
+}
+function freezeMap(value) {
+  const map = Object.create(null);
+  for (const key of Object.keys(value||{})) { const entry = value[key]; if (typeof entry !== 'string') throw Error('Session fact must be text'); map[key] = entry; }
+  return Object.freeze(map);
+}
+// A published window is host configuration, so a malformed one is refused here rather than read as
+// the absence of a window: the published form names exactly one bound, exactly as the compiled window
+// parse requires, and an omitted entry is the only way to publish no bound. -1 is the published
+// "no absolute bound", so a host that sends both keys still names one window.
+// The facts arrive as JSON, so a window and its map are plain records: any other object (a Map, a Set,
+// a class instance) would publish no key at all and would read as "no bound", so it is refused.
+function plainRecord(value) {
+  // Realm-independent: the facts may be handed in from another JavaScript realm, where a plain object
+  // does not share this realm's Object.prototype, while a Map or a Set still reports its own class.
+  return value !== null && typeof value === 'object' && Object.prototype.toString.call(value) === '[object Object]';
+}
+function freezeExpiry(value) {
+  if (!plainRecord(value)) throw Error('Session expiry must be a map of windows');
+  const map = Object.create(null);
+  for (const key of Object.keys(value)) {
+    const spec = value[key];
+    if (!plainRecord(spec)) throw Error('Session expiry must be an object');
+    const entry = Object.create(null);
+    let bounds = 0;
+    if (Object.hasOwn(spec, 'relativeMs')) {
+      if (!Number.isFinite(spec.relativeMs) || spec.relativeMs < 0) throw Error('Session expiry relativeMs must be a nonnegative number');
+      entry.relativeMs = spec.relativeMs; bounds++;
+    }
+    if (Object.hasOwn(spec, 'absolute')) {
+      if (!Number.isFinite(spec.absolute) || (spec.absolute < 0 && spec.absolute !== -1)) throw Error('Session expiry absolute must be an instant or -1');
+      if (spec.absolute >= 0) { entry.absolute = spec.absolute; bounds++; }
+    }
+    if (bounds !== 1) throw Error('Session expiry must name exactly one of relativeMs or absolute');
+    map[key] = Object.freeze(entry);
+  }
+  return Object.freeze(map);
+}
+globalThis.configureDealSession = function(config) {
+  const granted = Array.isArray(config.granted) ? config.granted.map(module => String(module)) : [];
+  const lifetime = typeof config.lifetime === 'string' ? config.lifetime : '';
+  const now = typeof config.now === 'number' && Number.isFinite(config.now) ? config.now : 0;
+  // The windows are keyed by module/function. A container of another shape would silently publish no
+  // window for every function, so it is refused rather than read as an empty map.
+  const windows = config.expiry === undefined ? {} : config.expiry;
+  // The Experience origin and the frozen-request determination are host facts, never inferred from
+  // source: an absent determination is false, so it authorizes no mutation.
+  const origin = typeof config.origin === 'string' ? config.origin : '';
+  const requestAuthorizes = config.requestAuthorizes === true;
+  const requestTarget = typeof config.requestTarget === 'string' ? config.requestTarget : '';
+  dealSessionFacts = Object.freeze({lifetime:lifetime,epochs:freezeNumbers(config.epochs),granted:Object.freeze(granted),classification:freezeMap(config.classification),confirmation:freezeMap(config.confirmation),origin:origin,requestAuthorizes:requestAuthorizes,requestTarget:requestTarget,clockTrusted:config.clockTrusted === true,now:now,expiry:freezeExpiry(windows)});
+  return '';
+};
+// A host that publishes no window answers -1 for both bounds, so the absence of a window stays
+// distinguishable from a window that is the instant of admission: a relative bound of 0 expires at
+// admission and an absolute instant of 0 has already passed. Neither is invented by the isolate.
+function sessionExpiry(module, functionName) {
+  const spec = dealSessionFacts.expiry[module + '/' + functionName];
+  if (spec === undefined || spec === null || typeof spec !== 'object') return Object.freeze({relativeMs:-1,absolute:-1});
+  const relativeMs = typeof spec.relativeMs === 'number' && Number.isFinite(spec.relativeMs) && spec.relativeMs >= 0 ? spec.relativeMs : -1;
+  const absolute = typeof spec.absolute === 'number' && Number.isFinite(spec.absolute) && spec.absolute >= 0 ? spec.absolute : -1;
+  return Object.freeze({relativeMs:relativeMs,absolute:absolute});
+}
+const dealSession = Object.freeze({
+  epoch: module => { const value = dealSessionFacts.epochs[module]; return Number.isInteger(value) ? value : -1; },
+  lifetime: () => dealSessionFacts.lifetime,
+  granted: module => dealSessionFacts.granted.includes(module),
+  classification: (module, functionName) => dealSessionFacts.classification[module + '/' + functionName] || '',
+  confirmation: (module, functionName, argumentsJson) => dealSessionFacts.confirmation[module + '/' + functionName + '#' + argumentsJson] || '',
+  origin: () => dealSessionFacts.origin,
+  requestAuthorizes: () => dealSessionFacts.requestAuthorizes,
+  requestTarget: () => dealSessionFacts.requestTarget,
+  clockTrusted: () => dealSessionFacts.clockTrusted,
+  now: () => dealSessionFacts.now,
+  relativeMs: (module, functionName) => sessionExpiry(module, functionName).relativeMs,
+  absolute: (module, functionName) => sessionExpiry(module, functionName).absolute
+});
 globalThis.dealLoad = function(factories, entryId, appModule = null) {
   const cache = Object.create(null);
   let messageBytes = 0;
@@ -355,6 +440,9 @@ globalThis.dealLoad = function(factories, entryId, appModule = null) {
     if (name === 'embedding/graphics' || name === 'embedding/graphics.js') return 'embedding/graphics';
     if (name === 'embedding/day' || name === 'embedding/day.js') return 'embedding/day';
     if (name === 'embedding/probe' || name === 'embedding/probe.js') return 'embedding/probe';
+    // The host Session facts of compiled admission are a host-owned module, not a bundle file: the
+    // generated Experience resolves it by its declared identity, exactly as it resolves the filter.
+    if (name === 'embedding/session' || name === 'embedding/session.js') return 'embedding/session';
     if (typeof protocolDeclarations !== 'undefined' && Object.hasOwn(protocolDeclarations, name.replace(/\.js$/, ""))) return name.replace(/\.js$/, "");
     if (Object.hasOwn(dealHostContracts, name.replace(/\.js$/, ""))) return name.replace(/\.js$/, "");
     if (!name.startsWith("./") && !name.startsWith("../")) {
@@ -387,6 +475,9 @@ globalThis.dealLoad = function(factories, entryId, appModule = null) {
     // Public-probe mechanism: the transport policy lives in this binding, not in composed source, so a
     // section cannot widen a destination, a media type, an encoding or a bound.
     if (id === 'embedding/probe') { if (!Object.hasOwn(cache,id)) cache[id]={exports:dealProbeModule(load('deal/runtime.js'))}; return cache[id].exports; }
+    // The host-owned Session facts of compiled admission, answered synchronously from host
+    // configuration: no provider call, no isolate round trip and no snapshot can establish them.
+    if (id === 'embedding/session' || id === 'embedding/session.js') return dealSession;
     function encode(type, value) {
       if (type.kind === 'array') return value.map(item => encode(type.element, item));
       if (type.kind === 'record') {

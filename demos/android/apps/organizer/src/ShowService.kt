@@ -20,6 +20,6 @@ class ShowService : SharedAppService() {
                 .put("act", requirement.act).put("name", requirement.name).put("quantity", requirement.quantity)
                 .put("specification", requirement.specification).put("from", Instant.ofEpochMilli(requirement.from).toString())
                 .put("until", Instant.ofEpochMilli(requirement.until).toString()).put("location", requirement.location).put("status", requirement.summary) } ?: emptyList<JSONObject>())
-        }))
+        }), mapOf("requirements" to "read"))
     }
 }

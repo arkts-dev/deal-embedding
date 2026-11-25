@@ -13,11 +13,13 @@ import * as s from "./construction-schema";
 export class Verdict { code: string; message: string; }
 function accepted(): Verdict { return {code:"",message:""}; }
 function refused(code: string, message: string): Verdict { return {code:code,message:code+": "+message}; }
-// Checked standard modules, the nominal graphics declarations, the host-timezone day mechanism and the
+// Checked standard modules, the nominal graphics declarations, the host-timezone day mechanism, the
+// live probe mechanism, the host facts a running Session supplies to compiled admission and the
 // per-Experience store; a disclosed provider module is admitted because it is part of the frozen
-// contract surface.
+// contract surface. The Session facts module carries facts only: the emitted admission that consumes
+// them, not the model, decides with them.
 function permitted(providers: string[]): string[] {
-  let result: string[] = ["std/math","std/string","std/table","std/time","embedding/graphics","embedding/day","embedding/probe","host/storage"];
+  let result: string[] = ["std/math","std/string","std/table","std/time","embedding/graphics","embedding/day","embedding/probe","embedding/session","host/storage"];
   for (let module of providers) { if (!s.contains(result,module)) { result[result.length] = module; } }
   return result;
 }

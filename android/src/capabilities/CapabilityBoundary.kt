@@ -85,6 +85,9 @@ internal object CapabilityBoundary {
             need(identifier(function.name), subject, "$path.name", "must match [A-Za-z][A-Za-z0-9_]{0,63}, got '${function.name}'")
             need(declared(function.name), subject, "$path.name", "must name a DEAL declaration, got the keyword '${function.name}'")
             need(function.description.length in 1..DESCRIPTION, subject, "$path.description", "must be 1 to $DESCRIPTION UTF-16 units, got ${function.description.length}")
+            // A disclosed class is the host's own read or mutating statement; an undisclosed class is
+            // empty and admits no read. Any other word would be read as one of the two by accident.
+            need(function.classification in setOf("", "read", "mutating"), subject, "$path.classification", "must be empty, read or mutating, got '${function.classification}'")
             need(function.parameters.size <= PARAMETERS, subject, "$path.parameters", "must number at most $PARAMETERS, got ${function.parameters.size}")
             val parameters = mutableSetOf<String>()
             function.parameters.forEachIndexed { position, parameter ->

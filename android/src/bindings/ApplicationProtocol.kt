@@ -5,7 +5,7 @@ import org.json.*
 import java.util.concurrent.Executors
 
 /** Rendering/lifecycle adapter to the compiled DEAL consumer. It never drives sessions. */
-class ApplicationProtocol internal constructor(private val context:Context, mechanisms:Embedding, private val discoveryGateway: GenerationGatewayConfig?, updateWaits: Int):AutoCloseable {
+class ApplicationProtocol internal constructor(private val context:Context, private val mechanisms:Embedding, private val discoveryGateway: GenerationGatewayConfig?, updateWaits: Int):AutoCloseable {
     internal val presentationTarget = mechanisms.presentationTarget
     /** Host-configured containment bounds carried to renderer resources; never public API. */
     internal val resourceLimits = mechanisms.executionLimits
@@ -78,6 +78,10 @@ class ApplicationProtocol internal constructor(private val context:Context, mech
     fun refresh()=(call("refresh") as JSONArray).let { a -> (0 until a.length()).map { CapabilityContract.parse(a.getJSONObject(it).toString()) } }
     fun grant(module:String){sync("grant",module)}
     fun revoke(module:String){sync("revoke",module)}
+    /** Host confirmation of one mutation: an approval names exactly one disclosed target and one
+     * validated argument snapshot, a denial is final for that call, and a changed grant epoch makes an
+     * approval stale. The compiled admission in the source never decides this; the host does. */
+    fun confirm(module:String,function:String,argumentsJson:String,status:String){mechanisms.confirm(module,function,argumentsJson,status)}
     fun requestTrace(request:GenerationRequest)=sync("requestTrace",request.id) as String
     fun sessionTrace(session:Session)=sync("sessionTrace",session.id) as String
     fun events(trace:String,cursor:String,limit:Int)=(call("events",trace,cursor,limit) as JSONObject).let{v->val a=v.getJSONArray("events");EventPage((0 until a.length()).map{a.getJSONObject(it)},v.getString("cursor"),v.getBoolean("incomplete"))}

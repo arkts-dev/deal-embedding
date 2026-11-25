@@ -11,16 +11,27 @@ internal interface CapabilitySession : AutoCloseable {
     val identity: String
     fun receive(request: JSONObject, now: Long)
     fun drain(now: Long): List<JSONObject>
+    /** The live Session facts compiled admission re-reads before a send and before a reply: the
+     * Session lifetime, the permission epoch of each module, the granted modules, the host
+     * classification of each disclosed function, the host confirmation of one target and validated
+     * argument snapshot, the Experience origin, the frozen-request determination, clock trust and the
+     * configured window. Facts, never decisions: the generated Experience decides with them, and the
+     * host dispatch boundary decides every call with the same facts. */
+    fun authority(): String
 }
 
 internal interface CapabilityHost {
-    fun openSession(log: dev.deal.embedding.EmbeddingLog): CapabilitySession
+    fun openSession(log: dev.deal.embedding.EmbeddingLog, origin: String = "supplied"): CapabilitySession
 }
 
 /** Discovery and grants are shared; each isolate owns an independent request/reply session. */
 internal class CapabilityRegistry(private val context: Context, private val discovery: CapabilityDiscovery, local: List<NativeCapabilities>, private val limits: ExecutionLimits) : CapabilityHost, AutoCloseable {
     private val log = dev.deal.embedding.EmbeddingLog(context)
-    private data class Provider(val contract: CapabilityContract, val local: NativeCapabilities? = null, val endpoint: CapabilityDiscovery.Endpoint? = null)
+    private data class Provider(val contract: CapabilityContract, val local: NativeCapabilities? = null, val endpoint: CapabilityDiscovery.Endpoint? = null) {
+        /** The disclosed form: a local registration's per-function class travels with its contract, and a
+         * discovered contract already carries the class its provider published. */
+        val disclosed: CapabilityContract get() = local?.let { CapabilityContract.parse(it.declaration()) } ?: contract
+    }
     private val locals = local.toList()
     /** One atomic disclosure: a rejected proposal keeps these providers, their bindings and grants. */
     private val disclosure = CapabilityDisclosure(locals.map { Provider(it.contract, it) }) { it.contract }
@@ -31,6 +42,15 @@ internal class CapabilityRegistry(private val context: Context, private val disc
     private fun epoch(module: String): String? = permission?.invoke(module)
     private fun allowed(module: String): Boolean = epoch(module)!=null
     private val io = Executors.newSingleThreadExecutor()
+    /** The host's own decision about one mutation, bound to its target and validated argument snapshot. */
+    private data class Confirmation(val module: String, val function: String, val arguments: String, val status: String, val epoch: String?) {
+        /** An approval made under another grant epoch no longer correlates with the live permission. */
+        fun status(live: String?): String = if (status == "approved" && live != epoch) "stale" else status
+    }
+    /** Host confirmations keyed by `module/function#argumentsJson`, the same shape the facts publish. */
+    private val confirmations = mutableMapOf<String, Confirmation>()
+    private val epochNumbers = mutableMapOf<String, Int>()
+    private var nextEpochNumber = 0
     private data class Pending(val id: Int, val key: String, val provider: Provider, val deadline: Long, val permission: String, val bytes:Int)
     private val sessions = mutableSetOf<Session>()
     private var closed = false
@@ -41,12 +61,38 @@ internal class CapabilityRegistry(private val context: Context, private val disc
             check(!closed) { "Capability registry is closed" }
             // The whole proposal is inside the boundary before any contract, binding or grant changes.
             disclosure.admit(proposal, sessions.isNotEmpty())
+            disclosed()
         }
     }
-    @Synchronized fun contracts(): List<CapabilityContract> = disclosure.contracts()
-    @Synchronized override fun openSession(log: dev.deal.embedding.EmbeddingLog): CapabilitySession {
+    /** The accepted contracts as discovery publishes them, each function carrying its host class. */
+    private fun disclosed(): List<CapabilityContract> = providers.values.map { it.disclosed }
+    @Synchronized fun contracts(): List<CapabilityContract> = disclosed()
+    /**
+     * The host's confirmation of one mutation: an approval covers exactly this target and validated
+     * argument snapshot, a denial is final for that call, and an approval taken under a grant epoch
+     * that has since changed is stale. Nothing here invokes a provider or grants a module.
+     */
+    @Synchronized fun confirm(module: String, function: String, argumentsJson: String, status: String) {
         check(!closed) { "Capability registry is closed" }
-        return Session(log).also { sessions.add(it) }
+        require(status in setOf("approved", "denied", "stale")) { "Unknown confirmation status: $status" }
+        val provider = providers[module] ?: throw ProtocolFailure("INVALID_ARGUMENT", "Confirmation names no disclosed module '$module'")
+        val target = provider.contract.functions.singleOrNull { it.name == function } ?: throw ProtocolFailure("INVALID_ARGUMENT", "Confirmation names no disclosed function '$module.$function'")
+        val arguments = JSONArray(argumentsJson)
+        target.validateArguments(arguments)
+        confirmations[module + "/" + function + "#" + arguments.toString()] = Confirmation(module, function, arguments.toString(), status, epoch(module))
+    }
+    /** The facts of one Session: classification of every accepted function, live confirmation statuses,
+     * the Experience origin and the frozen-request determination. Generation issues no determination,
+     * so the published flag is false and a mutation needs the host confirmation. */
+    private fun facts(origin: String): CapabilityFacts {
+        val classes = acceptedClasses(providers.values.map { it.contract to (it.local?.classification() ?: emptyMap()) })
+        val confirmation = mutableMapOf<String, String>()
+        for ((key, approval) in confirmations) { confirmation[key] = approval.status(epoch(approval.module)) }
+        return CapabilityFacts(classes, confirmation, origin, false, "")
+    }
+    @Synchronized override fun openSession(log: dev.deal.embedding.EmbeddingLog, origin: String): CapabilitySession {
+        check(!closed) { "Capability registry is closed" }
+        return Session(log, origin).also { sessions.add(it) }
     }
     /** One explicit trusted read through the same grant/provider/schema boundary as UI calls.
      * The caller selects disclosed data; this method adds no model or write authority. */
@@ -66,8 +112,9 @@ internal class CapabilityRegistry(private val context: Context, private val disc
     private fun cancelRemote(item: Pending) { io.execute { try { item.provider.endpoint?.remote?.cancel(item.key); log.event("transport", "cancelled", operation = item.key, target = item.provider.contract.module) } catch (_: Exception) { log.event("transport", "failed", operation = item.key, code = "CANCEL_FAILED") } } }
 
     /** Session operations and callbacks serialize; permission queries read trusted isolate epochs. */
-    private inner class Session(private val log: dev.deal.embedding.EmbeddingLog) : CapabilitySession {
+    private inner class Session(private val log: dev.deal.embedding.EmbeddingLog, private val origin: String) : CapabilitySession {
         override val identity = UUID.randomUUID().toString()
+        private val calls = CapabilityCall { facts(origin) }
         private val pending = mutableMapOf<Int, Pending>()
         private val replies = mutableListOf<JSONObject>()
         private var nextId = 1L
@@ -105,12 +152,16 @@ internal class CapabilityRegistry(private val context: Context, private val disc
             val args = request.optJSONArray("args")
             if (request.length() != 4 || provider == null || function == null || args == null) { fail(id, "BAD_REQUEST", "Unknown typed capability"); return@synchronized }
             try { function.validateArguments(args) } catch (_: Exception) { fail(id, "BAD_REQUEST", "Invalid capability arguments"); return@synchronized }
-            if (!allowed(provider.contract.module)) { fail(id, "DENIED", "Capability access not granted"); return@synchronized }
+            // A module grant never authorizes a mutation: the one send admission decides the call with the
+            // host's classification, its confirmation of this exact target and validated argument snapshot,
+            // the frozen-request determination and the live grant, before it becomes pending or reaches a
+            // local or remote provider. A refused call dispatches nothing and publishes only its refusal.
+            val refusal = calls.admit(provider.contract.module, function.name, args.toString(), allowed(provider.contract.module))
+            if (refusal != null) { fail(id, refusal.code, refusal.reason); return@synchronized }
             if (pending.size >= 8) { fail(id, "LIMIT", "Too many pending requests"); return@synchronized }
             if (provider.local != null) {
                 try {
-                    val value=provider.local.invoke(function.name,args,InvocationContext(log.experienceIdentity))
-                    function.result.validate(value)
+                    val value=calls.invoke(provider.local,function,args,InvocationContext(log.experienceIdentity))
                     require(JSONArray().put(value).toString().toByteArray().size<=16*1024){"Host response too large"}
                     success(id,value)
                 }
@@ -158,6 +209,40 @@ internal class CapabilityRegistry(private val context: Context, private val disc
                 cancelRemote(it); fail(it.id, if (epoch(it.provider.contract.module)!=it.permission) "REVOKED" else if (it.deadline <= now) "TIMEOUT" else "PROVIDER_DIED", "Capability unavailable")
             }
             replies.toList().also { replies.clear() }
+        }
+        /** The live facts of this Session, read by compiled admission. Grant tokens stay opaque here;
+         * a stable integer identity per token is what the generated Experience captures and compares.
+         * An unknown module, an unclassified function or a closed Session admits nothing. Every
+         * disclosed function carries the host-configured window of one provider call, measured from the
+         * admission that issues it to its terminal reply: the emitted reply admission expires no later
+         * than the instant the lane fails the same call at, and neither bound is an adapter literal. */
+        override fun authority(): String = synchronized(this@CapabilityRegistry) {
+            val granted = JSONArray()
+            val epochs = JSONObject()
+            val expiry = JSONObject()
+            val window = limits.providerTimeoutMs
+            for (provider in providers.values) {
+                val token = epoch(provider.contract.module)
+                if (token != null) granted.put(provider.contract.module)
+                epochs.put(provider.contract.module, if (token == null) -1 else (epochNumbers.getOrPut(token) { nextEpochNumber++ }))
+                for (function in provider.contract.functions) {
+                    val key = provider.contract.module + "/" + function.name
+                    expiry.put(key, JSONObject().put("relativeMs", window).put("absolute", -1))
+                }
+            }
+            // The classification, the live confirmation statuses, the origin and the determination are
+            // the one fact set the host dispatch boundary also decides with; they are never derived a
+            // second way. An approval under another grant epoch is published as stale so no consumer
+            // reads a confirmation that no longer correlates with the live permission.
+            val facts = facts(origin)
+            val classification = JSONObject()
+            for ((key, value) in facts.classification) { classification.put(key, value) }
+            val confirmation = JSONObject()
+            for ((key, value) in facts.confirmation) { confirmation.put(key, value) }
+            JSONObject().put("lifetime", if (closed || ended) "" else identity).put("epochs", epochs).put("granted", granted)
+                .put("classification", classification).put("confirmation", confirmation).put("clockTrusted", !(closed || ended))
+                .put("origin", facts.origin).put("requestAuthorizes", facts.requestAuthorizes).put("requestTarget", facts.requestTarget)
+                .put("now", android.os.SystemClock.elapsedRealtime()).put("expiry", expiry).toString()
         }
         override fun close(): Unit = synchronized(this@CapabilityRegistry) {
             if (ended) return@synchronized

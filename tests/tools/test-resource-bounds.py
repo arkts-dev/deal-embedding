@@ -153,6 +153,29 @@ class ProductionCallSiteTest(unittest.TestCase):
         self.assertTrue('sslSocketFactory=pinned' in probe and 'valpeer=socket.inetAddress' in probe and '!publicAddress(peer)' in probe, 'the read must validate the peer the connection really reached instead of trusting a second resolution')
         self.assertTrue('parameters.endpointIdentificationAlgorithm="HTTPS"' in probe, 'the validated connection must keep the name certificate identity')
 
+    def test_the_emitted_window_is_the_configured_provider_bound(self):
+        self.assertTrue(self.numeral('android/src/capabilities/CapabilityRegistry.kt') is None, 'the invocation window must not be an adapter literal')
+        registry = self.read('android/src/capabilities/CapabilityRegistry.kt')
+        self.assertTrue('valwindow=limits.providerTimeoutMs' in registry, 'the emitted invocation window must be the configured provider bound')
+        self.assertTrue('expiry.put(key,JSONObject().put("relativeMs",window)' in registry, 'a disclosed function must publish the configured window as a host fact')
+
+    def test_the_session_facts_are_reinstalled_at_every_transition(self):
+        """A send and its reply are decided under the Session as it is, never under a mount snapshot."""
+        session = self.read('android/src/execution/UiSession.kt')
+        definition = session.find('privatefuninstallSessionFacts()')
+        self.assertGreaterEqual(definition, 0, 'the Session facts must be installed by one host-owned step')
+        self.assertGreaterEqual(session.count('installSessionFacts()'), 6, 'the Session facts are installed once instead of per transition')
+        mount = session.find('JSONObject(evaluate(bundle))')
+        self.assertGreaterEqual(mount, 0, 'the Session lane no longer mounts a bundle')
+        self.assertGreater(session.find('installSessionFacts()', mount), mount, 'a mounted Session must have its facts installed before any action dispatches')
+        for entry in ('evaluate(DealSessionBindings.dispatch(', 'pumpClocks(force=false)',
+                      'setFrameVisibility(', 'dealCapabilities.deliver('):
+            index = session.find(entry)
+            self.assertGreaterEqual(index, 0, f'the Session lane no longer performs {entry}')
+            install = session.rfind('installSessionFacts()', 0, index)
+            self.assertGreaterEqual(install, 0, f'the Session facts are never installed before {entry}')
+            self.assertGreater(install, definition, f'the Session facts are not installed before {entry}')
+
     def test_the_block_has_one_owner_and_stays_host_configuration(self):
         config = self.read('android/src/EmbeddingConfig.kt')
         self.assertTrue('valexecution:ExecutionLimits=ExecutionLimits()' in config, 'the embedding configuration must carry the bounds')

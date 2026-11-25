@@ -1,0 +1,20 @@
+// The live facts a running Session supplies to its own compiled admission: the permission epoch and
+// Session lifetime this invocation captures, the host's grant of the module it targets, the host's
+// read or mutating classification of the disclosed function, the host confirmation status bound to the
+// same target and argument snapshot, the trust the host places in its own clock, the host's admission
+// instant and the host-configured invocation window. These are facts of the host, never decisions: the
+// generated Experience's compiled admission decides with them, and the same facts are re-read before a
+// reply is admitted. A host that cannot answer fails closed: no grant, no classification, no window and
+// no trusted time admit nothing.
+export function epoch(module: string): number;
+export function lifetime(): string;
+export function granted(module: string): boolean;
+export function classification(module: string, functionName: string): string;
+export function confirmation(module: string, functionName: string, argumentsJson: string): string;
+export function origin(): string;
+export function requestAuthorizes(): boolean;
+export function requestTarget(): string;
+export function clockTrusted(): boolean;
+export function now(): number;
+export function relativeMs(module: string, functionName: string): number;
+export function absolute(module: string, functionName: string): number;

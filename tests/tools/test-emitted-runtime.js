@@ -21,6 +21,8 @@ function open(mode,options={}){
   const context=vm.createContext({sources});
   vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/sandbox.js','utf8'),context);
   if(options.contracts)vm.runInContext('configureDealCapabilities('+JSON.stringify(options.contracts)+')',context);
+  // Host Session facts for the provider-bearing pair: a granted, read-classified probe.
+  vm.runInContext("configureDealSession({lifetime:'session-1',epochs:{'host/probe':4},granted:['host/probe'],classification:{'host/probe/read':'read'},confirmation:{},clockTrusted:true,now:1000,expiry:{}});",context);
   vm.runInContext(fs.readFileSync(path.join(dealUi,'runtime-js/checkpoint.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(path.join(dealUi,'runtime-js/session.js'),'utf8'),context);
   // A declared effect runs through the host contract; without one the fixture refuses effects.

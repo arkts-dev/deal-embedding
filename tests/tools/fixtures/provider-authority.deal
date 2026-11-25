@@ -1,0 +1,59 @@
+import * as embedding from "embedding";
+import * as plans from "./plan";
+import * as selecting from "./construction-selection";
+import * as selections from "./selection";
+import * as screens from "./screen";
+import * as parts from "./parts";
+import * as scalar from "./scalar-read";
+import * as bindings from "./bindings";
+import * as construction from "./construction";
+import * as composer from "./composer";
+import * as s from "./construction-schema";
+
+// One provider-bearing composition assembled by the production stages: a live need whose only
+// alternative is a disclosed numeric provider function, selected as a read, bound to one issued plan
+// input and placed as the scalar-read part. The emitted pair carries the part's invocation, so the
+// generated Experience performs the call under its own compiled admission.
+function insist(condition: boolean, message: string): null { if (!condition) { throw {name:"TEST_FAILED",message:message}; } return null; }
+
+function numberSchema(): embedding.WireType { let fields: embedding.WireField[] = []; return {kind:"number",fields:fields,element:null,maximum:0,minimumNumber:-1000000.0,maximumNumber:1000000.0}; }
+
+function contract(): embedding.CapabilityContract {
+  let parameters: embedding.Parameter[] = [{name:"value",type:numberSchema()}];
+  let fields: embedding.WireField[] = [];
+  let functions: embedding.CapabilityFunction[] = [{name:"read",description:"Read the current authorized rate",parameters:parameters,result:numberSchema(),classification:"read"}];
+  let noFunctions: embedding.CapabilityFunction[] = [];
+  return {module:"host/probe",description:"Authorized rate probe",version:1,functions:functions};
+}
+
+export async function emit(): Promise<string> {
+  let plan: plans.Plan = plans.decode("{\"title\":\"Rate\",\"inputs\":[{\"id\":\"value\",\"label\":\"Value\",\"kind\":\"amount\",\"measure\":\"number\",\"value\":1}],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"rate\",\"type\":\"live\",\"words\":\"Look up the current authorized rate\",\"reads\":[\"value\"],\"spec\":{\"label\":\"Rate\",\"unit\":\"EUR\",\"measure\":\"number\",\"query\":\"Current authorized rate for the entered value\"}}],\"questions\":[]}",[],[],"Look up the current authorized rate","{\"facts\":[]}");
+  let registry: bindings.Registry = bindings.create([contract()]);
+  let candidates: scalar.Candidate[] = scalar.candidates(plan,registry.contracts);
+  insist(candidates.length === 1,"the disclosed read issued no candidate");
+  let candidate: scalar.Candidate = candidates[0];
+  insist(candidate.argument === "value","the candidate did not bind the issued input");
+  // The selection results the production stages consume: the read is required by the original task
+  // and its sole parameter keeps the input's exact meaning.
+  let firstAnswers: selections.Answer[] = [{id:"real_"+candidate.id,selected:"read",probability:1,accepted:true,probabilities:[]}];
+  let first: selecting.Result = {choices:[],answers:firstAnswers,settled:[],usable:true};
+  let secondAnswers: selections.Answer[] = [{id:"argument_"+candidate.id,selected:"bound",probability:1,accepted:true,probabilities:[]}];
+  let chosen: selecting.Choice[] = [{need:"rate",alternative:candidate.id,status:"selected",reason:""}];
+  let second: selecting.Result = {choices:chosen,answers:secondAnswers,settled:[],usable:true};
+  let definitions: parts.Definitions = parts.defineWithProviders(plan,scalar.operands(candidates));
+  let reads: scalar.Built = scalar.build(plan,candidates,first,second);
+  let built: parts.Built = parts.buildWithProviders(plan,definitions,chosen,registry,reads,{intervalMs:1000,toleranceMs:2000});
+  let composition: screens.Composition = {screen:screens.reserve(plan,"screen"),bindings:{},actions:{},connections:[]};
+  // A filled slot carries the kind its accepted alternative declares, exactly as the selection stage
+  // issues it, so assembly resolves the placed part against the kind it really implements.
+  for (let slot of composition.screen.slots) { if (slot.need === "rate") { slot.allowedKinds = ["scalar_read"]; } }
+  let bound: construction.Bound = await construction.issueBindings(composition,plan,built,registry,"Look up the current authorized rate","{\"facts\":[]}");
+  insist(bound.placed,"the provider part was not placed");
+  let result: composer.Result = await composer.assembleWith(composition,built.computations,registry,null);
+  insist(result.source.deal.includes("embedding/session"),"the emitted pair carries no Session facts import");
+  insist(result.source.deal.includes("refused_"),"the emitted pair carries no admission refusal");
+  insist(result.source.deal.includes(".classification("),"the emitted pair carries no host classification check");
+  return s.encode({candidateId:candidate.id,source:result.source,metadata:result.metadata});
+}
+
+export function main(): void { return; }

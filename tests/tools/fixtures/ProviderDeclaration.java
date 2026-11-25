@@ -6,7 +6,7 @@ import java.util.List;
 public final class ProviderDeclaration {
     public static void main(String[] args) {
         var result = new WireType("number", List.of(), null, 0, -1000, 1000);
-        var function = new CapabilityFunction("read", "Return fixture value", List.of(), result);
+        var function = new CapabilityFunction("read", "Return fixture value", List.of(), result, "read");
         var contract = new CapabilityContract("host/probe", "Explicit fixture read", List.of(function), 1);
         String declaration = CapabilityBindings.INSTANCE.declaration(contract);
         // 'prompt' prints the capabilityDeclarations text the generation host emits: label and declaration.

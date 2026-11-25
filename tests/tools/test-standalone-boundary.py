@@ -119,6 +119,44 @@ class StandaloneBoundaryTest(unittest.TestCase):
             violations, pending = module.compile_demos([declaration])
             self.assertEqual((violations, pending), ([], ['calendar']))
 
+    def test_a_package_the_gate_build_produced_carries_its_compile_proof(self):
+        # The gate's own demo build repackages a target through the same production target loop, so it
+        # hands this item the validated proof of every package it produced. Recording it means a lane
+        # repackages only targets no build has proven, and a proof never covers a package whose inputs
+        # or bytes moved: a damaged package is compiled and packaged again.
+        import importlib.util
+        import tempfile
+        import types
+        spec = importlib.util.spec_from_file_location('boundary_proof', ROOT / 'tools/boundary-proof.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            module.ROOT = work
+            module.COMPILE_CACHE = work / 'build/verification/demo-compile'
+            (work / 'build').mkdir()
+            declaration = {'target': 'calendar', 'sources': [], 'app_apis': [], 'profile_jars': []}
+            module.compile_gate = lambda declarations: []
+            module.compile_key = lambda declaration: 'validated-input-key'
+            module.demo_declarations = lambda *arguments, **keywords: [declaration]
+            module.subprocess = types.SimpleNamespace(run=lambda *arguments, **keywords: None)
+            package = work / 'build/calendar.apk'
+            package.write_text('a package an earlier build produced')
+            violations, pending = module.compile_demos([declaration])
+            self.assertEqual(pending, ['calendar'], 'a target no build proved must be packaged')
+            package.write_text('a package this gate build produced')
+            # The recording under control is the production one the demo build runs, not a test stamp.
+            module.record_target_proof('calendar')
+            self.assertTrue((module.COMPILE_CACHE / 'calendar.sha256').is_file(),
+                            'the gate build recorded no compile proof')
+            violations, pending = module.compile_demos([declaration])
+            self.assertEqual((violations, pending), ([], []),
+                             'this exact input set is already packaged from the AAR extraction')
+            package.write_text('a package this build did not produce')
+            violations, pending = module.compile_demos([declaration])
+            self.assertEqual(pending, ['calendar'],
+                             'a compile proof covered a package this build did not produce')
+
     def test_library_input_declaration_contains_no_application_source(self):
         sys.path.insert(0, str(ROOT / 'tools'))
         import importlib.util

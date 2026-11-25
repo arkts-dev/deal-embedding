@@ -105,6 +105,9 @@ gate_sequence_contracts() {
     python3 tests/tools/test-construction-contracts.py
     # Session execution policy: dependency revisions, currentness, expiry trust, authority and text admission.
     python3 tests/tools/test-execution-contracts.py
+    # Provider authority and operation currentness in the running Session: the generated Experience's own
+    # compiled send/reply admission over the host Session facts, refusing to dispatch or publish.
+    python3 tests/tools/test-provider-authority.py
     # Host-configured containment: provider, discovery, evaluation, heap, input and transfer bounds.
     python3 tests/tools/test-resource-bounds.py
     python3 tests/tools/test-source-edits.py

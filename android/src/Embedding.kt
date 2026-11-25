@@ -137,8 +137,11 @@ class Embedding internal constructor(private val context: Context, internal val 
     @Synchronized fun saved():List<Experience> = runtime.savedWorkspaces().map{saved -> experiences.getOrPut(saved.id){Experience(saved.id,saved.title,when(saved.origin){WorkspaceOrigin.CATALOGUE->"catalogue";WorkspaceOrigin.AI_SOURCE->"generated";else->"supplied"},saved.attempts)} }
     @Synchronized fun forget(experience:Experience){trusted(experience);sessions.entries.filter{it.value==experience.id}.map{it.key}.forEach{close(Session(it))};candidates[experience.id]?.close();candidates.remove(experience.id);runtime.forgetWorkspace(experience.id);experiences.remove(experience.id)}
     @Synchronized fun refresh():List<CapabilityContract>{check(!stopped);return registry.refresh().map{CapabilityContract.parse(it.json().toString())}.also{config.contracts=it.map{c->CapabilityContract.parse(c.json().toString())}}}
-    @Synchronized fun liveSessions():List<Session> {sessions.entries.removeAll{runtime.workspace(it.value)==null};return sessions.keys.map{Session(it)}}
-    @Synchronized fun requestTrace(request:GenerationRequest)=(requests[request.id] ?: error("Invalid request")).log.run
+    /** The host's own decision about one mutation of one exact target and validated argument snapshot.
+     * An approval dispatches that call once; a denial is final for it; an approval taken under a grant
+     * epoch that has since changed is stale. Never a provider invocation and never a grant. */
+    @Synchronized fun confirm(module:String,function:String,argumentsJson:String,status:String){check(!stopped);registry.confirm(module,function,argumentsJson,status)}
+    @Synchronized fun liveSessions():List<Session> {sessions.entries.removeAll{runtime.workspace(it.value)==null};return sessions.keys.map{Session(it)}}    @Synchronized fun requestTrace(request:GenerationRequest)=(requests[request.id] ?: error("Invalid request")).log.run
     @Synchronized fun sessionTrace(session:Session):String {val e=experience(session);return runtime.workspace(e.id)!!.session.logTrace()}
     private val observation by lazy{Observation(context)}
     internal fun controlFailure(operation:String,error:Throwable){EmbeddingLog(context).event("control","failed",operation=operation,code="CONTROL_FAILED")}

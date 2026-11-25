@@ -19,6 +19,6 @@ class AgendaService : SharedAppService() {
             JSONArray(ShowAgenda(this).events(day).take(32).map { event -> JSONObject()
                 .put("id", event.id.toString()).put("title", event.title).put("from", Instant.ofEpochMilli(event.from).toString())
                 .put("until", Instant.ofEpochMilli(event.until).toString()).put("location", event.location).put("notes", event.notes.take(2048)) })
-        }))
+        }), mapOf("events" to "read"))
     }
 }

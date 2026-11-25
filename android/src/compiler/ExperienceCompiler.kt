@@ -49,6 +49,10 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             // its declaration compiles like the graphics declarations and the isolate supplies the binding.
             File(project,"probe.d.deal").writeText(context.assets.open("protocol/probe.d.deal").bufferedReader().use { it.readText() })
             externals.put("embedding/probe",JSONObject().put("declaration","probe.d.deal"))
+            // The host Session facts compiled admission re-reads are a frozen host module, so the
+            // emitted provider import compiles exactly as it does in the deterministic lanes.
+            File(project,"session.d.deal").writeText(context.assets.open("generation/session.d.deal").bufferedReader().use { it.readText() })
+            externals.put("embedding/session",JSONObject().put("declaration","session.d.deal"))
             config.contracts.forEachIndexed { index, module ->
                 val declaration = "host-$index.d.deal"
                 File(project, declaration).writeText(dev.deal.embedding.capabilities.CapabilityBindings.declaration(module))

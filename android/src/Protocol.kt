@@ -3,11 +3,11 @@ package dev.deal.embedding
 import dev.deal.embedding.capabilities.NativeCapabilities
 import org.json.*
 
-fun nativeCapabilities(contract: CapabilityContract, handlers: Map<String, (JSONArray) -> Any>) = NativeCapabilities(contract, handlers)
-fun nativeCapabilities(contract: CapabilityContract, handlers: (InvocationContext) -> Map<String, (JSONArray) -> Any>) =
+fun nativeCapabilities(contract: CapabilityContract, handlers: Map<String, (JSONArray) -> Any>, classification: Map<String, String> = emptyMap()) = NativeCapabilities(contract, handlers, classification)
+fun nativeCapabilities(contract: CapabilityContract, classification: Map<String, String> = emptyMap(), handlers: (InvocationContext) -> Map<String, (JSONArray) -> Any>) =
     NativeCapabilities.contextual(contract, contract.functions.associate { function ->
         function.name to { args: JSONArray, invocation: InvocationContext -> handlers(invocation).getValue(function.name)(args) }
-    })
+    }, classification)
 
 data class GenerationContext(val id: String)
 class GenerationRequest internal constructor(internal val id: String)

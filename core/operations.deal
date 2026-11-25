@@ -45,11 +45,19 @@ export function envelope(operation: Operation, callId: string): Envelope {
   if (!operation.calls.some((call: Call): boolean => call.id === callId) || operation.status !== "pending") { s.reject("Unissued operation call"); }
   return {operationId:operation.id,sequence:operation.sequence,phase:operation.phase,revision:operation.revision,lifetime:operation.lifetime,epoch:operation.epoch,callId:callId};
 }
-export function sendCurrent(operation: Operation, envelope: Envelope, prerequisites: Prerequisites): boolean {
-  if (!current(operation,envelope,prerequisites)) { return false; }
+// Does this completion answer one of this invocation's issued, unanswered calls? A call identity the
+// invocation never issued, or one that already had its terminal reply, is not a reply to it.
+export function answers(operation: Operation, envelope: Envelope): boolean {
   return operation.calls.some((call: Call): boolean => call.id === envelope.callId && !call.terminal);
 }
-function sameInvocation(operation: Operation, envelope: Envelope): boolean {
+export function sendCurrent(operation: Operation, envelope: Envelope, prerequisites: Prerequisites): boolean {
+  if (!current(operation,envelope,prerequisites)) { return false; }
+  return answers(operation,envelope);
+}
+// Does this completion answer this record's own invocation? Matching the originating correlation is
+// the first thing a reply admission decides: a completion for an older invocation changes no
+// bookkeeping of the newer one, and vice versa.
+export function originates(operation: Operation, envelope: Envelope): boolean {
   return operation.id === envelope.operationId && operation.sequence === envelope.sequence && operation.phase === envelope.phase && operation.revision === envelope.revision && operation.lifetime === envelope.lifetime && operation.epoch === envelope.epoch;
 }
 // A reply is admitted only after invocationCurrent accepted it against the live store on the serialized
@@ -57,7 +65,7 @@ function sameInvocation(operation: Operation, envelope: Envelope): boolean {
 export function complete(operation: Operation, completion: Completion, prerequisites: Prerequisites): Operation {
   let next: Operation = copy(operation); let origin: Envelope = completion.envelope;
   // Stale completions cannot clear a newer pending invocation.
-  if (!completion.accepted || !sameInvocation(operation,origin) || operation.status !== "pending") { return next; }
+  if (!completion.accepted || !originates(operation,origin) || operation.status !== "pending") { return next; }
   let found: boolean = false;
   for (let call of next.calls) { if (call.id === origin.callId && !call.terminal) { call.terminal = true; found = true; } }
   if (!found) { return next; }

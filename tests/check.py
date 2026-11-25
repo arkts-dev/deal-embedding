@@ -101,6 +101,10 @@ LANES = {
 LANES.update({'composer:'+g:['python3','tests/tools/test-composer.py','--group',g] for g in ['validation','basics','clocks','operations','entries','presentation']})
 LANES.update({'pair:'+p:['python3','tests/tools/test-composer.py','--pair',p] for p in PAIRS})
 LANES.update({'catalogue:'+g:['python3','tests/tools/test-catalogue-runtime.py','--group',g] for g in GROUPS})
+# The short lane bounds every whole invocation at 40 s (below), which is deliberately shorter than a cold
+# compile of this toolchain: a build:, isolation: or boundary: lane that misses its artifact stops at
+# that bound with its name and the retained predecessors instead of returning a pass, and the complete
+# gate is what validates those stages. Nothing here is a substitute for running the gate.
 LANES.update({'build:'+s:['bash','build.sh'] for s in STAGES})
 LANES.update({'isolation:'+s:['python3','tools/boundary-proof.py','--prepare-stage',s] for s in STAGES})
 LANES.update({'boundary:'+p.parent.name:['python3','tools/boundary-proof.py','--target',p.parent.name]

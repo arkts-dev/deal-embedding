@@ -15,8 +15,11 @@
 
 The isolated proof is cached only for identical validated inputs; a changed input invalidates it, and
 an unchanged demo target keeps its compile proof. The isolated build and the demo repackage share no
-output tree, so one cold proof prepares both at the same time, each under its own declared bound.
-Nothing tracked is modified.
+output tree, so one cold proof prepares both at the same time, each under its own declared bound. The
+gate's own demo build repackages a target through this same production target loop, so it records that
+compile proof too (`--record`): a lane that already packaged a target from the AAR extraction does not
+compile identical inputs again, while this item's declaration audit, extraction comparison and negative
+controls still run every time. Nothing tracked is modified.
 """
 import argparse
 import concurrent.futures
@@ -455,6 +458,27 @@ def packaging_jobs(pending):
     return max(1, min(int(requested), len(pending), os.cpu_count() or 1))
 
 
+def record_target_proof(target):
+    """Record the compile proof of a demo package a build just produced from the AAR extraction.
+
+    `tools/build-demos.sh` packages a target through this same production target loop, with the
+    declaration channel `demos/build.sh print-inputs` reports. Recording the identical validated key
+    means the boundary item repackages only a target no build has proven, and it still audits every
+    declaration, compares the AAR extraction and runs its negative controls in every lane. A proof of a
+    target this build did not package is refused instead of recorded."""
+    declarations = [declaration for declaration in demo_declarations()
+                    if declaration['target'] == target]
+    if len(declarations) != 1:
+        raise SystemExit(f'standalone boundary: {target} has no demo declaration to record')
+    declaration = declarations[0]
+    package = ROOT / f'build/{target}.apk'
+    if not package.is_file():
+        raise SystemExit(f'standalone boundary: {target} produced no packaged APK to record')
+    COMPILE_CACHE.mkdir(parents=True, exist_ok=True)
+    (COMPILE_CACHE / f'{target}.sha256').write_text(
+        compile_key(declaration) + ':' + sha(package.read_bytes()) + '\n')
+
+
 def compile_demos(declarations):
     """Compile and package every demo target from the packaged AAR extraction only.
 
@@ -609,7 +633,17 @@ def main():
     # someone remembers a second list.
     parser.add_argument('--prepare-stage', choices=sorted(stage_bounds()), help='prepare one bounded isolated-library stage, not a passing boundary proof')
     parser.add_argument('--plan', action='store_true', help='show isolated stage readiness and pending targets without builds')
+    parser.add_argument('--record', nargs='+', choices=demo_targets(), metavar='TARGET',
+                        help='record the demo compile proof of packages this build produced; not a boundary proof')
     args = parser.parse_args()
+    if args.record:
+        # The gate's own demo build runs the same production target loop, so it hands over the proof of
+        # the packages it just produced instead of leaving this item to compile identical inputs again.
+        for target in args.record:
+            record_target_proof(target)
+        print(f'standalone boundary: recorded the compile proof of {len(args.record)} demo package(s) '
+              'this build produced; no boundary proof recorded')
+        return 0
     (ROOT/'build').mkdir(exist_ok=True)
     lock = (ROOT/'build/.demos-build.lock').open('a')
     if os.environ.get('DEAL_BUILD_LOCK_HELD') != str(ROOT):

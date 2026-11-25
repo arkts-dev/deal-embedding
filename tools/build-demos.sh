@@ -431,3 +431,17 @@ if (( JOBS > 1 )) && (( ${#BATCH_TARGETS[@]} > 1 )); then
 else
     for app in "${TARGETS[@]}"; do build_target "$app"; done
 fi
+# The standalone boundary item consumes this same production compile. Hand it the validated proof of
+# every package this build produced, so a lane that already repackaged a target from the AAR extraction
+# does not compile identical inputs again. A recorded proof is input identity only: the boundary item
+# still audits every declaration, compares the AAR extraction and runs its negative controls, and it
+# repackages any target that has no proof.
+recorded_proofs=()
+for app in "${TARGETS[@]}"; do
+    if [[ "$app" == tests || ! -f "build/$app.apk" ]]; then continue; fi
+    recorded_proofs+=("$app")
+done
+if (( ${#recorded_proofs[@]} > 0 )); then
+    python3 tools/boundary-proof.py --record "${recorded_proofs[@]}" ||
+        printf 'Demo packaging: compile proof not recorded for %s\n' "${recorded_proofs[*]}"
+fi

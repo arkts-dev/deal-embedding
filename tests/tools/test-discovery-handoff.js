@@ -49,7 +49,7 @@ async function call(name,args,handler){
 }
 (async()=>{
  const scalar={kind:'number',fields:[],element:null,maximum:128,minimumNumber:-Number.MAX_VALUE,maximumNumber:Number.MAX_VALUE};
- const contract={module:'host/sensor',description:'Sensor',version:1,functions:[{name:'read',description:'Read the sensor',parameters:[],result:scalar}]};
+ const contract={module:'host/sensor',description:'Sensor',version:1,functions:[{name:'read',description:'Read the sensor',parameters:[],result:scalar,classification:'read'}]};
  const catalogue=await call('refresh',[],()=>[contract]);
  assert.equal(catalogue.length,1);
  native.length=0;

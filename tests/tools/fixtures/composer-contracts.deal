@@ -756,7 +756,7 @@ function contract(): embedding.CapabilityContract {
   let boundedFields: embedding.WireField[] = [];
   let boundedWire: embedding.WireType = {kind:"number",fields:boundedFields,element:null,maximum:0,minimumNumber:0,maximumNumber:100};
   let boundedParameters: embedding.Parameter[] = [{name:"value",type:boundedWire}];
-  let functions: embedding.CapabilityFunction[] = [{name:"write",description:"Record the constructed value",parameters:parameters,result:numberWire()},{name:"writeText",description:"Record a constructed label",parameters:textParameters,result:textWire},{name:"writeShort",description:"Record a bounded label",parameters:shortParameters,result:textWire},{name:"writeBounded",description:"Record a bounded rate",parameters:boundedParameters,result:numberWire()}];
+  let functions: embedding.CapabilityFunction[] = [{name:"write",description:"Record the constructed value",parameters:parameters,result:numberWire(),classification:""},{name:"writeText",description:"Record a constructed label",parameters:textParameters,result:textWire,classification:""},{name:"writeShort",description:"Record a bounded label",parameters:shortParameters,result:textWire,classification:""},{name:"writeBounded",description:"Record a bounded rate",parameters:boundedParameters,result:numberWire(),classification:""}];
   return {module:"demo/facts",description:"Test record",version:1,functions:functions};
 }
 function owner(id: string, value: number): screens.Instance {
@@ -1404,7 +1404,7 @@ export async function bindingReasons(): Promise<null> {
   // aborting the whole candidate.
   let rowPlan: plans.Plan = plans.decode("{\"title\":\"Rows\",\"inputs\":[],\"constants\":[],\"requirements\":[],\"needs\":[{\"id\":\"log\",\"type\":\"content\",\"words\":\"Show rows\",\"reads\":[],\"spec\":{}},{\"id\":\"mark\",\"type\":\"action\",\"words\":\"Mark a row\",\"reads\":[],\"spec\":{\"on\":\"row_tap\",\"at\":\"log\",\"operation\":\"refresh\"}}],\"questions\":[]}",[],[],"Show rows","{\"facts\":[]}");
   let refreshParameters: embedding.Parameter[] = [];
-  let refreshFunctions: embedding.CapabilityFunction[] = [{name:"refresh",description:"Reload the rows",parameters:refreshParameters,result:numberWire()}];
+  let refreshFunctions: embedding.CapabilityFunction[] = [{name:"refresh",description:"Reload the rows",parameters:refreshParameters,result:numberWire(),classification:"read"}];
   let rowContract: embedding.CapabilityContract = {module:"demo/rows",description:"Rows",version:1,functions:refreshFunctions};
   let rowRegistry: bindings.Registry = bindings.create([rowContract]);
   let rowBuilt: parts.Built = parts.buildWithProviders(rowPlan,parts.defineWithProviders(rowPlan,[]),[],rowRegistry,null,clockConfig());
