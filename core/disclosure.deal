@@ -80,7 +80,7 @@ function structuredRecord(source: unknown, values: Record<string, unknown>): boo
     return false;
   }
   // JSON arrays are row containers, not tables and never one combined record.
-  if (s.encode(source).startsWith("[")) {
+  if (Array.isArray(source)) {
     const rows: readonly unknown[] = source as readonly unknown[]; let scalarRow: boolean = true;
     for (let row of rows) { if (typeof row === "object" && row !== null) { scalarRow = false; } }
     if (scalarRow) {
@@ -120,9 +120,11 @@ export function admitsRecord(data: string, values: Record<string, unknown>): boo
   let parsed: unknown = null;
   try { parsed = JSON.parse(data); } catch (unknownError) { return proseRecord(data,values); }
   if (typeof parsed !== "object" || parsed === null) { return false; }
-  let carrier: Record<string, unknown> = parsed as Record<string, unknown>;
-  if (typeof carrier.request === "string" && typeof carrier.context === "string") {
-    return sourceRecord(carrier.request as string,values) || sourceRecord(carrier.context as string,values);
+  if (!Array.isArray(parsed)) {
+    let carrier: Record<string, unknown> = parsed as Record<string, unknown>;
+    if (typeof carrier.request === "string" && typeof carrier.context === "string") {
+      return sourceRecord(carrier.request as string,values) || sourceRecord(carrier.context as string,values);
+    }
   }
   return structuredRecord(parsed,values);
 }
@@ -140,14 +142,14 @@ export function admitsTimestamp(facts: string, value: number): string {
   if (!Number.isFinite(value) || Math.floor(value) !== value) { return ""; }
   let parsed: unknown = null;
   try { parsed = JSON.parse(facts); } catch (unknownError) { return ""; }
-  if (typeof parsed !== "object" || parsed === null) { return ""; }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) { return ""; }
   let root: Record<string, unknown> = parsed as Record<string, unknown>;
   if (!Object.hasOwn(root,"facts")) { return ""; }
   let issued: unknown = root.facts;
-  if (typeof issued !== "object" || issued === null) { return ""; }
+  if (!Array.isArray(issued)) { return ""; }
   const entries: readonly unknown[] = issued as readonly unknown[];
   for (let entry of entries) {
-    if (typeof entry !== "object" || entry === null) { continue; }
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) { continue; }
     let fact: Record<string, unknown> = entry as Record<string, unknown>;
     // The declaration is the host-issued fact's own type, never a guessed key name.
     if (typeof fact.type !== "string" || (fact.type as string) !== "unixMillis") { continue; }
@@ -173,7 +175,7 @@ export class ContextFact { id: string; text: string; }
 export function context(facts: string): ContextFact[] {
   let result: ContextFact[] = [];
   let raw: unknown = JSON.parse(facts);
-  if (typeof raw !== "object" || raw === null) { return result; }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) { return result; }
   let parsed: Record<string, unknown> = raw as Record<string, unknown>;
   if (!Object.hasOwn(parsed,"facts")) { return result; }
   let ids: string[] = [];

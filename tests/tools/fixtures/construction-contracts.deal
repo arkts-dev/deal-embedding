@@ -40,6 +40,7 @@ function rejectsPlan(raw: string): void { let rejected: boolean = false; try { p
 function planFailure(raw: string, original: string, facts: string): string { try { plans.decode(raw,[],[],original,facts); } catch (errorUnknown) { let error: Error = errorUnknown as Error; return error.message; } return ""; }
 function refusesPlan(raw: string, original: string, facts: string, located: string): void { let message: string = planFailure(raw,original,facts); insist(message !== "","Invalid plan admitted: "+located); insist(strings.contains(message,located),"Plan rejection "+located+" missing, got: "+message); }
 function unknownRecord(value: unknown): Record<string, unknown> { return value as Record<string, unknown>; }
+function numberArray(value: unknown): number[] { return value as number[]; }
 export function schemas(): null {
   const rawLabels: Record<string, unknown> = JSON.parse("{\"2\":\"two\",\"__proto__\":\"safe\",\"text\":\"\\ud800\"}");
   const labels: Record<string, string> = decoded.stringRecord(rawLabels);
@@ -59,11 +60,36 @@ export function schemas(): null {
   // The checked collection decodes into a fresh invariant array and keeps every UTF-16 unit, including
   // the quote, backslash and newline the full source escapes must round-trip.
   const typed: string[] = ["😀","\ud800","\u0001","\"","\\","\n"];
+  const borrowed: readonly string[] = typed;
+  insist(Array.isArray(borrowed),"Readonly array identity was lost");
+  // Classification never retags invariant storage: the original string descriptor
+  // must still reject a numeric assertion after inspection through unknown.
+  let badDescriptor: boolean = false;
+  try { numberArray(borrowed); } catch(error) { badDescriptor = true; }
+  insist(badDescriptor,"Array inspection erased the string element descriptor");
+  for (const raw of ["null","false","7","\"[]\"","{}","{\"length\":0,\"0\":\"x\"}"]) {
+    const candidate: unknown = JSON.parse(raw);
+    insist(!Array.isArray(candidate),"Array-like non-array classified as an array: "+raw);
+    let shapeError: string = "";
+    try { decoded.strings(candidate); } catch(error) { shapeError = (error as Error).message; }
+    insist(shapeError === "Expected array","Non-array refusal changed: "+shapeError);
+  }
+  const empty: unknown = JSON.parse("[]");
+  insist(Array.isArray(empty) && decoded.strings(empty).length === 0,"Empty dynamic array refused");
+  let nestedArray: boolean = false;
+  try { decoded.records(JSON.parse("[[]]")); } catch(error) { nestedArray = (error as Error).message.includes("record at index 0"); }
+  insist(nestedArray,"Array admitted as a record element");
   const copied: string[] = decoded.strings(typed); insist(copied.join("") === typed.join(""),"Checked collection changed UTF-16 units"); insist(copied !== typed,"Checked collection aliased its input");
   const dynamic: unknown[] = JSON.parse("[\"😀\",\"\\ud800\",\"\\u0001\",\"\\\"\",\"\\\\\",\"\\n\"]");
   const fresh: string[] = decoded.strings(dynamic); insist(fresh.join("") === typed.join(""),"Dynamic array conversion lost UTF-16 units");
   let refusedCollection: boolean = false; try { decoded.strings(JSON.parse("[1]")); } catch(error) { refusedCollection = true; } insist(refusedCollection,"Wrong element kind admitted to a typed collection");
   refusedCollection = false; try { decoded.records(JSON.parse("7")); } catch(error) { refusedCollection = true; } insist(refusedCollection,"Non-array admitted as a typed collection");
+  insist(disclosure.admitsRecord("[[\"Rent\",40]]",{name:"Rent",amount:40}),"Nested scalar row evidence refused");
+  insist(!disclosure.admitsRecord("[{\"name\":\"Rent\",\"amount\":3},{\"name\":\"Food\",\"amount\":40}]",{name:"Rent",amount:40}),"Array rows combined unrelated evidence");
+  for (const malformed of ["[]","{\"facts\":{}}","{\"facts\":\"[]\"}","{\"facts\":[[],null,7]}"]) {
+    insist(disclosure.admitsTimestamp(malformed,1700000000000) === "","Malformed fact container issued timestamp evidence");
+  }
+  insist(disclosure.context("[]").length === 0,"Array root admitted as context record");
   let location: string = "";
   try { decoded.records(JSON.parse("[1]")); } catch (errorUnknown) { let error: Error = errorUnknown as Error; location = error.message; }
   insist(strings.contains(location,"record at index 0"),"Collection rejection is not located: "+location);

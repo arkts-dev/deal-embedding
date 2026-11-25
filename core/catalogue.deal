@@ -184,14 +184,14 @@ export function facts(definition: Definition): string {
   let requirements: string[] = []; for (let requirement of definition.requirements) { requirements[requirements.length] = requirement; }
   return "Parameters ["+parameters.join("; ")+"]; publishes ["+publishes.join("; ")+"]; readers ["+readPorts.join("; ")+"]; holes ["+holes.join("; ")+"]; requires ["+requirements.join("; ")+"].";
 }
-// Decoded values carry real JSON kinds, so their wire spelling identifies the type: a text begins
-// with a quote, an array with a bracket and a row with a brace. A wrong-typed field or collection of
-// these kinds then rejects instead of being read as an empty value or re-spelled by a later emitter.
+// Check decoded kinds before typed extraction. Array identity does not validate its
+// elements; the checked readonly views and per-element decoders below still do that.
+// Text and record wire-kind checks retain their located schema refusals.
 async function text(value: unknown, maximum: number, nonblank: boolean): Promise<string> {
   if (!s.encode(value).startsWith("\"")) { s.reject("Catalogue text required"); }
   let result: string = s.text(value); if (nonblank) { s.nonblank(result); } if (result.length > maximum) { s.reject("Catalogue text bound"); } return result;
 }
-function list(value: unknown, name: string): void { if (!s.encode(value).startsWith("[")) { s.reject("Catalogue array required: "+name); } }
+function list(value: unknown, name: string): void { if (!Array.isArray(value)) { s.reject("Catalogue array required: "+name); } }
 function record(value: unknown, name: string): void { if (!s.encode(value).startsWith("{")) { s.reject("Catalogue row required: "+name); } }
 // Number.isFinite is the only total numeric test for a dynamic value: it never coerces, so a text
 // or boolean value rejects here instead of reaching a checked numeric cast.
@@ -594,14 +594,14 @@ export function disclosed(entry: Configured, original: string, facts: string, us
   // Generated record IDs and interaction defaults are not factual values.
   for (let parameter of entry.definition.parameters) { if (parameter.origin === "disclosed" && Object.hasOwn(entry.parameters,parameter.name)) {
     let raw: unknown = entry.parameters[parameter.name];
-    if (!s.encode(raw).startsWith("[")) { continue; }
+    if (!Array.isArray(raw)) { continue; }
     let index: number = 0;
     const rows: readonly unknown[] = raw as readonly unknown[];
     for (let row of rows) {
       let values: Record<string, unknown> = {};
       if (typeof row === "string") { values.value = row; }
       else if (typeof row === "object" && row !== null) {
-        if (s.encode(row).startsWith("[")) { let cell: number = 0; const cells: readonly unknown[] = row as readonly unknown[]; for (let value of cells) { values["cell"+String(cell)] = value; cell = cell+1; } }
+        if (Array.isArray(row)) { let cell: number = 0; const cells: readonly unknown[] = row as readonly unknown[]; for (let value of cells) { values["cell"+String(cell)] = value; cell = cell+1; } }
         else { let record: Record<string, unknown> = row as Record<string, unknown>; for (let key of tables.keys(record)) { if (key !== "id" && key !== "done" && key !== "selected" && key !== "completed" && key !== "daily") { let value: unknown = record[key]; if (value !== null) { values[key] = value; } } } }
       }
       if (!disclosure.admitsRecord(data,values)) { return refusal(entry,parameter.name+" row "+String(index)+" fields are not one disclosed record"); }

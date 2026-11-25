@@ -42,7 +42,7 @@ function truth(value: unknown, owner: string): boolean {
   s.reject(owner+": expected a boolean");
 }
 function record(value: unknown, owner: string): Record<string, unknown> {
-  if (typeof value === "object" && value !== null) { try { return value as Record<string, unknown>; } catch (error) { } }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) { try { return value as Record<string, unknown>; } catch (error) { } }
   s.reject(owner+": expected a record");
 }
 // A declared array of the Plan or Requirement schema is required: the spec marks these fields without

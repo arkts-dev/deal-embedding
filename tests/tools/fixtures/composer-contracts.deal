@@ -50,8 +50,13 @@ export async function rejects(): Promise<null> {
   rejected = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Batched syntax reordered policy rejection");
   calculation.reason = "\"Unavailable\"";
   calculation.dependencies = ["f_calculation_value"];
+  calculation.value = "Array.isArray(state.value) ? 0 : state.value * 2";
+  let inspected: composer.Result = await composer.assemble(composition([instance]),[calculation]);
+  insist(inspected.source.deal.includes("Array.isArray"),"Pure array inspection was not emitted");
   calculation.value = "clock.nowMillis()"; instance.fragment.declarations = instance.fragment.declarations+" import * as clock from \"std/time\";";
   rejected = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Clock admitted in recompute");
+  calculation.value = "Array.isArray(clock.nowMillis()) ? 1 : 0";
+  rejected = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Array inspection hid an effectful argument");
   instance.fragment.helpers = instance.fragment.helpers+" export function indirect(candidate: AppState): number { return clock.nowMillis() + candidate.value; }"; calculation.value = "indirect(state)";
   rejected = false; try { await composer.assemble(composition([instance]),[calculation]); } catch (errorUnknown) { let error: Error = errorUnknown as Error; rejected = error.name === "CONSTRUCTION_SCHEMA"; } insist(rejected,"Transitive clock read admitted");
   calculation.value = "state.value * 2";

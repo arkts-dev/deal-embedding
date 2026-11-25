@@ -1,13 +1,14 @@
-// Readonly views admit every valid array without retagging its storage. Array.from
-// checks each element and creates a fresh invariant result; sparse arrays still reject.
+// Array.isArray tests identity only. The checked readonly view preserves storage;
+// Array.from validates each element into a fresh invariant result; holes still reject.
 function refuse(message: string): never { throw {name:"CONSTRUCTION_SCHEMA",message:message}; }
 function elements(value: unknown): readonly unknown[] {
-    try { return value as readonly unknown[]; } catch (error) { refuse("Expected array"); }
+    if (!Array.isArray(value)) { refuse("Expected array"); }
+    return value as readonly unknown[];
 }
 export function records(value: unknown): Record<string, unknown>[] {
     const source: readonly unknown[] = elements(value);
     return Array.from(source, (item: unknown, index: number): Record<string, unknown> => {
-        if (typeof item === "object" && item !== null) { try { return item as Record<string, unknown>; } catch (error) { } }
+        if (typeof item === "object" && item !== null && !Array.isArray(item)) { try { return item as Record<string, unknown>; } catch (error) { } }
         refuse("Expected record at index "+String(index));
     });
 }

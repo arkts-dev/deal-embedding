@@ -54,7 +54,7 @@ function check(fact: Record<string, unknown>, facts: Facts, reads: string[], pat
   }
   for (let call of decoded.strings(fact.calls)) {
     let parts: string[] = call.split(".");
-    if (["String","Number","Number.isFinite","Number.isNaN","JSON.stringify","Math.floor","Math.ceil","Math.sqrt","Math.abs","Math.round","Math.min","Math.max","Math.pow"].includes(call)) { }
+    if (["Array.isArray","String","Number","Number.isFinite","Number.isNaN","JSON.stringify","Math.floor","Math.ceil","Math.sqrt","Math.abs","Math.round","Math.min","Math.max","Math.pow"].includes(call)) { }
     else if (parts.length === 2 && s.contains(facts.pureImports,parts[0])) { }
     // Pure receiver intrinsics: the ECMAScript string and nonmutating array operations return fresh
     // values and never write, so a case-insensitive match or a slice stays a read-only summary. Mutators
