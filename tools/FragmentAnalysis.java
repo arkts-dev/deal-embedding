@@ -9,7 +9,7 @@ public final class FragmentAnalysis {
     private final Set<String> reads=new LinkedHashSet<>(),writes=new LinkedHashSet<>(),calls=new LinkedHashSet<>(),supplies=new LinkedHashSet<>(),borrowedWrites=new LinkedHashSet<>();
     /** Locals that borrow a state value, mapped to the borrowed state path. Scoped like the locals. */
     private Map<String,String> aliases=new LinkedHashMap<>();
-    /** Container paths this function allocated itself: an array or object literal it still holds. */
+    /** Fresh outer containers: literals or checked nonmutating array copies it still holds. */
     private Set<String> fresh=new LinkedHashSet<>();
     /** Names this function declared with a declaration statement, never a parameter. */
     private final Set<String> declared=new HashSet<>();
@@ -185,11 +185,13 @@ public final class FragmentAnalysis {
         if(name!=null&&fresh.contains(root(name)))return;
         leaveTry();
     }
-    /** A value this function allocated itself: an array or object literal. A local that names another
-     *  local is never fresh: two names for one container would let a write through one spelling prove
-     *  an element the other spelling could already have bound to a borrowed state value. */
+    /** Fresh outer storage only. Array slice is shallow: no element or nested field acquires freshness.
+     *  Compiler receiver types distinguish the intrinsic from same-spelled user methods. Another local
+     *  is never itself a new allocation; aliases cannot turn its borrowed contents into fresh values. */
     private boolean allocated(ExpressionNode node){
         if(node instanceof ArrayLiteralExpr||node instanceof ObjectLiteralExpr)return true;
+        if(node instanceof CallExpr call&&call.callee() instanceof MemberAccessExpr member
+            &&member.field().equals("slice")&&types.get(member.object()) instanceof Type.Array)return true;
         if(node instanceof AssertionExpr a)return allocated(a.value());
         if(node instanceof OptionalGuardExpr g)return allocated(g.value());
         return false;

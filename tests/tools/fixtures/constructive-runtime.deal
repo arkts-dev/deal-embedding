@@ -218,6 +218,14 @@ async function rejection(helper: string, value: string, dependencies: string[]):
 // while building an array this helper allocated itself is admitted, and so are the two early-exit helpers
 // once what they contain can no longer skip the allocation the block ends with, and the same holds for a
 // body that always ends on its own allocation before the loop runs again.
+export async function localCopyPlan(): Promise<string> {
+  let instance: screens.Instance = rejectedSource("export function probe(state: AppState): number { let own = state.menu.slice(); own[0] = {id: \"replaced\"}; let held: Record<string, unknown>[] = []; try { held = state.menu; let n = held.length; held = []; } catch(e) {} held[0] = {}; return own.length + held.length; }");
+  instance.fragment.fields[0].initial = "[{id: \"original\"}]";
+  let composition: screens.Composition = {screen:{title:"Copies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[instance]},bindings:{},actions:{},connections:[]};
+  let computation: composer.Computation = {instance:"gap",field:"probe",value:"probe(state)",ready:"true",reason:"\"Unavailable\"",dependencies:["f_gap_menu"]};
+  let result: composer.Result = await composer.assemble(composition,[computation]);
+  return s.encode({source:result.source,metadata:result.metadata});
+}
 export async function negatives(): Promise<string> {
   let results: string[] = [];
   results[results.length] = await rejection("export function probe(state: AppState): number { state.menu = []; return 1; }","probe(state)",["f_gap_menu"]);
@@ -278,5 +286,9 @@ export async function negatives(): Promise<string> {
   results[results.length] = await rejection("export function probe(state: AppState): number { let held: Record<string, unknown>[] = []; let own: Record<string, unknown>[] = []; try { held = state.menu; own[9] = {id: \"x\"}; held = []; } catch (e) { } held[0] = {id: \"stolen\"}; return held.length; }","probe(state)",["f_gap_menu"]);
   results[results.length] = await rejection("export function probe(state: AppState): number { let held: Record<string, unknown>[] = []; try { held = state.menu; let n = held.length; held = []; } catch (e) { } held[0] = {}; return held.length; }","probe(state)",["f_gap_menu"]);
   results[results.length] = await rejection("export function probe(state: AppState): number { let held: Record<string, unknown>[] = []; let record: Record<string, unknown> = state.menu[0]; try { held = state.menu; let n = record.length; held = []; } catch (e) { } held[0] = {}; return held.length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function probe(state: AppState): number { let own = state.menu.slice(); own[0] = {}; return own.length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function probe(state: AppState): number { let own = state.menu.slice(); own[0].id = \"damaged\"; return own.length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function probe(state: AppState): number { let own = state.menu.slice(); let alias = own; alias[0].id = \"damaged\"; return own.length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function probe(state: AppState): number { let own = state.menu.slice(); for(let row of own) { row.id = \"damaged\"; } return own.length; }","probe(state)",["f_gap_menu"]);
   return s.encode(results);
 }
