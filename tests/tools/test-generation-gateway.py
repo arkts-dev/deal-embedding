@@ -79,6 +79,23 @@ class TransportTest(unittest.TestCase):
             self.assertEqual(captured.count('failed'),1,'No hidden inference retry')
         finally:owner.pool.shutdown()
 
+    def test_ordinary_cerebras_serialized_payload_disables_reasoning(self):
+        provider={'model':'qwen-3.8-27b','endpoint':'https://provider.invalid','key':'private-fixture-key'}
+        owner=gateway.Gateway({'cerebras':provider},'cerebras','disabled')
+        captured=[]
+        owner.opener=types.SimpleNamespace(open=lambda request,timeout:captured.append(request) or Reply({'choices':[{'message':{'content':'code'},'finish_reason':'stop'}]}))
+        try:
+            for thinking,effort in [(False,'none'),(True,'high')]:
+                body=envelope();body['thinking']=thinking
+                owner.infer(body,'cerebras')
+                payload=json.loads(captured[-1].data)
+                self.assertEqual(payload['reasoning_effort'],effort)
+                self.assertEqual(payload['max_tokens'],body['maxTokens'])
+                self.assertEqual(payload['model'],provider['model'])
+                self.assertTrue(payload['clear_thinking'])
+            self.assertEqual(len(captured),2)
+        finally:owner.pool.shutdown()
+
     def test_reasoning_only_length_is_a_completed_outcome(self):
         owner=gateway.Gateway({'cerebras':{'model':'fixed','endpoint':'https://provider.invalid','key':'private'}},'cerebras','disabled')
         calls=[]

@@ -20,6 +20,8 @@ function exact(label: string, applied: revisions.Applied, base: revisions.Revisi
   insist(applied.current.digest === base.digest,label+": rejection replaced the digest");
   insist(applied.current.source.deal === base.source.deal && applied.current.source.dealui === base.source.dealui,label+": rejection changed accepted source bytes");
   insist(applied.diagnostics !== "",label+": rejection lost its diagnostic");
+  let feedback: string = revisions.rejectedFeedback("Preserve the original behavior",applied);
+  insist(feedback.includes("Preserve the original behavior") && feedback.includes(applied.diagnostics),label+": retry lost original goal or exact rejection");
 }
 async function rejected(label: string, base: revisions.Revision, response: string): Promise<void> {
   exact(label,await revisions.apply(base,response),base);
@@ -67,6 +69,7 @@ export async function sourceEdits(): Promise<revisions.Revision> {
   await rejected("Extra edit field",base,envelope(s.encode(base.revision),s.encode(base.digest),"[{\"file\":\"deal\",\"search\":\"value: 1;\",\"replace\":\"x\",\"start\":0}]"));
   await rejected("Unknown request field",base,envelope(s.encode(base.revision),s.encode(base.digest),"[{\"file\":\"deal\",\"search\":\"value: 1;\",\"replace\":\"x\"}],\"extra\":1"));
   await rejected("Malformed request",base,"{\"revision\":");
+  await rejected("Fenced JSON",base,"```json\n"+request(base.revision,base.digest,[edit("deal","value: 1;","value: 3;")])+"\n```");
   await rejected("Null edit list",base,envelope(s.encode(base.revision),s.encode(base.digest),"null"));
   await rejected("Non-record edit",base,envelope(s.encode(base.revision),s.encode(base.digest),"[\"deal\"]"));
   await rejected("Numeric revision",base,envelope("7",s.encode(base.digest),"[{\"file\":\"deal\",\"search\":\"value: 1;\",\"replace\":\"x\"}]"));

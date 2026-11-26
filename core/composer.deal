@@ -104,6 +104,16 @@ function primitive(type: string): boolean { return s.contains(["string","boolean
 // A derived array binds a nonnullable prepared `_display` companion initialized empty, exactly as a
 // derived primitive does; readiness still guards it so an empty array is never a displayed fact.
 function displayable(type: string): boolean { return primitive(type) || type.endsWith("[]"); }
+// The writer contract and qualifier consume the same issued reader projection. Authoritative
+// resources have no invented readiness/display companions; derived resources keep their guards.
+export function readerTypes(publisher: screens.Field, getter: string): Record<string, string> {
+  let result: Record<string, string> = {}; result[getter] = publisher.type;
+  if (publisher.role === "derived") {
+    result[getter+"_ready"] = "boolean"; result[getter+"_reason"] = "string";
+    if (displayable(publisher.type)) { result[getter+"_display"] = publisher.type; }
+  }
+  return result;
+}
 function copyExpression(fields: Field[], changes: Record<string, string>, state: string): string {
   let result: string = "{"; let separator: string = "";
   for (let item of fields) {
@@ -334,13 +344,11 @@ export async function assembleWith(composition: screens.Composition, computation
       if (reader === null || writer === null || writerField === null || (reader as screens.Port).type !== (writer as screens.Port).type || (writerField as screens.Field).type !== (reader as screens.Port).type) { s.reject("Unresolved typed port connection"); }
       let port: screens.Port = reader as screens.Port; let publisher: screens.Field = writerField as screens.Field;
       if (Object.hasOwn(fieldNames,port.getter)) { s.reject("Reader field conflicts with owner field"); }
-      fieldNames[port.getter] = qualified(connection.writerInstance,publisher.name); types[port.getter] = publisher.type;
-      if (publisher.role === "derived") {
-        for (let suffix of ["_ready","_reason"]) {
-          fieldNames[port.getter+suffix] = qualified(connection.writerInstance,publisher.name)+suffix;
-          if (suffix === "_ready") { types[port.getter+suffix] = "boolean"; } else { types[port.getter+suffix] = "string"; }
-        }
-        if (displayable(publisher.type)) { fieldNames[port.getter+"_display"] = qualified(connection.writerInstance,publisher.name)+"_display"; types[port.getter+"_display"] = publisher.type; }
+      let projected: Record<string, string> = readerTypes(publisher,port.getter);
+      for (let name of Object.keys(projected)) {
+        if (Object.hasOwn(fieldNames,name)) { s.reject("Reader field conflicts with owner field"); }
+        fieldNames[name] = qualified(connection.writerInstance,publisher.name)+name.substring(port.getter.length);
+        types[name] = projected[name] as string;
       }
     } }
     // An optional unconnected reader holds its typed, assembly-owned fallback.

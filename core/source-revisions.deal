@@ -56,4 +56,9 @@ export async function apply(current: Revision, response: string): Promise<Applie
   // Identity/hash failures are operational; they never authorize another model edit.
   return {accepted:true,current:await issue(next as Source),diagnostics:""};
 }
+// Rejection changes feedback, never the issued pair. Keep the original repair goal distinct from
+// exact applier feedback so retries cannot repeat a format/search failure without seeing its cause.
+export function rejectedFeedback(goal: string, applied: Applied): string {
+  return "REPAIR GOAL\n"+goal+"\nEDIT REJECTED (source/revision unchanged)\n"+applied.diagnostics;
+}
 export function main(): void { return; }

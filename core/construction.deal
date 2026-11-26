@@ -364,7 +364,7 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   if (notAdmitted.code !== "") { return {candidateId:"",attempts:0,diagnostics:notAdmitted.message,runnable:true}; }
   let assembled: composer.Result = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan));
   let questions: selections.Question[] = coverage.questions(plan,composition.screen);
-  let judged: selections.Answer[] = await selecting.batch("coverage",{original:context.original,facts:context.facts,contracts:context.contracts,specification:context.specification+"\nCURRENT ASSEMBLED SOURCE\n"+s.encode(assembled.source)},plan,questions,false);
+  let judged: selections.Answer[] = await selecting.batch("coverage",{original:context.original,facts:context.facts,contracts:context.contracts,specification:context.specification+"\nNEED → PRODUCER → VIEW EVIDENCE (issued context, not a coverage verdict)\n"+coverage.evidence(composition)+"\nCURRENT ASSEMBLED SOURCE\n"+s.encode(assembled.source)},plan,questions,false);
   let ledger: coverage.Ledger = coverage.judge(plan,composition.screen,judged); let open: string[] = []; let diagnostics: string = reasons;
   // The issued composition notices (a declared owns entry no reducer writes, a layout fallback) are
   // compiler metadata that reaches the caller and the persisted record through this result.
@@ -414,7 +414,7 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   if (!checker.repairable(checked.diagnostics as string)) { return {candidateId:"",attempts:attempts,diagnostics:checked.diagnostics as string,runnable:true}; }
   let revision: revisions.Revision = await revisions.issue({deal:assembled.source.deal,dealui:assembled.source.dealui});
   let repair: inference.Operation = inference.operation(await identity.issue(),2);
-  let diagnostic: string = checked.diagnostics as string; let previous: string = "";
+  let diagnostic: string = checked.diagnostics as string; let repairGoal: string = diagnostic; let previous: string = "";
   while (repair.used < repair.cap) {
     let response = await inference.ask(repair,"assembled-edit","SPECIFICATION\n"+context.specification+"\nORIGINAL REQUEST\n"+context.original+"\nFACTS (data)\n"+context.facts+"\nFROZEN CONTRACTS\n"+context.contracts+"\nCURRENT PLAN\n"+s.encode(plan)+"\nCURRENT ISSUED SOURCE REVISION\n"+s.encode(revision)+"\nRepair only source diagnostics. Preserve existing owners and working behavior. Return {revision,digest,edits:[{file,search,replace}]} with exact unique disjoint nonempty searches.",previous,diagnostic,2000,false);
     previous = response.content; if (response.refusal !== "" || response.content.trim() === "") { break; }
@@ -428,8 +428,8 @@ export async function run(input: writing.Input, context: selecting.Context, plan
       // A repaired candidate rejected by an admission or authority verdict ends the request: the
       // verdict is never fed back as a source diagnostic.
       if (!checker.repairable(checked.diagnostics as string)) { return {candidateId:"",attempts:attempts,diagnostics:checked.diagnostics as string,runnable:true}; }
-      diagnostic = checked.diagnostics as string;
-    }
+      diagnostic = checked.diagnostics as string; repairGoal = diagnostic;
+    } else { diagnostic = revisions.rejectedFeedback(repairGoal,applied); }
   }
   return {candidateId:"",attempts:attempts,diagnostics:diagnostic,runnable:true};
 }

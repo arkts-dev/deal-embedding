@@ -71,4 +71,25 @@ export function judge(plan: plans.Plan, screen: screens.Screen, answers: selecti
   }
   return result;
 }
+// Trace issued needs to actual owners/resources and view source. These are navigation facts, not
+// assertions of coverage: the judge must still inspect the complete source and original constraints.
+export function evidence(composition: screens.Composition): string {
+  let result: Record<string, unknown>[] = []; let owners: Record<string, unknown> = {};
+  for (let slot of composition.screen.slots) {
+    let producers: string[] = []; let owner: string = "";
+    if (slot.instance !== null) { owner = slot.instance as string; }
+    for (let instance of composition.screen.instances) {
+      if (instance.id === owner || s.contains(instance.fragment.covers,slot.need)) {
+        producers[producers.length] = instance.id;
+        if (!Object.hasOwn(owners,instance.id)) {
+          let fields: Record<string, unknown>[] = [];
+          for (let field of instance.fragment.fields) { fields[fields.length] = {name:field.name,type:field.type,role:field.role,dependencies:field.dependencies}; }
+          owners[instance.id] = {fields:fields,ports:instance.fragment.ports,viewOwner:instance.id,qualifiedPrefix:"f_"+instance.id+"_"};
+        }
+      }
+    }
+    result[result.length] = {need:slot.need,status:slot.status,reads:slot.reads,producers:producers};
+  }
+  return s.encode({needs:result,owners:owners});
+}
 export function main(): void { return; }

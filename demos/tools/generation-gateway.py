@@ -55,7 +55,7 @@ def payload_for(body, backend, provider):
     payload = {'model':provider['model'],'messages':messages(body),'max_tokens':body['maxTokens'],
                'temperature':0.2,'stream':False}
     if backend == 'cerebras':
-        payload.update(temperature=1, top_p=0.95, reasoning_effort='high' if body['thinking'] else 'low', clear_thinking=True)
+        payload.update(temperature=1, top_p=0.95, reasoning_effort='high' if body['thinking'] else 'none', clear_thinking=True)
     elif backend == 'deepseek-flash':
         payload.update(temperature=0, thinking={'type':'enabled' if body['thinking'] else 'disabled'})
     else:
