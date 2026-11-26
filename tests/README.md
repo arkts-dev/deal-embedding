@@ -81,6 +81,11 @@ exit/timeout never counts as an observed broken rule. Interrupted mutation journ
 `DEAL_BUILD_PLAN=1` previews library stages without compiling; `DEAL_BUILD_COLD=1` refuses artifact reuse.
 These are preparation/diagnostic controls, not substitutes for the complete gate.
 
+`python3 tests/tools/test-session-lifecycle.py` runs the pinned upstream compiled-state and Session
+lifecycle assertions against embedding's real pack and host, loading renderer admission and its issued
+projections before mounting. Only the synthetic numeric component and payload-free Button dispatches
+are adapted to the real pack ABI; upstream assertions remain intact and the dependency checkout stays clean.
+
 ## Legacy broad commands (explicit, not the short feedback path)
 
 From the framework root:
