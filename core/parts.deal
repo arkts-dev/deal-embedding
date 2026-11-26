@@ -10,6 +10,7 @@ import * as s from "./construction-schema";
 import * as literals from "./source-literals";
 import * as tables from "std/table";
 import * as scalar from "./scalar-read";
+import * as textgen from "./text-generation";
 import * as disclosure from "./disclosure";
 
 export class Figure { need: string; expression: formula.Expression; label: string; unit: string; format: string; shown: boolean; valueType: string; operands: formula.Operand[]; example: Record<string, unknown>; result: number; }
@@ -444,11 +445,21 @@ function inputValues(plan: plans.Plan, changed: string): string {
   return result;
 }
 export function buildWithProviders(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry, reads: scalar.Built | null, clock: Clock): Built {
+  return assembleParts(plan,definitions,choices,registry,reads,clock,null);
+}
+// The construction route places the runtime text-generation part beside the scalar read part; both are
+// provider parts of this one owner, so they enter through the same assembly.
+export function buildWithTextGeneration(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry, reads: scalar.Built | null, clock: Clock, text: textgen.Built | null): Built {
+  return assembleParts(plan,definitions,choices,registry,reads,clock,text);
+}
+function assembleParts(plan: plans.Plan, definitions: Definitions, choices: selecting.Choice[], registry: bindings.Registry, reads: scalar.Built | null, clock: Clock, text: textgen.Built | null): Built {
   if (!(clock.intervalMs > 0) || !Number.isFinite(clock.intervalMs)) { s.reject("Clock driver interval must be a finite positive number"); }
   if (!(clock.toleranceMs > 0) || !Number.isFinite(clock.toleranceMs)) { s.reject("Clock wall-clock tolerance must be a finite positive number"); }
   if (clock.toleranceMs < clock.intervalMs) { s.reject("Clock wall-clock tolerance must cover the driver interval"); }
   let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let effects: screens.Handler[] = []; let declarations: string = ""; let helpers: string = ""; let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() {";
   let computations: composer.Computation[] = []; let covers: string[] = [];
+  // The private reading carriers this owner issues, carried to the composition as instance metadata.
+  let readings: string[] = [];
   // Which presentation helpers this instance's prepared text actually calls: a numeric draft opens on a
   // plain spelling, and an entries part prepares row text.
   let plainTextUsed: boolean = false; let fixedTextUsed: boolean = false;
@@ -532,6 +543,22 @@ export function buildWithProviders(plan: plans.Plan, definitions: Definitions, c
     // must be one this instance re-derives at admission, so the instance states it too.
     if (built.covers.length > 0 && !s.contains(partKinds,"scalar_read")) { partKinds[partKinds.length] = "scalar_read"; }
     declarations = declarations+built.declarations; helpers = helpers+built.helpers; view = view+built.view;
+  }
+  // The runtime text-generation part is a part kind of this instance for the same reason: a filled slot
+  // names the kind the accepted alternative declared, and admission re-derives it from the instance.
+  if (text !== null) {
+    let issued: textgen.Built = text as textgen.Built;
+    for (let entry of issued.fields) { fields[fields.length] = entry; }
+    for (let update of issued.updates) { updates[updates.length] = update; }
+    for (let effect of issued.effects) { effects[effects.length] = effect; }
+    for (let computation of issued.computations) { computations[computations.length] = computation; }
+    for (let need of issued.covers) { covers[covers.length] = need; }
+    // The private reading carriers this part issues are carried as instance metadata, exactly as the
+    // clock drivers are: the Session binding resolves them from the rendered tree by their issued
+    // identity, so no generated source names its own driver.
+    for (let carrier of issued.readings) { if (!s.contains(readings,carrier)) { readings[readings.length] = carrier; } }
+    if (issued.covers.length > 0 && !s.contains(partKinds,"text_generation")) { partKinds[partKinds.length] = "text_generation"; }
+    declarations = declarations+issued.declarations; helpers = helpers+issued.helpers; view = view+issued.view;
   }
   let clockEmitted: boolean = false; let sessionClock: boolean = false; let restoreFields: string = ""; let resumeFields: string = ""; let drivers: screens.Driver[] = [];
   // The wall-clock tolerance is host configuration; the driver delivers the monotone reading with each
@@ -780,7 +807,7 @@ export function buildWithProviders(plan: plans.Plan, definitions: Definitions, c
   // assembly rejection instead of a located part rejection (a choice label field is one example).
   let resourceNames: string[] = [];
   for (let field of fields) { if (s.contains(resourceNames,field.name)) { s.reject("Duplicate part resource: "+field.name); } resourceNames[resourceNames.length] = field.name; }
-  let issuedInstance: screens.Instance = {id:"parts",kind:"inputs_figures",origin:"part",parameters:{kinds:partKinds},fragment:{declarations:declarations,fields:fields,updates:updates,effects:effects,helpers:helpers,view:view+"} }",options:[],content:[],ports:ports,holes:[],covers:covers,owns:["parts"]},bodies:{},drivers:drivers};
+  let issuedInstance: screens.Instance = {id:"parts",kind:"inputs_figures",origin:"part",parameters:{kinds:partKinds},fragment:{declarations:declarations,fields:fields,updates:updates,effects:effects,helpers:helpers,view:view+"} }",options:[],content:[],ports:ports,holes:[],covers:covers,owns:["parts"]},bodies:{},drivers:drivers,readings:readings};
   issuedInstance.definition = screens.issueDefinition(issuedInstance.fragment);
   return {instance:issuedInstance,computations:computations,unavailable:unavailable};
 }

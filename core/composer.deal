@@ -38,7 +38,7 @@ export class InstanceRecord { id: string; kind: string; origin: string; kinds: s
 // The one Session-local clock trust identity the expiry driver reads. It is issued metadata, never a
 // model string, and every clock driver of the composition names these same two compiled fields.
 export class SessionClock { epoch: string; trust: string; resume: string; }
-export class Metadata { slots: SlotRecord[]; operations: OperationRecord[]; runtime: string[]; publications: string[]; drivers: string[]; clockDrivers: screens.Driver[]; sessionClock: SessionClock; composites: CompositeRecord[]; chatRoot: boolean; notices: string[]; declarations: string[]; owners: ResourceRecord[]; composerOwned: string[]; instances: InstanceRecord[]; sources: string[]; }
+export class Metadata { slots: SlotRecord[]; operations: OperationRecord[]; runtime: string[]; publications: string[]; drivers: string[]; clockDrivers: screens.Driver[]; readings: string[]; sessionClock: SessionClock; composites: CompositeRecord[]; chatRoot: boolean; notices: string[]; declarations: string[]; owners: ResourceRecord[]; composerOwned: string[]; instances: InstanceRecord[]; sources: string[]; }
 export class ChildLabel { instance: string; label: string; }
 export class ChatRoot { children: ChildLabel[]; initialSelection: number; }
 // The chat root generation issues: one child per placed fragment in placement order, the label the
@@ -302,6 +302,12 @@ export async function assembleWith(composition: screens.Composition, computation
     let aliases: Record<string, string> = {};
     for (let item of decoded.records(raw.imports)) {
       let alias: string = s.identifier(item.alias); let module: string = s.nonblank(item.module);
+      // The same alias for the same module is one binding, however many times a part emits it: two
+      // provider parts of one instance each read the Session, and a second section of one part repeats
+      // its own provider import. The duplicate pair reuses the one qualified binding and emits nothing;
+      // a second alias naming another module, or a name a declaration or another import already binds,
+      // still rejects, so a real import/declaration conflict is never absorbed.
+      if (Object.hasOwn(aliases,alias)) { if ((aliases[alias] as string) === module) { continue; } s.reject("Import/declaration conflict"); }
       if (Object.hasOwn(names,alias)) { s.reject("Import/declaration conflict"); }
       if (!permitted(registry,module)) { s.reject("unissued module "+module+" in "+instance.id); }
       // The public probe is the live figure's own mechanism: admission refuses it for every other kind,
@@ -975,6 +981,18 @@ export async function assembleWith(composition: screens.Composition, computation
       clockDrivers[clockDrivers.length] = {need:driver.need,sample:driver.sample,tick:driver.tick,start:driver.start,pause:driver.pause,reset:driver.reset,resume:driver.resume,request:qualified(instance.id,driver.request),running:qualified(instance.id,driver.running),restore:qualified(instance.id,"restore"),epoch:qualified(instance.id,driver.epoch),trust:qualified(instance.id,driver.trust),intervalMs:driver.intervalMs};
     }
   }
+  // The private reading carriers are issued here too: a Session publishes its host millisecond wall
+  // reading into the compiled fields these carriers bind, and the rendered tree resolves each carrier by
+  // this issued identity. A duplicated or unissued identity rejects instead of being dispatched.
+  let readings: string[] = [];
+  for (let instance of composition.screen.instances) {
+    if (!Object.hasOwn(instance,"readings")) { continue; }
+    for (let carrier of instance.readings as string[]) {
+      if (carrier.trim() === "") { s.reject("Reading carrier without its issued identity: "+instance.id); }
+      if (s.contains(readings,carrier)) { s.reject("Duplicate reading carrier: "+carrier); }
+      readings[readings.length] = carrier;
+    }
+  }
   // One Session-local clock trust identity per composition: every issued clock driver names these same
   // two compiled runtime fields, and the expiry driver consumes them through this metadata.
   let sessionClock: SessionClock = {epoch:"",trust:"",resume:""};
@@ -1025,7 +1043,7 @@ export async function assembleWith(composition: screens.Composition, computation
     ownerRecords[ownerRecords.length] = {name:name,owner:"composer",role:role};
     composerOwned[composerOwned.length] = name;
   }
-  return {source:{deal:declarations,dealui:viewSource},fields:allFields,computations:ordered,metadata:{slots:slots,operations:operations,runtime:map.runtime,publications:publications,drivers:drivers,clockDrivers:clockDrivers,sessionClock:sessionClock,composites:compositeActions,chatRoot:chat,notices:notices,declarations:storageNames,owners:ownerRecords,composerOwned:composerOwned,instances:instanceRecords,sources:sourceIds}};
+  return {source:{deal:declarations,dealui:viewSource},fields:allFields,computations:ordered,metadata:{slots:slots,operations:operations,runtime:map.runtime,publications:publications,drivers:drivers,clockDrivers:clockDrivers,readings:readings,sessionClock:sessionClock,composites:compositeActions,chatRoot:chat,notices:notices,declarations:storageNames,owners:ownerRecords,composerOwned:composerOwned,instances:instanceRecords,sources:sourceIds}};
 }
 function initialStateSource(fields: Field[], initial: Record<string, string>): string {
   return "export function initialState(): AppState {\n  let capturedTime: number = embeddingClock.nowMillis();\n  let candidate: AppState = "+copyExpression(fields,initial,"")+";\n  return recompute(candidate);\n}\n";

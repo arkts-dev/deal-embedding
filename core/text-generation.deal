@@ -1,0 +1,328 @@
+import * as embedding from "embedding";
+import * as plans from "./plan";
+import * as selecting from "./construction-selection";
+import * as selections from "./selection";
+import * as screens from "./screen";
+import * as composer from "./composer";
+import * as s from "./construction-schema";
+import * as literals from "./source-literals";
+
+// Runtime text generation: the emitted Session adapter of the text admission policy in
+// core/execution.deal (docs/spec-v0.8.md "Custom writing and recovery"). The specification states the
+// whole contract of this section in one paragraph: a disclosed text-generation capability, ordinary
+// bindings, an explicit button with waiting/result/failure/retry states, a prompt of at most 2000
+// UTF-16 units, 80 words by default and at most 300, identical-success reuse for 3000 ms, six calls
+// per rolling minute, a 30-answer cache, and consent, cancellation and owner isolation.
+//
+// The capability binding is issued from the frozen disclosed contracts only: a candidate exists when a
+// disclosed function returns text from a prompt and a word count the contract can accept. Authority is
+// the Session's own live facts, the same ones core/execution.deal's emitted admission reads: the Session
+// lifetime, the module grant, the permission epoch and the host's classification of the disclosed
+// function. They are read before the call and again before the reply, so a grant, a revocation or an
+// epoch that moved while the call was in flight is what the reply is decided under
+// (docs/spec-v0.8.md: "grant and revoke synchronously update permissions and increment their epoch.
+// Check both before calls and replies"). Nothing is remembered between presses: a refusal is that
+// press's own classification, so the next press under a live grant dispatches again, and a
+// permission-classified completion clears the answers retained under the authority that no longer holds
+// instead of serving them. One section's revocation can land while a sibling's call is still out, so a
+// late answer is classified as the refusal and changes no reply, cache entry or record. Cancellation is
+// the Session's disposal of that pending wait: the completion is admitted only for the invocation that
+// is still current, so a late answer after cancellation changes no business result.
+//
+// Owner isolation is the per-Experience store: the answer cache and the rolling dispatch counter are
+// composition-scope runtime resources of this Session's owner, issued once for the composition and
+// shared by every text section it emits, exactly as every clock of a composition shares one Session
+// clock epoch (core/parts.deal). Every answer of that one list carries the policy identity of
+// core/execution.deal's admitText - authority scope, capability, prompt and word bound - so the 3000 ms
+// identical-success reuse, the 30-answer capacity by least recent use and the six dispatches per rolling
+// 60 000 ms are decided per owner, and one section's answer is never served for another section's
+// different authority scope, capability, prompt or word bound. The authority scope is the live one the
+// press was admitted under (permission epoch, grant and Session lifetime), so an answer produced under a
+// permission scope that no longer holds is never reused after the epoch moved. No bound crosses into
+// another Experience.
+//
+// Both windows are measured on the host's millisecond wall reading, never on the truncated whole-second
+// reading of std/time: the reuse window is 3000 ms wide to the millisecond and the rolling window is
+// 60 000 ms wide to the millisecond, exactly as core/execution.deal's admitText decides them. The
+// Session binding publishes that reading into one composition-scope runtime field (`textNow`) before
+// every dispatched action and before every delivered completion, so the press's admission and the
+// stored answer's instant are the host readings taken for those two events. An absent reading (-1) is
+// not a reading: no press is admitted until the Session has published one, so a missing mechanism can
+// never stand in for a measurement.
+//
+// The answer is authoritative state of this owner and therefore persists with the record, while the
+// reuse cache and the rolling dispatch counter are `runtime` resources that the persisted projection
+// clears, together with the accepted action, its pending marker and the press sequence it correlates:
+// those are admission state and pending effects, never restored business state
+// (docs/spec-v0.8.md "Execution and provider workflows": "Persist source ... exclude derived values,
+// closures, permission tokens, admission markers and pending effects"). A cold reopen therefore starts
+// idle under sequence 0 and an explicit press is admitted instead of inheriting an attempt no effect can
+// retire. One admitted press is at most one provider call: the adapter never retries, and only an
+// explicit press retries.
+
+// One issued text-generation binding: the frozen disclosed function, the issued prompt text and the
+// word count, and the prompt bound the contract really accepts.
+export class Candidate {
+  id: string; need: string; module: string; function: string; description: string;
+  prompt: string; words: number; maximum: number;
+}
+export class Built {
+  fields: screens.Field[]; updates: screens.Handler[]; effects: screens.Handler[];
+  computations: composer.Computation[]; declarations: string; helpers: string; view: string; covers: string[];
+  readings: string[];
+}
+// The specification's own runtime bounds, stated once here so reuse, dispatch and the cache cannot
+// disagree with each other.
+function promptMaximum(): number { return 2000; }
+function defaultWords(): number { return 80; }
+function maximumWords(): number { return 300; }
+function reuseWindow(): number { return 3000; }
+function dispatchWindow(): number { return 60000; }
+function dispatchCap(): number { return 6; }
+function cacheCapacity(): number { return 30; }
+function field(name: string, type: string, role: string, initial: string): screens.Field {
+  return {name:name,type:type,role:role,dependencies:[],initial:initial,owner:"parts"};
+}
+// The disclosed functions that can implement runtime text generation: text produced from a prompt and
+// a word count, both inside the frozen contract, with the specified default word count accepted. A
+// function whose prompt or word parameter cannot carry the issued request is not a candidate at all,
+// so the binding never issues a call the provider boundary must reject.
+export function candidates(plan: plans.Plan, contracts: embedding.CapabilityContract[]): Candidate[] {
+  let result: Candidate[] = [];
+  for (let need of plan.needs) {
+    if (need.type !== "content" && need.type !== "other") { continue; }
+    let prompt: string = need.words;
+    if (prompt.length < 1 || prompt.length > promptMaximum()) { continue; }
+    for (let contract of contracts) {
+      for (let fn of contract.functions) {
+        if (fn.result.kind !== "string") { continue; }
+        if (fn.parameters.length !== 2) { continue; }
+        let promptType: embedding.WireType = fn.parameters[0].type; let wordsType: embedding.WireType = fn.parameters[1].type;
+        if (promptType.kind !== "string" || wordsType.kind !== "number") { continue; }
+        if (promptType.maximum < 1 || prompt.length > promptType.maximum) { continue; }
+        if (defaultWords() < 1 || defaultWords() > maximumWords()) { continue; }
+        if (defaultWords() < wordsType.minimumNumber || defaultWords() > wordsType.maximumNumber) { continue; }
+        let maximum: number = promptMaximum(); if (promptType.maximum < maximum) { maximum = promptType.maximum; }
+        result[result.length] = {id:"text_"+s.encode(result.length),need:need.id,module:contract.module,function:fn.name,description:contract.description+" / "+fn.description,prompt:prompt,words:defaultWords(),maximum:maximum};
+      }
+    }
+  }
+  return result;
+}
+export function alternatives(candidates: Candidate[]): selecting.Alternative[] {
+  let result: selecting.Alternative[] = [];
+  for (let candidate of candidates) {
+    result[result.length] = {id:candidate.id,need:candidate.need,origin:"part",kind:"text_generation",criteria:"Explicit button generates new text at runtime through the disclosed text-generation capability "+candidate.module+"."+candidate.function+" ("+candidate.description+") from an editable prompt of at most "+String(candidate.maximum)+" UTF-16 units and "+String(candidate.words)+" words, with waiting, result, failure and explicit retry states, 3000 ms identical-success reuse, six calls per rolling minute and a 30-answer cache. Select only if the original task asks for text produced when the user asks for it: the section never invents disclosed facts, never replaces a disclosed value and never runs at startup.",eligible:true,reason:""};
+  }
+  return result;
+}
+// The real-data decision: the need asks for newly generated text, not for disclosed data or authored
+// static content.
+export function questions(candidates: Candidate[]): selections.Question[] {
+  let result: selections.Question[] = [];
+  for (let candidate of candidates) {
+    result[result.length] = selections.question("generate_"+candidate.id,candidate.need,"real-data","Does the original task require text generated at runtime by an actual authorized provider call? "+candidate.module+"."+candidate.function+" "+candidate.description,[{id:"generate",criteria:"The requested behavior is new nonfactual text produced on demand by this exact disclosed operation."},{id:"unavailable",criteria:"The content is disclosed data, static authored text, a stored fact, or a result this operation cannot produce."}]);
+  }
+  return result;
+}
+function admitted(candidate: Candidate, first: selecting.Result, second: selecting.Result): boolean {
+  let generated: boolean = false;
+  for (let answer of first.answers) { if (answer.id === "generate_"+candidate.id && answer.accepted && answer.selected === "generate") { generated = true; } }
+  let selected: boolean = false;
+  for (let choice of second.choices) { if (choice.alternative === candidate.id) { selected = true; } }
+  return generated && selected;
+}
+// The composition-scope runtime state of runtime text generation: one answer cache and one rolling
+// dispatch counter for the owner (this Session's Experience). Every text section of the composition
+// shares them, so the per-owner reuse window, capacity and rolling cap hold for the owner as a whole.
+// All of it is `runtime` bookkeeping the persisted projection clears.
+function sharedFields(): screens.Field[] {
+  let result: screens.Field[] = [];
+  result[result.length] = field("textNow","number","runtime","-1");
+  result[result.length] = field("textCacheKeys","string[]","runtime","[]");
+  result[result.length] = field("textCacheTexts","string[]","runtime","[]");
+  result[result.length] = field("textCacheAt","number[]","runtime","[]");
+  result[result.length] = field("textCacheUsed","number[]","runtime","[]");
+  result[result.length] = field("textDispatch","number[]","runtime","[]");
+  return result;
+}
+// The emitted helpers of that one shared store: the policy identity, the newest identical answer
+// inside the reuse window, the rolling count of the last 60 000 ms and the two transitions a section
+// applies to the cache it shares with its siblings.
+function sharedHelpers(): string {
+  let result: string = "";
+  // The one runtime field the Session binding publishes its millisecond wall reading into. It is
+  // bookkeeping of this Session, so the persisted projection clears it and a cold reopen starts with no
+  // reading at all instead of a saved one.
+  result = result+"export function publishTextNow(state: AppState, action: TextNow): AppState { return {textNow: action.now}; }\n";
+  // The live authority scope of one press or reply as one unambiguous value: the permission epoch, the
+  // module grant and the Session lifetime it was admitted under. It is the scope part of the policy
+  // identity of core/execution.deal's admitText, so an answer produced under a permission scope that no
+  // longer holds is never reused. It is runtime bookkeeping and never enters saved state.
+  result = result+"export function textScope(epoch: number, granted: boolean, lifetime: string): string { let grant: string = \"0\"; if (granted) { grant = \"1\"; } return String(epoch)+\":\"+grant+\":\"+lifetime; }\n";
+  // The identity parts are length-prefixed, so a prompt that contains the encoder's own punctuation
+  // can never make two different capabilities, prompts or word bounds share one answer.
+  result = result+"export function textIdentity(scope: string, capability: string, prompt: string, words: number): string { return String(scope.length)+\":\"+scope+String(capability.length)+\":\"+capability+String(prompt.length)+\":\"+prompt+String(words); }\n";
+  // A future-dated entry is not reusable, and an entry exactly at the 3000 ms edge is, exactly as the
+  // compiled window is inclusive.
+  result = result+"export function textHit(state: AppState, key: string, now: number): number { let found: number = -1; let index: number = 0; while (index < state.textCacheKeys.length) { if (state.textCacheKeys[index] === key && now >= state.textCacheAt[index] && now-state.textCacheAt[index] <= "+String(reuseWindow())+") { if (found < 0 || state.textCacheAt[index] > state.textCacheAt[found]) { found = index; } } index = index+1; } return found; }\n";
+  // The rolling count keeps a future-dated dispatch, so a retreating clock cannot widen the cap.
+  result = result+"export function textRequests(state: AppState, now: number): number { let count: number = 0; let index: number = 0; while (index < state.textDispatch.length) { let at: number = state.textDispatch[index]; if (!(at <= now && now-at >= "+String(dispatchWindow())+")) { count = count+1; } index = index+1; } return count; }\n";
+  result = result+"export function textDispatchNext(state: AppState, now: number): number[] { let kept: number[] = []; let index: number = 0; while (index < state.textDispatch.length) { let at: number = state.textDispatch[index]; if (!(at <= now && now-at >= "+String(dispatchWindow())+")) { kept[kept.length] = at; } index = index+1; } kept[kept.length] = now; return kept; }\n";
+  result = result+"export function textTouch(state: AppState, hit: number, now: number): number[] { let used: number[] = []; let index: number = 0; while (index < state.textCacheUsed.length) { if (index === hit) { used[used.length] = now; } else { used[used.length] = state.textCacheUsed[index]; } index = index+1; } return used; }\n";
+  return result;
+}
+// The emitted helpers of one candidate. Every rule below is the runtime form of core/execution.deal's
+// admitText for this owner: the live authority facts before reuse and dispatch, the exact 3000 ms
+// identical-success window, one answer per identity, capacity 30 by least recent use, and six dispatches
+// per rolling 60 000 ms including failures, all decided over the store this section shares with every
+// sibling.
+function helpersFor(candidate: Candidate): string {
+  let id: string = candidate.id; let p: string = id+"_";
+  // This binding's policy identity: the live authority scope of the press (permission epoch, grant and
+  // Session lifetime), its capability, the prompt a press carries and the issued word bound. Two
+  // sections binding the same capability for the same prompt and word count are one identity, so a
+  // success either produced is reused by the other inside the window and both count against one rolling
+  // cap, while a scope whose epoch, grant or lifetime moved is another identity entirely.
+  let module: string = literals.quote(candidate.module);
+  let functionName: string = literals.quote(candidate.function);
+  let capability: string = literals.quote(candidate.module+"/"+candidate.function);
+  let words: string = String(candidate.words);
+  let draftIdentity: string = "textIdentity(scope, "+capability+", state."+p+"draft, "+words+")";
+  let answerIdentity: string = "textIdentity(action.scope, "+capability+", action.prompt, "+words+")";
+  let result: string = "";
+  result = result+"export function change_"+id+"(state: AppState, action: Change_"+id+"): AppState { return {"+p+"draft: action.value}; }\n";
+  // The button text is prepared from the terminal classification, so the retry state is the same one
+  // control: exactly one button, and a failure is retried only by an explicit press.
+  result = result+"export function label_"+id+"(state: AppState): string { if (state."+p+"outcome === \"failure\") { return \"Retry\"; } if (state."+p+"pending) { return \"Generating\"; } return \"Generate\"; }\n";
+  result = result+"export function allowed_"+id+"(text: string): boolean { return text.length >= 1 && text.length <= "+String(candidate.maximum)+"; }\n";
+  result = result+"export function bump_"+id+"(state: AppState, action: Generate_"+id+"): AppState { return {"+p+"sequence: state."+p+"sequence+1, "+p+"action: action}; }\n";
+  result = result+"export function reused_"+id+"(state: AppState, hit: number, now: number): AppState { return {textCacheUsed: textTouch(state, hit, now), "+p+"pending: false, "+p+"reply: state.textCacheTexts[hit], "+p+"code: \"\", "+p+"outcome: \"success\", "+p+"status: \"Reused within 3000 ms\"}; }\n";
+  // One refusal of one press or reply: the located classification and the section left idle. Nothing is
+  // remembered beyond this press, so the next press is decided again from the live Session facts.
+  result = result+"export function refusal_"+id+"(state: AppState, code: string, status: string): AppState { return {"+p+"pending: false, "+p+"code: code, "+p+"outcome: \"failure\", "+p+"status: status}; }\n";
+  // The same classification returned by the effect for this invocation: no call left, or the reply was
+  // no longer authorized. The completion carries the authority scope the call was admitted under, so a
+  // successful answer is stored under exactly the identity its press looked up.
+  result = result+"export function refused_"+id+"(sequence: number, code: string, message: string): Generated_"+id+" { return {sequence: sequence, prompt: \"\", scope: \"\", ok: false, text: \"\", code: code, outcome: \"failure\", message: message}; }\n";
+  result = result+"export function sending_"+id+"(state: AppState, now: number): AppState { return {textDispatch: textDispatchNext(state, now), "+p+"pending: true, "+p+"code: \"\", "+p+"outcome: \"none\", "+p+"status: \"Generating\"}; }\n";
+  // One answer per identity in the owner's one cache, the capacity of 30 and least-recent-use
+  // eviction. A repeated identity replaces its slot and a future-dated use is clamped to now, so the
+  // answer just produced is never its own victim.
+  result = result+"export function stored_"+id+"(state: AppState, key: string, text: string, now: number): AppState { let keys: string[] = []; let texts: string[] = []; let stamps: number[] = []; let useds: number[] = []; let index: number = 0; while (index < state.textCacheKeys.length) { if (state.textCacheKeys[index] !== key) { keys[keys.length] = state.textCacheKeys[index]; texts[texts.length] = state.textCacheTexts[index]; stamps[stamps.length] = state.textCacheAt[index]; let used: number = state.textCacheUsed[index]; if (used > now) { used = now; } useds[useds.length] = used; } index = index+1; } keys[keys.length] = key; texts[texts.length] = text; stamps[stamps.length] = now; useds[useds.length] = now; while (keys.length > "+String(cacheCapacity())+") { let victim: number = 0; let scan: number = 1; while (scan < keys.length) { if (useds[scan] < useds[victim]) { victim = scan; } scan = scan+1; } let nextKeys: string[] = []; let nextTexts: string[] = []; let nextStamps: number[] = []; let nextUseds: number[] = []; let cursor: number = 0; while (cursor < keys.length) { if (cursor !== victim) { nextKeys[nextKeys.length] = keys[cursor]; nextTexts[nextTexts.length] = texts[cursor]; nextStamps[nextStamps.length] = stamps[cursor]; nextUseds[nextUseds.length] = useds[cursor]; } cursor = cursor+1; } keys = nextKeys; texts = nextTexts; stamps = nextStamps; useds = nextUseds; } return {textCacheKeys: keys, textCacheTexts: texts, textCacheAt: stamps, textCacheUsed: useds, "+p+"pending: false, "+p+"reply: text, "+p+"code: \"\", "+p+"outcome: \"success\", "+p+"status: \"Generated\"}; }\n";
+  // Admission runs in the reducer, on the committed store, at the host millisecond reading the Session
+  // published for this press: a duplicate pending press preserves the invocation and starts nothing, and
+  // the press's authority is the live Session - its lifetime, this module's grant, its permission epoch
+  // and the host's classification of the function - so an ungranted, lifetime-less, epoch-less or
+  // write-classified function never reaches the reuse lookup or the dispatch counter. Nothing is
+  // remembered between presses: the next press under a live grant is decided again. The reuse lookup is
+  // this binding's live authority scope and identity in the owner's one cache, and the dispatch is
+  // recorded before the call leaves so a failure counts toward the owner's cap. No reading is no
+  // measurement, so the press is refused instead of deciding the windows from a placeholder.
+  let start: string = "export function start_"+id+"(state: AppState, action: Generate_"+id+"): AppState {"
+    +" if (action.sequence !== state."+p+"sequence || state."+p+"pending || state."+p+"sequence >= 9007199254740991) { return state; }"
+    +" if (!allowed_"+id+"(state."+p+"draft)) { return state; }"
+    +" let epoch: number = session.epoch("+module+"); let lifetime: string = session.lifetime(); let granted: boolean = session.granted("+module+"); let classification: string = session.classification("+module+", "+functionName+");"
+    +" if (lifetime === \"\") { return refusal_"+id+"(bump_"+id+"(state, action), \"INVALID_ARGUMENT\", \"Session lifetime is unknown\"); }"
+    +" if (!granted) { return refusal_"+id+"(bump_"+id+"(state, action), \"DENIED\", \"Text generation is not granted\"); }"
+    +" if (!(epoch >= 0)) { return refusal_"+id+"(bump_"+id+"(state, action), \"INVALID_ARGUMENT\", \"No permission epoch for this module\"); }"
+    +" if (classification !== \"read\") { return refusal_"+id+"(bump_"+id+"(state, action), \"DENIED\", \"Not an authorized read\"); }"
+    +" if (state.textNow < 0) { return refusal_"+id+"(bump_"+id+"(state, action), \"CLOCK\", \"No host time reading for this press\"); }"
+    +" let now: number = state.textNow; let scope: string = textScope(epoch, granted, lifetime); let key: string = "+draftIdentity+"; let hit: number = textHit(state, key, now);"
+    +" if (hit >= 0) { return reused_"+id+"(bump_"+id+"(state, action), hit, now); }"
+    +" if (textRequests(state, now) >= "+String(dispatchCap())+") { return refusal_"+id+"(bump_"+id+"(state, action), \"RATE\", \"Too many calls in the last minute\"); }"
+    +" return sending_"+id+"(bump_"+id+"(state, action), now); }\n";
+  result = result+start;
+  // One admitted invocation is one provider call. The effect reads the live Session facts before the
+  // call and again before the reply is admitted, exactly as execution.emittedInvocation does for a
+  // provider read: a refusal starts no call, and a grant, a revocation, a lifetime or an epoch that
+  // moved while the call was out refuses the reply as no longer authorized instead of publishing an
+  // answer produced under authority that no longer holds. The captured scope is the one the answer is
+  // stored under; the effect never retries, and a late or superseded completion changes nothing.
+  let effect: string = "export async function generate_"+id+"(state: AppState, action: Generate_"+id+"): Promise<Generated_"+id+"> {"
+    +" if (!state."+p+"pending || state."+p+"action === null || (state."+p+"action as Generate_"+id+") !== action || state."+p+"sequence !== action.sequence+1) { return refused_"+id+"(-1, \"NOT_ADMITTED\", \"Not admitted\"); }"
+    +" let epoch: number = session.epoch("+module+"); let lifetime: string = session.lifetime(); let granted: boolean = session.granted("+module+"); let classification: string = session.classification("+module+", "+functionName+");"
+    +" if (lifetime === \"\") { return refused_"+id+"(state."+p+"sequence, \"INVALID_ARGUMENT\", \"Session lifetime is unknown\"); }"
+    +" if (!granted) { return refused_"+id+"(state."+p+"sequence, \"DENIED\", \"Text generation is not granted\"); }"
+    +" if (!(epoch >= 0)) { return refused_"+id+"(state."+p+"sequence, \"INVALID_ARGUMENT\", \"No permission epoch for this module\"); }"
+    +" if (classification !== \"read\") { return refused_"+id+"(state."+p+"sequence, \"DENIED\", \"Not an authorized read\"); }"
+    +" let scope: string = textScope(epoch, granted, lifetime); let prompt: string = state."+p+"draft; let value: string = \"\"; let ok: boolean = true; let code: string = \"\"; let message: string = \"Generated\";"
+    +" try { value = await textProvider_"+id+"."+candidate.function+"(prompt, "+words+"); } catch (unknownError) { let error: Error = unknownError as Error; ok = false; code = error.name; message = error.message; }"
+    +" if (!(session.granted("+module+") && session.epoch("+module+") === epoch && session.lifetime() === lifetime && session.classification("+module+", "+functionName+") === \"read\")) { return refused_"+id+"(state."+p+"sequence, \"REVOKED\", \"Invocation no longer authorized\"); }"
+    +" if (ok && value.length < 1) { ok = false; code = \"BAD_RESPONSE\"; message = \"Empty answer\"; }"
+    +" let outcome: string = \"failure\"; if (ok) { outcome = \"success\"; }"
+    +" return {sequence: state."+p+"sequence, prompt: prompt, scope: scope, ok: ok, text: value, code: code, outcome: outcome, message: message}; }\n";
+  result = result+effect;
+  // A permission-classified completion that moved the authority clears every answer produced under the
+  // authority that was lost, for every section of the composition: a sibling section can never keep
+  // serving an answer from a boundary that no longer holds. A refusal that moved no authority (an
+  // ungranted module, a provider whose consent is off, an invalid answer, a rate refusal) keeps the
+  // retained answers for explicit reuse and remembers no refusal, so a press under a live grant
+  // dispatches again. The completion is admitted for the invocation it belongs to, by the pending
+  // press's sequence: an edit to the prompt while the call is in flight is a business value, not a
+  // cancellation, so the answer is stored under the identity and authority scope it was asked for and
+  // the control leaves its waiting state.
+  let complete: string = "export function complete_"+id+"(state: AppState, action: Generated_"+id+"): AppState {"
+    +" if (!state."+p+"pending || action.sequence !== state."+p+"sequence) { return state; }"
+    +" if (!action.ok) {"
+    +" if (action.code === \"REVOKED\" || action.code === \"PROVIDER_REVOKED\") { return {"+p+"pending: false, "+p+"code: action.code, "+p+"outcome: \"failure\", "+p+"status: action.message, textCacheKeys: [], textCacheTexts: [], textCacheAt: [], textCacheUsed: []}; }"
+    +" return {"+p+"pending: false, "+p+"code: action.code, "+p+"outcome: \"failure\", "+p+"status: action.message}; }"
+    +" return stored_"+id+"(state, "+answerIdentity+", action.text, state.textNow); }\n";
+  result = result+complete;
+  return result;
+}
+export function build(plan: plans.Plan, candidates: Candidate[], first: selecting.Result, second: selecting.Result, intervalMs: number): Built {
+  let built: Built = {fields:[],updates:[],effects:[],computations:[],declarations:"",helpers:"",view:"",covers:[],readings:[]};
+  let shared: boolean = false;
+  for (let candidate of candidates) {
+    if (!admitted(candidate,first,second) || s.contains(built.covers,candidate.need)) { continue; }
+    let id: string = candidate.id; let p: string = id+"_";
+    // The owner's cache and rolling counter are issued once for this composition and shared by every
+    // text section it emits: one list of answers keyed by the policy identity and one list of dispatches,
+    // so reuse, the 30-answer capacity and the six-per-minute cap are decided per owner instead of per
+    // control. The Session import is issued here with them, because every section of the owner decides
+    // its authority from the same live Session facts.
+    if (!shared) {
+      for (let entry of sharedFields()) { built.fields[built.fields.length] = entry; }
+      built.helpers = built.helpers+sharedHelpers();
+      built.declarations = built.declarations+"import * as session from \"embedding/session\"; export class TextNow { now: number; }";
+      built.updates[built.updates.length] = {action:"TextNow",function:"publishTextNow"};
+      // The reading carrier: a private Session identity, never a renderer control. The Session binding
+      // dispatches it with the host wall reading it took for the press or the completion, and nothing
+      // ticks it, so no renderer interval can stand in for a reading that was not taken. The interval is
+      // host configuration issued with the rest of the driver metadata; this carrier never runs.
+      built.view = built.view+"ui.Ticker(id: \"text_now\", intervalMs: "+String(intervalMs)+", running: false, onTick: action app.TextNow {now: payload}) ";
+      built.readings[built.readings.length] = "text_now";
+      shared = true;
+    }
+    built.fields[built.fields.length] = field(p+"draft","string","authoritative",literals.quote(candidate.prompt));
+    // The pressed invocation is one live attempt, never authoritative business state: the accepted
+    // action, its pending marker and the press sequence that correlates the reply are admission state
+    // and a pending effect (docs/spec-v0.8.md "Execution and provider workflows"), so the persisted
+    // projection excludes them and a cold reopen starts idle under sequence 0 instead of inheriting an
+    // attempt no effect can retire.
+    built.fields[built.fields.length] = field(p+"sequence","number","runtime","0");
+    built.fields[built.fields.length] = field(p+"action","Generate_"+id+" | null","runtime","null");
+    built.fields[built.fields.length] = field(p+"pending","boolean","runtime","false");
+    // The answer is authoritative state of this owner, so it persists with the record, with the
+    // classification it carries.
+    built.fields[built.fields.length] = field(p+"reply","string","authoritative","\"\"");
+    built.fields[built.fields.length] = field(p+"code","string","authoritative","\"\"");
+    built.fields[built.fields.length] = field(p+"outcome","string","authoritative","\"none\"");
+    built.fields[built.fields.length] = field(p+"status","string","authoritative","\"Not generated\"");
+    built.fields[built.fields.length] = field(p+"label","string","derived","null");
+    built.declarations = built.declarations+"import * as textProvider_"+id+" from "+literals.quote(candidate.module)+"; export class Change_"+id+" {value: string;} export class Generate_"+id+" {sequence: number;} export class Generated_"+id+" {sequence: number;prompt: string;scope: string;ok: boolean;text: string;code: string;outcome: string;message: string;}";
+    built.updates[built.updates.length] = {action:"Change_"+id,function:"change_"+id};
+    built.updates[built.updates.length] = {action:"Generate_"+id,function:"start_"+id};
+    built.updates[built.updates.length] = {action:"Generated_"+id,function:"complete_"+id};
+    built.effects[built.effects.length] = {action:"Generate_"+id,function:"generate_"+id};
+    built.helpers = built.helpers+helpersFor(candidate);
+    built.computations[built.computations.length] = {instance:"parts",field:p+"label",value:"label_"+id+"(state)",ready:"true",reason:"\"Text generation unavailable\"",dependencies:["f_parts_"+p+"outcome","f_parts_"+p+"pending"]};
+    // Exactly one button: the same control carries the retry state, and the prompt, the waiting/result
+    // status and the produced text are the section's only other controls.
+    built.view = built.view+"ui.Text(text: "+literals.quote(candidate.prompt)+") ui.TextField(label: \"Prompt\", value: state."+p+"draft, onChange: action app.Change_"+id+" {value: payload}) ui.Button(text: state."+p+"label_display, value: state."+p+"sequence, onClick: action app.Generate_"+id+" {sequence: payload}) ui.Text(text: state."+p+"status) When(state."+p+"reply !== \"\") {ui.Text(text: state."+p+"reply)} ";
+    built.covers[built.covers.length] = candidate.need;
+  }
+  return built;
+}
+export function main(): void { return; }

@@ -3,11 +3,14 @@
 // the persisted record is the compiled authoritative projection only. Restore runs the codec's
 // digest/tag checks, the compiled nominal allocation and the compiled recompute before Deal UI
 // publishes the first tree. No inference, provider call or effect runs for restore.
-globalThis.mountDealUi = function(factories, entryId, persistedState = null, appModule = null, prepare = null, clockDrivers = null) {
+globalThis.mountDealUi = function(factories, entryId, persistedState = null, appModule = null, prepare = null, clockDrivers = null, readingCarriers = null) {
   const {entry, rt, checkpointSchema, app} = dealLoad(factories, entryId, appModule);
   const scheduleEffect = (invoke, complete, fail, exited) => {
-    // Start immediately after commit; synchronous throws follow the same exit accounting.
-    try { Promise.resolve(invoke()).then(complete).catch(fail).finally(exited); }
+    // Start immediately after commit; synchronous throws follow the same exit accounting. The host
+    // publishes its millisecond wall reading for the completion before the completion is enqueued, so
+    // the compiled policy stamps the answer with the instant the call really returned instead of a
+    // reading taken a second earlier.
+    try { Promise.resolve(invoke()).then(result => { publishReading(); complete(result); }).catch(fail).finally(exited); }
     catch (error) { try { fail(error); } finally { exited(); } }
   };
   const role = name => {
@@ -55,7 +58,34 @@ globalThis.mountDealUi = function(factories, entryId, persistedState = null, app
     }};
   }
   const session = createDealUiSession(checkedEntry, rt, restored, scheduleEffect, checkpointSchema);
-  globalThis.dealUi = session;
+  // The private reading carriers this composition issued: a Session publishes one host millisecond wall
+  // reading into the compiled field they bind. The carriers are resolved from the rendered tree by their
+  // issued identities; a missing or duplicated one is never dispatched, so a model-authored node cannot
+  // stand in for the reading. `publishReading` runs for the press the host is about to admit and for the
+  // completion it is about to deliver, and never from a renderer event or on an interval.
+  const readingIds = Array.isArray(readingCarriers) ? readingCarriers : [];
+  const publishReading = () => {
+    if (readingIds.length === 0) return;
+    const wall = Date.now();
+    if (typeof wall !== 'number' || !Number.isFinite(wall) || wall < 0) return;
+    const slots = actionSlots();
+    for (const identity of readingIds) {
+      const slot = slots[identity];
+      if (!Number.isInteger(slot) || slot < 0) continue;
+      // A reading is bookkeeping about the action that follows it, so a refused publish never blocks
+      // the action or loses a produced answer.
+      try { session.dispatch(slot, String(wall)); } catch (_) {}
+    }
+  };
+  // A press admits with the host reading taken for it; an edit changes a value and reads no reading.
+  const pressEvents = ['onClick', 'onTap', 'onAction', 'onBack'];
+  // The host-facing session publishes the reading for the press it is about to admit. The binding's own
+  // driver dispatches use the inner session, so a host-driven action never publishes a reading of its
+  // own.
+  globalThis.dealUi = Object.freeze({...session, dispatch: (slot, payload = null) => {
+    if (readingIds.length > 0 && pressEvents.includes(actionEvents()[slot])) publishReading();
+    return session.dispatch(slot, payload);
+  }});
   let projectedFrom = null, projectedValue = null;
   globalThis.persistDealUi = function() {
     // Deal UI refuses a checkpoint while an effect is in flight: a pending invocation is never saved.
@@ -69,6 +99,21 @@ globalThis.mountDealUi = function(factories, entryId, persistedState = null, app
     return value;
   };
   const lastTick = Object.create(null);
+  // The event each rendered action slot was bound to. A value edit (a text, number, slider or selection
+  // change) carries no press: publishing a reading before it would commit a transition nobody reads,
+  // while a press is the action whose compiled policy decides its windows from the instant it happened.
+  const actionEvents = () => {
+    const tree = JSON.parse(session.snapshot()).tree;
+    const found = Object.create(null);
+    (function visit(node) {
+      for (const prop of node.props) {
+        if (prop.kind !== 'action' || !Number.isInteger(prop.actionSlot)) continue;
+        found[prop.actionSlot] = Object.hasOwn(found, prop.actionSlot) ? '' : prop.name;
+      }
+      for (const child of node.children) visit(child);
+    })(tree);
+    return found;
+  };
   const actionSlots = () => {
     const tree = JSON.parse(session.snapshot()).tree;
     const found = Object.create(null);
@@ -163,7 +208,7 @@ globalThis.mountDealUi = function(factories, entryId, persistedState = null, app
         const slot=slots[driver.resume];
         if(!Number.isInteger(slot)||slot<0||dispatched[slot])continue;
         dispatched[slot]=true;
-        dealUi.dispatch(slot,String(reading));
+        session.dispatch(slot,String(reading));
       }
     }
     // The transition counts only once the resume it describes has been admitted, so a failed dispatch
@@ -177,8 +222,8 @@ globalThis.mountDealUi = function(factories, entryId, persistedState = null, app
     const delta=clock.delta;
     const slots=[];
     function visit(node){if(node.component.split('.').pop()==='Surface')for(const prop of node.props)if(prop.kind==='action'&&prop.name==='onFrame')slots.push(prop.actionSlot);for(const child of node.children)visit(child);}
-    visit(JSON.parse(dealUi.snapshot()).tree);
-    for(const slot of slots)dealUi.dispatch(slot,String(delta));
+    visit(JSON.parse(session.snapshot()).tree);
+    for(const slot of slots)session.dispatch(slot,String(delta));
     return '';
   };
   return session.snapshot();

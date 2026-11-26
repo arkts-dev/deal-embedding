@@ -197,7 +197,7 @@ const addedOutput=JSON.parse(manifest);if((addedOutput.composition.slots||[]).le
  assert(admit(JSON.stringify(addedOutput),true).includes('ADMISSION_OWNERSHIP'),'a slot output with no publication was admitted');}
 const reusedResume=JSON.parse(manifest);if((reusedResume.composition.clockDrivers||[]).length>0){reusedResume.composition.clockDrivers[0].resume=reusedResume.composition.clockDrivers[0].sample;reusedResume.composition.sessionClock.resume=reusedResume.composition.clockDrivers[0].sample;
  assert(admit(JSON.stringify(reusedResume),true).includes('ADMISSION_OWNERSHIP'),'a Session resume identity reusing a driver identity was admitted');}
-for(const section of ['composites','chatRoot','clockDrivers','sessionClock','notices','owners','composerOwned','instances','sources']){
+for(const section of ['composites','chatRoot','clockDrivers','readings','sessionClock','notices','owners','composerOwned','instances','sources']){
  const droppedSection=JSON.parse(manifest);delete droppedSection.composition[section];
  assert(admit(JSON.stringify(droppedSection),true).includes('ADMISSION_OWNERSHIP'),'a composition without its '+section+' was admitted');
 }

@@ -9,7 +9,7 @@ let frozenTarget='screen';fs.mkdirSync(stage,{recursive:true});
 // Modes whose accepted pair the runtime items consume: their recorded digest belongs to the unfiltered
 // run, because a broken artifact must never record the digest of the sources it emitted. One table for
 // the retention below and for the refusal of a filtered run that would emit a pair without a digest.
-const RETAINED=new Set(['ordinary','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','partial','scalar-read']);
+const RETAINED=new Set(['ordinary','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','partial','scalar-read','provider-text','text-generation','text-generation-sections']);
 const classes=path.join(root,'build/embedding-library/classes'),testClasses=path.join(stage,'classes');fs.mkdirSync(testClasses,{recursive:true});
 cp.execFileSync('javac',['--release','21','-cp',classes,'-d',testClasses,'tests/tools/fixtures/CompileComposer.java','tests/tools/fixtures/ProviderDeclaration.java']);
 const classpath=testClasses+':'+classes;
@@ -66,7 +66,18 @@ const eventsPlan={title:'Timed log',constants:[],inputs:[{id:'value',label:'Valu
 const eventsOpenPlan={...eventsPlan,inputs:[...eventsPlan.inputs,{id:'span',label:'Span',kind:'count',measure:'seconds',value:60}],needs:[...eventsPlan.needs,{id:'timer',type:'countdown',words:'Count down to the deadline',reads:['span'],spec:{label:'Timer',length:'span'}},{id:'rows',type:'entries',words:'Log rows',reads:[],spec:{label:'Rows',fields:[]}}]};
 // A live need and one declared provider contract make the scalar-read emitter produce its Load pair.
 const scalarPlan={title:'Scalar provider',inputs:[],constants:[],requirements:[{id:'preserve',text:'Read the current scalar value',sources:['request'],needs:['read']}],needs:[{id:'read',type:'live',words:'Explicitly read the scalar value',reads:[],spec:{label:'Scalar',measure:'number',unit:'',query:'host/probe.read'}}],questions:[]};
-const {providerContract,declaration}=require('./fixtures/provider-contract.js');
+// A content need that asks for text produced when the user asks for it: the runtime text-generation
+// emitter binds the disclosed host/text capability as an ordinary action of its own section.
+const textPlan={title:'Runtime text',inputs:[],constants:[],requirements:[{id:'preserve',text:'Generate a short encouraging note on demand',sources:['request'],needs:['write']}],needs:[{id:'write',type:'content',words:'Write a short encouraging note about the disclosed plan',quote:'',reads:[],spec:{}}],questions:[]};
+// The same owner with two text sections: both bind the one disclosed capability, so the owner's consent,
+// answer cache and rolling dispatch counter are shared by the two sections instead of multiplied by
+// them. The runtime item drives this pair to observe the per-owner reuse, capacity and cap across both.
+const textSectionsPlan={title:'Runtime text sections',inputs:[],constants:[],requirements:[{id:'preserve',text:'Generate a short encouraging note and a short reminder on demand',sources:['request'],needs:['write','note']}],needs:[{id:'write',type:'content',words:'Write a short encouraging note about the disclosed plan',quote:'',reads:[],spec:{}},{id:'note',type:'content',words:'Write a short reminder about the disclosed plan',quote:'',reads:[],spec:{}}],questions:[]};
+// One Experience that needs an explicit live provider read and on-demand generated text: both ordinary
+// provider parts of this owner compose into one instance, so its declarations carry one Session import
+// however many parts read the live Session facts (docs/spec-v0.8.md:525 "ordinary bindings").
+const providerTextPlan={title:'Provider value and runtime text',inputs:[],constants:[],requirements:[{id:'preserve',text:'Read the current scalar value and generate a short encouraging note on demand',sources:['request'],needs:['read','write']}],needs:[{id:'read',type:'live',words:'Explicitly read the scalar value',reads:[],spec:{label:'Scalar',measure:'number',unit:'',query:'host/probe.read'}},{id:'write',type:'content',words:'Write a short encouraging note about the disclosed plan',quote:'',reads:[],spec:{}}],questions:[]};
+const {providerContract,textContract,declaration}=require('./fixtures/provider-contract.js');
 const rendererContract=require('./fixtures/renderer-contract.js');
 const providerDeclarations=contracts=>Object.fromEntries(contracts.map(c=>[c.module,declaration(c)]));
 const regions='<classes>export class Change {value: number;}</classes><fields>value: number = 3;</fields><functions>export function change(state: AppState, action: Change): AppState {return {value: action.value};}</functions><view>import * as app from "./experience"; import * as ui from "./platform.dealui-pack"; export view Panel(state: app.AppState): View {ui.Column(){ui.Text(text: "Retained authored text 😀") ui.NumberField(label: "Value", value: state.value, minimum: 0, maximum: 999, step: 1, onChange: action app.Change {value: payload})}}</view>';
@@ -84,14 +95,18 @@ async function run(mode){
  // Each mode compiles into a clean staging directory: no declaration or module from another mode survives.
  fs.rmSync(path.join(root,'build/v08-cutover/composed-executable'),{recursive:true,force:true});
  // The production host's capabilityDeclarations text for the one contract this mode declares.
- const hasProvider=['scalar-read','classified-whole','success'].includes(mode);
+ const hasProvider=['scalar-read','provider-text','classified-whole','success'].includes(mode);
+ const hasText=mode.startsWith('text-generation')||mode==='provider-text';
+ // The disclosed contracts this request declares: one provider part per need, and the one composition
+ // that needs both a live read and generated text declares both beside each other.
+ const contracts=hasText&&hasProvider?[providerContract,textContract]:hasText?[textContract]:hasProvider?[providerContract]:[];
  const authoredRegions=hasProvider?regions.replace('<classes>','<classes>import * as probe from "host/probe";'):regions;
- const productionPrompt=hasProvider?cp.execFileSync('java',['-cp',javaWithKotlin,'ProviderDeclaration','prompt'],{encoding:'utf8'}).trim():'';
- const chosenPlan=mode==='units-rejected'?wrongUnitPlan:mode==='events-open'?eventsOpenPlan:mode.startsWith('events')?eventsPlan:mode==='classified-part-gap'?mixedPlan:['ordinary','repair','construction-failure','store-reducer','assembly-imports'].includes(mode)||mode.startsWith('admission-')||mode.startsWith('classified-')?ordinaryPlan:mode==='catalogue'?cataloguePlan:mode==='catalogue-empty'?catalogueEmptyPlan:mode==='catalogue-sections'?catalogueSectionsPlan:mode==='catalogue-readonly'?catalogueReadonlyPlan:mode==='catalogue-readonly-empty'?catalogueReadonlyEmptyPlan:mode==='catalogue-undisclosed'?catalogueUndisclosedPlan:mode==='catalogue-refused'?catalogueUndisclosedPlan:mode==='scalar-read'?scalarPlan:mode==='alignment-once'?alignmentOncePlan:mode.startsWith('alignment')?alignmentPlan:['mixed','partial'].includes(mode)?mixedPlan:fixturePlan;
+ const productionPrompt=hasProvider&&!hasText?cp.execFileSync('java',['-cp',javaWithKotlin,'ProviderDeclaration','prompt'],{encoding:'utf8'}).trim():'';
+ const chosenPlan=mode==='provider-text'?providerTextPlan:mode==='units-rejected'?wrongUnitPlan:mode==='text-generation'?textPlan:mode==='text-generation-sections'?textSectionsPlan:mode==='events-open'?eventsOpenPlan:mode.startsWith('events')?eventsPlan:mode==='classified-part-gap'?mixedPlan:['ordinary','repair','construction-failure','store-reducer','assembly-imports'].includes(mode)||mode.startsWith('admission-')||mode.startsWith('classified-')?ordinaryPlan:mode==='catalogue'?cataloguePlan:mode==='catalogue-empty'?catalogueEmptyPlan:mode==='catalogue-sections'?catalogueSectionsPlan:mode==='catalogue-readonly'?catalogueReadonlyPlan:mode==='catalogue-readonly-empty'?catalogueReadonlyEmptyPlan:mode==='catalogue-undisclosed'?catalogueUndisclosedPlan:mode==='catalogue-refused'?catalogueUndisclosedPlan:mode==='scalar-read'?scalarPlan:mode==='alignment-once'?alignmentOncePlan:mode.startsWith('alignment')?alignmentPlan:['mixed','partial'].includes(mode)?mixedPlan:fixturePlan;
  const context=vm.createContext({sources,frozenTarget});
  for(const name of ['sandbox.js','generation-contracts.js','protocol-contracts.js','protocol-host.js','generation-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),context);
  const intent=mode.startsWith('classified-')?'Let the user draw freely on the canvas':'Double the edited value';
- vm.runInContext(`protocolContexts.fixture={value:${JSON.stringify(mode==='catalogue-readonly'?JSON.stringify(catalogueReadonlyFacts):mode==='catalogue-undisclosed'?JSON.stringify(catalogueUndisclosedFacts):mode==='catalogue-refused'?JSON.stringify(catalogueUndisclosedFacts):fixtureFacts)},schema:{kind:'record',fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0}};const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));runGeneration(factories,{intent:${JSON.stringify(mode==='catalogue-readonly'?'Double the edited value '+escapedCell:intent)},context:{id:'fixture'},target:frozenTarget,clockIntervalMs:1000,clockToleranceMs:2000,capabilities:${hasProvider?JSON.stringify([providerContract]):'[]'}});`,context);
+ vm.runInContext(`protocolContexts.fixture={value:${JSON.stringify(mode==='catalogue-readonly'?JSON.stringify(catalogueReadonlyFacts):mode==='catalogue-undisclosed'?JSON.stringify(catalogueUndisclosedFacts):mode==='catalogue-refused'?JSON.stringify(catalogueUndisclosedFacts):fixtureFacts)},schema:{kind:'record',fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0}};const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));runGeneration(factories,{intent:${JSON.stringify(mode==='catalogue-readonly'?'Double the edited value '+escapedCell:intent)},context:{id:'fixture'},target:frozenTarget,clockIntervalMs:1000,clockToleranceMs:2000,capabilities:${JSON.stringify(contracts)}});`,context);
  let asks=[],checks=0,issued=0,editSeen=false,discarded=0,isolatedStarts=0,acceptedSource=null,checkingContext=null,classificationAsks=0,surfaceAsks=0,alignmentAsks=0,alignmentQuestions=[];
  for(let turn=0;turn<2000;turn++){
   await new Promise(resolve=>setImmediate(resolve));
@@ -273,7 +288,7 @@ async function run(mode){
     assert(!acceptedSource.deal.includes('f_section_summary_'),'the unavailable answer instantiates nothing');
    }
   }
-  else if(['ordinary','repair','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','catalogue-refused','scalar-read','mixed','partial','units-rejected'].includes(mode)) {
+  else if(['ordinary','repair','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','catalogue-refused','scalar-read','provider-text','text-generation','text-generation-sections','mixed','partial','units-rejected'].includes(mode)) {
     assert.equal(snapshot.error,null,mode+' '+JSON.stringify(snapshot.error));assert(snapshot.result.candidateId,mode+' '+JSON.stringify(snapshot.result));assert(checks>=1);
     assert(!asks.some(r=>r.stage==='custom-whole'),'Runnable ordinary result must never enter whole writing: '+mode+' '+JSON.stringify(asks.map(r=>r.stage)));
     if(mode==='repair'){assert.equal(checks,2);assert.equal(snapshot.result.attempts,2,'a failed check plus an accepted repair is two attempts');assert.equal(asks.filter(r=>r.stage==='assembled-edit').length,1);}
@@ -335,6 +350,86 @@ async function run(mode){
      assert(acceptedSource.dealui.includes('ui.Button(text: "Load Scalar", value: state.f_parts_scalar_0_sequence, onClick: action app.f_parts_Load_scalar_0 {sequence: payload})'),acceptedSource.dealui);
      assert(acceptedSource.dealui.includes('ui.Text(text: state.f_parts_scalar_0_status)'),acceptedSource.dealui);
      assert(/export class f_parts_Load_scalar_0 \{\n  sequence: number;\n\}/.test(acceptedSource.deal),acceptedSource.deal);}
+    if(mode==='provider-text'){
+     // Both provider parts of the owner compose into one instance: the live read's Load control and the
+     // text section's own generate control render side by side, each dispatches through its own emitted
+     // effect and provider module, and the whole instance emits the Session import exactly once.
+     assert.equal((acceptedSource.dealui.match(/ui\.Button\(/g)||[]).length,2,'each provider section renders its own one button: '+acceptedSource.dealui);
+     assert(acceptedSource.dealui.includes('ui.Button(text: "Load Scalar", value: state.f_parts_scalar_0_sequence, onClick: action app.f_parts_Load_scalar_0 {sequence: payload})'),'the live read section renders no Load control: '+acceptedSource.dealui);
+     assert(acceptedSource.dealui.includes('ui.Button(text: state.f_parts_text_0_label_display, value: state.f_parts_text_0_sequence, onClick: action app.f_parts_Generate_text_0 {sequence: payload})'),'the text section renders no generate control: '+acceptedSource.dealui);
+     assert(acceptedSource.deal.includes('export function f_parts_start_scalar_0(')&&acceptedSource.deal.includes('export function f_parts_start_text_0('),'both sections emit their press reducer: '+acceptedSource.deal.slice(0,2000));
+     assert(acceptedSource.deal.includes('await f_parts_provider_scalar_0.read()'),'the live read section dispatches no provider call');
+     assert(acceptedSource.deal.includes('await f_parts_textProvider_text_0.generate(prompt, 80.0)'),'the text section dispatches no provider call');
+     assert.equal((acceptedSource.deal.match(/import \* as f_parts_session from "embedding\/session";/g)||[]).length,1,'the composition imports the Session more than once: '+acceptedSource.deal.slice(0,600));
+     assert.equal((acceptedSource.deal.match(/session\.epoch\("host\/text"\)/g)||[]).length,3,'the text section re-reads the live permission epoch before its call and before its reply');
+     assert(acceptedSource.deal.includes('session.granted("host/probe")'),'the live read section reads no live module grant');
+     assert(asks[0].input.includes('// host/probe\nexport function read(): Promise<number>;'),'the planning prompt carries the declared provider declaration');
+     assert(asks[0].input.includes('// host/text\nexport function generate(arg0: string, arg1: number): Promise<string>;'),'the planning prompt carries the declared text-generation declaration');
+    }
+    if(mode.startsWith('text-generation')){
+     // The runtime text-generation capability is bound as an ordinary issued action: one button per
+     // section, an editable prompt, the waiting/result status and the produced text, and the disclosure
+     // is the declared contract the planning prompt carries.
+     assert(asks.length>0&&asks[0].input.includes('// host/text\nexport function generate(arg0: string, arg1: number): Promise<string>;'),'the planning prompt carries the declared text-generation declaration: '+asks[0].input.slice(0,600));
+     assert.equal((acceptedSource.dealui.match(/ui\.Button\(/g)||[]).length,mode==='text-generation'?1:2,'each text section renders exactly one button');
+     assert(acceptedSource.dealui.includes('ui.TextField(label: "Prompt", value: state.f_parts_text_0_draft, onChange: action app.f_parts_Change_text_0 {value: payload})'),acceptedSource.dealui);
+     assert(acceptedSource.dealui.includes('ui.Button(text: state.f_parts_text_0_label_display, value: state.f_parts_text_0_sequence, onClick: action app.f_parts_Generate_text_0 {sequence: payload})'),acceptedSource.dealui);
+     assert(acceptedSource.dealui.includes('ui.Text(text: state.f_parts_text_0_status)'),acceptedSource.dealui);
+     // The answer is authoritative state, so it persists; the cache, the counter and the Session reading
+     // are runtime resources of the owner, issued once for the composition.
+     assert(/  f_parts_text_0_reply: string;\n/.test(acceptedSource.deal),acceptedSource.deal);
+     for(const name of ['textNow','textCacheKeys','textCacheTexts','textCacheAt','textCacheUsed','textDispatch'])assert(new RegExp('  f_parts_'+name+': ').test(acceptedSource.deal),name+' is not emitted as the owner\'s composition-scope runtime field');
+     assert(!/  f_parts_text_0_cachePrompt: /.test(acceptedSource.deal),'the answer cache is issued per section instead of once for the owner');
+     assert(!/  f_parts_text_0_dispatch: /.test(acceptedSource.deal),'the rolling counter is issued per section instead of once for the owner');
+     // The accepted invocation - its action, its pending marker and the press sequence that correlates
+     // its reply - is admission state and a pending effect, never authoritative business state: the
+     // emitted projection excludes it and a restore starts idle.
+     assert(!/  f_parts_textConsent: string;\n/.test(acceptedSource.deal),'the section keeps a sticky consent flag instead of deciding each press from the live Session facts');
+     const ownerRoles=Object.fromEntries(JSON.parse(fs.readFileSync(path.join(root,'build/v08-cutover/composed-executable/js/admission.json'),'utf8')).composition.owners.map(owner=>[owner.name,owner.role]));
+     for(const name of ['f_parts_text_0_action','f_parts_text_0_pending','f_parts_text_0_sequence'])assert.equal(ownerRoles[name],'runtime',name+' is emitted as authoritative business state');
+     for(const name of ['f_parts_text_0_draft','f_parts_text_0_reply','f_parts_text_0_code','f_parts_text_0_outcome','f_parts_text_0_status'])assert.equal(ownerRoles[name],'authoritative',name+' left the persisted business state');
+     // The emitted sections look their answers up in that one list by the policy identity.
+     assert.equal((acceptedSource.deal.match(/textHit\(state, key, now\)/g)||[]).length,mode==='text-generation'?1:2,'each section looks its answer up in one owner cache');
+     assert.equal((acceptedSource.deal.match(/textRequests\(state, now\)/g)||[]).length,mode==='text-generation'?1:2,'each section counts against the owner\'s one rolling window');
+     // The identity the lookup and the store use carries the live authority scope - the permission
+     // epoch, the grant and the Session lifetime of the press - not the constant module, so an answer
+     // produced under a permission scope that no longer holds is never reused.
+     assert(acceptedSource.deal.includes('textScope(epoch, granted, lifetime)'),'the emitted press does not capture the live authority scope: '+acceptedSource.deal);
+     assert(acceptedSource.deal.includes('textIdentity(scope, "host/text/generate", state.f_parts_text_0_draft, 80.0)'),'the emitted lookup carries no live authority scope and capability of the binding: '+acceptedSource.deal);
+     assert(acceptedSource.deal.includes('textIdentity(action.scope, "host/text/generate", action.prompt, 80.0)'),'the emitted store carries no authority scope the call was admitted under');
+     // The emitted operation is wired to the Session's own live facts: the grant, the permission epoch,
+     // the Session lifetime and the host's classification are read before the call and again before the
+     // reply is admitted, exactly as the sibling provider part's emitted admission reads them.
+     assert(acceptedSource.deal.includes('import * as f_parts_session from "embedding/session";'),'the emitted part imports no live Session facts: '+acceptedSource.deal.slice(0,600));
+     assert.equal((acceptedSource.deal.match(/session\.epoch\("host\/text"\)/g)||[]).length,mode==='text-generation'?3:6,'each section re-reads the live permission epoch before its call and before its reply');
+     assert(acceptedSource.deal.includes('session.lifetime()'),'the emitted part reads no live Session lifetime');
+     assert(acceptedSource.deal.includes('session.granted("host/text")'),'the emitted part reads no live module grant');
+     assert(acceptedSource.deal.includes('session.classification("host/text", "generate")'),'the emitted part reads no host classification of the disclosed function');
+     if(mode==='text-generation-sections'){
+      // The two sections of one owner keep their own business state and share the owner's bookkeeping.
+      assert(/  f_parts_text_1_reply: string;\n/.test(acceptedSource.deal),acceptedSource.deal);
+      assert.equal((acceptedSource.deal.match(/  f_parts_textCacheKeys: /g)||[]).length,1,'the owner answer cache is issued more than once');
+      assert(acceptedSource.dealui.includes('ui.Button(text: state.f_parts_text_1_label_display, value: state.f_parts_text_1_sequence, onClick: action app.f_parts_Generate_text_1 {sequence: payload})'),acceptedSource.dealui);
+      const ownerRuntime=JSON.parse(fs.readFileSync(path.join(root,'build/v08-cutover/composed-executable/js/admission.json'),'utf8')).composition.runtime;
+      assert.equal(ownerRuntime.filter(name=>['f_parts_textNow','f_parts_textCacheKeys','f_parts_textCacheTexts','f_parts_textCacheAt','f_parts_textCacheUsed','f_parts_textDispatch'].includes(name)).length,6,'the composed manifest declares the owner\'s six shared runtime fields');
+      assert(!ownerRuntime.some(name=>name.startsWith('f_parts_text_0_cache')||name.startsWith('f_parts_text_1_cache')||name==='f_parts_text_1_dispatch'),'the composed manifest still scopes the cache or counter per section');
+     }
+     // Both windows are decided on the host millisecond reading the Session publishes into that field,
+     // never on the whole-second standard library reading: the emitted reducer reads the published
+     // reading for the press and the completion stores the answer at the reading of its completion.
+     assert(acceptedSource.deal.includes('let now: number = state.f_parts_textNow;'),'the press does not decide the windows from the published host reading');
+     assert(acceptedSource.deal.includes('action.text, state.f_parts_textNow)'),'the completion is not stored at the published host reading');
+     assert(!/entriesClock\.nowMillis\(\)[^;]*textCache/.test(acceptedSource.deal),'a window is decided from the truncated standard library reading');
+     assert(acceptedSource.deal.includes('export class f_parts_TextNow {'),'the owner issues no reading action for the Session');
+     assert(acceptedSource.dealui.includes('ui.Ticker(id: "text_now", intervalMs: 1000.0, running: false, onTick: action app.f_parts_TextNow {now: payload})'),acceptedSource.dealui);
+     if(mode==='text-generation'){
+      // The reading carrier is issued composition metadata the Session binding resolves from the tree.
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root,'build/v08-cutover/composed-executable/js/admission.json'),'utf8')).composition.readings,['text_now'],'the composed manifest issues the owner\'s Session reading carrier');
+     }
+     assert(acceptedSource.deal.includes('return ((text.length >= 1.0) && (text.length <= 2000.0));'),'the emitted prompt bound is the specification 2000 UTF-16 units: '+acceptedSource.deal.slice(0,4000));
+     assert(acceptedSource.deal.includes('let prompt: string = state.f_parts_text_0_draft;'),'the emitted effect does not carry the pressed prompt');
+     assert(acceptedSource.deal.includes('await f_parts_textProvider_text_0.generate(prompt, 80.0)'),'the emitted effect calls the disclosed capability');
+     assert.equal((acceptedSource.deal.match(/\.generate\(/g)||[]).length,mode==='text-generation'?1:2,'the emitted part issues exactly one call per section: no retry loop');}
     if(mode==='mixed'){assert(asks.some(r=>r.stage==='custom-section'));assert(acceptedSource.deal.includes('f_parts_value'));assert(acceptedSource.deal.includes('f_gap_Change'));
      // No alignment answer added a publisher, so the reader round is never issued.
      assert.equal(alignmentAsks,1,'a stage that added no publisher issued a later round: '+JSON.stringify(alignmentQuestions));}
@@ -350,7 +445,7 @@ async function run(mode){
     case 'embedding/construction-identity':value='issued-'+(++issued);break;
     case 'embedding/policy-data':
      if(request.function==='catalogJson')value=JSON.stringify(request.args[0]);
-     else if(request.function==='capabilityDeclarations'){assert.deepEqual(request.args[0],hasProvider?[providerContract]:[]);const reply=request.args[0].map(c=>'// '+c.module+'\n'+declaration(c)).join('\n');if(productionPrompt)assert.equal(reply,productionPrompt,'the capability declarations equal the production host text');value=reply;}
+     else if(request.function==='capabilityDeclarations'){assert.deepEqual(request.args[0],contracts);const reply=request.args[0].map(c=>'// '+c.module+'\n'+declaration(c)).join('\n');if(productionPrompt)assert.equal(reply,productionPrompt,'the capability declarations equal the production host text');value=reply;}
      else if(request.function==='sha256')value=crypto.createHash('sha256').update(request.args[0]).digest('hex');
      else throw Error('Unexpected policy data');break;
     case 'embedding/inference':{
@@ -393,7 +488,8 @@ async function run(mode){
      else if(r.stage==='planning'){assert(r.input.includes('\nFROZEN TARGET\n'+frozenTarget+'\n'));value={content:JSON.stringify(chosenPlan),finish:'stop',refusal:''};}
      else if(['selection-first','selection-second'].includes(r.stage)) {
       const questions=JSON.parse(r.input.split('\nISSUED QUESTIONS\n')[1]);
-      const answers=questions.map(q=>{let selected='unavailable';if(mode==='scalar-read'&&q.id.startsWith('real_'))selected='read';else if(mode==='scalar-read'&&q.id==='read')selected='scalar_0';else if(q.id.startsWith('ownership_'))selected='authored';else if(q.id.startsWith('formula_'))selected='formula';else if(q.id.startsWith('units_'))selected=mode==='units-rejected'&&q.id==='units_wrong_scale'?'unavailable':'preserved';else if(mode==='classified-part'&&q.id==='calculate')selected='part_calculate';else if(mode==='classified-part-gap'&&q.id==='calculate')selected='part_calculate';else if(mode==='units-rejected')selected='part_'+q.id;else if(mode.startsWith('events')&&q.id==='calculate')selected='part_calculate';else if(mode==='events-open'&&q.id==='events_log')return {id:q.id,selected:'button',probabilities:q.options.map(o=>({id:o.id,p:0.2}))};else if(mode.startsWith('events')&&q.id==='events_log')selected=mode==='events-custom'?'unavailable':'button';else if(mode==='catalogue-readonly')selected={table:'cat_table_data_table',rail:'cat_rail_timeline',bars:'cat_bars_bar_chart',trend:'cat_trend_trend_chart',facts:'cat_facts_metrics',details:'cat_details_key_facts'}[q.id]||'unavailable';else if(mode.startsWith('alignment')&&q.id==='calculate')selected='part_calculate';else if(mode==='catalogue-readonly-empty')selected={table:'cat_table_data_table',rail:'cat_rail_timeline',bars:'cat_bars_bar_chart'}[q.id]||'unavailable';else if(mode==='catalogue-undisclosed')selected={table:'cat_table_data_table',watch:'cat_watch_spotlight'}[q.id]||'unavailable';else if(['ordinary','repair'].includes(mode)||mode.startsWith('admission-')||(['store-reducer','assembly-imports'].includes(mode)&&q.id==='calculate')||['mixed','partial'].includes(mode)&&q.id==='calculate')selected='part_calculate';else if(mode==='catalogue'&&q.id==='items')selected='cat_items_checklist';else if(mode==='catalogue'&&q.id==='choice')selected='cat_choice_actions';else if(mode==='catalogue-empty'&&q.id==='items')selected='cat_items_checklist';else if(mode==='catalogue-empty'&&q.id==='facts')selected='cat_facts_metrics';else if(mode==='catalogue-sections'&&q.id==='facts')selected='cat_facts_metrics';else if(mode==='catalogue-sections'&&q.id==='watch')selected='cat_watch_spotlight';else if(mode==='catalogue-sections'&&q.id==='details')selected='cat_details_key_facts';else if(mode==='catalogue-refused'&&q.id==='table')selected='cat_table_data_table';else if(mode==='catalogue-refused'&&q.id==='watch')selected='cat_watch_spotlight';return {id:q.id,selected,probabilities:q.options.map(o=>({id:o.id,p:o.id===selected?1:0}))};});
+      const reads=mode==='scalar-read'||mode==='provider-text';const writes=mode.startsWith('text-generation')||mode==='provider-text';
+      const answers=questions.map(q=>{let selected='unavailable';if(reads&&q.id.startsWith('real_'))selected='read';else if(reads&&q.id==='read')selected='scalar_0';else if(writes&&q.id.startsWith('generate_'))selected='generate';else if(writes&&q.id==='write')selected='text_0';else if(mode==='text-generation-sections'&&q.id==='note')selected='text_1';else if(q.id.startsWith('ownership_'))selected='authored';else if(q.id.startsWith('formula_'))selected='formula';else if(q.id.startsWith('units_'))selected=mode==='units-rejected'&&q.id==='units_wrong_scale'?'unavailable':'preserved';else if(mode==='classified-part'&&q.id==='calculate')selected='part_calculate';else if(mode==='classified-part-gap'&&q.id==='calculate')selected='part_calculate';else if(mode==='units-rejected')selected='part_'+q.id;else if(mode.startsWith('events')&&q.id==='calculate')selected='part_calculate';else if(mode==='events-open'&&q.id==='events_log')return {id:q.id,selected:'button',probabilities:q.options.map(o=>({id:o.id,p:0.2}))};else if(mode.startsWith('events')&&q.id==='events_log')selected=mode==='events-custom'?'unavailable':'button';else if(mode==='catalogue-readonly')selected={table:'cat_table_data_table',rail:'cat_rail_timeline',bars:'cat_bars_bar_chart',trend:'cat_trend_trend_chart',facts:'cat_facts_metrics',details:'cat_details_key_facts'}[q.id]||'unavailable';else if(mode.startsWith('alignment')&&q.id==='calculate')selected='part_calculate';else if(mode==='catalogue-readonly-empty')selected={table:'cat_table_data_table',rail:'cat_rail_timeline',bars:'cat_bars_bar_chart'}[q.id]||'unavailable';else if(mode==='catalogue-undisclosed')selected={table:'cat_table_data_table',watch:'cat_watch_spotlight'}[q.id]||'unavailable';else if(['ordinary','repair'].includes(mode)||mode.startsWith('admission-')||(['store-reducer','assembly-imports'].includes(mode)&&q.id==='calculate')||['mixed','partial'].includes(mode)&&q.id==='calculate')selected='part_calculate';else if(mode==='catalogue'&&q.id==='items')selected='cat_items_checklist';else if(mode==='catalogue'&&q.id==='choice')selected='cat_choice_actions';else if(mode==='catalogue-empty'&&q.id==='items')selected='cat_items_checklist';else if(mode==='catalogue-empty'&&q.id==='facts')selected='cat_facts_metrics';else if(mode==='catalogue-sections'&&q.id==='facts')selected='cat_facts_metrics';else if(mode==='catalogue-sections'&&q.id==='watch')selected='cat_watch_spotlight';else if(mode==='catalogue-sections'&&q.id==='details')selected='cat_details_key_facts';else if(mode==='catalogue-refused'&&q.id==='table')selected='cat_table_data_table';else if(mode==='catalogue-refused'&&q.id==='watch')selected='cat_watch_spotlight';return {id:q.id,selected,probabilities:q.options.map(o=>({id:o.id,p:o.id===selected?1:0}))};});
       value={content:JSON.stringify({answers}),finish:'stop',refusal:''};
      }
      else if(r.stage==='alignment') {
@@ -441,7 +537,7 @@ async function run(mode){
        isolatedStarts++;
        checkingContext=vm.createContext({rendererContract:rendererContract(frozenTarget)});
        for(const name of ['sandbox.js','text-pattern.js','renderer-admission.js','checking-session.js'])vm.runInContext(fs.readFileSync(path.join(assets,'embedding/bindings',name),'utf8'),checkingContext);
-       if(hasProvider)vm.runInContext('configureDealCapabilities('+JSON.stringify([providerContract])+')',checkingContext);
+       if(contracts.length)vm.runInContext('configureDealCapabilities('+JSON.stringify(contracts)+')',checkingContext);
        const executable=path.join(stage,'../composed-executable/js');const modules={};
        function load(dir){for(const n of fs.readdirSync(dir)){const f=path.join(dir,n);if(fs.statSync(f).isDirectory())load(f);else if(n.endsWith('.js'))modules[path.relative(executable,f)]=fs.readFileSync(f,'utf8');}}load(executable);
        checkingContext.sources=modules;vm.runInContext(`openChecking(Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)])),'experience_entry.js')`,checkingContext);
@@ -450,7 +546,7 @@ async function run(mode){
      }
      assert.equal(request.function,'compile');checks++;fs.writeFileSync(path.join(stage,'experience.deal'),request.args[0]);fs.writeFileSync(path.join(stage,'experience.dealui'),request.args[1]);fs.writeFileSync(path.join(stage,'metadata.json'),request.args[2]);
      // The composer receives each declared provider declaration, exactly as the compiler writes them.
-     const modules=providerDeclarations(hasProvider?[providerContract]:[]),lines=[];let index=0;
+     const modules=providerDeclarations(contracts),lines=[];let index=0;
      for(const [module,text] of Object.entries(modules)){const file='provider-'+(index++)+'.d.deal';fs.writeFileSync(path.join(stage,file),text+'\n');lines.push(module+'='+file);}
      fs.writeFileSync(path.join(stage,'providers.txt'),lines.length?lines.join('\n')+'\n':'');
      cp.execFileSync('java',['-Ddeal.home='+path.resolve(process.env.DEAL_ROOT||path.join(root,'dependencies/deal')),'-cp',classpath,'CompileComposer',root,stage,frozenTarget,path.join(stage,'metadata.json'),String(request.args[3])]);
@@ -459,12 +555,14 @@ async function run(mode){
      if(RETAINED.has(mode)){const kept=path.join(root,'build/v08-cutover/emitted',mode);fs.rmSync(kept,{recursive:true,force:true});fs.cpSync(path.join(root,'build/v08-cutover/composed-executable'),kept,{recursive:true});
       // The runtime item refuses a stale pair; its recorded digest is written once every mode passed.
       emitted.push(kept);}
-     value=['retained','repeated','retained-operation-failure'].includes(mode)?{accepted:true,candidateId:'retained-'+checks,diagnostics:''}:mode==='repair'?{accepted:checks===2,candidateId:checks===2?'repaired':'',diagnostics:'FIXTURE_CHECK: source repair required'}:['ordinary','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','catalogue-refused','scalar-read','mixed','partial','units-rejected'].includes(mode)||mode.startsWith('events')||mode.startsWith('classified-')||mode.startsWith('alignment-')?{accepted:true,candidateId:'checked-'+checks,diagnostics:''}:mode==='budget'?{accepted:true,candidateId:'discard-me',diagnostics:''}:{accepted:checks===2,candidateId:checks===2?'checked-2':'',diagnostics:checks===1?'FIXTURE_CHECK: retain exact pair and revise label':''};
+     value=['retained','repeated','retained-operation-failure'].includes(mode)?{accepted:true,candidateId:'retained-'+checks,diagnostics:''}:mode==='repair'?{accepted:checks===2,candidateId:checks===2?'repaired':'',diagnostics:'FIXTURE_CHECK: source repair required'}:['ordinary','catalogue','catalogue-empty','catalogue-sections','catalogue-readonly','catalogue-readonly-empty','catalogue-undisclosed','catalogue-refused','scalar-read','provider-text','text-generation','text-generation-sections','mixed','partial','units-rejected'].includes(mode)||mode.startsWith('events')||mode.startsWith('classified-')||mode.startsWith('alignment-')?{accepted:true,candidateId:'checked-'+checks,diagnostics:''}:mode==='budget'?{accepted:true,candidateId:'discard-me',diagnostics:''}:{accepted:checks===2,candidateId:checks===2?'checked-2':'',diagnostics:checks===1?'FIXTURE_CHECK: retain exact pair and revise label':''};
      value.manifest=JSON.parse(fs.readFileSync(path.join(stage,'../composed-executable/js/admission.json'),'utf8'));
      // A declared frozen provider module is part of the permitted import surface: the composed
      // manifest of the provider mode imports it and lists it among its providers, and that candidate
      // is admitted.
-     if(hasProvider){assert(value.manifest.imports.includes('host/probe'),'the composed manifest imports the declared provider module');assert.deepEqual(value.manifest.providers,['host/probe'],'the composed manifest declares the provider module');}
+     if(hasText&&hasProvider){assert(value.manifest.imports.includes('host/text')&&value.manifest.imports.includes('host/probe'),'the composed manifest imports both declared provider modules');assert.deepEqual([...value.manifest.providers].sort(),['host/probe','host/text'],'the composed manifest declares both provider modules');}
+     else if(hasText){assert(value.manifest.imports.includes('host/text'),'the composed manifest imports the declared text-generation module');assert.deepEqual(value.manifest.providers,['host/text'],'the composed manifest declares the text-generation module');}
+     else if(hasProvider){assert(value.manifest.imports.includes('host/probe'),'the composed manifest imports the declared provider module');assert.deepEqual(value.manifest.providers,['host/probe'],'the composed manifest declares the provider module');}
      // Admission controls mutate only the compiled manifest the production checker path consumes; the
      // first attempt carries the injected defect and the repaired attempt carries the real one.
      if(mode.startsWith('admission-')&&checks===1){
@@ -483,7 +581,7 @@ async function run(mode){
  }
  throw Error('Production generation did not settle');
 }
-const MODES=[['retained','retained'],['repeated','repeated'],['retainedOperationFailure','retained-operation-failure'],['unitsRejected','units-rejected'],['ordinary','ordinary'],['repair','repair'],['admissionImports','admission-imports'],['admissionDigest','admission-digest'],['admissionVersion','admission-version'],['admissionPermitted','admission-permitted'],['catalogue','catalogue'],['catalogueEmpty','catalogue-empty'],['catalogueSections','catalogue-sections'],['catalogueReadonly','catalogue-readonly'],['catalogueReadonlyEmpty','catalogue-readonly-empty'],['catalogueUndisclosed','catalogue-undisclosed'],['catalogueRefused','catalogue-refused'],['alignmentRounds','alignment-rounds'],['alignmentOnce','alignment-once'],['alignmentStop','alignment-stop'],['scalarRead','scalar-read'],['mixed','mixed'],['partial','partial'],['events','events'],['eventsCustom','events-custom'],['eventsOpen','events-open'],['classifiedWhole','classified-whole'],['classifiedPart','classified-part'],['classifiedPartGap','classified-part-gap'],['classifiedNone','classified-none'],['classifiedUnusable','classified-unusable'],['classifiedChat','classified-chat'],['storeReducer','store-reducer'],['assemblyImports','assembly-imports'],['success','success'],['failure','failure'],['constructionFailure','construction-failure'],['budget','budget']];
+const MODES=[['retained','retained'],['repeated','repeated'],['retainedOperationFailure','retained-operation-failure'],['unitsRejected','units-rejected'],['ordinary','ordinary'],['repair','repair'],['admissionImports','admission-imports'],['admissionDigest','admission-digest'],['admissionVersion','admission-version'],['admissionPermitted','admission-permitted'],['catalogue','catalogue'],['catalogueEmpty','catalogue-empty'],['catalogueSections','catalogue-sections'],['catalogueReadonly','catalogue-readonly'],['catalogueReadonlyEmpty','catalogue-readonly-empty'],['catalogueUndisclosed','catalogue-undisclosed'],['catalogueRefused','catalogue-refused'],['alignmentRounds','alignment-rounds'],['alignmentOnce','alignment-once'],['alignmentStop','alignment-stop'],['scalarRead','scalar-read'],['providerText','provider-text'],['textGeneration','text-generation'],['textGenerationSections','text-generation-sections'],['mixed','mixed'],['partial','partial'],['events','events'],['eventsCustom','events-custom'],['eventsOpen','events-open'],['classifiedWhole','classified-whole'],['classifiedPart','classified-part'],['classifiedPartGap','classified-part-gap'],['classifiedNone','classified-none'],['classifiedUnusable','classified-unusable'],['classifiedChat','classified-chat'],['storeReducer','store-reducer'],['assemblyImports','assembly-imports'],['success','success'],['failure','failure'],['constructionFailure','construction-failure'],['budget','budget']];
 // A seam control breaks one production rule and reruns this item to observe that rule's assertion.
 // `--mode=<name>` runs only the named modes, so a control pays for the rule it breaks instead of the
 // whole matrix; an unfiltered run stays the gate item and is the only one that records pair digests.

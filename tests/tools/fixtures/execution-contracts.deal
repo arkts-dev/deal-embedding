@@ -72,6 +72,11 @@ function generatedWithRequest(target: string): execution.Authority {
 function textRequest(owner: string, scope: string, prompt: string, words: number, consent: string, cancelled: boolean, now: number): string {
   return "{\"owner\":\""+owner+"\",\"capability\":\"host/text/generate\",\"scope\":\""+scope+"\",\"prompt\":\""+prompt+"\",\"words\":"+String(words)+",\"consent\":\""+consent+"\",\"cancelled\":"+(cancelled ? "true" : "false")+",\"now\":"+String(now)+"}";
 }
+// The same request naming another capability, so the disclosure decision is exercised over capability
+// identities whose module is not the fixture module.
+function capabilityRequest(capability: string): string {
+  return "{\"owner\":\"experience-1\",\"capability\":\""+capability+"\",\"scope\":\"s\",\"prompt\":\"Write a note\",\"words\":80,\"consent\":\"granted\",\"cancelled\":false,\"now\":100000}";
+}
 function emptyJson(): string { return "[]"; }
 function owned(values: execution.Dispatch[], owner: string): number { let count: number = 0; for (let value of values) { if (value.owner === owner) { count++; } } return count; }
 function answers(values: execution.Answer[]): string {
@@ -599,6 +604,45 @@ export function text(): null {
   insist(failedRecord.indexOf("\"revision\":0") >= 0,"A terminal failure lost the revision a reopen compares");
   insist(failedRecord.indexOf("\"expiryKind\":\"relative\"") >= 0 && failedRecord.indexOf("\"admittedAt\":3000") >= 0,"A restored result could not revalidate expiry");
   insist(failedRecord.indexOf("call-1") < 0,"A terminal failure carried an admission marker");
+  // An undisclosed capability never dispatches and never reuses: the disclosed set names the contract
+  // modules a request may name, matched exactly and never as a prefix of another module's own name, so a
+  // request that names an undisclosed module is refused before both decisions and keeps the answers it
+  // was handed.
+  let disclosed: string = "[\"host/text\"]";
+  let adjacent: string = "[\"host/textual\"]";
+  let disclosedDecision: execution.Decision = execution.textDisclosure(disclosed,textRequest("experience-1",scope,"Write a note",80,"granted",false,100000));
+  insist(disclosedDecision.admitted,"A disclosed capability was refused");
+  let hiddenDecision: execution.Decision = execution.textDisclosure(adjacent,textRequest("experience-1",scope,"Write a note",80,"granted",false,100000));
+  insist(!hiddenDecision.admitted && hiddenDecision.code === "INVALID_ARGUMENT","An undisclosed capability was admitted");
+  // A disclosed module is matched exactly, never as a prefix path of the module the capability names:
+  // the parent `host` of the disclosed contract module discloses no contract of `host/text`, so the
+  // request is refused before reuse and dispatch and the answers the caller holds are kept.
+  let parent: string = "[\"host\"]";
+  let parentDecision: execution.Decision = execution.textDisclosure(parent,textRequest("experience-1",scope,"Write a note",80,"granted",false,100000));
+  insist(!parentDecision.admitted && parentDecision.code === "INVALID_ARGUMENT","A disclosed parent module admitted another module's capability");
+  let parentAdmission: execution.TextAdmission = execution.admitDisclosedText(parent,cache,dispatches(answer.dispatch),textRequest("experience-1",scope,"Write a note",80,"granted",false,102000));
+  insist(!parentAdmission.accepted && !parentAdmission.reused,"A disclosed parent module dispatched or reused a capability");
+  insist(parentAdmission.cache.length === 1 && textAt(parentAdmission.cache,"Write a note") === "first answer","A parent-module disclosure refusal dropped the retained answer");
+  insist(parentAdmission.dispatch.length === 1 && owned(parentAdmission.dispatch,"experience-1") === 1,"A parent-module disclosure refusal recorded a dispatch");
+  // A capability that names no module or no function is not a capability: it is refused instead of being
+  // read as one, so no separator spelling can authorize a call.
+  let bare: execution.Decision = execution.textDisclosure(disclosed,capabilityRequest("generate"));
+  insist(!bare.admitted && bare.code === "INVALID_ARGUMENT","A capability naming no module was admitted");
+  let open: execution.Decision = execution.textDisclosure(disclosed,capabilityRequest("host/text/"));
+  insist(!open.admitted && open.code === "INVALID_ARGUMENT","A capability naming no function was admitted");
+  let disclosedReuse: execution.TextAdmission = execution.admitDisclosedText(disclosed,cache,dispatches(answer.dispatch),textRequest("experience-1",scope,"Write a note",80,"granted",false,102000));
+  insist(disclosedReuse.accepted && disclosedReuse.reused && disclosedReuse.answer === "first answer","A disclosed capability could not reuse its answered identity");
+  let hiddenAdmission: execution.TextAdmission = execution.admitDisclosedText(adjacent,cache,dispatches(answer.dispatch),textRequest("experience-1",scope,"Write a note",80,"granted",false,104000));
+  insist(!hiddenAdmission.accepted && hiddenAdmission.code === "INVALID_ARGUMENT","An undisclosed capability dispatched a call");
+  insist(!hiddenAdmission.reused,"An undisclosed capability reused an answer");
+  insist(hiddenAdmission.dispatch.length === 1 && owned(hiddenAdmission.dispatch,"experience-1") === 1,"A disclosure refusal recorded a dispatch");
+  insist(hiddenAdmission.cache.length === 1 && textAt(hiddenAdmission.cache,"Write a note") === "first answer","A disclosure refusal dropped the retained answer");
+  // The disclosed-capability check precedes consent, so an undisclosed capability reports its own
+  // refusal even when consent is also missing, and no cached answer crosses either boundary.
+  let hiddenDenied: execution.TextAdmission = execution.admitDisclosedText(adjacent,cache,emptyJson(),textRequest("experience-1",scope,"Write a note",80,"denied",false,104000));
+  insist(!hiddenDenied.accepted && hiddenDenied.code === "INVALID_ARGUMENT","Disclosure precedence changed");
+  let disclosedDenied: execution.TextAdmission = execution.admitDisclosedText(disclosed,cache,emptyJson(),textRequest("experience-1",scope,"Write a note",80,"withdrawn",false,104000));
+  insist(!disclosedDenied.accepted && disclosedDenied.code === "DENIED" && !disclosedDenied.reused,"A disclosed but withdrawn request reused an answer");
   return null;
 }
 

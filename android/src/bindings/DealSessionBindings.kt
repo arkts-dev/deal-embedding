@@ -17,6 +17,10 @@ internal object DealSessionBindings {
         val composition = manifest.optJSONObject("composition")
             ?: manifest.optString("composition").takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() }
         val drivers = composition?.optJSONArray("clockDrivers")?.toString() ?: "[]"
+        // The reading carriers are issued composition metadata too: the Session binding publishes its
+        // host millisecond wall reading into the compiled fields they bind, resolved from the rendered
+        // tree by those issued identities.
+        val readings = composition?.optJSONArray("readings")?.toString() ?: "[]"
         // The configured probe bounds reach the isolate once, so the probe binding enforces the host's
         // numbers instead of deciding its own.
         val probeLimits = JSONObject().put("bytes", config.execution.probeBytes).put("depth", config.execution.probeDepth)
@@ -25,7 +29,7 @@ internal object DealSessionBindings {
         return "globalThis.dealProbeLimits = $probeLimits;" + SandboxBundle.build(
             context, listOf("dealui-session.js", "text-pattern.js", "renderer-admission.js", "ui-session.js"),
             CapabilityBindings.script(config.contracts) + RendererContract.script(context, config.target),
-            "mountDealUi(factories,\"$ENTRY_NAME.js\",${record(restored)},${appModule(config)?.let { JSONObject.quote(it) } ?: "null"},null,$drivers)", output = output)
+            "mountDealUi(factories,\"$ENTRY_NAME.js\",${record(restored)},${appModule(config)?.let { JSONObject.quote(it) } ?: "null"},null,$drivers,$readings)", output = output)
     }
     /** The compiled app module owns the issued persistence roles; only retaining hosts name it. */
     fun appModule(config: RuntimeConfig): String? = if (config.retainState) "${config.sourceName}.js" else null

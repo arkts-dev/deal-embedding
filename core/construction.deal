@@ -4,6 +4,7 @@ import * as selecting from "./construction-selection";
 import * as selections from "./selection";
 import * as parts from "./parts";
 import * as scalar from "./scalar-read";
+import * as textgen from "./text-generation";
 import * as catalogue from "./catalogue";
 import * as alignment from "./alignment";
 import * as bindings from "./bindings";
@@ -224,6 +225,7 @@ function alternativeKind(choice: selecting.Choice): string {
   if (choice.alternative.startsWith("input_")) { return "inputs"; }
   if (choice.alternative.startsWith("part_")) { return "figure"; }
   if (choice.alternative.startsWith("scalar_")) { return "scalar_read"; }
+  if (choice.alternative.startsWith("text_")) { return "text_generation"; }
   if (choice.alternative.startsWith("cat_")) {
     for (let definition of catalogue.definitions()) { if (choice.alternative.endsWith("_"+definition.kind)) { return definition.kind; } }
   }
@@ -250,11 +252,16 @@ export function planBindings(plan: plans.Plan, registry: bindings.Registry): Pla
 }
 export async function run(input: writing.Input, context: selecting.Context, plan: plans.Plan, registry: bindings.Registry): Promise<Result> {
   let scalarCandidates: scalar.Candidate[] = scalar.candidates(plan,registry.contracts);
+  // Runtime text generation binds a disclosed text-generation capability as an ordinary issued part;
+  // its alternatives are offered beside the catalogue kinds for the same content/other needs.
+  let textCandidates: textgen.Candidate[] = textgen.candidates(plan,registry.contracts);
   let definitions: parts.Definitions = parts.defineWithProviders(plan,scalar.operands(scalarCandidates)); let alternatives: selecting.Alternative[] = [];
   for (let alternative of definitions.alternatives) { alternatives[alternatives.length] = alternative; }
   for (let alternative of catalogue.alternatives(plan)) { alternatives[alternatives.length] = alternative; }
   for (let alternative of scalar.alternatives(scalarCandidates)) { alternatives[alternatives.length] = alternative; }
+  for (let alternative of textgen.alternatives(textCandidates)) { alternatives[alternatives.length] = alternative; }
   let firstQuestions: selections.Question[] = ownership(plan,alternatives); for (let question of scalar.questions(scalarCandidates)) { firstQuestions[firstQuestions.length] = question; }
+  for (let question of textgen.questions(textCandidates)) { firstQuestions[firstQuestions.length] = question; }
   let first: selecting.Result = await selecting.first(context,plan,alternatives,[],firstQuestions);
   let secondQuestions: selections.Question[] = parts.formulaQuestions(plan,definitions,first); for (let question of scalar.argumentQuestions(scalarCandidates,first)) { secondQuestions[secondQuestions.length] = question; }
   // The events question belongs to the second batch: the trigger is a selection decision, not a
@@ -303,7 +310,7 @@ export async function run(input: writing.Input, context: selecting.Context, plan
     for (let slot of composition.screen.slots) { if (slot.need === choice.need) { slot.allowedKinds = [kind]; } }
   }
   let computations: composer.Computation[] = [];
-  let built: parts.Built = parts.buildWithProviders(plan,definitions,second.choices,registry,scalar.build(plan,scalarCandidates,first,second),{intervalMs:input.clockIntervalMs,toleranceMs:input.clockToleranceMs});
+  let built: parts.Built = parts.buildWithTextGeneration(plan,definitions,second.choices,registry,scalar.build(plan,scalarCandidates,first,second),{intervalMs:input.clockIntervalMs,toleranceMs:input.clockToleranceMs},textgen.build(plan,textCandidates,first,second,input.clockIntervalMs));
   let bound: Bound = await issueBindings(composition,plan,built,registry,input.original,input.facts);
   if (bound.placed) { computations = built.computations; }
   // The Bind stage's located reasons belong to the result whichever way this candidate goes, so a

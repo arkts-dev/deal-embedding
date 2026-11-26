@@ -333,6 +333,15 @@ echo class > "$out/dev/deal/embedding/RendererRulesTestKt.class"
         # The batch is the last block in the builder; bound the extraction so a later append cannot
         # silently become harness code.
         block = block.split('\nfi', 1)[0] + '\nfi\n'
+        # The verdict of a batch is its targets' own. `wait -n` reports an anonymous status and this shell
+        # answers 127 for a batch job that already exited when the signal that reaped it arrives while
+        # the wait drains, which failed 8 of 3000 runs of this block below with every target succeeding.
+        # A negative control over the block's own code, never its comments: the batch must reap a pid it
+        # captured, not an anonymous job.
+        code = '\n'.join(line for line in block.splitlines() if not line.lstrip().startswith('#'))
+        self.assertNotIn('wait -n', code, 'the batch takes an anonymous job status')
+        self.assertIn('wait "${running[0]}"', code, 'the batch does not reap the job it started')
+        self.assertIn('for pid in "${running[@]}"; do', code, 'the batch does not drain every started job')
         harness = '''#!/usr/bin/env bash
 set -euo pipefail
 TARGETS=("$@")
@@ -367,8 +376,8 @@ DEMO_JOB_CEILING=3''' + block
             for target in ('calendar', 'pizza', 'rental'):
                 self.assertIn(f'build {target}', batch.stdout, 'every batch target stays compiled')
                 self.assertEqual((staged / f'build/{target}/build.log').read_text().strip(), f'build {target}')
-            # A target that fails fails the batch, and its own log is what reports the reason. The last
-            # target is the one the drain loop reaps, so it pins that loop as well as the in-loop wait.
+            # A target that fails fails the batch, and its own log is what reports the reason, whether it
+            # is a job the launch window was still holding or one the drain reaped at the end.
             for failing in ('pizza', 'rental'):
                 failed, _ = run(2, 'calendar', 'pizza', 'rental', fail=failing)
                 self.assertEqual(failed.returncode, 1, failed.stdout)

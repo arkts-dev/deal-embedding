@@ -407,20 +407,25 @@ if (( JOBS > 1 )) && (( ${#BATCH_TARGETS[@]} > 1 )); then
     profile_dex host-stable "${RUNTIME_JARS[@]}"
     embedding_dex
     printf 'Demo packaging: %s target(s) over %s job(s)\n' "${#BATCH_TARGETS[@]}" "$JOBS"
-    pending=0 status=0
+    # Every job is reaped by the pid it was started as, so a status that fails the batch is the status
+    # of the target that produced it. An anonymous `wait -n` answers for whichever job this shell
+    # happens to see, and it answers 127 for a job of the batch that already exited when the signal
+    # that reaped it arrives while the wait drains: a batch whose every target succeeded then exited 1
+    # with no target to name (8 of 3000 mixed batches before this changed). The launch window still
+    # holds at most JOBS jobs at a time.
+    running=() status=0
     for app in "${BATCH_TARGETS[@]}"; do
         mkdir -p "build/$app"
         printf 'Demo packaging: starting %s\n' "$app" >&2
         ( build_target "$app" ) > "build/$app/build.log" 2>&1 &
-        pending=$((pending + 1))
-        if (( pending >= JOBS )); then
-            wait -n || status=1
-            pending=$((pending - 1))
+        running+=("$!")
+        if (( ${#running[@]} >= JOBS )); then
+            wait "${running[0]}" || status=1
+            running=("${running[@]:1}")
         fi
     done
-    while (( pending > 0 )); do
-        wait -n || status=1
-        pending=$((pending - 1))
+    for pid in "${running[@]}"; do
+        wait "$pid" || status=1
     done
     for app in "${BATCH_TARGETS[@]}"; do cat "build/$app/build.log"; done
     (( status == 0 )) || exit 1

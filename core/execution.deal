@@ -681,6 +681,44 @@ export function admitText(cacheJson: string, dispatchJson: string, requestJson: 
   return {accepted:true,code:"",reused:false,answer:"",cache:retained,dispatch:rolling};
 }
 
+// The disclosed-capability check on a text request: the capability identity a request names must belong
+// to a module the host disclosed for this Session. The disclosed set names disclosed contract modules and
+// the request names its capability under the module's own separator, so the module a capability names is
+// everything before its last separator and it is matched exactly, never as a prefix of another module's
+// name: a disclosed `host` names no capability the contract of `host/text` declares, and a disclosed
+// `host/text` does not admit `host/textual`. A request naming an undisclosed module is refused before
+// reuse and dispatch, so an answer can never be served from a capability that is no longer disclosed and
+// no call is ever sent to a provider the request never had. The compiled route issues the binding from
+// the frozen disclosed contracts only; this is the same decision at the runtime boundary, where a request
+// arrives with its capability identity as data.
+export function textDisclosure(disclosedJson: string, requestJson: string): Decision {
+  let request: TextRequest = textRequest(requestJson);
+  // A frozen function name is one identifier, so the last separator splits the capability into the
+  // module the disclosed set is compared against and the function it declares. A capability that names
+  // no module or no function is not a capability and is refused instead of being read as one.
+  let capability: string = request.capability;
+  let separator: number = -1; let cursor: number = 0;
+  while (cursor < capability.length) { if (capability.substring(cursor,cursor+1) === "/") { separator = cursor; } cursor = cursor+1; }
+  if (separator <= 0 || separator === capability.length-1) { return {admitted:false,kind:"",code:"INVALID_ARGUMENT",reason:"Text capability names no module and function"}; }
+  let module: string = capability.substring(0,separator);
+  let disclosed: string[] = decoded.strings(JSON.parse(disclosedJson));
+  for (let entry of disclosed) {
+    s.nonblank(entry);
+    if (entry === module) { return {admitted:true,kind:"",code:"",reason:""}; }
+  }
+  return {admitted:false,kind:"",code:"INVALID_ARGUMENT",reason:"Undisclosed text-generation capability"};
+}
+
+// Admission behind the disclosed-capability check, for a caller that holds the disclosed set and the
+// runtime bookkeeping of one Session lane. A refusal is the disclosure decision's own code, makes no
+// call and returns the cache reduced to each owner's capacity, exactly as admitText does for consent and
+// cancellation.
+export function admitDisclosedText(disclosedJson: string, cacheJson: string, dispatchJson: string, requestJson: string): TextAdmission {
+  let decision: Decision = textDisclosure(disclosedJson,requestJson);
+  if (!decision.admitted) { return {accepted:false,code:decision.code,reused:false,answer:"",cache:capped(answersOf(cacheJson)),dispatch:dispatchesOf(dispatchJson)}; }
+  return admitText(cacheJson,dispatchJson,requestJson);
+}
+
 // A successful answer becomes the authoritative result of the operation, so it persists with the
 // record and restores with it. The reuse cache and the rolling counter are runtime bookkeeping.
 export function resolved(cacheJson: string, requestJson: string, text: string): Answer[] {

@@ -127,7 +127,7 @@ function inspect(manifest: Record<string, unknown>, fresh: boolean): string {
   let composition: Record<string, unknown> = manifest.composition as Record<string, unknown>;
   // Every section assembly issues is a carried fact: a composed pair that dropped one would silently
   // lose what this admission validates, so every section the composer always writes must be present.
-  for (let section of ["declarations","slots","operations","runtime","publications","drivers","composites","chatRoot","clockDrivers","sessionClock","notices","owners","composerOwned","instances","sources"]) { if (!Object.hasOwn(composition,section)) { return "ADMISSION_OWNERSHIP: issued composition without its "+section; } }
+  for (let section of ["declarations","slots","operations","runtime","publications","drivers","composites","chatRoot","clockDrivers","readings","sessionClock","notices","owners","composerOwned","instances","sources"]) { if (!Object.hasOwn(composition,section)) { return "ADMISSION_OWNERSHIP: issued composition without its "+section; } }
   let issuedSources: string[] = decoded.strings(composition.sources);
   let issuedNeeds: string[] = [];
   // A slot without a textual need is left to the slot loop, which rejects it with the slot identity
@@ -405,6 +405,14 @@ function inspect(manifest: Record<string, unknown>, fresh: boolean): string {
     }
   }
   let driverNeeds: string[] = [];
+  let readingCarriers: string[] = [];
+  // The private reading carriers a Session publishes its host wall reading into are issued identities:
+  // a blank, duplicated or missing one rejects instead of leaving a reading unpublished.
+  for (let value of decoded.strings(composition.readings)) {
+    if (value.trim() === "") { return "ADMISSION_OWNERSHIP: issued reading carrier without its identity"; }
+    if (s.contains(readingCarriers,value)) { return "ADMISSION_OWNERSHIP: duplicate reading carrier: "+value; }
+    readingCarriers[readingCarriers.length] = value;
+  }
   // The Session clock trust identity is issued metadata: the expiry driver reads exactly these fields.
   let clockSection: Record<string, unknown> = composition.sessionClock as Record<string, unknown>;
   let sessionEpoch: string = s.text(clockSection.epoch); let sessionTrust: string = s.text(clockSection.trust); let sessionResume: string = s.optionalText(clockSection,"resume");

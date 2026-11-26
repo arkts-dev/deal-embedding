@@ -89,6 +89,10 @@ gate_sequence_generation() {
     # emitted-runtime and provider items drive, so those follow it in this sequence alone.
     node tests/tools/test-generation-cutover.js
     node tests/tools/test-persistence-provider.js build/v08-cutover/emitted/scalar-read/js
+    # Runtime text generation through the packaged Session: the live Session authority, the reuse edge, one
+    # call per press, the rolling cap, an authoritative-only record and the owner-scope cache and counter
+    # that two sections share; the last pair is the composition that also binds the live provider read.
+    node tests/tools/test-text-generation.js build/v08-cutover/emitted/text-generation/js build/v08-cutover/emitted/text-generation-sections/js build/v08-cutover/emitted/provider-text/js
     node tests/tools/test-emitted-runtime.js
 }
 gate_sequence_catalogue() {

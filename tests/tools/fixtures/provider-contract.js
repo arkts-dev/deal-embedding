@@ -13,4 +13,19 @@ const providerContract = {
   functions: [{name: 'read', description: 'Return fixture value', parameters: [], classification: 'read',
                result: {kind: 'number', fields: [], element: null, maximum: 0, minimumNumber: -1000, maximumNumber: 1000}}],
 };
-module.exports = {providerContract, declaration};
+// A disclosed text-generation capability: text produced from an editable prompt and an explicit word
+// count. The prompt bound is the specification's 2000 UTF-16 units and the word count is 1-300, so the
+// issued 80-word request is inside the frozen parameter. The host classifies this call as a read: it
+// returns text from a prompt and changes no disclosed state, so the module grant and the owner's consent
+// authorize it without a confirmation of a write.
+const textContract = {
+  module: 'host/text',
+  description: 'Runtime text generation',
+  version: 1,
+  functions: [{name: 'generate', description: 'Generate text for a prompt', classification: 'read',
+               parameters: [
+                 {name: 'prompt', type: {kind: 'string', fields: [], element: null, maximum: 2000, minimumNumber: 0, maximumNumber: 0}},
+                 {name: 'words', type: {kind: 'number', fields: [], element: null, maximum: 0, minimumNumber: 1, maximumNumber: 300}}],
+               result: {kind: 'string', fields: [], element: null, maximum: 8192, minimumNumber: 0, maximumNumber: 0}}],
+};
+module.exports = {providerContract, textContract, declaration};
