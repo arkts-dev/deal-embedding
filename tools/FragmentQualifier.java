@@ -73,13 +73,14 @@ public final class FragmentQualifier {
     private String name(String name) { return names.getOrDefault(name,name); }
     private static TypeNode unnull(TypeNode type) { while(type instanceof NullableType nullable) type = nullable.innerType(); return type; }
     private static boolean state(TypeNode type) { return unnull(type) instanceof NamedType n && n.name().equals("AppState"); }
-    private String type(TypeNode type) {
+    private String type(TypeNode type) { return type(type,false); }
+    private String type(TypeNode type, boolean view) {
         return switch(type) {
             case NamedType n -> name(n.name());
-            case QualifiedType q -> name(q.moduleName()) + "." + q.typeName();
-            case ArrayType a -> a.readonly() ? "readonly (" + type(a.elementType()) + ")[]" : (a.elementType() instanceof ArrayType inner && inner.readonly() ? "(" + type(a.elementType()) + ")[]" : type(a.elementType()) + "[]");
-            case NullableType n -> "(" + type(n.innerType()) + (n.undefinedMember() ? " | undefined)" : " | null)");
-            case FunctionType f -> "(" + f.params().stream().map(p -> p.name()+": "+type(p.type())).collect(Collectors.joining(", ")) + ") => " + result(f.returnType(),f.isAsync());
+            case QualifiedType q -> name(q.moduleName()) + "." + (view && !q.typeName().equals("AppState") ? name(q.typeName()) : q.typeName());
+            case ArrayType a -> a.readonly() ? "readonly (" + type(a.elementType(),view) + ")[]" : (a.elementType() instanceof ArrayType inner && inner.readonly() ? "(" + type(a.elementType(),view) + ")[]" : type(a.elementType(),view) + "[]");
+            case NullableType n -> "(" + type(n.innerType(),view) + (n.undefinedMember() ? " | undefined)" : " | null)");
+            case FunctionType f -> "(" + f.params().stream().map(p -> p.name()+": "+type(p.type(),view)).collect(Collectors.joining(", ")) + ") => " + (f.isAsync() ? "Promise<" + type(f.returnType(),view) + ">" : type(f.returnType(),view));
         };
     }
     private String result(TypeNode type, boolean async) { return async ? "Promise<" + type(type) + ">" : type(type); }
@@ -234,8 +235,9 @@ public final class FragmentQualifier {
         return out.toString();
     }
     private String uiType(UiModel.TypeRef type) {
-        String[] parts = type.name().split("\\."); String result = parts.length==2 ? name(parts[0])+"."+(parts[1].equals("AppState")?"AppState":name(parts[1])) : name(type.name());
-        return type.sourceType(result);
+        // UiParser now preserves core function annotations as well as collection/nullish layers.
+        // Qualify their actual type nodes, not a dotted-string approximation of a nominal leaf.
+        return type(parseType(type.sourceType(type.name())),true);
     }
     private String stateField(String field) {
         String resolved=fields.get(field);

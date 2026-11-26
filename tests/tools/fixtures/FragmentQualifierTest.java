@@ -49,6 +49,14 @@ public final class FragmentQualifierTest {
             var actual=UiParser.parseViews(Path.of("nullable.dealui"),rewritten).views().getFirst().parameters().getFirst().type();
             if(!actual.equals(type.withName("app.f_a_Row")))throw new AssertionError("Nullable layer changed: "+arrays+" -> "+rewritten);
         }
+        // Core UI annotations include nested function signatures: rename nominal leaves inside them,
+        // while Record, Error, parameter bindings and every nullish/readonly layer remain intact.
+        String signature="(value: app.Row, rows: readonly (app.Row | undefined)[]) => Promise<app.Row | null>";
+        String functionView="import * as app from \"./experience\"; export view Panel(callback: "+signature+", strings: Record<string, string>, error: Error): View { }";
+        String functionQualified=(String)FragmentQualifier.qualify("","",functionView,names,fields,types).get("view");
+        var callback=UiParser.parseViews(Path.of("function-qualified.dealui"),functionQualified).views().getFirst().parameters().getFirst().type();
+        var expectedCallback=UiParser.parseViews(Path.of("function-expected.dealui"),functionView.replace("app.Row","app.f_a_Row")).views().getFirst().parameters().getFirst().type();
+        if(!callback.equals(expectedCallback)||!functionQualified.contains("Record<string, string>")||!functionQualified.contains("Error"))throw new AssertionError("Lost function annotation identity: "+functionQualified);
         if(args.length>0){Files.createDirectories(Path.of(args[0]));Files.writeString(Path.of(args[0],"qualified.deal"),(String)result.get("declarations")+"export class AppState { f_a_value: number; f_a_rows: f_a_Row[]; }\n"+code);}
         System.out.println("fragment qualifier: contextual state/member/action identities, locals, Unicode and parsed views passed");
     }

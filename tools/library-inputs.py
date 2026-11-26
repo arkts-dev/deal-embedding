@@ -12,7 +12,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / 'tools/library-inputs.txt'
-UI_SOURCES = ['UiModel', 'UiParser', 'UiDiagnostic', 'UiDiagnosticJson', 'UiRepairDiagnostics',
+UI_SOURCES = ['UiModel', 'UiTypes', 'UiNominals', 'UiParser', 'UiDiagnostic', 'UiDiagnosticJson', 'UiRepairDiagnostics',
               'UiCompilerWorkspace', 'CanonicalCompiler', 'UiChecker', 'UiFlowScope', 'UiBorrowedValueChecker',
               'UiDealGenerator', 'UiViewBindings', 'UiSourceGenerator', 'DealUiDealSource', 'UiCheckpointCompiler']
 

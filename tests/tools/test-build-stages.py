@@ -194,7 +194,7 @@ elif name=='timeout':
             (root / 'tools/protocol-build.py').write_text('import pathlib,sys;p=pathlib.Path(sys.argv[2])/"aar/assets/protocol-application";p.mkdir(parents=True,exist_ok=True);(p/"main.js").write_text("protocol")')
             files = ['android/AndroidManifest.xml', 'android/src/Sample.kt', 'android/aidl/a.aidl', 'android/assets/embedding/a.js', 'core/host/a.d.deal', 'core/generation.deal', 'core/discovery.deal', 'core/assistance.deal', 'core/logging.deal', 'core/assistance-policy.deal', 'core/controller.deal', 'api/embedding.d.deal', 'api/graphics.d.deal', 'api/day.d.deal', 'ui/theme.json', 'ui/prop-constraints.json', 'ui/platform.dealui-pack', 'ui/assistance/suggestion.dealui', 'docs/spec-v0.8.md', 'dep/deal/runtime.js', 'dep/docs/spec-v1.6.md', 'dep/std/a.js', 'dep/std/a.d.deal', 'dep/skills/write-deal/references/language.md', 'ui-dep/ui/a.deal', 'ui-dep/runtime-js/session.js', 'ui-dep/runtime-js/checkpoint.js', 'tools/ui-vocabulary.json', 'tools/vocabulary-inventory.py', 'tools/controller-mechanisms.d.deal', 'tools/application-consumer.deal', 'tools/protocol-consumer.deal', 'android.jar', 'runtime.jar', 'jdk/release', 'kotlin/lib/kotlin-compiler.jar', 'kotlin/lib/kotlin-stdlib.jar', 'kotlin/lib/compose-compiler-plugin.jar']
             files += ['tools/'+name+'.java' for name in ('CapabilityApi','AssistanceUi','GenerationGuidance','GenerationBindings','FragmentSyntax','FragmentRegions','FragmentQualifier','FragmentAnalysis','FragmentMechanisms','PayloadConsumption')]
-            files += ['ui-dep/src/main/java/deal/ui/'+name+'.java' for name in ('UiModel','UiParser','UiDiagnostic','UiDiagnosticJson','UiRepairDiagnostics','UiCompilerWorkspace','CanonicalCompiler','UiChecker','UiFlowScope','UiBorrowedValueChecker','UiDealGenerator','UiViewBindings','UiSourceGenerator','DealUiDealSource','UiCheckpointCompiler')]
+            files += ['ui-dep/src/main/java/deal/ui/'+name+'.java' for name in ('UiModel','UiTypes','UiNominals','UiParser','UiDiagnostic','UiDiagnosticJson','UiRepairDiagnostics','UiCompilerWorkspace','CanonicalCompiler','UiChecker','UiFlowScope','UiBorrowedValueChecker','UiDealGenerator','UiViewBindings','UiSourceGenerator','DealUiDealSource','UiCheckpointCompiler')]
             for file in files:
                 (root / file).write_text(file)
             fake = '''#!/usr/bin/env python3
@@ -231,12 +231,18 @@ elif name=='jar':
             self.assertNotIn(': MISS',result.stdout)
             binding = root/'ui-dep/src/main/java/deal/ui/UiViewBindings.java'
             binding.write_text('changed action specialization')
+            # Core type projection and module-identity normalization are compiler inputs too.
+            type_sources = [root/f'ui-dep/src/main/java/deal/ui/{name}.java' for name in ('UiTypes', 'UiNominals')]
+            for source in type_sources:
+                source.write_text('changed '+source.stem)
             (root/'core/generation.deal').write_text('changed policy')
             result=run();self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             self.assertIn('generation: MISS',result.stdout)
             self.assertIn('kotlin: hit',result.stdout)
             self.assertIn('java_base: MISS',result.stdout)
             self.assertIn(str(binding), (root/'out/sources.txt').read_text())
+            for source in type_sources:
+                self.assertIn(str(source), (root/'out/sources.txt').read_text())
             (root/'out/kotlin-classes/kotlinc.class').write_text('corrupt')
             (root/'fail-kotlin').touch()
             result=run();self.assertEqual(result.returncode,9,result.stdout+result.stderr)
