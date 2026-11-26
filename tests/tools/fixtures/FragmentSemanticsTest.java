@@ -32,7 +32,29 @@ export function run(): string {
   return `😀 ${n}:${old}:${current}:${down}:${preDown}:${previous}:${index}:${rows[0]}:${rows[1]}:${apply(state)}:${render(4)}`;
 }
 """;
-        for (String name : List.of("templates", "updates")) emit(output,name,name.equals("templates")?templates:updates);
+        String inferred="""
+import * as append from "./append";
+export function opaque(value: unknown): unknown { return value; }
+export function run(): string {
+  let value: string | null = "stable";
+  if (value === null) { return "missing"; }
+  let visits: number = 0;
+  for (let index of [1,2]) { if (value === "stable") { visits = visits+1; } }
+  while (visits < 3) { let checked: string = value; visits = visits+1; }
+  let data: Record<string, unknown> = {nested:{label:value},empty:[],mixed:[1,"two",null],rows:[{id:"row"}]};
+  let empty: unknown[] = data.empty as unknown[]; empty.push(false);
+  let mixed: unknown[] = data.mixed as unknown[];
+  let rows: Record<string, unknown>[] = data.rows as Record<string, unknown>[];
+  let numbers: number[] = [1]; let length: number = append.add(numbers);
+  let erased: unknown = opaque(numbers); let rejected: boolean = false;
+  try { let invalid: unknown[] = erased as unknown[]; } catch (error) { rejected = true; }
+  return `${visits}:${empty.length}:${mixed.length}:${rows[0].id as string}:${length}:${rejected ? "true" : "false"}`;
+}
+""";
+        Files.writeString(output.resolve("append.deal"),"export function add(values: number[]): number { return values.push(2); }\n");
+        emit(output,"templates",templates);
+        emit(output,"updates",updates);
+        emit(output,"inferred",inferred);
     }
     private static void emit(Path output,String name,String source) throws Exception {
         source+="\nexport function noop(value: number): void { return; }\nexport function main(): void { return; }\n";
@@ -43,7 +65,7 @@ export function run(): string {
         // AppState is composer-owned; qualify only its issued fields in the test declaration.
         Files.writeString(output.resolve(name+"_original.deal"),declarations+source);
         Files.writeString(output.resolve(name+"_syntax.deal"),FragmentSyntax.qualify(declarations+source,Map.of()));
-        Files.writeString(output.resolve(name+"_qualified.deal"),declarations.replace("value: number","qualified_value: number")+qualified.get("helpers"));
+        Files.writeString(output.resolve(name+"_qualified.deal"),(name.equals("inferred")?"import * as append from \"./append\";\n":"")+declarations.replace("value: number","qualified_value: number")+qualified.get("helpers"));
         if(name.equals("updates")) {
             String expression=FragmentQualifier.expression("(state): number => state.value",Map.of(),fields,Map.of("value","number"),"(state: AppState) => number",Map.of());
             if(!expression.contains("state.qualified_value"))throw new AssertionError(expression);

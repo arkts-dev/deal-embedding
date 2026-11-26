@@ -22,7 +22,8 @@ source = stage / 'src'
 run(['java', '-cp', str(classes) + ':' + str(compiler), 'FragmentSemanticsTest', str(source)], check=True)
 (stage / 'deal.json').write_text(json.dumps({'languageVersion': '1.6', 'backend': 'js', 'moduleRoots': ['src']}))
 for case, expected in [('templates', 'value 4  `:outer inner 3 😀:'),
-                       ('updates', '😀 1:1:3:3:1:10:2:11:24:9:value 4')]:
+                       ('updates', '😀 1:1:3:3:1:10:2:11:24:9:value 4'),
+                       ('inferred', '3:1:3:row:2:true')]:
     results = {}
     for variant in ['original', 'syntax', 'qualified']:
         name = case + '_' + variant
@@ -34,4 +35,4 @@ for case, expected in [('templates', 'value 4  `:outer inner 3 😀:'),
             str(output / (name + '.js'))], capture_output=True, text=True, check=True).stdout
     assert len(set(results.values())) == 1, results
     assert json.loads(results['original']) == expected, results
-print('fragment semantics: templates and updates; original == structural printer == contextual qualifier')
+print('fragment semantics: templates, updates, stable loop refinements, unknown-context literals and imported push; original == structural printer == contextual qualifier')

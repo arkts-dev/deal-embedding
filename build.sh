@@ -172,7 +172,7 @@ OUTPUTS=("$OUTPUT_DIR/mechanism-classes"); stage mechanisms
 IFS=: read -ra RUNTIME_INPUTS <<< "$RUNTIME_CP"
 INPUTS=("$OUTPUT_DIR/java-classes" "$OUTPUT_DIR/mechanism-classes" "$OUTPUT_DIR/generated/PackProjections.kt" "$ROOT/android/src" "$ROOT/tools/CapabilityApi.java" "$ROOT/api/embedding.d.deal" "$ROOT/tools/theme-build.py" "$ROOT/ui/theme.json" "$ANDROID_JAR" "${RUNTIME_INPUTS[@]}" "$KOTLIN_HOME/bin/kotlinc" "$KOTLIN_HOME/lib")
 OUTPUTS=("$OUTPUT_DIR/kotlin-classes" "$OUTPUT_DIR/native-tools/CapabilityApi.kt" "$OUTPUT_DIR/native-tools/PackTheme.kt"); stage kotlin
-INPUTS=("$OUTPUT_DIR/java-classes" "$ROOT/core" "$ROOT/tools/GenerationGuidance.java" "$ROOT/docs/spec-v0.8.md" "$ROOT/ui" "$DEAL_ROOT/std" "$DEAL_ROOT/skills/write-deal/references" "$DEAL_UI_ROOT/ui")
+INPUTS=("$OUTPUT_DIR/java-classes" "$ROOT/core" "$ROOT/tools/GenerationGuidance.java" "$ROOT/docs/spec-v0.8.md" "$DEAL_ROOT/docs/spec-v1.6.md" "$ROOT/ui" "$DEAL_ROOT/std" "$DEAL_ROOT/skills/write-deal/references" "$DEAL_UI_ROOT/ui")
 OUTPUTS=("$OUTPUT_DIR/generation" "$OUTPUT_DIR/bundles/generation"); stage generation
 INPUTS=("$OUTPUT_DIR/java-classes" "$OUTPUT_DIR/generation"); OUTPUTS=("$OUTPUT_DIR/bundles/discovery"); stage discovery
 for name in assistance_policy logging; do

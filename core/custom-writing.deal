@@ -24,8 +24,9 @@ export class Result { candidateId: string; attempts: number; diagnostics: string
 export class Assembled { deal: string; dealui: string; metadata: string; }
 function readers(input: Input): screens.Port[] {
   let result: screens.Port[] = []; let names: string[] = [];
-  if (!Object.hasOwn(input,"base") || input.plan === null) { return result; }
-  for (let need of (input.plan as plans.Plan).needs) {
+  const plan = input.plan;
+  if (!Object.hasOwn(input,"base") || plan === null) { return result; }
+  for (let need of plan.needs) {
     if (Object.hasOwn(input,"openNeeds") && !s.contains(input.openNeeds as string[],need.id)) { continue; }
     // Extending a producer's view also needs its own issued value, not only its dependencies.
     for (let dependency of need.reads.concat([need.id])) {
@@ -53,13 +54,13 @@ function writerInterface(input: Input): string {
     if (field.name === getter && field.type === port.type) { readable[port.getter] = composer.readerTypes(field,port.getter); }
   } } } }
   let outputs: Record<string, unknown>[] = [];
-  if (input.plan !== null) { for (let need of (input.plan as plans.Plan).needs) {
+  const plan = input.plan;
+  if (plan !== null) { for (let need of plan.needs) {
     if (Object.hasOwn(input,"openNeeds") && !s.contains(input.openNeeds as string[],need.id)) { continue; }
     let type: string = screens.publishedType(need);
     if (type !== "" && !Object.hasOwn(readable,need.id)) { outputs[outputs.length] = {getter:need.id,type:type}; }
   } }
-  let actions: string[] = [];
-  return s.encode({readable:readable,callableExistingActions:actions,requiredOutputGetters:outputs});
+  return s.encode({readable:readable,callableExistingActions:[],requiredOutputGetters:outputs});
 }
 function existingContext(input: Input): string {
   if (!Object.hasOwn(input,"base")) { return "No existing composition"; }
@@ -81,8 +82,9 @@ function scene(input: Input): boolean {
   // prove semantic start/settle behavior mechanically. The write is a scene write as soon as it
   // carries one scene need: a call that also covers another missing need still writes that scene, so
   // requiring every open need to be a scene would leave the scene unwritten without its contract.
-  if (input.plan === null) { return false; }
-  for (let need of (input.plan as plans.Plan).needs) {
+  const plan = input.plan;
+  if (plan === null) { return false; }
+  for (let need of plan.needs) {
     if (Object.hasOwn(input,"openNeeds") && !s.contains(input.openNeeds as string[],need.id)) { continue; }
     if (need.type === "scene") { return true; }
   }

@@ -28,6 +28,7 @@ tools/theme-build.py
 tools/library-inputs.py
 dep:deal:deal
 dep:deal:std
+dep:deal:docs/spec-v1.6.md
 dep:deal:skills/write-deal/references
 dep:deal-ui:ui
 dep:deal-ui:runtime-js

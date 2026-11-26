@@ -504,7 +504,7 @@ export async function decode(definition: Definition, raw: unknown): Promise<Reco
     // A list parameter with no declared default starts empty. The replacement is an untyped element
     // array because each consuming branch performs its own element decode; a typed empty array would
     // reach the branch cast with a narrower element tag.
-    let value: unknown = parameter.fallback; if (s.encode(value) === "null") { let empty: unknown[] = []; value = empty; } if (Object.hasOwn(given,parameter.name)) { value = given[parameter.name]; }
+    let value: unknown = parameter.fallback; if (s.encode(value) === "null") { value = []; } if (Object.hasOwn(given,parameter.name)) { value = given[parameter.name]; }
     if (parameter.type === "string") { result[parameter.name] = await text(value,parameter.maximum,false); }
     else if (parameter.type === "currency") { result[parameter.name] = await text(value,32,true); }
     else if (parameter.type === "number" || parameter.type === "positive") {
@@ -803,8 +803,7 @@ export async function fill(context: selecting.Context, plan: plans.Plan, entries
 }
 async function literal(value: unknown, type: string): Promise<string> {
   // Compiler mechanism handles control characters and authored Unicode without textual substitution.
-  let empty: Record<string, unknown> = {};
-  return await syntax.expression(s.encode({source:s.encode(value),expected:type,names:empty,fields:empty,types:empty,variables:empty}));
+  return await syntax.expression(s.encode({source:s.encode(value),expected:type,names:{},fields:{},types:{},variables:{}}));
 }
 // Each kind issues its own fragment from the one table above. These helpers keep field, port and
 // action identities uniform so a kind cannot drift into a second convention.

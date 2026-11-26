@@ -31,15 +31,14 @@ export async function resolve(requestId: string, questions: plans.HumanQuestion[
     if (response.optionId !== null && response.text !== null) { s.reject("Option and text are mutually exclusive"); }
     let optionId: string | null = response.optionId; let text: string | null = response.text;
     if (text !== null) {
-      let answer: string = text as string;
-      if (answer.trim() === "" || answer.length > 4096) { s.reject("Question text length"); }
+      if (text.trim() === "" || text.length > 4096) { s.reject("Question text length"); }
       result.changed = true;
     } else {
       if (optionId === null) { optionId = question.default; }
       let present: boolean = false;
-      for (let option of question.options) { if ((option.id as string) === (optionId as string)) { present = true; } }
+      for (let option of question.options) { if ((option.id as string) === optionId) { present = true; } }
       if (!present) { s.reject("Unissued question option"); }
-      if ((optionId as string) !== question.default) { result.changed = true; }
+      if (optionId !== question.default) { result.changed = true; }
     }
     result.answers[result.answers.length] = {id:question.id,optionId:optionId,text:text};
   }

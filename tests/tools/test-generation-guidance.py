@@ -48,7 +48,15 @@ class GuidanceTest(unittest.TestCase):
             for paragraph in values[name].strip().split('\n\n'):
                 self.assertIn(paragraph, spec)
         self.assertEqual(values['pack'], (ROOT / 'ui/platform.dealui-pack').read_text())
-        self.assertEqual(values['language'], (ROOT / 'dependencies/deal/skills/write-deal/references/language.md').read_text())
+        language_spec = (ROOT / 'dependencies/deal/docs/spec-v1.6.md').read_text()
+        passages = ''.join(language_spec[language_spec.index(start):language_spec.index(end, language_spec.index(start))] + '\n'
+                           for start, end in [('### Narrowing and checked assertions\n', '### Type compatibility\n'),
+                                              ('### Inference rules\n', '### Redeclaration\n'),
+                                              ('### Array literals\n', '### Indexing\n')])
+        self.assertEqual(values['language'], (ROOT / 'dependencies/deal/skills/write-deal/references/language.md').read_text()
+                         + '\nAUTHORITATIVE TYPE REFINEMENT AND LITERAL RULES\n' + passages)
+        self.assertIn('Retain remaining binding refinements across iterations', values['language'])
+        self.assertIn('Under contextual `unknown`, object literals infer', values['language'])
         self.assertLess(len(planning), 11000)
         self.assertLess(len(selection), 1500)
         self.assertLess(len(writing), 20000)
