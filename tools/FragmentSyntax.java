@@ -10,7 +10,9 @@ public final class FragmentSyntax {
     public static ProgramNode parse(String source) {
         var lexed=new Lexer(source,"fragment.deal").tokenize();
         var parsed=new Parser(lexed.tokens(),"fragment.deal").parse();
-        if(!lexed.diagnostics().isEmpty() || !parsed.diagnostics().isEmpty())throw new IllegalArgumentException("Invalid fragment syntax: " + parsed.diagnostics());
+        var diagnostics=new ArrayList<>(lexed.diagnostics());
+        diagnostics.addAll(parsed.diagnostics());
+        if(!diagnostics.isEmpty())throw new IllegalArgumentException("Invalid fragment syntax: " + diagnostics);
         return parsed.program();
     }
     public static String function(String source,String function,Map<String,String> names,Map<String,String> expressions) {

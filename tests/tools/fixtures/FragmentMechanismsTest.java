@@ -5,6 +5,17 @@ public final class FragmentMechanismsTest {
     private static String quote(String value) { return "\""+deal.codegen.jvm.JvmJson.escapeString(value)+"\""; }
     private static String request(String operation,String input) { return "{\"function\":"+quote(operation)+",\"input\":"+quote(input)+"}"; }
     public static void main(String[] args) throws Exception {
+        // Lexer-only failures must retain their actual diagnostic, including its source span.
+        for(String malformed:List.of("// 😀\r\nlet x = @;", "let x = \"\\q\";")) {
+            var lexerDiagnostics=new deal.lexer.Lexer(malformed,"fragment.deal").tokenize().diagnostics();
+            if(lexerDiagnostics.isEmpty())throw new AssertionError("Fixture has no lexer diagnostic");
+            try { FragmentSyntax.parse(malformed);throw new AssertionError("Malformed input admitted"); }
+            catch(IllegalArgumentException failure) {
+                for(var diagnostic:lexerDiagnostics)if(!failure.getMessage().contains(diagnostic.toString()))throw new AssertionError("Lexer evidence lost: "+failure.getMessage());
+            }
+            String response=FragmentMechanisms.invoke("batch","{\"requests\":["+request("analyzeFunctions","{\"source\":"+quote(malformed)+"}")+"]}");
+            if(response.contains("Invalid fragment syntax: []")||!response.contains("FRAGMENT_SYNTAX"))throw new AssertionError(response);
+        }
         String valid="{\"source\":\"state.value + 1\",\"expected\":\"number\",\"names\":{},\"fields\":{\"value\":\"f_value\"},\"types\":{\"value\":\"number\"},\"variables\":{\"state\":\"AppState\"}}";
         String invalid=valid.replace("state.value + 1","(");
         String batch="{\"requests\":["+request("expression",valid)+","+request("expression",invalid)+","+request("analyzeExpression","{\"source\":\"true\"}")+"]}";
