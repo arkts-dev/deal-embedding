@@ -63,7 +63,9 @@ function open(mode,source,capabilities){
   fs.rmSync(directory,{recursive:true,force:true});fs.mkdirSync(directory,{recursive:true});
   fs.writeFileSync(path.join(directory,'experience.deal'),source.deal);
   fs.writeFileSync(path.join(directory,'experience.dealui'),source.dealui);
-  fs.writeFileSync(path.join(directory,'metadata.json'),'{}');
+  // The issued composition metadata is the production compile input, so the packaged admission
+  // manifest carries the driver, ownership and runtime facts the fixture assembled.
+  fs.writeFileSync(path.join(directory,'metadata.json'),JSON.stringify(source.metadata||{}));
   // A disclosed contract is a checked declaration, exactly as the production compiler writes one, so the
   // emitted provider import compiles against the frozen module instead of an invented shape.
   const wireName=type=>type.kind==='array'?wireName(type.element)+'[]':type.kind==='record'?'Record<string, unknown>':type.kind==='number'?'number':type.kind==='string'?'string':type.kind==='boolean'?'boolean':type.kind==='null'?'null':'string';
@@ -78,13 +80,23 @@ function open(mode,source,capabilities){
   }
   // The composed-pair compile of the bigger `day` and `calendar` fixtures has always had the wider bound;
   // every other group compiles a smaller screen inside the default one, which the owning lane contains.
-  const compileBound=(group==='day'||group==='calendar'||group==='all'||group==='local')?120000:30000;
+  // A timers or issued-bodies pair carries the private clock machinery for each clock instance, so
+  // its production compile keeps the same wider bound the bigger fixtures use.
+  const compileBound=(group==='day'||group==='calendar'||group==='all'||group==='local'||group==='timers'||group==='issued-bodies')?120000:30000;
   const compiled=cp.spawnSync('java',['-Ddeal.home=dependencies/deal','-cp',classpath,'CompileComposer',root,directory,'screen',path.join(directory,'metadata.json'),'false'],{encoding:'utf8',timeout:compileBound});
   if(compiled.error)throw Error('catalogue '+mode+' compile failed or exceeded '+String(compileBound/1000)+'s: '+compiled.error.message);
   assert.equal(compiled.status,0,compiled.stdout+compiled.stderr);
   const emitted=path.join(root,'build/v08-cutover/catalogue-runtime/composed-executable/js'),files={};
   (function visit(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())visit(file);else if(name.endsWith('.js'))files[path.relative(emitted,file)]=fs.readFileSync(file,'utf8');}})(emitted);
+  // The private clock drivers are the compiler-issued metadata the host schedules: the packaged Session
+  // binding resolves their ticker identities from the rendered tree, so a catalogue timer never runs
+  // from a renderer event.
+  const manifest=JSON.parse(fs.readFileSync(path.join(root,'build/v08-cutover/catalogue-runtime/composed-executable/js/admission.json'),'utf8'));
+  const drivers=(manifest.composition&&manifest.composition.clockDrivers)?manifest.composition.clockDrivers:[];
   const runtime=vm.createContext({sources:files});
+  // A driver-bearing pair mounts through candidate admission, so it receives the shipped renderer
+  // projection the host hands the compiled Session.
+  if(drivers.length>0)runtime.rendererContract=require('./fixtures/renderer-contract.js')(manifest.target);
   vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/sandbox.js','utf8'),runtime);
   // The frozen contracts the composition was assembled against are the only modules this host supplies;
   // a dispatch reaches a module the sandbox does not know and fails rather than reaching anything else.
@@ -92,22 +104,21 @@ function open(mode,source,capabilities){
   vm.runInContext('configureDealCapabilities(capabilities)',runtime);
   // The host configures the probe bounds once; the probe binding enforces those numbers.
   vm.runInContext('globalThis.dealProbeLimits={bytes:65536,depth:32,characters:6000,paths:3,timeoutMs:5000}',runtime);
-  vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js/checkpoint.js'),'utf8'),runtime);
-  vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js/session.js'),'utf8'),runtime);
+  for(const file of ['checkpoint.js','session.js']) vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js',file),'utf8'),runtime);
+  for(const file of ['text-pattern.js','renderer-admission.js','ui-session.js']) vm.runInContext(fs.readFileSync(path.join('android/assets/embedding/bindings',file),'utf8'),runtime);
   vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));
    const {entry,rt,checkpointSchema,app}=dealLoad(factories,'experience_entry.js','experience.js');
-   const schedule=(invoke,complete,fail,exited)=>{try{Promise.resolve(invoke()).then(complete).catch(fail).finally(exited);}catch(error){try{fail(error);}finally{exited();}}};
-   const session=createDealUiSession(entry,rt,null,schedule,checkpointSchema);
+   globalThis.dealFactories=factories;
    const restoreCodec=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f());
    // A cold reopen of the same source with the compiled persistence roles: the authoritative record is
    // projected, the named fields are replaced, and the compiled restore path re-derives every runtime
    // resource (including the adapter day) before recompute. The opened scratch session is the evidence.
    globalThis.persistedKeys=function(){
-     const live=restoreCodec.decode(JSON.parse(session.checkpoint()),entry.bridgeInitialState.$sig.substring(4));
+     const live=restoreCodec.decode(JSON.parse(dealUi.checkpoint()),entry.bridgeInitialState.$sig.substring(4));
      return JSON.stringify([...app.bridgePersistedState.$f(live).keys()]);
    };
    globalThis.restoredState=function(mutationsJson){
-     const live=restoreCodec.decode(JSON.parse(session.checkpoint()),entry.bridgeInitialState.$sig.substring(4));
+     const live=restoreCodec.decode(JSON.parse(dealUi.checkpoint()),entry.bridgeInitialState.$sig.substring(4));
      const record=app.bridgePersistedState.$f(live);
      const mutations=JSON.parse(mutationsJson);
      // A replaced field carries the declared element descriptor of its typed array, exactly as the
@@ -122,9 +133,26 @@ function open(mode,source,capabilities){
      const scratch=createDealUiSession(entry,rt,encoded,()=>{throw Error('No effect expected');},checkpointSchema);
      return JSON.stringify(restoreCodec.decode(JSON.parse(scratch.checkpoint()),entry.bridgeInitialState.$sig.substring(4)));
    };
-   globalThis.rt=rt;globalThis.checkpointSchema=checkpointSchema;globalThis.entry=entry;globalThis.session=session;`,runtime);
-  const state=()=>vm.runInContext("createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f()).decode(JSON.parse(session.checkpoint()),entry.bridgeInitialState.$sig.substring(4))",runtime);
-  const tree=()=>JSON.parse(vm.runInContext('session.snapshot()',runtime)).tree;
+   // A composition that issues private clock drivers is mounted through the packaged production path:
+   // it decodes the saved record, applies every issued clock restore hook, validates candidate trees and
+   // exposes the private driver to the host. A composition without drivers keeps the pinned Session path
+   // the other catalogue groups have always used, so this harness adds no admission cost where the
+   // composition issues no driver.
+   const driverMetadata=${JSON.stringify(drivers)};
+   globalThis.clockDriven=${drivers.length > 0};
+   globalThis.mount=function(persisted){
+     if (clockDriven) {
+       mountDealUi(factories,'experience_entry.js',persisted===undefined?null:persisted,'experience.js',null,driverMetadata);
+     } else {
+       const schedule=(invoke,complete,fail,exited)=>{try{Promise.resolve(invoke()).then(complete).catch(fail).finally(exited);}catch(error){try{fail(error);}finally{exited();}}};
+       globalThis.dealUi=createDealUiSession(entry,rt,persisted===undefined?null:persisted,schedule,checkpointSchema);
+     }
+     return dealUi.snapshot();
+   };
+   globalThis.rt=rt;globalThis.checkpointSchema=checkpointSchema;globalThis.entry=entry;`,runtime);
+  vm.runInContext('mount(null)',runtime);
+  const state=()=>vm.runInContext("createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f()).decode(JSON.parse(dealUi.checkpoint()),entry.bridgeInitialState.$sig.substring(4))",runtime);
+  const tree=()=>JSON.parse(vm.runInContext('dealUi.snapshot()',runtime)).tree;
   function visit(node,fn){fn(node);for(const child of node.children)visit(child,fn);}
   function slot(component,text,prop){
     let found;
@@ -211,14 +239,31 @@ function open(mode,source,capabilities){
   function press(component,text,index){
     const control=pressed(component,text,null,null,index);
     if(control===undefined)throw Error('No '+component+' to press: '+String(text));
-    return vm.runInContext('session.dispatch(handle,payload)',Object.assign(runtime,{handle:control.slot,payload:control.payload}));
+    return vm.runInContext('dealUi.dispatch(handle,payload)',Object.assign(runtime,{handle:control.slot,payload:control.payload}));
   }
   function pressAt(component,property,value,index){
     const control=pressed(component,null,property,value,index);
     if(control===undefined)throw Error('No '+component+' '+property+'='+String(value)+' to press');
-    return vm.runInContext('session.dispatch(handle,payload)',Object.assign(runtime,{handle:control.slot,payload:control.payload}));
+    return vm.runInContext('dealUi.dispatch(handle,payload)',Object.assign(runtime,{handle:control.slot,payload:control.payload}));
   }
-  return {raw:()=>{const env=JSON.parse(vm.runInContext('session.checkpoint()',runtime));return JSON.stringify({keys:Object.keys(env),digest:env.schemaDigest,current:vm.runInContext('entry.bridgeSchemaDigest.$f()',runtime),hasValue:Object.hasOwn(env,'value')});},checkpointed:()=>vm.runInContext('session.checkpoint()',runtime),fault:()=>JSON.parse(vm.runInContext('session.snapshot()',runtime)).fault,state,restore,persistedKeys,tree,slot,slotBy,slotsBy,hasText,charts,display,calls,probed,pump,press,pressAt,probe:value=>Object.assign(probe,value),clock:now=>vm.runInContext('globalThis.__now = '+JSON.stringify(now)+'; Date.now = () => globalThis.__now;',runtime),failNext:value=>{runtime.failNext=value===true;},dispatch:(handle,payload)=>{runtime.handle=handle;runtime.payload=payload===undefined?null:payload;return vm.runInContext('session.dispatch(handle,payload)',runtime);}};
+  function dispatch(handle,payload){runtime.handle=handle;runtime.payload=payload===undefined?null:payload;return vm.runInContext('dealUi.dispatch(handle,payload)',runtime);}
+  // The retaining host's write: the compiled authoritative projection exactly as `persistDealUi` emits
+  // it, which is also the record a cold reopen decodes before the issued restore hooks run.
+  function persisted(){const encoded=vm.runInContext('persistDealUi()',runtime);return encoded===null?null:JSON.parse(encoded);}
+  // The host clock lane: paired adapter readings the host takes for the press it is about to admit and
+  // on its interval, exactly as android/src/execution/UiSession.kt pumps the binding. `checkPress` is the
+  // forced pump after a dispatch; the scheduled pump omits it.
+  function clockPump(monotone,wall,checkPress){vm.runInContext(`dealClockPump(${monotone},${wall},${checkPress===true})`,runtime);}
+  // A press records its intent with the control's own value, then the forced pump admits the real
+  // control with the paired reading taken for that press.
+  function pressClock(component,text,monotone,wall){
+    const control=pressed(component,text,null,null,0);
+    if(control===undefined)throw Error('No '+component+' to press: '+String(text));
+    dispatch(control.slot,control.payload);
+    clockPump(monotone,wall===undefined?monotone:wall,true);
+    return control;
+  }
+  return {raw:()=>{const env=JSON.parse(vm.runInContext('dealUi.checkpoint()',runtime));return JSON.stringify({keys:Object.keys(env),digest:env.schemaDigest,current:vm.runInContext('entry.bridgeSchemaDigest.$f()',runtime),hasValue:Object.hasOwn(env,'value')});},checkpointed:()=>vm.runInContext('dealUi.checkpoint()',runtime),fault:()=>JSON.parse(vm.runInContext('dealUi.snapshot()',runtime)).fault,state,restore,persistedKeys,tree,slot,slotBy,slotsBy,hasText,charts,display,calls,probed,pump,press,pressAt,probe:value=>Object.assign(probe,value),clock:now=>vm.runInContext('globalThis.__now = '+JSON.stringify(now)+'; Date.now = () => globalThis.__now;',runtime),failNext:value=>{runtime.failNext=value===true;},dispatch:(handle,payload)=>{runtime.handle=handle;runtime.payload=payload===undefined?null:payload;return vm.runInContext('dealUi.dispatch(handle,payload)',runtime);},drivers,driver:need=>drivers.find(item=>item.need===need),clockPump,pressClock,persisted,setFrameVisibility:(visible,monotone)=>vm.runInContext('setFrameVisibility('+(visible===true)+(monotone===undefined?'':','+monotone)+')',runtime),reopen:persisted=>vm.runInContext('mount('+JSON.stringify(persisted===undefined?null:persisted)+')',runtime)};
 }
 function must(handle,message){assert.ok(Number.isInteger(handle),message);return handle;}
 // ---- the public-probe transport policy ---------------------------------------------------------
@@ -387,6 +432,15 @@ const aggregate=(group==='all'||group==='aggregate')?JSON.parse(await step('aggr
 const wired=(group==='all'||group==='calendar')?JSON.parse(await step('calendar')):null;
 const lists=(group==='all'||group==='lists')?JSON.parse(await step('lists')):null;
 const issued=(group==='all'||group==='issued-bodies')?JSON.parse(await step('issuedBodies')):null;
+// A saved composition is serialized, decoded by the same module and reassembled: the private clock
+// drivers an edited or reopened record carries survive it, ticker, restore, epoch and trust identities
+// included, so no edit silently drops the scheduling metadata the host reads.
+const recorded=(group==='all'||group==='local'||group==='timers')?JSON.parse(await step('clockRecord')):null;
+if(recorded!==null){
+ const driverFacts=recorded.map(driver=>[driver.need,driver.sample,driver.tick,driver.start,driver.pause,driver.reset,driver.resume,driver.epoch,driver.trust,driver.restore,driver.intervalMs]);
+ const issuedFacts=[['section_timer','section_timer_sample','section_timer_tick','section_timer_start','section_timer_pause','section_timer_reset','section_timer_resume','f_section_timer_clockEpoch','f_section_timer_clockTrust','f_section_timer_restore',250],['section_interval','section_interval_sample','section_interval_tick','section_interval_start','section_interval_pause','section_interval_reset','section_interval_resume','f_section_interval_clockEpoch','f_section_interval_clockTrust','f_section_interval_restore',250]];
+ assert.deepStrictEqual(driverFacts,issuedFacts,'a saved composition round-trips its private clock drivers');
+}
 const rejected=await step('rejectedBodies');
 assert.strictEqual(rejected,10,'every rejected body case ran, none silently dropped');
 const aliased=await step('aliasedBinding');
@@ -397,11 +451,34 @@ for(const localGroup of localGroups) {
  const source=JSON.parse(await step(localGroup));
  const app=open('local-'+localGroup,source),s=()=>app.state();
  if(localGroup==='timers') {
-  // Initialization: goal at zero, rating at its declared initial, timers paused at zero, no reading.
+  // Initialization: goal at zero, rating at its declared initial, timers paused at zero with no admitted
+  // sampling reading, and the composition issuing one private driver per clock through its metadata.
+  const timerDriver=app.driver('section_timer'),intervalDriver=app.driver('section_interval');
+  assert.ok(timerDriver&&intervalDriver,'the composition issues a private driver per catalogue clock');
+  assert.strictEqual(app.drivers.length,2,'the timers group carries exactly two issued clock drivers');
+  assert.strictEqual(timerDriver.intervalMs,250,'the driver interval is the issued scheduling interval');
+  assert.deepStrictEqual([timerDriver.sample,timerDriver.tick,timerDriver.start,timerDriver.pause,timerDriver.reset,timerDriver.resume],
+    ['section_timer_sample','section_timer_tick','section_timer_start','section_timer_pause','section_timer_reset','section_timer_resume'],
+    'the timer driver names its issued ticker carriers');
+  assert.strictEqual(timerDriver.restore,'f_section_timer_restore','the driver names the issued cold-restore hook');
+  assert.strictEqual(timerDriver.epoch,'f_section_timer_clockEpoch','the driver names its Session clock epoch field');
+  assert.strictEqual(timerDriver.running,'f_section_timer_running','the driver names the compiled running field');
+  assert.strictEqual(app.hasText('Clock reading'),false,'no clock diagnostic is published before any reading');
   assert.strictEqual(s().f_section_goal_value,0,'the goal starts at zero');
   assert.strictEqual(s().f_section_rating_value,5,'the rating starts at its declared initial');
   assert.strictEqual(s().f_section_timer_elapsed,0,'the timer starts at zero');
   assert.strictEqual(s().f_section_timer_running,false,'the timer starts paused');
+  assert.strictEqual(s().f_section_timer_completed,false,'the timer starts incomplete');
+  assert.strictEqual(s().f_section_timer_sample,-1,'no admitted monotone reading before the first sample');
+  assert.strictEqual(s().f_section_timer_pending,-1,'no prepared reading before the first sample');
+  assert.strictEqual(s().f_section_timer_wall,-1,'no wall reading before the first sample');
+  assert.strictEqual(s().f_section_timer_anchor,-1,'no runtime anchor before a run');
+  assert.strictEqual(s().f_section_timer_clockEpoch,0,'the Session clock epoch starts at its issued value');
+  assert.strictEqual(s().f_section_timer_clockTrust,false,'the Session clock epoch starts untrusted');
+  assert.strictEqual(s().f_section_timer_request,0,'no press intent is pending');
+  assert.strictEqual(s().f_section_interval_phase,'work');
+  assert.strictEqual(s().f_section_interval_running,false,'the interval starts paused');
+  assert.strictEqual(s().f_section_interval_sample,-1,'the interval has no admitted sampling reading');
   // Goal: increment by the declared step, reset, and never clamp the stored value.
   const add=must(app.slot('Button','Add goal','onClick'),'the goal binds Add');
   app.dispatch(add,'0');assert.strictEqual(s().f_section_goal_value,3);
@@ -412,72 +489,259 @@ for(const localGroup of localGroups) {
   const rate=must(app.slot('Slider',null,'onChange'),'the rating binds a slider');
   app.dispatch(rate,'11');assert.strictEqual(s().f_section_rating_value,5,'an out-of-range rating is refused');
   app.dispatch(rate,'9');assert.strictEqual(s().f_section_rating_value,9);
-  // Countdown: start pauses at the end once and the end hole leaves it stopped.
+  // The host's paired adapter readings: one monotone uptime and one wall epoch reading taken together.
+  // `step` models a device wall-clock correction (an NTP step or a manual change) applied at one moment.
+  const wall0=1700000000000; let step=0;
+  const wallOf=monotone=>wall0+step+monotone;
+  const jumped='Clock reading jumped; wall-clock trust is invalid and elapsed follows monotone progress';
+  const backwards='Clock reading went backwards; wall-clock trust is invalid and elapsed follows monotone progress';
+  const retreated='Clock reading retreated; elapsed follows admitted monotone progress';
+  // A press records only its intent: the timer still runs nothing until the forced pump admits the real
+  // control with the reading prepared for that press.
   must(app.slot('Select',null,'onChange'),'the timer binds its preset selection');
   app.dispatch(app.slot('Select',null,'onChange'),'1');
   assert.strictEqual(s().f_section_timer_preset,1,'the second preset is selected');
-  app.dispatch(must(app.slot('Button','Start','onClick'),'the timer binds Start'),'0');
+  const startControl=app.slot('Button','Start','onClick');
+  app.dispatch(startControl,'1');
+  assert.strictEqual(s().f_section_timer_request,1,'a press records its intent before admission');
+  assert.strictEqual(s().f_section_timer_running,false,'an unadmitted press starts nothing');
+  app.clockPump(1000,wallOf(1000),true);
   assert.strictEqual(s().f_section_timer_running,true,'start runs the timer');
-  app.dispatch(must(app.slot('Button','Pause','onClick'),'the timer binds Pause'),'0');
+  assert.strictEqual(s().f_section_timer_anchor,1000,'start anchors at the prepared monotone reading');
+  assert.strictEqual(s().f_section_timer_elapsed,0,'no time before the admitted start counts');
+  assert.strictEqual(s().f_section_timer_request,0,'the admitted press consumed its intent');
+  assert.strictEqual(s().f_section_timer_clockTrust,true,'a valid paired start establishes admission');
+  // Elapsed follows the admitted monotone delta, never a scheduled interval.
+  app.clockPump(7000,wallOf(7000));
+  assert.strictEqual(s().f_section_timer_elapsed,6000,'a delayed tick counts the actual monotone progress');
+  // Detachment: the renderer hidden and no renderer event delivered, yet the host lane keeps running.
+  app.setFrameVisibility(false,7000);
+  app.clockPump(9000,wallOf(9000));
+  assert.strictEqual(s().f_section_timer_elapsed,8000,'a detached renderer does not stop the driver');
+  // A visible surface is a Session resume: the run is kept, the anchor is the resume reading and the
+  // Session epoch advances so evidence captured before the suspension is stale.
+  app.setFrameVisibility(true,9000);
+  assert.strictEqual(s().f_section_timer_running,true,'a resume keeps the authoritative run');
+  assert.strictEqual(s().f_section_timer_anchor,9000,'a resume anchors at its own admitted reading');
+  assert.strictEqual(s().f_section_timer_clockEpoch,1,'a Session resume advances the Session epoch');
+  assert.strictEqual(s().f_section_timer_clockTrust,false,'a Session resume leaves the epoch untrusted');
+  assert.strictEqual(s().f_section_interval_clockEpoch,1,'a Session resume admits every clock owner, not only the first driver');
+  assert.strictEqual(s().f_section_interval_anchor,9000,'every clock owner anchors at the resume reading');
+  // The first post-resume pump only establishes the driver's new baseline; the next one admits the
+  // resume-anchored delta, so the suspended interval is never counted.
+  app.clockPump(10000,wallOf(10000));
+  assert.strictEqual(s().f_section_timer_elapsed,8000,'a baseline pump after a resume counts no suspended time');
+  app.clockPump(11000,wallOf(11000));
+  assert.strictEqual(s().f_section_timer_elapsed,10000,'post-resume progress counts from the resume anchor');
+  assert.strictEqual(s().f_section_timer_clockTrust,true,'a matched pair re-establishes admission');
+  assert.strictEqual(s().f_section_timer_notice,'','a matched post-resume pair publishes no diagnostic');
+  // A forward wall-clock step across a Pause press is classified by that press: elapsed follows only the
+  // monotone progress, the epoch advances, trust drops and the located reason is rendered.
+  step=step+3600000;
+  app.pressClock('Button','Pause',11500,wallOf(11500));
   assert.strictEqual(s().f_section_timer_running,false,'pause stops the timer');
-  app.dispatch(must(app.slot('Button','Start','onClick'),'the timer restarts'),'0');
-  const started=s().f_section_timer_last;
-  const tick=must(app.slotBy('Ticker','id','timer','onTick'),'the timer binds a ticker');
-  app.dispatch(tick,String(started+1000));
-  assert.strictEqual(s().f_section_timer_elapsed,1000,'elapsed follows the tick delta');
-  app.dispatch(tick,String(started+30000));
-  assert.strictEqual(s().f_section_timer_elapsed,30000);
+  assert.strictEqual(s().f_section_timer_elapsed,10500,'a pause counts the delta through its admitted reading');
+  assert.strictEqual(s().f_section_timer_anchor,-1,'pause clears the runtime anchor');
+  assert.strictEqual(s().f_section_timer_clockEpoch,2,'a wall jump across a press advances the Session epoch');
+  assert.strictEqual(s().f_section_timer_clockTrust,false,'a wall jump across a press leaves the epoch untrusted');
+  assert.strictEqual(s().f_section_timer_notice,jumped,'a wall jump across a press publishes its reason');
+  assert.strictEqual(app.hasText(jumped),true,'the jump diagnostic renders as text');
+  // A restart compares against the pause reading, so an already-classified step is not reported twice.
+  app.pressClock('Button','Start',12000,wallOf(12000));
+  assert.strictEqual(s().f_section_timer_elapsed,10500,'a resume keeps the elapsed already counted');
+  assert.strictEqual(s().f_section_timer_anchor,12000,'the restarted run anchors at its own reading');
+  assert.strictEqual(s().f_section_timer_clockEpoch,2,'a matched press keeps the epoch the jump advanced');
+  assert.strictEqual(s().f_section_timer_clockTrust,true,'a matched pair under the advanced epoch is fresh admission');
+  assert.strictEqual(s().f_section_timer_notice,'','a matched pair clears the wall diagnostic');
+  app.clockPump(14000,wallOf(14000));
+  assert.strictEqual(s().f_section_timer_elapsed,12500,'a coalesced tick counts its real monotone delta');
+  // A backwards wall reading while running advances the epoch and untrusts it without freezing the
+  // monotone progress; the next matched pair is fresh admission under the new epoch.
+  step=step-7200000;
+  app.clockPump(16000,wallOf(16000));
+  assert.strictEqual(s().f_section_timer_elapsed,14500,'a backwards wall reading still counts monotone progress');
+  assert.strictEqual(s().f_section_timer_clockEpoch,3,'a backwards wall reading advances the Session epoch');
+  assert.strictEqual(s().f_section_timer_clockTrust,false,'a backwards wall reading invalidates trust');
+  assert.strictEqual(s().f_section_timer_notice,backwards,'a backwards wall reading publishes its reason');
+  app.clockPump(18000,wallOf(18000));
+  assert.strictEqual(s().f_section_timer_elapsed,16500,'monotone progress continues after the wall jump');
+  assert.strictEqual(s().f_section_timer_clockEpoch,3,'the matched pair does not advance the epoch again');
+  assert.strictEqual(s().f_section_timer_clockTrust,true,'a matched pair under the new epoch is fresh admission');
+  assert.strictEqual(s().f_section_timer_notice,'','a matched pair clears the wall diagnostic');
+  // A delta past the binary64 addition boundary cannot overflow the countdown: elapsed clamps at the
+  // exactly issued preset duration and completion stays a finite state.
+  const huge=18000+9007199254740991;
+  const hugeWall=wallOf(18000)+9007199254740991;
+  app.clockPump(huge,hugeWall);
+  assert.strictEqual(s().f_section_timer_elapsed,30000,'an overflowing delta clamps at the preset duration');
   assert.strictEqual(s().f_section_timer_running,false,'reaching the preset pauses the timer');
-  app.dispatch(tick,String(started+60000));
+  assert.strictEqual(s().f_section_timer_completed,true,'reaching the preset completes the run');
+  // Once-only completion: a later reading still reaches the issued tick carrier, yet the end body never
+  // fires again and no elapsed or end event is recorded twice.
+  const tickSlot=must(app.slotBy('Ticker','id','section_timer_tick','onTick'),'the timer driver resolves its tick carrier');
+  app.dispatch(tickSlot,String(hugeWall+1000));
   assert.strictEqual(s().f_section_timer_elapsed,30000,'the end body runs once and does not refire');
-  app.dispatch(must(app.slot('Button','Reset','onClick'),'the timer binds Reset'),'0');
+  assert.strictEqual(s().f_section_timer_completed,true,'a completed run stays completed');
+  assert.strictEqual(s().f_section_timer_clockEpoch,3,'a completed run admits no further tick transition');
+  // Restart after completion clears elapsed and runs from a fresh anchor.
+  app.pressClock('Button','Start',huge+1000,hugeWall+1000);
+  assert.strictEqual(s().f_section_timer_running,true,'start after completion restarts');
+  assert.strictEqual(s().f_section_timer_elapsed,0,'restart clears elapsed');
+  assert.strictEqual(s().f_section_timer_completed,false,'restart clears completion');
+  app.clockPump(huge+2000,hugeWall+2000);
+  assert.strictEqual(s().f_section_timer_elapsed,1000,'the restarted run advances from its own anchor');
+  // Reset clears the run and keeps the pair it was admitted with.
+  app.pressClock('Button','Reset',huge+3000,hugeWall+3000);
   assert.strictEqual(s().f_section_timer_elapsed,0,'reset clears the elapsed time while paused');
-  // Interval rounds: work, rest, and the final round has no rest; a long tick carries across phases.
-  const intervalStart=must(app.slot('Button','Start interval','onClick'),'the interval binds Start');
-  app.dispatch(intervalStart,'0');
-  const intervalLast=s().f_section_interval_last;
-  const intervalTick=must(app.slotBy('Ticker','id','intervals','onTick'),'the interval binds a ticker');
-  app.dispatch(intervalTick,String(intervalLast+5000));
+  assert.strictEqual(s().f_section_timer_completed,false,'reset clears completion');
+  assert.strictEqual(s().f_section_timer_anchor,-1,'reset clears the runtime anchor');
+  // Cold restore: the authoritative elapsed is retained while the clock resumes paused with the
+  // runtime sampling anchors, prepared reading, wall baseline, press intent and diagnostic cleared.
+  app.pressClock('Button','Start',huge+4000,hugeWall+4000);
+  app.clockPump(huge+5000,hugeWall+5000);
+  assert.strictEqual(s().f_section_timer_elapsed,1000,'the preserved run counted its progress');
+  const timerKeys=app.persistedKeys();
+  for(const runtime of ['sample','pending','wall','anchor','clockEpoch','clockTrust','notice','request'])
+    assert.strictEqual(timerKeys.includes('f_section_timer_'+runtime),false,'runtime sampling state is persisted: '+runtime);
+  assert.ok(timerKeys.includes('f_section_timer_elapsed')&&timerKeys.includes('f_section_timer_running'),'authoritative timer state is persisted');
+  const timerRecord=app.persisted();
+  assert.ok(timerRecord,'the retaining host wrote the compiled authoritative projection');
+  app.reopen(timerRecord);
+  assert.strictEqual(s().f_section_timer_running,false,'cold restore resumes the timer paused');
+  assert.strictEqual(s().f_section_timer_elapsed,1000,'cold restore keeps the authoritative elapsed');
+  assert.strictEqual(s().f_section_timer_completed,false,'cold restore keeps completion');
+  assert.strictEqual(s().f_section_timer_sample,-1,'cold restore clears the sampling reading');
+  assert.strictEqual(s().f_section_timer_pending,-1,'cold restore clears the prepared reading');
+  assert.strictEqual(s().f_section_timer_anchor,-1,'cold restore clears the monotone anchor');
+  assert.strictEqual(s().f_section_timer_wall,-1,'cold restore clears the wall baseline');
+  assert.strictEqual(s().f_section_timer_request,0,'cold restore clears a pending press intent');
+  assert.strictEqual(s().f_section_timer_notice,'','cold restore clears the diagnostic');
+  assert.strictEqual(s().f_section_timer_clockEpoch,1,'cold restore starts a fresh Session epoch');
+  assert.strictEqual(s().f_section_timer_clockTrust,false,'cold restore starts the Session epoch untrusted');
+  // The suspended interval is never counted after a cold reopen: the new run anchors at its own reading.
+  app.pressClock('Button','Start',100000,wallOf(100000));
+  assert.strictEqual(s().f_section_timer_elapsed,1000,'a restored run keeps the elapsed already counted');
+  app.clockPump(101000,wallOf(101000));
+  assert.strictEqual(s().f_section_timer_elapsed,2000,'a restored run advances by admitted progress');
+  // A completed timer survives the cold restore as completed: the end body already ran, so a later
+  // admitted reading changes no elapsed and never runs it a second time.
+  app.clockPump(129000,wallOf(129000));
+  assert.strictEqual(s().f_section_timer_completed,true,'the restored run reaches its preset');
+  assert.strictEqual(s().f_section_timer_running,false,'reaching the preset pauses the restored run');
+  const completedTimer=app.persisted();
+  app.reopen(completedTimer);
+  assert.strictEqual(s().f_section_timer_completed,true,'a completed timer stays completed across a cold restore');
+  assert.strictEqual(s().f_section_timer_elapsed,30000,'a completed timer keeps its elapsed across a cold restore');
+  assert.strictEqual(s().f_section_timer_running,false,'a completed timer restores paused');
+  app.dispatch(must(app.slotBy('Ticker','id','section_timer_tick','onTick'),'the restored timer resolves its tick carrier'),String(wallOf(129000)+1000));
+  assert.strictEqual(s().f_section_timer_elapsed,30000,'a completed timer never runs its end body again');
+  assert.strictEqual(s().f_section_timer_completed,true,'a completed timer admits no second completion');
+  // Interval rounds through the same private driver: work, rest, and the final round has no rest; a
+  // coalesced tick carries its overflow across phase boundaries.
+  app.pressClock('Button','Start interval',1000,wallOf(1000));
+  assert.strictEqual(s().f_section_interval_running,true,'the interval driver starts the run');
+  app.clockPump(6000,wallOf(6000));
   assert.strictEqual(s().f_section_interval_focus_done,5,'a completed work phase credits its seconds');
   assert.strictEqual(s().f_section_interval_phase,'rest');
-  app.dispatch(intervalTick,String(intervalLast+7000));
+  app.clockPump(8000,wallOf(8000));
   assert.strictEqual(s().f_section_interval_phase,'work');
   assert.strictEqual(s().f_section_interval_round_value,2);
-  app.dispatch(intervalTick,String(intervalLast+12000));
+  app.clockPump(13000,wallOf(13000));
   assert.strictEqual(s().f_section_interval_phase,'done','the final round finishes without a final rest');
   assert.strictEqual(s().f_section_interval_focus_done,10);
   assert.strictEqual(s().f_section_interval_running,false);
   assert.strictEqual(s().f_section_interval_round_display,2,'the round port publishes the round');
   assert.strictEqual(s().f_section_interval_focus_seconds_done_display,10,'the focus port publishes the total');
-  // A single tick spanning more than the whole interval also completes: completion is terminal and a
-  // later tick cannot restart work or publish a round past the configured rounds.
-  app.dispatch(must(app.slot('Button','Reset interval','onClick'),'the interval binds Reset'),'0');
-  app.dispatch(must(app.slot('Button','Start interval','onClick'),'the interval restarts'),'0');
-  const lateLast=s().f_section_interval_last;
-  app.dispatch(intervalTick,String(lateLast+17000));
+  // A single tick spanning more than the whole interval also carries its overflow: completion is
+  // terminal and a later tick cannot restart work or publish a round past the configured rounds.
+  app.pressClock('Button','Reset interval',14000,wallOf(14000));
+  app.pressClock('Button','Start interval',15000,wallOf(15000));
+  app.clockPump(32000,wallOf(32000));
   assert.strictEqual(s().f_section_interval_phase,'done','a long tick completes the whole interval');
   assert.strictEqual(s().f_section_interval_focus_done,10,'the long tick credits every completed work phase once');
   assert.strictEqual(s().f_section_interval_round_value,2,'completion never advances past the configured rounds');
   assert.strictEqual(s().f_section_interval_running,false);
   const completedRound=s().f_section_interval_round_value;
-  app.dispatch(intervalTick,String(lateLast+34000));
+  app.clockPump(49000,wallOf(49000));
   assert.strictEqual(s().f_section_interval_phase,'done','a later tick keeps the interval complete');
   assert.strictEqual(s().f_section_interval_round_value,completedRound,'a later tick does not restart work');
-  // Pause, skip and reset: pause stops the interval, skipping work reaches rest, skipping the final
-  // round completes it without a final rest.
-  app.dispatch(must(app.slot('Button','Reset interval','onClick'),'the interval resets'),'0');
-  app.dispatch(must(app.slot('Button','Start interval','onClick'),'the interval starts'),'0');
-  app.dispatch(must(app.slot('Button','Pause interval','onClick'),'the interval pauses'),'0');
+  // Pause and resume: the paused interval counts nothing and the resumed run anchors at its own reading.
+  app.pressClock('Button','Reset interval',50000,wallOf(50000));
+  app.pressClock('Button','Start interval',51000,wallOf(51000));
+  app.clockPump(53000,wallOf(53000));
+  assert.strictEqual(s().f_section_interval_elapsed,2000,'the interval accumulates its monotone progress');
+  app.pressClock('Button','Pause interval',54000,wallOf(54000));
   assert.strictEqual(s().f_section_interval_running,false,'pause stops the interval');
-  app.dispatch(must(app.slot('Button','Start interval','onClick'),'the interval resumes'),'0');
-  app.dispatch(must(app.slot('Button','Skip interval','onClick'),'the interval skips work'),'0');
+  assert.strictEqual(s().f_section_interval_elapsed,3000,'pause counts the delta through its admitted reading');
+  assert.strictEqual(s().f_section_interval_anchor,-1,'pause clears the interval anchor');
+  app.clockPump(60000,wallOf(60000));
+  assert.strictEqual(s().f_section_interval_elapsed,3000,'a paused interval counts no elapsed');
+  app.pressClock('Button','Start interval',61000,wallOf(61000));
+  app.clockPump(62000,wallOf(62000));
+  assert.strictEqual(s().f_section_interval_elapsed,4000,'the resumed interval counts only resumed progress');
+  // Skip: skipping work reaches rest, skipping rest advances the round, and skipping the final work
+  // phase completes without a final rest. A skip re-baselines the run at the last admitted sample.
+  app.dispatch(must(app.slot('Button','Skip interval','onClick'),'the interval binds Skip'),'0');
   assert.strictEqual(s().f_section_interval_phase,'rest','skipping work reaches the rest phase');
+  assert.strictEqual(s().f_section_interval_elapsed,0);
+  assert.strictEqual(s().f_section_interval_anchor,s().f_section_interval_sample,'a skip re-baselines the running interval');
+  app.clockPump(63000,wallOf(63000));
+  assert.strictEqual(s().f_section_interval_elapsed,1000,'the rest phase counts its own progress');
   app.dispatch(must(app.slot('Button','Skip interval','onClick'),'the interval skips rest'),'0');
   assert.strictEqual(s().f_section_interval_phase,'work');
   assert.strictEqual(s().f_section_interval_round_value,2,'skipping rest advances the round');
   app.dispatch(must(app.slot('Button','Skip interval','onClick'),'the interval skips the last work phase'),'0');
   assert.strictEqual(s().f_section_interval_phase,'done','skipping the final round completes without a rest');
   assert.strictEqual(s().f_section_interval_running,false);
+  assert.strictEqual(s().f_section_interval_focus_done,0,'a skipped work phase credits nothing');
+  // A wall-clock step across an interval press advances the Session epoch and leaves elapsed on
+  // monotone progress, exactly as the countdown does.
+  app.pressClock('Button','Reset interval',64000,wallOf(64000));
+  app.pressClock('Button','Start interval',65000,wallOf(65000));
+  app.clockPump(66000,wallOf(66000));
+  step=step+3600000;
+  app.pressClock('Button','Pause interval',67000,wallOf(67000));
+  assert.strictEqual(s().f_section_interval_running,false,'a jumped pause stops the interval');
+  assert.strictEqual(s().f_section_interval_elapsed,2000,'a wall jump across a press adds only monotone progress');
+  assert.strictEqual(s().f_section_interval_clockEpoch,2,'a wall jump across an interval press advances the epoch');
+  assert.strictEqual(s().f_section_interval_clockTrust,false,'a wall jump across an interval press invalidates trust');
+  assert.strictEqual(s().f_section_interval_notice,jumped,'a wall jump across an interval press publishes its reason');
+  // Cold restore of the interval keeps its authoritative phase, round, elapsed and focus credits while
+  // resuming paused with every runtime sampling anchor cleared.
+  app.pressClock('Button','Reset interval',68000,wallOf(68000));
+  app.pressClock('Button','Start interval',69000,wallOf(69000));
+  app.clockPump(70000,wallOf(70000));
+  assert.strictEqual(s().f_section_interval_elapsed,1000,'the preserved interval counted its progress');
+  const intervalKeys=app.persistedKeys();
+  for(const runtime of ['sample','pending','wall','anchor','clockEpoch','clockTrust','notice','request'])
+    assert.strictEqual(intervalKeys.includes('f_section_interval_'+runtime),false,'interval runtime state is persisted: '+runtime);
+  app.reopen(app.persisted());
+  assert.strictEqual(s().f_section_interval_running,false,'cold restore resumes the interval paused');
+  assert.strictEqual(s().f_section_interval_phase,'work','cold restore keeps the authoritative phase');
+  assert.strictEqual(s().f_section_interval_round_value,1,'cold restore keeps the authoritative round');
+  assert.strictEqual(s().f_section_interval_elapsed,1000,'cold restore keeps the authoritative elapsed');
+  assert.strictEqual(s().f_section_interval_focus_done,0,'cold restore keeps the focus credits');
+  assert.strictEqual(s().f_section_interval_sample,-1,'cold restore clears the interval sampling reading');
+  assert.strictEqual(s().f_section_interval_pending,-1,'cold restore clears the interval prepared reading');
+  assert.strictEqual(s().f_section_interval_anchor,-1,'cold restore clears the interval anchor');
+  assert.strictEqual(s().f_section_interval_wall,-1,'cold restore clears the interval wall baseline');
+  assert.strictEqual(s().f_section_interval_clockEpoch,1,'cold restore starts a fresh interval epoch');
+  app.pressClock('Button','Start interval',200000,wallOf(200000));
+  app.clockPump(201000,wallOf(201000));
+  assert.strictEqual(s().f_section_interval_elapsed,2000,'a restored interval advances by admitted progress');
+  // A completed interval survives the cold restore as complete: every work phase was credited once, so
+  // a later admitted reading neither restarts work nor publishes a round past the configured rounds.
+  app.clockPump(212000,wallOf(212000));
+  assert.strictEqual(s().f_section_interval_phase,'done','the restored interval runs to completion');
+  assert.strictEqual(s().f_section_interval_focus_done,10,'the restored interval credits every work phase once');
+  const completedInterval=app.persisted();
+  app.reopen(completedInterval);
+  assert.strictEqual(s().f_section_interval_phase,'done','a completed interval stays complete across a cold restore');
+  assert.strictEqual(s().f_section_interval_focus_done,10,'a completed interval keeps its focus credits');
+  assert.strictEqual(s().f_section_interval_running,false,'a completed interval restores paused');
+  app.dispatch(must(app.slotBy('Ticker','id','section_interval_tick','onTick'),'the restored interval resolves its tick carrier'),String(wallOf(212000)+1000));
+  assert.strictEqual(s().f_section_interval_phase,'done','a completed interval keeps its terminal phase');
+  assert.strictEqual(s().f_section_interval_round_value,2,'a completed interval admits no later round');
  }
  if(localGroup==='reading') {
   assert.deepEqual(s().f_section_reading_band_uppers,[5,9,null],'unbounded bands retain null, not a numeric sentinel');
@@ -1219,11 +1483,17 @@ if(group==='all'||group==='issued-bodies') {
   // The issued rowMatches hides Beta even though the query is empty, which the default cannot do.
   assert.strictEqual(s().f_section_master_shown_0_display,true);
   assert.strictEqual(s().f_section_master_shown_1_display,false,'the issued rowMatches replaced the default body');
-  app.dispatch(must(app.slot('Button','Start','onClick'),'the issued timer binds Start'),'0');
-  const last=s().f_section_timer_last;
-  app.dispatch(must(app.slotBy('Ticker','id','timer','onTick'),'the issued timer binds its ticker'),String(last+1000));
+  // The emitted end body replaces the default one in place, on the one tick that reaches the preset.
+  const clockWall=1700000000000;
+  app.pressClock('Button','Start',1000,clockWall+1000);
+  assert.strictEqual(s().f_section_timer_running,true,'the issued timer binds Start through its driver');
+  app.clockPump(61000,clockWall+61000);
   assert.strictEqual(s().f_section_timer_running,false,'the issued end body ran');
   assert.strictEqual(s().f_section_timer_elapsed,0,'the issued end body cleared the elapsed time the default body keeps');
+  assert.strictEqual(s().f_section_timer_completed,true,'the issued end body ran on the completing transition');
+  app.clockPump(121000,clockWall+121000);
+  assert.strictEqual(s().f_section_timer_elapsed,0,'the issued end body runs once and does not refire');
+  assert.strictEqual(s().f_section_timer_running,false,'a later reading does not restart the completed run');
 }
 assert.equal(await transport.close(),0);
 console.log('catalogue group '+group+' passed');

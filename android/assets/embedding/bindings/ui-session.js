@@ -35,15 +35,22 @@ globalThis.mountDealUi = function(factories, entryId, persistedState = null, app
   const drivers = Array.isArray(clockDrivers) ? clockDrivers : [];
   // Cold restore normalization: a restored clock resumes paused with the runtime sampling anchors,
   // prepared reading and press intent cleared, while authoritative elapsed/completed are retained.
-  // The emitted hook is compiler-owned policy; this binding only applies it before mount.
-  const restoreName = drivers.length > 0 ? drivers[0].restore : null;
-  if (state !== null && typeof restoreName === 'string' && restoreName !== '') {
-    // A restored state always loads the compiled app module (a saved record without its issued roles is
-    // refused above and a prepared state carries no driver), so the hook comes from that one module
-    // cache and nominal identity is never duplicated. A missing hook fails closed.
-    const hook = app === null || app === undefined ? undefined : app[restoreName];
-    if (!hook || hook.$kind !== 'function') throw Error('Missing issued clock restore identity: ' + restoreName);
-    state = hook.$f(state);
+  // The emitted hook is compiler-owned policy; this binding only applies it before mount. A
+  // composition may carry several clock owners, so every distinct issued restore identity runs once:
+  // one owner's normalization never leaves another owner's clock running.
+  const restoreNames = drivers.map(driver => driver.restore).filter(name => typeof name === 'string' && name !== '');
+  if (state !== null) {
+    const applied = Object.create(null);
+    for (const restoreName of restoreNames) {
+      if (applied[restoreName]) continue;
+      applied[restoreName] = true;
+      // A restored state always loads the compiled app module (a saved record without its issued roles
+      // is refused above and a prepared state carries no driver), so the hook comes from that one
+      // module cache and nominal identity is never duplicated. A missing hook fails closed.
+      const hook = app === null || app === undefined ? undefined : app[restoreName];
+      if (!hook || hook.$kind !== 'function') throw Error('Missing issued clock restore identity: ' + restoreName);
+      state = hook.$f(state);
+    }
   }
   const restored = state === null ? null : codec.encode(state);
   // Decorate only the tree-producing ABI calls; the pinned Session remains the sole store,

@@ -26,7 +26,9 @@ def run(command, **kwargs):
     bound=kwargs.pop('seconds',PAIR_COMPILE_SECONDS if lane else lane_bounds.ASSERTION)
     before=time.monotonic()
     try: return bounded_run(command, timeout=bound, **kwargs)
-    finally: print(f'composer stage {lane}{command[0]} {command[-1]}: {time.monotonic()-before:.2f}s',flush=True)
+    finally:
+        drive=command[4] if command[0]=='node' and len(command)>5 else command[-1]
+        print(f'composer stage {lane}{command[0]} {drive}: {time.monotonic()-before:.2f}s',flush=True)
 root=pathlib.Path(__file__).resolve().parents[2]
 deal=pathlib.Path(os.environ.get('DEAL_ROOT',root/'dependencies/deal')).resolve()
 deal_ui=pathlib.Path(os.environ.get('DEAL_UI_ROOT',root/'dependencies/deal-ui')).resolve()
@@ -82,7 +84,7 @@ else:
         run(['java','-cp',str(classes)+':'+cp,name],check=True)
     # The complete default executes every group, each with its own unchanged bound.
     for group in ([args.group] if args.group else GROUPS):
-        run(['node',str(root/'tests/tools/test-composer.js'),str(stage),str(classes)+':'+cp,group],check=True)
+        run(['node',str(root/'tests/tools/test-composer.js'),str(stage),str(classes)+':'+cp,group,str(lane_bounds.COMPOSER_SETTLE*1000)],check=True)
     if args.group:
         # Receipts authorize only a frozen fixture snapshot, never skip assertions.
         group_record=stage/('group-'+args.group+'.json')

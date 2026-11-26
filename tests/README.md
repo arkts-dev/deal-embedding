@@ -40,9 +40,9 @@ harness, and the boundary matrix still runs on every invocation.
 ```
 
 One lane per invocation, a **per-lane command-tree bound** (40 seconds by default; the catalogue and
-composer lanes take 200-600 seconds because their cold compiler preparation and assertion stages are
+composer lanes take 200-1000 seconds because their cold compiler preparation and assertion stages are
 larger, the renderer-rules lane takes 120 seconds because it compiles its JVM harness first (measured
-34.8 s, 33 s of it compilation), the stage-orchestration lane takes 300 seconds because its inner fake-build caps sum to 280 s, the
+34.8 s, 33 s of it compilation), the stage-orchestration lane takes 430 seconds because its inner fake-build caps sum to 412 s, the
 cache-control lane takes 800 seconds because its fake harness caps sum to 745 s, a
 `build:`/`isolation:` lane takes its stage's own declared bound plus 30/60 seconds, and a `boundary:`
 or `boundary-plan` lane takes the standalone proof's declared bound), no automatic broad gate or build.
@@ -76,7 +76,7 @@ Selected build stages require validated predecessors, not merely existing direct
 preparation retains its own isolated outputs, never canonical compiled outputs; final digest comparison,
 input auditing and negative controls remain mandatory. Demo proofs validate APK output content too.
 Library/composer/construction/catalogue caches store compiler artifacts only; assertions run on every check.
-Seams are selectable, hold the common lock and default to 300 seconds per owning test, because a mutated
+Seams are selectable, hold the common lock and default to 420 seconds per owning test, because a mutated
 source makes the owning test recompile cold; a seam may name a smaller bound and `--seconds` raises the
 ceiling for one run, so no control outlives the bound the run allows; infrastructure
 exit/timeout never counts as an observed broken rule. Interrupted mutation journals remain recoverable.
@@ -186,10 +186,11 @@ configures the frozen contracts on the host sandbox, and drives each control thr
 against a stubbed adapter, so the dispatch, the recorded pending attempt and the reply reconciliation are
 executed rather than inspected.
 These four Python harnesses check dependency pins and take the repository build lock (busy exit 75).
-Each subprocess tree is bounded (normally 45 seconds, the construction-contract lane 90 seconds, the
-catalogue contract lane 90 seconds, the interaction lane 90 seconds, the Surface-script lane 120 seconds, the
-catalogue runtime lane 150 seconds per section group and 600 seconds for the `all` and `local` bundles,
-one composer pair's compiler call 120 seconds since three of them share the host, and a cold fixture
+Each subprocess tree is bounded (normally 90 seconds, the construction-contract lane 180 seconds, the
+catalogue contract lane 180 seconds, the interaction lane 180 seconds, the Surface-script lane 240 seconds,
+the catalogue runtime lane 300 seconds per section group and 1200 seconds for the `all` and `local` bundles,
+one composer group's settle deadline 120 seconds, the constructive Food/Equipment lane 360 seconds,
+one composer pair's compiler call 120 seconds, and a cold fixture
 module graph 120 seconds);
 timeouts fail, and terminate descendant JVMs too. Those bounds and the shared preparation bounds are
 declared once in `tests/tools/lane_bounds.py` and `tests/tools/host_check.py`, which the harnesses pass to

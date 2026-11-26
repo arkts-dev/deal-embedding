@@ -996,11 +996,13 @@ export async function assembleWith(composition: screens.Composition, computation
       readings[readings.length] = carrier;
     }
   }
-  // One Session-local clock trust identity per composition: every issued clock driver names these same
-  // two compiled runtime fields, and the expiry driver consumes them through this metadata.
+  // One Session-local clock trust identity is published per composition and every issued driver names
+  // its own compiled epoch/trust pair and its own resume carrier: a plan clock part shares one pair
+  // across its own clocks, while independent owners (catalogue timer sections) each carry theirs. The
+  // published identity names the first issued driver; admission re-derives that it names an issued one.
   let sessionClock: SessionClock = {epoch:"",trust:"",resume:""};
   if (clockDrivers.length > 0) { sessionClock = {epoch:(clockDrivers[0] as screens.Driver).epoch,trust:(clockDrivers[0] as screens.Driver).trust,resume:(clockDrivers[0] as screens.Driver).resume}; }
-  for (let driver of clockDrivers) { if (driver.epoch !== sessionClock.epoch || driver.trust !== sessionClock.trust) { s.reject("Clock drivers disagree about the Session clock identity: "+driver.need); } if (driver.resume !== sessionClock.resume) { s.reject("Clock drivers disagree about the Session resume identity: "+driver.need); } }
+  for (let driver of clockDrivers) { if (driver.epoch.trim() === "" || driver.trust.trim() === "" || driver.resume.trim() === "") { s.reject("Clock driver without its Session clock identity: "+driver.need); } }
   // Composite actions are synchronous transactions, not asynchronous effect chains: one
   // composition-scope nominal identity with per-arm payloads whose ordered owner reducers run against
   // one candidate, followed by a single recompute/validate and one commit. No arm commits and no

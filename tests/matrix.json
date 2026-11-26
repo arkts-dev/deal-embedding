@@ -2125,11 +2125,17 @@
       "requirement": "Catalogue kind timer: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
       "status": "covered",
       "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
-      "evidence": "timer decodes one to six presets, pauses at zero, selects a preset, starts/pauses/resets, reports elapsed from tick deltas and runs the whenFinished end body once at the preset.",
+      "evidence": "timer decodes one to six presets, pauses at zero, selects a preset and starts/pauses/resets through its issued private monotone driver: the host publishes the prepared monotone sample and admits the control with the wall reading taken for the same pair, so elapsed advances only by admitted monotone progress and never by a scheduled interval. A forwarded or backward wall-clock step advances the Session trust epoch with its located reason without shortening or extending the run, a detached renderer never stops the driver, a delta past the binary64 addition boundary clamps at the preset, the whenFinished end body runs once, and a cold restore resumes paused with the runtime sampling anchors cleared while the authoritative elapsed is retained and a completed run stays completed instead of running its end body again. A saved composition is serialized, decoded by the same module and reassembled with every issued driver, ticker, restore, epoch and trust identity intact.",
       "asserts": [
         "pause stops the timer",
         "reset clears the elapsed time while paused",
-        "the end body runs once and does not refire"
+        "the end body runs once and does not refire",
+        "a detached renderer does not stop the driver",
+        "a backwards wall reading advances the Session epoch",
+        "an overflowing delta clamps at the preset duration",
+        "cold restore resumes the timer paused",
+        "a completed timer stays completed across a cold restore",
+        "a saved composition round-trips its private clock drivers"
       ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
@@ -2606,7 +2612,7 @@
       "requirement": "Catalogue kind interval_timer: parameter decode, row bounds, initialization, transitions, published and read ports and holes exactly as the spec row.",
       "status": "covered",
       "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
-      "evidence": "interval_timer runs work and rest rounds, credits completed work seconds, has no final rest, carries a long tick across phase boundaries, completes a single tick that spans the whole interval, keeps completion terminal so a later tick cannot restart work or publish a round past the configured rounds, and implements start/pause/skip/reset including skipping work to rest, skipping rest to the next round and skipping the final work phase to completion.",
+      "evidence": "interval_timer runs work and rest rounds through its issued private monotone driver: elapsed advances only by admitted monotone progress, a coalesced tick carries its overflow across phase boundaries, credits completed work seconds, has no final rest and keeps completion terminal so a later tick cannot restart work or publish a round past the configured rounds. Start/pause/reset are admitted with the paired reading the host prepared for that press, a skip re-baselines the running phase at the last admitted sample without crediting skipped time, a wall-clock step across a press advances the Session trust epoch with its located reason, and a cold restore resumes paused with the authoritative phase, round, elapsed and focus credits retained and every runtime sampling anchor cleared, so an already complete interval keeps its terminal phase and credits.",
       "asserts": [
         "the final round finishes without a final rest",
         "a completed work phase credits its seconds",
@@ -2615,8 +2621,12 @@
         "a later tick does not restart work",
         "pause stops the interval",
         "skipping work reaches the rest phase",
-        "skipping the final round completes without a rest"
-      ],
+        "skipping the final round completes without a rest",
+        "a skip re-baselines the running interval",
+        "a wall jump across an interval press advances the epoch",
+        "cold restore resumes the interval paused",
+        "a completed interval stays complete across a cold restore",
+        "a saved composition round-trips its private clock drivers"      ],
       "sources": [
         "tests/tools/fixtures/catalogue-contracts.deal",
         "tests/tools/test-catalogue.js",

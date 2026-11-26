@@ -37,7 +37,10 @@ export class Projection { composition: Composition; notices: string[]; }
 class WireLayout { kind:string; positions?:Position[]; }
 class WirePort { name:string; type:string; direction:string; getter:string; optional?:boolean; fallback?:string; }
 class WireFragment { declarations:string; fields:Field[]; updates:Handler[]; effects:Handler[]; helpers:string; view:string; options:Record<string, unknown>[]; content:Record<string, unknown>[]; ports:WirePort[]; holes:Record<string, unknown>[]; covers:string[]; owns:string[]; }
-class WireInstance { id:string; kind:string; origin:string; parameters:Record<string, unknown>; fragment:WireFragment; bodies:Record<string, unknown>; position?:string; definition?:WireDefinition; }
+// The private clock driver and reading carrier an issued instance may carry are compiler metadata:
+// they are optional on a supplied composition and are re-derived by admission for a fresh candidate.
+class WireDriver { need:string; sample:string; tick:string; start:string; pause:string; reset:string; resume:string; request:string; running:string; restore:string; epoch:string; trust:string; intervalMs:number; }
+class WireInstance { id:string; kind:string; origin:string; parameters:Record<string, unknown>; fragment:WireFragment; bodies:Record<string, unknown>; position?:string; definition?:WireDefinition; drivers?:WireDriver[]; readings?:string[]; }
 class WireSlot { id:string; need:string; reads:string[]; writes:string[]; event?:string; trigger?:string; action?:string; provider:boolean; allowedKinds:string[]; valueType?:string; status:string; instance:string|null; reason:string; }
 class WireScreen { title:string; target:string; layout:WireLayout; slots:WireSlot[]; instances:WireInstance[]; }
 class WireDefinitionField { name:string; type:string; role:string; initial:string; }
@@ -232,6 +235,16 @@ function instance(value: WireInstance, needIds: string[], catalogue: string[], i
   // without one cannot prove that its fragment implements the issued declaration.
   if (Object.hasOwn(value,"definition")) { entry.definition = definition(value.definition as WireDefinition); }
   else if (entry.origin === "catalogue" || entry.origin === "part") { s.reject("Missing issued definition: "+entry.id); }
+  // The private driver and reading-carrier metadata an issued instance carries is decoded with the
+  // same closed shape the composer issued, so a supplied composition can round-trip it unchanged.
+  if (Object.hasOwn(value,"drivers")) {
+    let drivers: Driver[] = [];
+    for (let raw of value.drivers as WireDriver[]) {
+      drivers[drivers.length] = {need:s.identifier(raw.need),sample:s.identifier(raw.sample),tick:s.identifier(raw.tick),start:s.identifier(raw.start),pause:s.identifier(raw.pause),reset:s.identifier(raw.reset),resume:s.identifier(raw.resume),request:s.identifier(raw.request),running:s.identifier(raw.running),restore:s.text(raw.restore),epoch:s.identifier(raw.epoch),trust:s.identifier(raw.trust),intervalMs:s.finite(raw.intervalMs)};
+    }
+    entry.drivers = drivers;
+  }
+  if (Object.hasOwn(value,"readings")) { entry.readings = s.stringArray(value.readings as string[]); }
   let declaredConflict: string = conflict(entry);
   if (declaredConflict !== "") { s.reject(declaredConflict); }
   for (let cover of entry.fragment.covers) { if (!s.contains(needIds,cover)) { s.reject("Unissued fragment coverage"); } }
@@ -273,6 +286,15 @@ function wireInstance(value: Instance): WireInstance {
   let entry: WireInstance = {id:value.id,kind:value.kind,origin:value.origin,parameters:value.parameters,fragment:wireFragment(value.fragment),bodies:bodies};
   if (Object.hasOwn(value,"position")) { entry.position = value.position as string; }
   if (Object.hasOwn(value,"definition")) { entry.definition = wireDefinition(value.definition as Definition); }
+  // The private driver and reading-carrier metadata an issued instance carries is encoded with the same
+  // closed shape the decode reads, so a saved or edited composition keeps the scheduling facts the host
+  // resolves from the rendered tree instead of re-issuing a clock nothing can schedule.
+  if (Object.hasOwn(value,"drivers")) {
+    let drivers: WireDriver[] = [];
+    for (let driver of value.drivers as Driver[]) { drivers[drivers.length] = {need:driver.need,sample:driver.sample,tick:driver.tick,start:driver.start,pause:driver.pause,reset:driver.reset,resume:driver.resume,request:driver.request,running:driver.running,restore:driver.restore,epoch:driver.epoch,trust:driver.trust,intervalMs:driver.intervalMs}; }
+    entry.drivers = drivers;
+  }
+  if (Object.hasOwn(value,"readings")) { entry.readings = value.readings as string[]; }
   return entry;
 }
 export function encode(composition: Composition): string {

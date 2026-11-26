@@ -14,6 +14,7 @@ import pathlib
 import shutil
 
 from host_check import prepare, run, compile_fixture
+import lane_bounds
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 lock = prepare(ROOT)
@@ -41,4 +42,4 @@ for path in (ROOT / 'core/host').glob('*.d.deal'):
 classes = STAGE / 'classes'
 library = str(ROOT / 'build/embedding-library/classes')
 compile_fixture(ROOT, STAGE, DEAL, [*[ROOT / 'tools' / f'{name}.java' for name in ('FragmentSyntax', 'FragmentRegions', 'FragmentQualifier', 'FragmentAnalysis', 'FragmentMechanisms', 'PayloadConsumption')], ROOT / 'tests/tools/fixtures/CompileComposer.java'])
-run(['node', str(ROOT / 'tests/tools/test-constructive-runtime.js'), str(STAGE), str(classes) + ':' + library], check=True, timeout=180)
+run(['node', str(ROOT / 'tests/tools/test-constructive-runtime.js'), str(STAGE), str(classes) + ':' + library], check=True, timeout=lane_bounds.CONSTRUCTIVE_NODE)

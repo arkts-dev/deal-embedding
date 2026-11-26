@@ -6,6 +6,7 @@ import * as identity from "embedding/construction-identity";
 import * as syntax from "embedding/fragment-syntax";
 import * as bindings from "./bindings";
 import * as composer from "./composer";
+import * as parts from "./parts";
 import * as s from "./construction-schema";
 import * as disclosure from "./disclosure";
 import * as tables from "std/table";
@@ -815,6 +816,49 @@ function publishPort(name: string, type: string): screens.Port { return {name:na
 function readerPort(name: string, type: string, fallback: string): screens.Port { return {name:name,type:type,direction:"read",getter:name,optional:true,fallback:fallback}; }
 function requiredReader(name: string, type: string): screens.Port { return {name:name,type:type,direction:"read",getter:name,optional:false}; }
 function handler(action: string, name: string): screens.Handler { return {action:action,function:name}; }
+// A catalogue clock runs on the same private Session driver as a plan clock part: the host samples its
+// monotone and wall adapter readings together for every admitted action, and compiled policy decides
+// elapsed, completion and wall-clock trust from that one pair. The renderer Ticker is only a carrier
+// the driver resolves by its issued identity, never the clock's scheduling authority, so detachment
+// from the renderer never stops the run and no scheduled interval stands in for a missing sample.
+// The sampling anchor, prepared reading, press intent, wall baseline, diagnostic and forwarder are
+// runtime-only state: they are never persisted and a cold restore clears them.
+function clockInterval(): number { return 250; }
+// The tolerance covers several driver intervals, so a delayed or coalesced host callback whose wall and
+// monotone readings moved together is not reported as a wall-clock jump.
+function clockTolerance(): number { return 2000; }
+function clockRuntimeFields(id: string, fields: screens.Field[]): void {
+  fields[fields.length] = {name:"sample",type:"number",role:"runtime",dependencies:[],initial:"-1",owner:id};
+  fields[fields.length] = {name:"pending",type:"number",role:"runtime",dependencies:[],initial:"-1",owner:id};
+  fields[fields.length] = {name:"wall",type:"number",role:"runtime",dependencies:[],initial:"-1",owner:id};
+  fields[fields.length] = {name:"anchor",type:"number",role:"runtime",dependencies:[],initial:"-1",owner:id};
+  fields[fields.length] = {name:"clockEpoch",type:"number",role:"runtime",dependencies:[],initial:"0",owner:id};
+  fields[fields.length] = {name:"clockTrust",type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:id};
+  fields[fields.length] = {name:"notice",type:"string",role:"runtime",dependencies:[],initial:"\"\"",owner:id};
+  fields[fields.length] = {name:"request",type:"number",role:"runtime",dependencies:[],initial:"0",owner:id};
+}
+// One issued private driver per clock instance: the ticker identities the Session resolves from the
+// rendered tree, the local press-intent and running fields it reads, the Session epoch and trust
+// fields compiled policy advances, and the host scheduling interval. The composer qualifies the state
+// fields and the restore identity; nothing here is model-supplied.
+function clockDriver(id: string): screens.Driver {
+  return {need:id,sample:id+"_sample",tick:id+"_tick",start:id+"_start",pause:id+"_pause",reset:id+"_reset",resume:id+"_resume",request:"request",running:"running",restore:"",epoch:"clockEpoch",trust:"clockTrust",intervalMs:clockInterval()};
+}
+// The paired reading every admitted press carries: the prepared monotone sample is the press's own
+// reading, the wall reading was taken with the same sample, and a retreat, an undecidable reading or a
+// wall step beyond tolerance advances the Session trust epoch with its located reason instead of
+// anchoring the run at a stale reading.
+function clockPressReading(previous: string): string {
+  let tolerance: string = String(clockTolerance());
+  return "let raw: number = state.pending; let undecidable: boolean = clockPressUndecidable(raw); let settled: boolean = undecidable || clockRetreated(state.sample, raw); let at: number = clockPrepared(state.sample, raw); let rawWall: number = action.wall; let wall: number = clockWallValue(state.wall, action.wall); let epoch: number = settled ? state.clockEpoch+1 : clockEpochNext(state.clockEpoch, state.wall, state.sample, rawWall, at, "+tolerance+"); let trust: boolean = settled ? false : clockTrustNext(state.clockEpoch, epoch, rawWall, at); let notice: string = undecidable ? \"Clock reading is undecidable; wall-clock trust is invalid and elapsed follows monotone progress\" : (settled ? \"Clock reading retreated; elapsed follows monotone progress\" : clockNoticeNow("+previous+", true, false, rawWall, state.wall, at, state.sample, "+tolerance+"));";
+}
+// The paired reading an admitted tick carries: elapsed advances by the real monotone delta, never by a
+// scheduled interval, and a wall step between two ticks advances the trust epoch while leaving elapsed
+// on monotone progress.
+function clockTickReading(completed: string): string {
+  let tolerance: string = String(clockTolerance());
+  return "let at: number = clockPrepared(state.sample, state.pending); let retreated: boolean = clockRetreated(state.sample, state.pending); let rawWall: number = action.wall; let wall: number = clockWallValue(state.wall, action.wall); let epoch: number = retreated ? state.clockEpoch+1 : clockEpochNext(state.clockEpoch, state.wall, state.sample, rawWall, at, "+tolerance+"); let trust: boolean = retreated ? false : clockTrustNext(state.clockEpoch, epoch, rawWall, at); let notice: string = retreated ? \"Clock reading retreated; elapsed follows admitted monotone progress\" : clockNoticeNow(state.notice, true, "+completed+", rawWall, state.wall, at, state.sample, "+tolerance+");";
+}
 // A hole definition is issued with the instance as plain record data, so the assembly boundary can
 // read its identity, signature, default body and writer without a second nominal class.
 function holeRecord(declared: HoleDecl): Record<string, unknown> { return {id:declared.id,signature:declared.signature,purpose:declared.purpose,body:declared.body,writer:declared.writer,requires:declared.requires}; }
@@ -907,6 +951,9 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     if (!Object.hasOwn(parameters,parameter.name)) { s.reject("Missing required owner value: "+entry.need+" "+kind+" "+parameter.name); }
   }
   let fields: screens.Field[] = []; let updates: screens.Handler[] = []; let effects: screens.Handler[] = []; let ports: screens.Port[] = []; let holes: Record<string, unknown>[] = []; let helpers: string = ""; let declarations: string = "";
+  // The private clock machinery is emitted once per instance that carries a clock, and the driver
+  // metadata is carried on the instance so the composer issues it as compiler metadata.
+  let clockEmitted: boolean = false; let drivers: screens.Driver[] = [];
   let body: string = ""; let title: string = s.text(parameters.title); if (title !== "") { body = body+"ui.Text(text: "+await literal(title,"string")+")"; }
   let subtitle: string = s.text(parameters.subtitle); if (subtitle !== "") { body = body+"ui.Text(text: "+await literal(subtitle,"string")+")"; }
   if (kind === "note" || kind === "filter_box") {
@@ -1001,18 +1048,54 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     fields[fields.length] = authoredField(id,"preset","number","0");
     fields[fields.length] = authoredField(id,"elapsed","number","0");
     fields[fields.length] = authoredField(id,"running","boolean","false");
-    fields[fields.length] = authoredField(id,"last","number","0");
+    // Completion is authoritative and exactly once: a stopped run admits no second end body even when a
+    // queued or later reading still reaches the tick reducer, and a start after completion clears both.
+    fields[fields.length] = authoredField(id,"completed","boolean","false");
+    clockRuntimeFields(id,fields);
     fields[fields.length] = derivedField(id,"seconds","number");
-    declarations = declarations+"export class Choose { index: number; } export class Start { value: number; } export class Pause { value: number; } export class Reset { value: number; } export class Tick { now: number; }";    updates[updates.length] = handler("Choose","choose"); updates[updates.length] = handler("Start","start"); updates[updates.length] = handler("Pause","pause"); updates[updates.length] = handler("Reset","reset"); updates[updates.length] = handler("Tick","tick");
-    helpers = helpers+"export function choose(state: AppState, action: Choose): AppState { if (state.running) { return state; } if (action.index < 0 || action.index >= state.preset_labels.length) { return state; } return {preset: action.index, elapsed: 0, last: 0}; }";
-    helpers = helpers+"export function start(state: AppState, action: Start): AppState { if (state.running) { return state; } if (state.elapsed >= state.durations[state.preset]) { return {running: true, elapsed: 0, last: embeddingClock.nowMillis()}; } return {running: true, last: embeddingClock.nowMillis()}; }";
-    helpers = helpers+"export function pause(state: AppState, action: Pause): AppState { if (!state.running) { return state; } return {running: false, last: 0}; }";
-    helpers = helpers+"export function reset(state: AppState, action: Reset): AppState { if (state.running) { return state; } return {elapsed: 0, last: 0}; }";
-    // Completion pauses at the preset and runs the end body once: the state handed to the hole is
-    // already stopped, so the default body leaves a paused timer that cannot fire again.
-    helpers = helpers+"export function stopped(state: AppState): AppState { return {running: false, elapsed: state.durations[state.preset], last: state.last}; }";
-    helpers = helpers+"export function tick(state: AppState, action: Tick): AppState { if (!state.running) { return state; } if (!(action.now >= state.last)) { return state; } let delta: number = action.now-state.last; let elapsed: number = state.elapsed+delta; if (!(elapsed >= state.elapsed)) { return state; } if (elapsed < state.durations[state.preset]) { return {elapsed: elapsed, last: action.now}; } return whenFinished(stopped(state)); }";
-    body = body+"ui.Select(labels: state.preset_labels, selected: state.preset, onChange: action app.Choose {index: payload}) ui.NumberText(value: state.seconds_display) ui.Button(text: \"Start\", enabled: !state.running, onClick: action app.Start {value: payload}) ui.Button(text: \"Pause\", enabled: state.running, onClick: action app.Pause {value: payload}) ui.Button(text: \"Reset\", enabled: !state.running, onClick: action app.Reset {value: payload}) ui.Ticker(id: \"timer\", intervalMs: 250, running: state.running, onTick: action app.Tick {now: payload})";
+    declarations = declarations+"export class Choose { index: number; } export class ReadyTimer { at: number; } export class PressTimer { kind: number; } export class StartTimer { wall: number; } export class PauseTimer { wall: number; } export class ResetTimer { wall: number; } export class TickTimer { wall: number; } export class ResumeTimer { at: number; }";
+    updates[updates.length] = handler("Choose","choose");
+    updates[updates.length] = handler("ReadyTimer","readyTimer");
+    updates[updates.length] = handler("PressTimer","pressTimer");
+    updates[updates.length] = handler("StartTimer","startTimer");
+    updates[updates.length] = handler("PauseTimer","pauseTimer");
+    updates[updates.length] = handler("ResetTimer","resetTimer");
+    updates[updates.length] = handler("TickTimer","tickTimer");
+    updates[updates.length] = handler("ResumeTimer","resumeTimer");
+    if (!clockEmitted) { helpers = helpers+parts.clockHelpers(); clockEmitted = true; }
+    helpers = helpers+"export function choose(state: AppState, action: Choose): AppState { if (state.running) { return state; } if (action.index < 0 || action.index >= state.preset_labels.length) { return state; } return {preset: action.index, elapsed: 0, completed: false, anchor: -1, request: 0}; }";
+    // A press records only its intent; the private driver admits the real control with the paired
+    // reading taken immediately before it, so a boundary delta is never a stale periodic sample.
+    helpers = helpers+"export function pressTimer(state: AppState, action: PressTimer): AppState { if (action.kind === 1 || action.kind === 2 || action.kind === 3) { return {request: action.kind}; } return {request: 0}; }";
+    helpers = helpers+"export function readyTimer(state: AppState, action: ReadyTimer): AppState { return {pending: action.at}; }";
+    helpers = helpers+"export function startTimer(state: AppState, action: StartTimer): AppState { let raw: number = state.pending; if (clockStartRefused(state.sample, raw)) { return {request: 0, pending: -1, clockEpoch: state.clockEpoch+1, clockTrust: false, notice: \"Clock reading is undecidable or retreated; the start was refused and elapsed follows admitted monotone progress\"}; } if (!clockStartAllowed(state.running, true, raw)) { return {request: 0, pending: raw}; } let at: number = raw; let rawWall: number = action.wall; let wall: number = clockWallValue(state.wall, action.wall); let epoch: number = clockEpochNext(state.clockEpoch, state.wall, state.sample, rawWall, at, "+String(clockTolerance())+"); return {elapsed: clockStartElapsed(state.elapsed >= state.durations[state.preset], state.elapsed), running: true, completed: false, anchor: at, sample: at, pending: at, wall: wall, clockEpoch: epoch, clockTrust: clockTrustNext(state.clockEpoch, epoch, rawWall, at), notice: clockNoticeNow(state.notice, true, false, rawWall, state.wall, at, state.sample, "+String(clockTolerance())+"), request: 0}; }";
+    helpers = helpers+"export function pauseTimer(state: AppState, action: PauseTimer): AppState { "+clockPressReading("state.notice")+" if (!state.running) { return {request: 0}; } let advanced: number = clockCapped(true, true, state.elapsed + clockAdvance(true, state.completed, state.anchor, at), state.durations[state.preset]); return {elapsed: advanced, running: false, completed: clockCompleted(state.completed, true, true, advanced, state.durations[state.preset]), anchor: -1, sample: at, pending: at, wall: wall, clockEpoch: epoch, clockTrust: trust, notice: notice, request: 0}; }";
+    helpers = helpers+"export function resetTimer(state: AppState, action: ResetTimer): AppState { "+clockPressReading("\"\"")+" return {elapsed: 0, running: false, completed: false, anchor: -1, sample: at, pending: at, wall: wall, clockEpoch: epoch, clockTrust: trust, notice: notice, request: 0}; }";
+    // A tick advances by the real monotone delta, clamps elapsed at the preset and runs the end body on
+    // the one transition that reaches it; a later reading of a completed run changes no business state.
+    helpers = helpers+"export function tickTimer(state: AppState, action: TickTimer): AppState { "+clockTickReading("state.completed")+" if (!state.running) { return {request: state.request}; } if (state.completed) { return {request: state.request}; } let advanced: number = clockCapped(true, true, state.elapsed + clockAdvance(true, state.completed, state.anchor, at), state.durations[state.preset]); if (clockCompleted(state.completed, true, true, advanced, state.durations[state.preset])) { return whenFinished({elapsed: state.durations[state.preset], running: false, completed: true, anchor: -1, sample: at, pending: at, wall: wall, clockEpoch: epoch, clockTrust: trust, notice: notice, request: state.request}); } return {elapsed: advanced, running: clockRunning(true, true, advanced, state.durations[state.preset]), completed: false, anchor: clockAnchor(true, state.completed, state.anchor, at), clockEpoch: epoch, clockTrust: trust, notice: notice, sample: at, pending: at, wall: wall}; }";
+    // A Session resume keeps the authoritative run and anchors it at the reading the host took for the
+    // resume, so the suspended interval is never counted and the epoch before it is never re-trusted.
+    helpers = helpers+"export function resumeTimer(state: AppState, action: ResumeTimer): AppState { return {anchor: clockResumeAnchor(state.sample, action.at), sample: clockResumeAnchor(state.sample, action.at), pending: clockResumeAnchor(state.sample, action.at), wall: -1, notice: clockResumeNotice(state.sample, action.at), request: 0, clockEpoch: state.clockEpoch+1, clockTrust: false}; }";
+    // Cold restore resumes the timer paused with its authoritative elapsed and completion retained and
+    // every runtime sampling anchor, prepared reading, press intent, wall baseline and diagnostic
+    // cleared. The Session epoch advances so evidence captured before the restore is stale.
+    helpers = helpers+"export function restorePaused(state: AppState): AppState { return {running: false, anchor: -1, sample: -1, pending: -1, wall: -1, notice: \"\", request: 0, clockEpoch: state.clockEpoch+1, clockTrust: false}; } export function restore(state: AppState): AppState { return recompute(restorePaused(state)); }";
+    let presetChoice: string = "ui.Select(labels: state.preset_labels, selected: state.preset, onChange: action app.Choose {index: payload}) ui.NumberText(value: state.seconds_display)";
+    let controls: string = "ui.Button(text: \"Start\", enabled: !state.running, value: 1, onClick: action app.PressTimer {kind: payload}) ui.Button(text: \"Pause\", enabled: state.running, value: 2, onClick: action app.PressTimer {kind: payload}) ui.Button(text: \"Reset\", enabled: !state.running, value: 3, onClick: action app.PressTimer {kind: payload})";
+    body = body+presetChoice+controls;
+    // Driver carriers: the private Session driver resolves these issued identities from the rendered
+    // tree and dispatches the prepared paired reading. They never run from a renderer event, so no
+    // renderer Ticker schedules this clock.
+    body = body+"ui.Ticker(id: "+s.encode(id+"_sample")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.ReadyTimer {at: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_tick")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.TickTimer {wall: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_start")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.StartTimer {wall: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_pause")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.PauseTimer {wall: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_reset")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.ResetTimer {wall: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_resume")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.ResumeTimer {at: payload})";
+    // An uncertain reading must be visible as a located diagnostic, not just bookkeeping.
+    body = body+"When(state.notice !== \"\") {ui.Text(text: state.notice, style: \"muted\")}";
+    drivers[drivers.length] = clockDriver(id);
     holes[holes.length] = holeRecord(whenFinished());
   } else if (kind === "progress_goal") {
     let goal: number = s.finite(parameters.goal); let step: number = s.finite(parameters.step);
@@ -1439,27 +1522,47 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     if (workSeconds <= 0 || restSeconds <= 0 || roundsValue <= 0) { s.reject("Catalogue interval bounds"); }
     fields[fields.length] = authoredField(id,"phase","string","\"work\""); fields[fields.length] = authoredField(id,"round_value","number","1");
     fields[fields.length] = authoredField(id,"elapsed","number","0"); fields[fields.length] = authoredField(id,"running","boolean","false");
-    fields[fields.length] = authoredField(id,"last","number","0");
     fields[fields.length] = authoredField(id,"focus_done","number","0");
+    clockRuntimeFields(id,fields);
     fields[fields.length] = derivedField(id,"round","number"); fields[fields.length] = derivedField(id,"focus_seconds_done","number"); fields[fields.length] = derivedField(id,"seconds","number");
     ports[ports.length] = publishPort("round","number"); ports[ports.length] = publishPort("focus_seconds_done","number");
-    declarations = declarations+"export class StartInterval { value: number; } export class PauseInterval { value: number; } export class SkipInterval { value: number; } export class ResetInterval { value: number; } export class IntervalTick { now: number; }";
+    declarations = declarations+"export class ReadyInterval { at: number; } export class PressInterval { kind: number; } export class StartInterval { wall: number; } export class PauseInterval { wall: number; } export class SkipInterval { value: number; } export class ResetInterval { wall: number; } export class IntervalTick { wall: number; } export class ResumeInterval { at: number; } export class IntervalWalk { phase: string; round: number; elapsed: number; focus: number; }";
+    updates[updates.length] = handler("ReadyInterval","readyInterval"); updates[updates.length] = handler("PressInterval","pressInterval");
     updates[updates.length] = handler("StartInterval","startInterval"); updates[updates.length] = handler("PauseInterval","pauseInterval");
     updates[updates.length] = handler("SkipInterval","skipInterval"); updates[updates.length] = handler("ResetInterval","resetInterval");
-    updates[updates.length] = handler("IntervalTick","intervalTick");
-    helpers = helpers+"export function startInterval(state: AppState, action: StartInterval): AppState { if (state.running) { return state; } return {running: true, last: embeddingClock.nowMillis()}; }";
-    helpers = helpers+"export function pauseInterval(state: AppState, action: PauseInterval): AppState { if (!state.running) { return state; } return {running: false, last: 0}; }";
-    helpers = helpers+"export function resetInterval(state: AppState, action: ResetInterval): AppState { if (state.running) { return state; } return {phase: \"work\", round_value: 1, elapsed: 0, last: 0, focus_done: 0}; }";
-    helpers = helpers+"export function skipInterval(state: AppState, action: SkipInterval): AppState { if (state.phase === \"work\") { if (state.round_value >= "+String(roundsValue)+") { return {phase: \"done\", elapsed: 0, running: false}; } return {phase: \"rest\", elapsed: 0}; } if (state.phase === \"rest\") { return {phase: \"work\", round_value: state.round_value+1, elapsed: 0}; } return state; }";
-    // A tick carries elapsed milliseconds across phase boundaries: work then rest per round, no final
-    // rest, and each completed phase is counted once even when the carried time spans several.
-    // A tick that spans several phases carries the overflow: work then rest per round, no final rest,
-    // and completion is terminal, so a late tick can never restart work past the configured rounds.
-    // The walk is bounded by the configured rounds, not by a fixed guard that could drop a long tick.
-    helpers = helpers+"export function intervalTick(state: AppState, action: IntervalTick): AppState { if (!state.running) { return state; } if (!(action.now >= state.last)) { return state; } let remaining: number = action.now-state.last; let phase: string = state.phase; let roundValue: number = state.round_value; let elapsed: number = state.elapsed; let focus: number = state.focus_done; let guard: number = 0; while (remaining > 0 && phase !== \"done\" && guard < "+String(roundsValue*2+2)+") { guard = guard+1; let length: number = "+String(workSeconds)+"*1000; if (phase === \"rest\") { length = "+String(restSeconds)+"*1000; } let left: number = length-elapsed; if (!(left > 0)) { left = length; } if (remaining < left) { elapsed = elapsed+remaining; remaining = 0; } else { remaining = remaining-left; elapsed = 0; if (phase === \"work\") { focus = focus+"+String(workSeconds)+"; if (roundValue >= "+String(roundsValue)+") { phase = \"done\"; } else { phase = \"rest\"; } } else { roundValue = roundValue+1; phase = \"work\"; } } } if (phase === \"done\") { return {phase: phase, round_value: roundValue, elapsed: 0, focus_done: focus, running: false, last: action.now}; } if (remaining > 0) { return state; } return {phase: phase, round_value: roundValue, elapsed: elapsed, focus_done: focus, last: action.now}; }";
+    updates[updates.length] = handler("IntervalTick","intervalTick"); updates[updates.length] = handler("ResumeInterval","resumeInterval");
+    if (!clockEmitted) { helpers = helpers+parts.clockHelpers(); clockEmitted = true; }
+    // A phase walk spends elapsed milliseconds across phase boundaries: work then rest per round, no
+    // final rest, and each completed phase is counted once even when the carried time spans several.
+    // A tick that spans several phases carries the overflow and completion is terminal, so a late tick
+    // can never restart work past the configured rounds. The walk is bounded by the configured rounds,
+    // not by a fixed guard that could drop a long tick.
+    helpers = helpers+"export function walkInterval(phase: string, roundValue: number, elapsed: number, focus: number, remaining: number): IntervalWalk { let current: string = phase; let round: number = roundValue; let span: number = elapsed; let focusDone: number = focus; let left: number = remaining; let guard: number = 0; while (left > 0 && current !== \"done\" && guard < "+String(roundsValue*2+2)+") { guard = guard+1; let length: number = "+String(workSeconds)+"*1000; if (current === \"rest\") { length = "+String(restSeconds)+"*1000; } let room: number = length-span; if (!(room > 0)) { room = length; } if (left < room) { span = span+left; left = 0; } else { left = left-room; span = 0; if (current === \"work\") { focusDone = focusDone+"+String(workSeconds)+"; if (round >= "+String(roundsValue)+") { current = \"done\"; } else { current = \"rest\"; } } else { round = round+1; current = \"work\"; } } } return {phase: current, round: round, elapsed: span, focus: focusDone}; }";
+    helpers = helpers+"export function readyInterval(state: AppState, action: ReadyInterval): AppState { return {pending: action.at}; }";
+    helpers = helpers+"export function pressInterval(state: AppState, action: PressInterval): AppState { if (action.kind === 1 || action.kind === 2 || action.kind === 3) { return {request: action.kind}; } return {request: 0}; }";
+    helpers = helpers+"export function startInterval(state: AppState, action: StartInterval): AppState { let raw: number = state.pending; if (clockStartRefused(state.sample, raw)) { return {request: 0, pending: -1, clockEpoch: state.clockEpoch+1, clockTrust: false, notice: \"Clock reading is undecidable or retreated; the start was refused and elapsed follows admitted monotone progress\"}; } if (state.phase === \"done\" || !clockStartAllowed(state.running, true, raw)) { return {request: 0, pending: raw}; } let at: number = raw; let rawWall: number = action.wall; let wall: number = clockWallValue(state.wall, action.wall); let epoch: number = clockEpochNext(state.clockEpoch, state.wall, state.sample, rawWall, at, "+String(clockTolerance())+"); return {running: true, anchor: at, sample: at, pending: at, wall: wall, clockEpoch: epoch, clockTrust: clockTrustNext(state.clockEpoch, epoch, rawWall, at), notice: clockNoticeNow(state.notice, true, false, rawWall, state.wall, at, state.sample, "+String(clockTolerance())+"), request: 0}; }";
+    // A pause incorporates the monotone progress of the paired reading taken for its own press, then
+    // stops the run; the paused interval counts no elapsed time and completion stays terminal.
+    helpers = helpers+"export function pauseInterval(state: AppState, action: PauseInterval): AppState { "+clockPressReading("state.notice")+" if (!state.running) { return {request: 0}; } let walked: IntervalWalk = walkInterval(state.phase, state.round_value, state.elapsed, state.focus_done, clockAdvance(true, false, state.anchor, at)); return {phase: walked.phase, round_value: walked.round, elapsed: walked.elapsed, focus_done: walked.focus, running: false, anchor: -1, sample: at, pending: at, wall: wall, clockEpoch: epoch, clockTrust: trust, notice: notice, request: 0}; }";
+    // A reset clears the authoritative run and keeps the paired reading it was admitted with, so the
+    // next run compares against the reading the user actually reset at.
+    helpers = helpers+"export function resetInterval(state: AppState, action: ResetInterval): AppState { "+clockPressReading("\"\"")+" return {phase: \"work\", round_value: 1, elapsed: 0, focus_done: 0, running: false, anchor: -1, sample: at, pending: at, wall: wall, clockEpoch: epoch, clockTrust: trust, notice: notice, request: 0}; }";
+    // A skip is an ordinary renderer press: it changes no clock reading, so it re-baselines the run at
+    // the last admitted monotone sample and never credits the skipped phase with time it did not spend.
+    helpers = helpers+"export function skipInterval(state: AppState, action: SkipInterval): AppState { if (state.phase === \"work\") { if (state.round_value >= "+String(roundsValue)+") { return {phase: \"done\", elapsed: 0, running: false, anchor: -1, request: 0}; } return {phase: \"rest\", elapsed: 0, anchor: state.running ? state.sample : -1, pending: state.running ? state.sample : state.pending}; } if (state.phase === \"rest\") { return {phase: \"work\", round_value: state.round_value+1, elapsed: 0, anchor: state.running ? state.sample : -1, pending: state.running ? state.sample : state.pending}; } return state; }";
+    helpers = helpers+"export function intervalTick(state: AppState, action: IntervalTick): AppState { "+clockTickReading("false")+" if (!state.running) { return {request: state.request}; } if (state.phase === \"done\") { return {request: state.request}; } let walked: IntervalWalk = walkInterval(state.phase, state.round_value, state.elapsed, state.focus_done, clockAdvance(true, false, state.anchor, at)); if (walked.phase === \"done\") { return {phase: \"done\", round_value: walked.round, elapsed: 0, focus_done: walked.focus, running: false, anchor: -1, sample: at, pending: at, wall: wall, clockEpoch: epoch, clockTrust: trust, notice: notice, request: state.request}; } return {phase: walked.phase, round_value: walked.round, elapsed: walked.elapsed, focus_done: walked.focus, running: true, anchor: clockAnchor(true, false, state.anchor, at), sample: at, pending: at, wall: wall, clockEpoch: epoch, clockTrust: trust, notice: notice}; }";
+    helpers = helpers+"export function resumeInterval(state: AppState, action: ResumeInterval): AppState { return {anchor: clockResumeAnchor(state.sample, action.at), sample: clockResumeAnchor(state.sample, action.at), pending: clockResumeAnchor(state.sample, action.at), wall: -1, notice: clockResumeNotice(state.sample, action.at), request: 0, clockEpoch: state.clockEpoch+1, clockTrust: false}; }";
+    helpers = helpers+"export function restorePaused(state: AppState): AppState { return {running: false, anchor: -1, sample: -1, pending: -1, wall: -1, notice: \"\", request: 0, clockEpoch: state.clockEpoch+1, clockTrust: false}; } export function restore(state: AppState): AppState { return recompute(restorePaused(state)); }";
     body = body+"ui.Text(text: state.phase) ui.NumberText(value: state.seconds_display)";
-    body = body+"ui.Button(text: \"Start interval\", enabled: !state.running && state.phase !== \"done\", onClick: action app.StartInterval {value: payload}) ui.Button(text: \"Pause interval\", enabled: state.running, onClick: action app.PauseInterval {value: payload}) ui.Button(text: \"Skip interval\", enabled: state.phase !== \"done\", onClick: action app.SkipInterval {value: payload}) ui.Button(text: \"Reset interval\", enabled: !state.running, onClick: action app.ResetInterval {value: payload})";
-    body = body+"ui.Ticker(id: \"intervals\", intervalMs: 250, running: state.running, onTick: action app.IntervalTick {now: payload})";
+    body = body+"ui.Button(text: \"Start interval\", enabled: !state.running && state.phase !== \"done\", value: 1, onClick: action app.PressInterval {kind: payload}) ui.Button(text: \"Pause interval\", enabled: state.running, value: 2, onClick: action app.PressInterval {kind: payload}) ui.Button(text: \"Skip interval\", enabled: state.phase !== \"done\", value: 0, onClick: action app.SkipInterval {value: payload}) ui.Button(text: \"Reset interval\", enabled: !state.running, value: 3, onClick: action app.PressInterval {kind: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_sample")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.ReadyInterval {at: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_tick")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.IntervalTick {wall: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_start")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.StartInterval {wall: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_pause")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.PauseInterval {wall: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_reset")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.ResetInterval {wall: payload})";
+    body = body+"ui.Ticker(id: "+s.encode(id+"_resume")+", intervalMs: "+String(clockInterval())+", running: false, onTick: action app.ResumeInterval {at: payload})";
+    body = body+"When(state.notice !== \"\") {ui.Text(text: state.notice, style: \"muted\")}";
+    drivers[drivers.length] = clockDriver(id);
   } else if (kind === "due_items") {
     let rows: Record<string, unknown>[] = s.records(parameters,"rows");
     let soonDays: number = s.integral(parameters.soonDays); if (soonDays < 0) { s.reject("Catalogue due soon days must be nonnegative"); }
@@ -1775,6 +1878,10 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
   }
   let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){"+body+"}}";
   let instance: screens.Instance = {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:effects,helpers:helpers,view:view,options:[],content:[],ports:ports,holes:holes,covers:[entry.need],owns:[id]},bodies:{}};
+  // The private clock drivers are instance metadata, exactly as a part instance carries them: the
+  // Session binding resolves their issued ticker identities from the rendered tree and never scans
+  // generated source for a driver.
+  if (drivers.length > 0) { instance.drivers = drivers; }
   instance.definition = screens.issueDefinition(instance.fragment);
   return instance;
 }

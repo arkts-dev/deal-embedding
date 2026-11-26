@@ -46,11 +46,11 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 # A control's bound only has to outlive its owning test, including that test's own cold preparation: a
 # mutated `core/` source invalidates the owning harness's fixture compile, so the widest owning items are
-# the construction lane at 300 s and the catalogue contract lane at 270 s. `TIMEOUT` is the default
-# control bound, and a seam may name its own smaller bound; `--seconds` raises the ceiling for one run, so
-# a bound smaller than the owning test's own declared preparation would report an infrastructure timeout
+# the construction lane and the catalogue contract lane at 360 s each. `TIMEOUT` is the default control
+# bound, and a seam may name its own smaller bound; `--seconds` raises the ceiling for one run, so a
+# bound smaller than the owning test's own declared preparation would report an infrastructure timeout
 # instead of the broken rule. No bound is ever above the ceiling this run allows.
-TIMEOUT = 300
+TIMEOUT = 420
 BACKUP = ROOT / 'build/verification/seam-backup'
 JOURNAL = BACKUP / 'journal.json'
 

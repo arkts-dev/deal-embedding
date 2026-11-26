@@ -44,7 +44,7 @@ async function compose(items: Piece[], links: Link[]): Promise<string> {
   let computations: composer.Computation[] = [];
   for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
   let assembled: composer.Result = await composer.assemble(composition,computations);
-  return s.encode(assembled.source);
+  return s.encode({deal:assembled.source.deal,dealui:assembled.source.dealui,metadata:assembled.metadata});
 }
 // Local state machines: a countdown with its end hole, a goal, a rating, interval rounds, readings,
 // an idea deck, a points ledger, a quick log, label actions, a note and the query box.
@@ -102,7 +102,7 @@ export async function calendar(): Promise<string> {
   let computations: composer.Computation[] = [];
   for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
   let assembled: composer.Result = await composer.assembleWith(composition,computations,issued,null);
-  return s.encode(assembled.source);
+  return s.encode({deal:assembled.source.deal,dealui:assembled.source.dealui,metadata:assembled.metadata});
 }
 // Exact aggregate arithmetic: one record log publishes every aggregate port, and four read-only
 // sections consume them through issued connections.
@@ -160,19 +160,46 @@ async function listGroup(trips: boolean): Promise<string> {
 }
 export async function lists(): Promise<string> { return await listGroup(false); }
 export async function trips(): Promise<string> { return await listGroup(true); }
+// A saved composition round-trips its private clock metadata: the issued record is serialized, decoded by
+// the same module and reassembled, and every driver the host schedules survives with its ticker, restore,
+// epoch and trust identities. An edit or a reopen of a clock-bearing Experience therefore keeps the
+// scheduling facts admission reads instead of re-issuing a clock nothing can schedule.
+export async function clockRecord(): Promise<string> {
+  let registry: bindings.Registry = bindings.create([]);
+  let items: Piece[] = [
+    {need:"timer",kind:"timer",json:"{\"presets\":[{\"label\":\"Focus\",\"seconds\":60},{\"label\":\"Break\",\"seconds\":30}]}"},
+    {need:"interval",kind:"interval_timer",json:"{\"workSeconds\":5,\"restSeconds\":2,\"rounds\":2}"}
+  ];
+  let composition: screens.Composition = {screen:{title:"Record",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[]},bindings:{},actions:{},connections:[]};
+  let needs: string[] = [];
+  for (let item of items) {
+    let instance: screens.Instance = await piece(item.need,item.kind,item.json,registry);
+    composition.screen.instances[composition.screen.instances.length] = instance;
+    // The issued record this route serializes is the admitted composition: one filled slot per need,
+    // declaring exactly the kind its catalogue instance implements.
+    composition.screen.slots[composition.screen.slots.length] = {id:item.need,need:item.need,reads:[],writes:[],provider:false,allowedKinds:[item.kind],valueType:"",status:"filled",instance:instance.id,reason:""};
+    needs[needs.length] = item.need;
+  }
+  let projected: screens.Projection = screens.decode(screens.encode(composition),"screen",needs);
+  let restored: screens.Composition = projected.composition;
+  let computations: composer.Computation[] = [];
+  for (let instance of restored.screen.instances) { for (let entry of catalogue.computations(instance,restored.connections,restored.screen.instances)) { computations[computations.length] = entry; } }
+  let assembled: composer.Result = await composer.assemble(restored,computations);
+  return s.encode(assembled.metadata.clockDrivers);
+}
 // The same countdown with an issued end body and an issued row filter: the body replaces the default
 // in place, changes behavior and leaves the signature and the parameter values alone.
 export async function issuedBodies(): Promise<string> {
   let registry: bindings.Registry = bindings.create([]);
   let timer: screens.Instance = await piece("timer","timer","{\"presets\":[{\"label\":\"Focus\",\"seconds\":1}]}",registry);
   let list: screens.Instance = await piece("master","master_list","{\"items\":[{\"id\":\"a\",\"label\":\"Alpha\"},{\"id\":\"b\",\"label\":\"Beta\"}]}",registry);
-  timer.bodies = {"whenFinished": "return {elapsed: 0, running: false, last: state.last, preset: state.preset};"};
+  timer.bodies = {"whenFinished": "return {elapsed: 0, running: false, preset: state.preset};"};
   list.bodies = {"rowMatches": "let label: string = item.label.toLowerCase(); let query: string = state.query.toLowerCase(); return item.label !== \"Beta\" && label.includes(query);"};
   let composition: screens.Composition = {screen:{title:"Bodies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[timer,list]},bindings:{},actions:{},connections:[]};
   let computations: composer.Computation[] = [];
   for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
   let assembled: composer.Result = await composer.assemble(composition,computations);
-  return s.encode(assembled.source);
+  return s.encode({deal:assembled.source.deal,dealui:assembled.source.dealui,metadata:assembled.metadata});
 }
 // The rejected cases the emission layer owns: an unissued body key, a duplicate key in the decoded
 // composition, a non-text body, a controller-writer body and a body past its UTF-16 bound.
@@ -291,7 +318,7 @@ export async function descriptor(): Promise<string> {
   let computations: composer.Computation[] = [];
   for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
   let assembled: composer.Result = await composer.assembleWith(composition,computations,issued,null);
-  return s.encode(assembled.source);
+  return s.encode({deal:assembled.source.deal,dealui:assembled.source.dealui,metadata:assembled.metadata});
 }
 // The live figure: one panel publishes its five ports and reads them through the public-probe mechanism.
 export async function live(): Promise<string> {
@@ -306,6 +333,6 @@ export async function live(): Promise<string> {
   let computations: composer.Computation[] = [];
   for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
   let assembled: composer.Result = await composer.assembleWith(composition,computations,registry,null);
-  return s.encode(assembled.source);
+  return s.encode({deal:assembled.source.deal,dealui:assembled.source.dealui,metadata:assembled.metadata});
 }
 export function main(): void { return; }

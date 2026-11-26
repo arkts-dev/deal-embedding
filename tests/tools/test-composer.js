@@ -19,10 +19,15 @@ const groups={
  presentation:[['presentationCases','presentation'],['foreignAction','foreign'],['numericTextCase','numericText']],
 };
 const group=process.argv[4]||'all';assert(group==='all'||groups[group],'unknown composer group');
+// One group settles only after every syntax call it issues has returned, and the number of calls is the
+// fixture's own: `validation` issues 318 of them. The settle deadline is the harness's declared bound
+// (`lane_bounds.COMPOSER_SETTLE`, passed in milliseconds) rather than a literal beside the harness, so a
+// group stops with its completed-call count under host contention instead of claiming a rule failed.
+const settleMs=Number(process.argv[5]);assert(Number.isFinite(settleMs)&&settleMs>0,'the composer settle bound is not declared');
 context.calls=group==='all'?Object.values(groups).flat():groups[group];
 vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));const {entry}=dealLoad(factories,'checks.js');let finished=false,failure=null;for(const name of ['result','boolean','clock','clockInput','assembly','entries','entriesEmpty','clockNeed','written','operation','contextOperation','trigger','descriptor','rowTap','presentation','seedDefaults','figureRejects','entryAggregate','foreign','numericText'])globalThis[name]=null;
 (async()=>{for(const [name,target] of calls){const value=await entry[name].$f();if(target)globalThis[target]=value;}})().then(()=>finished=true).catch(error=>{failure={code:error.code,message:error.message};finished=true;});`,context);
-(async()=>{const deadline=Date.now()+40000;while(Date.now()<deadline){
+(async()=>{const deadline=Date.now()+settleMs;while(Date.now()<deadline){
  await new Promise(resolve=>setImmediate(resolve));
  for(const request of JSON.parse(vm.runInContext('dealCapabilities.take()',context))){
   assert.equal(request.module,'embedding/fragment-syntax');
@@ -139,4 +144,4 @@ assert(entriesEmpty.source.deal.includes('export class f_parts_Entry_mark {')&&e
   const transportExit=await transport.close();if(transportExit!==0)throw Error('syntax transport exited '+transportExit);
   console.log('compiled composer: selected group '+group+' passed over '+transportCalls+' syntax calls');return;
  }
-}throw Error('Composer did not settle within 40s; completed syntax calls: '+transportCalls);})().catch(error=>{transport.close().catch(()=>{});console.error(error);process.exitCode=1;});
+}throw Error('Composer did not settle within '+(settleMs/1000)+'s; completed syntax calls: '+transportCalls);})().catch(error=>{transport.close().catch(()=>{});console.error(error);process.exitCode=1;});

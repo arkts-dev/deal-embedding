@@ -418,6 +418,7 @@ function inspect(manifest: Record<string, unknown>, fresh: boolean): string {
   let sessionEpoch: string = s.text(clockSection.epoch); let sessionTrust: string = s.text(clockSection.trust); let sessionResume: string = s.optionalText(clockSection,"resume");
   let runtime: string[] = [];
   if (Object.hasOwn(composition,"runtime")) { runtime = decoded.strings(composition.runtime); }
+  let issuedEpochs: string[] = []; let issuedTrusts: string[] = []; let issuedResumes: string[] = []; let issuedIdentities: string[] = [];
   if (Object.hasOwn(composition,"clockDrivers")) {
     let identities: string[] = [];
     for (let value of decoded.records(composition.clockDrivers)) {
@@ -432,29 +433,51 @@ function inspect(manifest: Record<string, unknown>, fresh: boolean): string {
         identities[identities.length] = identity;
       }
       if (s.text(value.restore).trim() === "") { return "ADMISSION_OWNERSHIP: clock driver without its restore identity: "+need; }
-      // Every clock driver names the one issued Session resume carrier, so a renamed or cross-wired
-      // identity rejects instead of silently scheduling no resume. The resume identity is a view
-      // carrier, never one of the driver's own state, action or restore identities, so a coordinated
-      // rewrite cannot point it at a slot that is not a resume.
-      if (s.optionalText(value,"resume").trim() === "" || s.optionalText(value,"resume") !== sessionResume) { return "ADMISSION_OWNERSHIP: clock driver names a different Session resume identity: "+need; }
-      for (let other of [s.text(value.sample),s.text(value.tick),s.text(value.start),s.text(value.pause),s.text(value.reset),s.text(value.restore),s.text(value.request),s.text(value.running),s.text(value.epoch),s.text(value.trust)]) { if (sessionResume === other) { return "ADMISSION_OWNERSHIP: Session resume identity reuses a driver identity: "+need+" "+sessionResume; } }
-      if (s.contains(declared,sessionResume)) { return "ADMISSION_OWNERSHIP: Session resume identity is a declared state field: "+sessionResume; }
+      // Every clock driver names its issued Session resume carrier. The carrier is a view identity, never
+      // a state, action or restore identity of any driver and never a declared state field, so a renamed
+      // or cross-wired identity rejects instead of silently scheduling no resume. Independent owners
+      // carry their own carrier; the clocks of one plan part share theirs, so a repeated carrier is
+      // admitted rather than read as one driver reusing another's identity.
+      let resume: string = s.optionalText(value,"resume");
+      if (resume.trim() === "") { return "ADMISSION_OWNERSHIP: clock driver without its Session resume identity: "+need; }
+      for (let other of [s.text(value.sample),s.text(value.tick),s.text(value.start),s.text(value.pause),s.text(value.reset),s.text(value.restore),s.text(value.request),s.text(value.running),s.text(value.epoch),s.text(value.trust)]) { if (resume === other) { return "ADMISSION_OWNERSHIP: Session resume identity reuses a driver identity: "+need+" "+resume; } }
+      if (s.contains(declared,resume)) { return "ADMISSION_OWNERSHIP: Session resume identity is a declared state field: "+resume; }
+      issuedResumes[issuedResumes.length] = resume;
+      for (let identity of [s.text(value.sample),s.text(value.tick),s.text(value.start),s.text(value.pause),s.text(value.reset),s.text(value.restore),s.text(value.request),s.text(value.running),s.text(value.epoch),s.text(value.trust)]) { if (!s.contains(issuedIdentities,identity)) { issuedIdentities[issuedIdentities.length] = identity; } }
       let interval: number = s.finite(value.intervalMs);
       if (!(interval > 0)) { return "ADMISSION_OWNERSHIP: clock driver interval must be positive: "+need; }
       for (let field of [s.text(value.request),s.text(value.running)]) { if (!s.contains(declared,field)) { return "ADMISSION_OWNERSHIP: clock driver field outside the compiled declarations: "+field; } }
-      // Every clock driver names the one Session epoch identity the composition issued.
-      if (s.text(value.epoch) !== sessionEpoch || s.text(value.trust) !== sessionTrust) { return "ADMISSION_OWNERSHIP: clock driver names a different Session epoch identity: "+need; }
-      if (s.text(value.epoch).trim() === "" || s.text(value.trust).trim() === "") { return "ADMISSION_OWNERSHIP: clock driver without its Session epoch fields: "+need; }
-      if (!s.contains(declared,s.text(value.epoch)) || !s.contains(declared,s.text(value.trust))) { return "ADMISSION_OWNERSHIP: clock driver epoch field outside the compiled declarations: "+need; }
+      // A composition may carry more than one clock owner: a plan clock part and a catalogue timer
+      // section, or several catalogue sections. Each driver names its own compiled Session-local epoch
+      // and trust pair, and the composition publishes one of them as its Session clock identity.
+      let epochField: string = s.text(value.epoch); let trustField: string = s.text(value.trust);
+      if (epochField.trim() === "" || trustField.trim() === "" || epochField === trustField) { return "ADMISSION_OWNERSHIP: clock driver without its Session epoch fields: "+need; }
+      if (s.contains(issuedEpochs,epochField) !== s.contains(issuedTrusts,trustField)) { return "ADMISSION_OWNERSHIP: clock drivers mix Session epoch and trust identities: "+need; }
+      if (!s.contains(issuedEpochs,epochField)) { issuedEpochs[issuedEpochs.length] = epochField; issuedTrusts[issuedTrusts.length] = trustField; }
+      if (!s.contains(declared,epochField) || !s.contains(declared,trustField)) { return "ADMISSION_OWNERSHIP: clock driver epoch field outside the compiled declarations: "+need; }
+      if (!s.contains(runtime,epochField) || !s.contains(runtime,trustField)) { return "ADMISSION_OWNERSHIP: clock driver epoch field is not emitted runtime state: "+need; }
     }
   }
+  // A resume carrier is a view identity of its own: one that names another driver's carrier would
+  // dispatch a Session resume into an action slot and silently schedule no resume at all.
+  for (let resume of issuedResumes) { if (s.contains(issuedIdentities,resume)) { return "ADMISSION_OWNERSHIP: Session resume identity reuses a driver identity: "+resume; } }
   // A clock implementation must carry its issued driver: a filled clock slot or a countdown-end
   // trigger without one would admit a clock the Session can never schedule. A composition with any
-  // issued driver must also carry the one Session clock identity the expiry driver reads.
+  // issued driver must also carry the Session clock identity the expiry driver reads, and that
+  // published identity must name one of the issued drivers instead of a fabricated pair.
   if (driverNeeds.length > 0) {
     if (sessionEpoch.trim() === "" || sessionTrust.trim() === "" || sessionEpoch === sessionTrust) { return "ADMISSION_OWNERSHIP: issued composition without its Session clock identity"; }
     if (!s.contains(runtime,sessionEpoch) || !s.contains(runtime,sessionTrust)) { return "ADMISSION_OWNERSHIP: Session clock identity is not emitted runtime state"; }
     if (sessionResume.trim() === "") { return "ADMISSION_OWNERSHIP: a composition with clock drivers carries no Session resume identity"; }
+    let publishedClock: boolean = false; let publishedResume: boolean = false;
+    let index: number = 0;
+    while (index < issuedEpochs.length) {
+      if ((issuedEpochs[index] as string) === sessionEpoch && (issuedTrusts[index] as string) === sessionTrust) { publishedClock = true; }
+      index = index+1;
+    }
+    for (let resume of issuedResumes) { if (resume === sessionResume) { publishedResume = true; } }
+    if (!publishedClock) { return "ADMISSION_OWNERSHIP: Session clock identity names no issued clock driver"; }
+    if (!publishedResume) { return "ADMISSION_OWNERSHIP: Session resume identity names no issued clock driver"; }
   } else if (sessionEpoch !== "" || sessionTrust !== "" || sessionResume !== "") { return "ADMISSION_OWNERSHIP: a composition without clock drivers carries a Session clock identity"; }
   if (Object.hasOwn(composition,"slots")) {
     for (let value of decoded.records(composition.slots)) {

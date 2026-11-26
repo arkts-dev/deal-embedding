@@ -26,24 +26,38 @@ LANE_SLACK = 10
 
 # The contract harnesses (`test-catalogue.py`, `test-construction-contracts.py`) each drive one node
 # group. One catalogue runtime section group and the `all`/`local` bundles are wider because the bundle
-# runs every section in one process: measured 71 s for the coldest group and 294 s for the default
-# bundle, so each bound contains more than twice its measured cost and a slow host still reports the
-# assertion that failed.
-CONTRACT_NODE = 90
+# runs every section in one process. The reference cost is 71 s for the coldest group and 294 s for the
+# default bundle; a host running several gates at once measured 95 s for one contract group and 157 s
+# for one section group, so each bound contains that measured cost and a slow host still reports the
+# assertion that failed instead of an unnamed timeout.
+CONTRACT_NODE = 180
 # The two interaction harnesses drive their own compiled policy fixtures and no section suite: the chat,
 # lookup and hole-body exports in one process, and the Surface exploration's whole frame window in the
-# other. Both measured under 20 s of CPU warm and 40 s on a loaded gate host, so each keeps more than
-# twice its measured cost instead of turning host contention into an unnamed timeout.
-INTERACTION_NODE = 90
-SURFACE_NODE = 120
-CATALOGUE_GROUP = 150
-CATALOGUE_SUITE = 600
+# other. Both measured under 20 s of CPU warm, 40 s on a loaded gate host and over 120 s on a host
+# running four gates at once, so each keeps more than twice its measured cost instead of turning host
+# contention into an unnamed timeout.
+INTERACTION_NODE = 180
+SURFACE_NODE = 240
+CATALOGUE_GROUP = 300
+# The default bundle measured 294 s before the catalogue clocks moved onto their private Session
+# drivers and 473 s after it: each clock-bearing group now compiles its own issued driver metadata and
+# mounts through the packaged Session binding. The bound keeps headroom over the widest measurement of
+# that suite, 888 s on a gate host running two gates at once, so a slow host reports the assertion that
+# failed instead of an unnamed suite timeout.
+CATALOGUE_SUITE = 1200
 CATALOGUE_BUNDLES = ('all', 'local')
+# The construction harness drives the Food and Equipment fixtures through the packaged session. It
+# measured 49-91 s of wall on the reference host and exceeded 180 s on a gate host running four gates
+# at once, so its own declaration keeps the same headroom as the lanes above.
+CONSTRUCTIVE_NODE = 360
 
 # The composer's own lane: `--contracts-only` compiles the fixtures, runs three JVM assertion classes
-# and then one node group per composer group it drives.
+# and then one node group per composer group it drives. A group settles only after every syntax call it
+# issues has returned: `validation` needs 318 calls at a 21 s reference cost and measured 41 s on a host
+# running four gates at once, so its settle deadline is declared here instead of beside the harness.
 COMPOSER_GROUPS = ['validation', 'basics', 'clocks', 'operations', 'entries', 'presentation']
 COMPOSER_JVM_ASSERTIONS = 3
+COMPOSER_SETTLE = 120
 
 # One emitted-pair compile, and the node assertions a pair lane drives. Three pair lanes share the host,
 # so the compiler call keeps the fixture compile's 120 s and every assertion stage uses the same wall.
@@ -75,7 +89,10 @@ INFRA_CAPS = {
     # `tests/tools/test-build-stages.py`.
     'stage-runner': (4, 8),     # one run of the stage runner with a fake compiler body
     'cutover-apk': (10, 8),     # one run of the extracted test-APK packaging script
-    'library-build': (8, 11),   # one run of the extracted library build script
+    # One run of the extracted library build script over its fake toolchain: a cold reference run takes
+    # under 4 s, and a host running several gates at once timed out the 8 s cap in two runs of three, so
+    # the cap keeps the same headroom as the assertion bounds instead of failing the item unnamed.
+    'library-build': (20, 11),
     'boundary-plan': (20, 1),   # one preview of the standalone proof's own plan
     'lane-refusal': (60, 1),    # one short-check lane, observing the stage-override refusal
 }

@@ -12,7 +12,11 @@ import sys
 PIN_SECONDS = 10
 JAVA_FIXTURE_SECONDS = 30
 DEAL_FIXTURE_SECONDS = 120
-ASSERTION_SECONDS = 45
+# One assertion stage is one process tree that compiles and drives a fixture: a composer node group
+# measured 21 s on the reference host and 41-45 s on a host running four gates at once, so the shared
+# default contains twice the loaded cost. A runaway stage is still stopped, with its name, well inside
+# the lane bound every harness derives from this declaration.
+ASSERTION_SECONDS = 90
 
 
 def compile_artifact(root, name, inputs, outputs, command, *, timeout=JAVA_FIXTURE_SECONDS):
