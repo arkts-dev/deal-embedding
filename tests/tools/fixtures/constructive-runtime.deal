@@ -220,6 +220,8 @@ async function rejection(helper: string, value: string, dependencies: string[]):
 // body that always ends on its own allocation before the loop runs again.
 export async function localCopyPlan(): Promise<string> {
   let instance: screens.Instance = rejectedSource("export function probe(state: AppState): number { let own = state.menu.slice(); own[0] = {id: \"replaced\"}; let held: Record<string, unknown>[] = []; try { held = state.menu; let n = held.length; held = []; } catch(e) {} held[0] = {}; return own.length + held.length; }");
+  instance.fragment.helpers = instance.fragment.helpers + " export function sorted(state: AppState): number { let keys = Object.keys(state.menu[0]); let own = state.menu.toSorted((a: Record<string, unknown>, b: Record<string, unknown>): number => 0); own[0] = {}; return keys.length + own.length; }";
+  instance.fragment.helpers = instance.fragment.helpers.replace("return own.length + held.length;", "return own.length + held.length + sorted(state);");
   instance.fragment.fields[0].initial = "[{id: \"original\"}]";
   let composition: screens.Composition = {screen:{title:"Copies",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[instance]},bindings:{},actions:{},connections:[]};
   let computation: composer.Computation = {instance:"gap",field:"probe",value:"probe(state)",ready:"true",reason:"\"Unavailable\"",dependencies:["f_gap_menu"]};
@@ -290,5 +292,14 @@ export async function negatives(): Promise<string> {
   results[results.length] = await rejection("export function probe(state: AppState): number { let own = state.menu.slice(); own[0].id = \"damaged\"; return own.length; }","probe(state)",["f_gap_menu"]);
   results[results.length] = await rejection("export function probe(state: AppState): number { let own = state.menu.slice(); let alias = own; alias[0].id = \"damaged\"; return own.length; }","probe(state)",["f_gap_menu"]);
   results[results.length] = await rejection("export function probe(state: AppState): number { let own = state.menu.slice(); for(let row of own) { row.id = \"damaged\"; } return own.length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function probe(state: AppState): number { return Object.keys(state.menu[0]).length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function compare(a: Record<string, unknown>, b: Record<string, unknown>): number { return 0; } export function probe(state: AppState): number { let own = state.menu.toSorted(compare); own[0] = {}; return own.length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function probe(state: AppState): number { let own = state.menu.toSorted((a: Record<string, unknown>, b: Record<string, unknown>): number => { state.menu[0] = {}; return 0; }); return own.length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function compare(a: Record<string, unknown>, b: Record<string, unknown>): number { return Date.now(); } export function probe(state: AppState): number { return state.menu.toSorted(compare).length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function probe(state: AppState): number { let own = state.menu.toSorted((a: Record<string, unknown>, b: Record<string, unknown>): number => 0); own[0].id = \"bad\"; return own.length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("class Fake { toSorted: (compare: (a: number, b: number) => number) => number[]; } export function probe(state: AppState): number { let fake: Fake = {toSorted:(compare: (a: number,b: number) => number): number[] => []}; return fake.toSorted((a: number,b: number): number => 0).length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("","Object.keys(state.menu[0]).length",["f_gap_menu"]);
+  results[results.length] = await rejection("","state.menu.toSorted((a: Record<string, unknown>, b: Record<string, unknown>): number => 0).length",["f_gap_menu"]);
+  results[results.length] = await rejection("","state.menu.toSorted((a: Record<string, unknown>, b: Record<string, unknown>): number => Date.now()).length",["f_gap_menu"]);
   return s.encode(results);
 }

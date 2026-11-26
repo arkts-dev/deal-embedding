@@ -6,7 +6,8 @@ import java.util.*;
 
 /** Conservative AST facts. DEAL decides purity, ownership and admitted calls from these facts. */
 public final class FragmentAnalysis {
-    private final Set<String> reads=new LinkedHashSet<>(),writes=new LinkedHashSet<>(),calls=new LinkedHashSet<>(),supplies=new LinkedHashSet<>(),borrowedWrites=new LinkedHashSet<>();
+    private final Set<String> reads=new LinkedHashSet<>(),writes=new LinkedHashSet<>(),calls=new LinkedHashSet<>(),supplies=new LinkedHashSet<>(),borrowedWrites=new LinkedHashSet<>(),intrinsics=new LinkedHashSet<>();
+    private final Set<String> unverifiedCalls=new HashSet<>();
     /** Locals that borrow a state value, mapped to the borrowed state path. Scoped like the locals. */
     private Map<String,String> aliases=new LinkedHashMap<>();
     /** Fresh outer containers: literals or checked nonmutating array copies it still holds. */
@@ -80,11 +81,16 @@ public final class FragmentAnalysis {
         }
         return result;
     }
-    public static Map<String,Object> expression(String source){
-        var analysis=new FragmentAnalysis();var declaration=(VariableDeclaration)FragmentSyntax.parse("let value = "+source+";").statements().getFirst();
-        analysis.expression(declaration.initializer(),new HashSet<>());return analysis.facts();
+    public static Map<String,Object> expression(String source){return expression(source,Map.of());}
+    public static Map<String,Object> expression(String source,Map<String,String> stateTypes){
+        String fields=stateTypes.entrySet().stream().map(e->e.getKey()+": "+e.getValue()+";").collect(java.util.stream.Collectors.joining());
+        var program=FragmentSyntax.parse("class AppState {"+fields+"} function expression(state: AppState): unknown { return "+source+"; }");
+        var function=(FunctionDeclaration)program.statements().getLast();
+        var analysis=new FragmentAnalysis();analysis.types=checkedTypes(program);analysis.stateParameters.add("state");
+        analysis.expression(((ReturnStatement)function.body().statements().getFirst()).expr().orElseThrow(),new HashSet<>(Set.of("state")));
+        return analysis.facts();
     }
-    private Map<String,Object> facts(){return Map.of("reads",new ArrayList<>(reads),"writes",new ArrayList<>(writes),"calls",new ArrayList<>(calls),"supplies",new ArrayList<>(supplies),"indirect",indirect,"borrowedWrites",new ArrayList<>(borrowedWrites));}
+    private Map<String,Object> facts(){intrinsics.removeAll(unverifiedCalls);return Map.of("reads",new ArrayList<>(reads),"writes",new ArrayList<>(writes),"calls",new ArrayList<>(calls),"supplies",new ArrayList<>(supplies),"indirect",indirect,"borrowedWrites",new ArrayList<>(borrowedWrites),"intrinsics",new ArrayList<>(intrinsics));}
     private String path(ExpressionNode node){
         if(node instanceof IdentifierExpr i)return stateParameters.contains(i.name())?"state":i.name();
         if(node instanceof MemberAccessExpr m){String base=path(m.object());return base==null?null:base+"."+m.field();}
@@ -191,7 +197,7 @@ public final class FragmentAnalysis {
     private boolean allocated(ExpressionNode node){
         if(node instanceof ArrayLiteralExpr||node instanceof ObjectLiteralExpr)return true;
         if(node instanceof CallExpr call&&call.callee() instanceof MemberAccessExpr member
-            &&member.field().equals("slice")&&types.get(member.object()) instanceof Type.Array)return true;
+            &&Set.of("slice","toSorted").contains(member.field())&&types.get(member.object()) instanceof Type.Array)return true;
         if(node instanceof AssertionExpr a)return allocated(a.value());
         if(node instanceof OptionalGuardExpr g)return allocated(g.value());
         return false;
@@ -322,18 +328,46 @@ public final class FragmentAnalysis {
             supplies.add("state."+name);
         }
     }
+    private boolean intrinsic(CallExpr call,Set<String> scope){
+        if(!(call.callee() instanceof MemberAccessExpr member))return false;
+        if(member.field().equals("toSorted")&&types.get(member.object()) instanceof Type.Array)return true;
+        return member.field().equals("keys")&&member.object() instanceof IdentifierExpr id&&id.name().equals("Object")
+            &&!scope.contains("Object")&&types.get(member) instanceof Type.Func&&types.get(call) instanceof Type.Array;
+    }
+    /** A sorting callback executes synchronously, but its effects and captures are still part of the
+     *  caller's summary. Captured containers receive no local-allocation proof in the callback. */
+    private void comparator(ExpressionNode callback,Set<String> scope){
+        if(callback instanceof IdentifierExpr id&&!scope.contains(id.name())){calls.add(id.name());return;}
+        if(!(callback instanceof FunctionExpr function)){indirect=true;return;}
+        var nested=new FragmentAnalysis();nested.types=types;nested.aliases=new LinkedHashMap<>(aliases);
+        nested.stateParameters.addAll(stateParameters);
+        Set<String> locals=new HashSet<>(scope);
+        for(var parameter:function.params()) {locals.add(parameter.name());nested.forget(parameter.name());nested.stateParameters.remove(parameter.name());}
+        nested.statement(function.body(),locals);
+        reads.addAll(nested.reads);writes.addAll(nested.writes);calls.addAll(nested.calls);
+        borrowedWrites.addAll(nested.borrowedWrites);intrinsics.addAll(nested.intrinsics);unverifiedCalls.addAll(nested.unverifiedCalls);indirect|=nested.indirect;
+    }
     private void expression(ExpressionNode node,Set<String> scope){
         switch(node){
             case IdentifierExpr i->{}
             case LiteralExpr l->{}
             // A field read admits its receiver and the field at run time; a field of a record nothing
             // validated may be absent, so the read is a possible unwind.
-            case MemberAccessExpr m->{String name=path(m);if(name!=null)reads.add(name);else indirect=true;expression(m.object(),scope);if(!(m.field().equals("length")&&(types.get(m.object()) instanceof Type.Array||types.get(m.object())==Type.String.INSTANCE)))checkedRead(m.object());}
+            case MemberAccessExpr m->{boolean length=m.field().equals("length")&&(types.get(m.object()) instanceof Type.Array||types.get(m.object())==Type.String.INSTANCE);String name=path(m);if(name!=null)reads.add(name);else if(!length)indirect=true;expression(m.object(),scope);if(!length)checkedRead(m.object());}
             // An element read admits an element at a position the array may not hold, and an element
             // write admits both the position and the stored value: either one throws on a committed or
             // short array, so the access is a possible unwind wherever it appears.
             case IndexExpr i->{expression(i.array(),scope);expression(i.index(),scope);leaveTry();}
-            case CallExpr c->{String name=path(c.callee());if(name==null || c.callee() instanceof IdentifierExpr i && scope.contains(i.name()))indirect=true;else {if(borrowedPath(name)!=null||root(name).equals("state"))borrowedWrites.add("call:"+name);calls.add(name);}c.args().forEach(e->expression(e,scope));leaveTry();}
+            case CallExpr c->{
+                String name=path(c.callee());boolean builtin=intrinsic(c,scope);
+                if(name==null || c.callee() instanceof IdentifierExpr i && scope.contains(i.name()))indirect=true;
+                else {if(borrowedPath(name)!=null||root(name).equals("state"))borrowedWrites.add("call:"+name);calls.add(name);if(builtin)intrinsics.add(name);else unverifiedCalls.add(name);}
+                if(builtin&&c.callee() instanceof MemberAccessExpr member&&member.field().equals("toSorted")){
+                    expression(member.object(),scope);
+                    for(var argument:c.args())comparator(argument,scope);
+                }else c.args().forEach(e->expression(e,scope));
+                leaveTry();
+            }
             case AwaitExpression a->{indirect=true;expression(a.callee(),scope);leaveTry();}
             case AssignmentExpr a->{if(a.target() instanceof IdentifierExpr i && scope.contains(i.name())){expression(a.value(),scope);String borrow=borrowTarget(a.value());forget(i.name());declared.add(i.name());if(borrow!=null)aliases.put(i.name(),borrow);else if(allocated(a.value())){fresh.add(i.name());}}else {write(a.target(),scope);expression(a.value(),scope);}}
             case BinaryExpr b->{expression(b.left(),scope);expression(b.right(),scope);}

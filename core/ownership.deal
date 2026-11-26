@@ -37,6 +37,7 @@ export function derive(instances: screens.Instance[], facts: Record<string, unkn
       if (Object.hasOwn(fact,"borrowedWrites")) { for (let target of decoded.strings(fact.borrowedWrites)) {
         // Parsed calls on borrowed values are conservative mechanism facts. These
         // checked built-ins do not mutate their receiver; unknown calls still reject.
+        if (target.startsWith("call:") && Object.hasOwn(fact,"intrinsics") && decoded.strings(fact.intrinsics).includes(target.substring(5))) { continue; }
         if (target.startsWith("call:") && (target.endsWith(".slice") || target.endsWith(".includes") || target.endsWith(".indexOf") || target.endsWith(".substring") || target.endsWith(".toLowerCase") || target.endsWith(".toUpperCase") || target.endsWith(".trim"))) { continue; }
         s.reject("Borrowed state is written: "+instance.id+"."+name+" "+target);
       } }

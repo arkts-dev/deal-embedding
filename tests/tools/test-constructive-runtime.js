@@ -122,7 +122,7 @@ const plan=JSON.parse(await step('plan'));
 const negatives=JSON.parse(await step('negatives'));
 
 // ---- the committed-value paths and an uninspectable callee stay refused, each with its reason.
-assert.strictEqual(negatives.length,34,'every constructive purity control ran, none silently dropped');
+assert.strictEqual(negatives.length,43,'every constructive purity control ran, none silently dropped');
 // A write to the state parameter, a field write to that parameter after rebinding it to a container the
 // helper allocated, a write through a local that borrows a state array, an indirect callee, an asserted
 // state element, a loop binding that shadows a fresh local, a write through a local whose borrow an early
@@ -167,9 +167,13 @@ assert(/Borrowed state is written/.test(negatives[29]),'a Record field named len
 
 assert.strictEqual(negatives[30],'ACCEPTED','safe slice outer storage is refused: '+negatives[30]);
 for(const index of [31,32,33])assert.notEqual(negatives[index],'ACCEPTED','shallow copied elements must not become fresh: '+index);
+for(const index of [34,35])assert.equal(negatives[index],'ACCEPTED','read-only intrinsic rejected: '+index+' '+negatives[index]);
+for(const index of [36,37,38,39])assert.notEqual(negatives[index],'ACCEPTED','unsafe/unverified sorting admitted: '+index);
+for(const index of [40,41])assert.equal(negatives[index],'ACCEPTED','direct read-only intrinsic rejected: '+negatives[index]);
+assert.notEqual(negatives[42],'ACCEPTED','direct effectful comparator admitted');
 const copyPlan=JSON.parse(await step('localCopyPlan'));
 const copied=open('local-copy',{deal:copyPlan.source.deal,dealui:copyPlan.source.dealui,metadata:copyPlan.metadata});
-assert.equal(copied.state().f_gap_probe_display,2,'copy-and-update and safe length helper did not execute');
+assert.equal(copied.state().f_gap_probe_display,4,'copy-and-update and safe length helper did not execute');
 assert.equal(copied.state().f_gap_menu[0].get('id'),'original','local copy mutation reached committed input');
 
 // ---- the emitted pair carries the constructive calculations and no ordering or booking surface.

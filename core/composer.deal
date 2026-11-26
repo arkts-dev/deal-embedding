@@ -796,7 +796,7 @@ export async function assembleWith(composition: screens.Composition, computation
           // Per-item failures remain classified, so a later syntax error cannot hide a prior policy rejection.
           let requests: SyntaxRequest[] = [];
           for (let source of [computation.ready,computation.value,computation.reason]) {
-            requests[requests.length] = {function:"analyzeExpression",input:s.encode({source:source})};
+            requests[requests.length] = {function:"analyzeExpression",input:s.encode({source:source,types:types})};
           }
           let sources: string[] = [computation.ready,computation.value,computation.reason];
           let expected: string[] = ["boolean",types[computation.field] as string,"string"];

@@ -61,14 +61,15 @@ function check(fact: Record<string, unknown>, facts: Facts, reads: string[], pat
   for (let call of decoded.strings(fact.calls)) {
     let parts: string[] = call.split(".");
     if (["Array.isArray","String","Number","Number.isFinite","Number.isNaN","JSON.stringify","Math.floor","Math.ceil","Math.sqrt","Math.abs","Math.round","Math.min","Math.max","Math.pow"].includes(call)) { }
+    else if (Object.hasOwn(fact,"intrinsics") && decoded.strings(fact.intrinsics).includes(call)) { }
     else if (parts.length === 2 && s.contains(facts.pureImports,parts[0])) { }
     // Pure receiver intrinsics: the ECMAScript string and nonmutating array operations return fresh
     // values and never write, so a case-insensitive match or a slice stays a read-only summary. Mutators
-    // (push/pop/splice/sort/reverse) and any callback-taking operation are absent: a callback is an
-    // indirect value and stays rejected above.
+    // (push/pop/splice/sort/reverse) are absent. Callback-taking toSorted is admitted separately
+    // only from compiler-resolved intrinsic facts, including the comparator's transitive summary.
     // A pure receiver intrinsic is admitted only when its receiver root is the state or a local value:
     // a call on an import alias that is not a known pure module stays effectful and rejected.
-    else if (parts.length >= 2 && s.contains(["toLowerCase","toUpperCase","substring","slice","trim","split","replace","includes","startsWith","endsWith","indexOf","lastIndexOf","join","toSorted"],parts[parts.length-1]) && (parts[0] === "state" || !s.contains(facts.aliases,parts[0]))) { }
+    else if (parts.length >= 2 && s.contains(["toLowerCase","toUpperCase","substring","slice","trim","split","replace","includes","startsWith","endsWith","indexOf","lastIndexOf","join"],parts[parts.length-1]) && (parts[0] === "state" || !s.contains(facts.aliases,parts[0]))) { }
     else if (parts.length === 1 && Object.hasOwn(facts.functions,call)) {
       if (s.contains(path,call)) { s.reject("Recursive recomputation helper lacks bounded read-only summary"); }
       const next = path.concat([call]);

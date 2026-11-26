@@ -45,7 +45,7 @@ public final class FragmentMechanisms {
         return encode(switch(function) {
             case "imports" -> FragmentSyntax.parse(text(value,"source")).statements().stream().filter(statement -> statement instanceof deal.ast.ImportDeclaration).map(statement -> ((deal.ast.ImportDeclaration)statement).modulePath()).toList();
             case "analyzeFunctions" -> FragmentAnalysis.functions(text(value,"source"),value.containsKey("types")?strings(value,"types"):Map.of());
-            case "analyzeExpression" -> FragmentAnalysis.expression(text(value,"source"));
+            case "analyzeExpression" -> FragmentAnalysis.expression(text(value,"source"),value.containsKey("types")?strings(value,"types"):Map.of());
             case "describe" -> FragmentRegions.describe(text(value,"classes"),text(value,"fields"),text(value,"functions"),text(value,"view"));
             case "qualify" -> FragmentQualifier.qualify(text(value,"declarations"),text(value,"helpers"),text(value,"view"),strings(value,"names"),strings(value,"fields"),strings(value,"types"),value.containsKey("preserved") ? ((List<?>)value.get("preserved")).stream().map(item -> (String)item).toList() : List.of(),value.containsKey("writable") ? ((List<?>)value.get("writable")).stream().map(item -> (String)item).toList() : new ArrayList<>(strings(value,"fields").keySet()));
             default -> throw new IllegalArgumentException("Unknown syntax mechanism");
