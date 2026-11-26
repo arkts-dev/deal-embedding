@@ -16,6 +16,9 @@ public final class FragmentMechanismsTest {
             String response=FragmentMechanisms.invoke("batch","{\"requests\":["+request("analyzeFunctions","{\"source\":"+quote(malformed)+"}")+"]}");
             if(response.contains("Invalid fragment syntax: []")||!response.contains("FRAGMENT_SYNTAX"))throw new AssertionError(response);
         }
+        String repeated="import * as session from \"embedding/session\";\n";
+        var analysed=FragmentAnalysis.functions(repeated+repeated+"export function probe(state: AppState): number { return state.ns.toSorted((a: number,b: number): number => a-b).length; }",Map.of("ns","number[]"));
+        if(!analysed.toString().contains("intrinsics=[state.ns.toSorted]"))throw new AssertionError("Repeated composition import lost compiler facts: "+analysed);
         String valid="{\"source\":\"state.value + 1\",\"expected\":\"number\",\"names\":{},\"fields\":{\"value\":\"f_value\"},\"types\":{\"value\":\"number\"},\"variables\":{\"state\":\"AppState\"}}";
         String invalid=valid.replace("state.value + 1","(");
         String batch="{\"requests\":["+request("expression",valid)+","+request("expression",invalid)+","+request("analyzeExpression","{\"source\":\"true\"}")+"]}";

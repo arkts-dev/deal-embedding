@@ -301,5 +301,6 @@ export async function negatives(): Promise<string> {
   results[results.length] = await rejection("","Object.keys(state.menu[0]).length",["f_gap_menu"]);
   results[results.length] = await rejection("","state.menu.toSorted((a: Record<string, unknown>, b: Record<string, unknown>): number => 0).length",["f_gap_menu"]);
   results[results.length] = await rejection("","state.menu.toSorted((a: Record<string, unknown>, b: Record<string, unknown>): number => Date.now()).length",["f_gap_menu"]);
+  results[results.length] = await rejection("export function probe(state: AppState): number { let own = state.menu.slice(); let sorted = state.menu.toSorted((a: Record<string, unknown>, b: Record<string, unknown>): number => { own = state.menu; return 0; }); own[0] = {}; return own.length; }","probe(state)",["f_gap_menu"]);
   return s.encode(results);
 }

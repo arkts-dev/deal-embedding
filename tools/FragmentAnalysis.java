@@ -7,7 +7,7 @@ import java.util.*;
 /** Conservative AST facts. DEAL decides purity, ownership and admitted calls from these facts. */
 public final class FragmentAnalysis {
     private final Set<String> reads=new LinkedHashSet<>(),writes=new LinkedHashSet<>(),calls=new LinkedHashSet<>(),supplies=new LinkedHashSet<>(),borrowedWrites=new LinkedHashSet<>(),intrinsics=new LinkedHashSet<>();
-    private final Set<String> unverifiedCalls=new HashSet<>();
+    private final Set<String> unverifiedCalls=new HashSet<>(),capturedBindings=new HashSet<>();
     /** Locals that borrow a state value, mapped to the borrowed state path. Scoped like the locals. */
     private Map<String,String> aliases=new LinkedHashMap<>();
     /** Fresh outer containers: literals or checked nonmutating array copies it still holds. */
@@ -58,6 +58,13 @@ public final class FragmentAnalysis {
             public Map<String,Type> resolveModule(String module,String from,Set<String> active){return Map.of();}
             public deal.checker.Symbol.ClassSymbol resolveClassSymbol(String name,String module,String from){return null;}
         });
+        // Fragment declarations and helpers may repeat an identical import. Composition coalesces
+        // those; do the same for this evidence-only pass without rewriting the authored AST nodes.
+        Set<String> imports=new HashSet<>();
+        program=new ProgramNode(program.span(),program.statements().stream().filter(s->{
+            if(unwrap(s) instanceof ImportDeclaration i)return imports.add(i.alias()+"\n"+i.modulePath());
+            return true;
+        }).toList());
         var symbols=resolver.resolve(program);
         // Fragments can have unresolved external imports at this stage. Their expressions stay
         // unproven; final project compilation still checks the complete program before execution.
@@ -340,9 +347,9 @@ public final class FragmentAnalysis {
         if(callback instanceof IdentifierExpr id&&!scope.contains(id.name())){calls.add(id.name());return;}
         if(!(callback instanceof FunctionExpr function)){indirect=true;return;}
         var nested=new FragmentAnalysis();nested.types=types;nested.aliases=new LinkedHashMap<>(aliases);
-        nested.stateParameters.addAll(stateParameters);
+        nested.stateParameters.addAll(stateParameters);nested.capturedBindings.addAll(scope);
         Set<String> locals=new HashSet<>(scope);
-        for(var parameter:function.params()) {locals.add(parameter.name());nested.forget(parameter.name());nested.stateParameters.remove(parameter.name());}
+        for(var parameter:function.params()) {locals.add(parameter.name());nested.forget(parameter.name());nested.stateParameters.remove(parameter.name());nested.capturedBindings.remove(parameter.name());}
         nested.statement(function.body(),locals);
         reads.addAll(nested.reads);writes.addAll(nested.writes);calls.addAll(nested.calls);
         borrowedWrites.addAll(nested.borrowedWrites);intrinsics.addAll(nested.intrinsics);unverifiedCalls.addAll(nested.unverifiedCalls);indirect|=nested.indirect;
@@ -369,7 +376,7 @@ public final class FragmentAnalysis {
                 leaveTry();
             }
             case AwaitExpression a->{indirect=true;expression(a.callee(),scope);leaveTry();}
-            case AssignmentExpr a->{if(a.target() instanceof IdentifierExpr i && scope.contains(i.name())){expression(a.value(),scope);String borrow=borrowTarget(a.value());forget(i.name());declared.add(i.name());if(borrow!=null)aliases.put(i.name(),borrow);else if(allocated(a.value())){fresh.add(i.name());}}else {write(a.target(),scope);expression(a.value(),scope);}}
+            case AssignmentExpr a->{if(a.target() instanceof IdentifierExpr i && scope.contains(i.name())){if(capturedBindings.contains(i.name()))indirect=true;expression(a.value(),scope);String borrow=borrowTarget(a.value());forget(i.name());declared.add(i.name());if(borrow!=null)aliases.put(i.name(),borrow);else if(allocated(a.value())){fresh.add(i.name());}}else {write(a.target(),scope);expression(a.value(),scope);}}
             case BinaryExpr b->{expression(b.left(),scope);expression(b.right(),scope);}
             case ConditionalExpr c->{expression(c.condition(),scope);expression(c.consequent(),scope);expression(c.alternate(),scope);}
             case OptionalChainExpr c->expression(c.expression(),scope);

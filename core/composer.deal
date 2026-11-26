@@ -360,7 +360,7 @@ export async function assembleWith(composition: screens.Composition, computation
     } }
     let importModules: Record<string, string> = {}; for (let item of decoded.records(raw.imports)) { let alias: string = s.text(item.alias); importModules[alias] = s.text(item.module); }
     modulesByInstance[instance.id] = importModules;
-    factsByInstance[instance.id] = await policy.inspect(instance.fragment.declarations+"\n"+instance.fragment.helpers+(holesByInstance[instance.id] as string),importModules,types);
+    factsByInstance[instance.id] = await policy.inspect(instance.fragment.helpers+(holesByInstance[instance.id] as string),importModules,types,instance.fragment.declarations);
     namesByInstance[instance.id] = names; fieldsByInstance[instance.id] = fieldNames; typesByInstance[instance.id] = types;
     // Only the panel that names a descriptor reads that descriptor's draft, so no other instance is handed
     // a name it could write; a fragment field that reuses a draft identity rejects instead of aliasing it.
