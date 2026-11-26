@@ -54,6 +54,7 @@ const FIXTURE = `
     reject:fn(store=>store), finish:fn(store=>store),
     bridgeSessionStarted:fn(status=>status), bridgeSessionExited:fn(status=>status),
     bridgeReplacementReady:fn(()=>true), bridgeEffect0:fn(()=>{effects++;return null;}),
+    effectCommand:fn(()=>({operation:'start',key:'',delayMillis:0,cancellationMode:'none'})),
     payloadType_1:fn(()=>'none'), action_1:fn(()=>({})),
     payloadType_2:fn(()=>'json'), decodePayload_2:fn(text=>JSON.parse(text)), action_2:fn(()=>({})),
     payloadType_0:fn(()=>'number'), action_0:fn(()=>({})), checkAction_0:fn(()=>({})),

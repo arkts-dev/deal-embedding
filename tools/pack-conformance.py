@@ -174,16 +174,15 @@ def pack_default(cursor):
 
 
 def parse_type(cursor):
-    """Parse a declared type; `| null` is the optionality spelling, as in deal-ui."""
+    """Preserve value nullability independently of the field's `?` presence marker."""
     name = cursor.qualified()
     while cursor.match("["):
         cursor.require("]")
         name += "[]"
-    nullable = False
     if cursor.match("|"):
         cursor.require("null")
-        nullable = True
-    return name, nullable
+        name += " | null"
+    return name
 
 
 def parse_pack(text):
@@ -208,8 +207,7 @@ def parse_pack(text):
                 field = cursor.ident()
                 optional = cursor.match("?")
                 cursor.require(":")
-                kind, nullable = parse_type(cursor)
-                optional = optional or nullable
+                kind = parse_type(cursor)
                 has_default, default = False, None
                 if cursor.match("="):
                     has_default, default = True, pack_default(cursor)
@@ -247,9 +245,7 @@ def parse_pack(text):
                         if cursor.match("("):
                             cursor.require("payload")
                             cursor.require(":")
-                            payload, nullable = parse_type(cursor)
-                            if nullable:
-                                payload += " | null"
+                            payload = parse_type(cursor)
                             cursor.require(")")
                         contracts["events"][event] = payload
                     elif cursor.match("accessibility"):

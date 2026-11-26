@@ -63,7 +63,7 @@ stage() {
 java_base() {
     rm -rf "$OUTPUT_DIR/java-classes" "$OUTPUT_DIR/generated"; mkdir -p "$OUTPUT_DIR/java-classes" "$OUTPUT_DIR/generated"
     find "$DEAL_ROOT/deal" -name '*.java' | sort > "$OUTPUT_DIR/sources.txt"
-    for source in UiModel UiParser UiDiagnostic UiDiagnosticJson UiRepairDiagnostics UiCompilerWorkspace CanonicalCompiler UiChecker UiBorrowedValueChecker UiDealGenerator UiSourceGenerator DealUiDealSource UiCheckpointCompiler; do
+    for source in UiModel UiParser UiDiagnostic UiDiagnosticJson UiRepairDiagnostics UiCompilerWorkspace CanonicalCompiler UiChecker UiFlowScope UiBorrowedValueChecker UiDealGenerator UiViewBindings UiSourceGenerator DealUiDealSource UiCheckpointCompiler; do
         printf '%s/src/main/java/deal/ui/%s.java\n' "$DEAL_UI_ROOT" "$source" >> "$OUTPUT_DIR/sources.txt"
     done
     python3 "$ROOT/tools/pack-conformance.py" --pack "$ROOT/ui/platform.dealui-pack" --theme "$ROOT/ui/theme.json" \
@@ -164,7 +164,7 @@ package_aar() {
     (cd "$OUTPUT_DIR/aar" && zip -qr "$OUTPUT_DIR/deal-embedding.aar" .)
 }
 # Explicit source/toolchain boundaries: a policy edit does not recompile Java or Compose.
-mapfile -t UI_JAVA < <(for s in UiModel UiParser UiDiagnostic UiDiagnosticJson UiRepairDiagnostics UiCompilerWorkspace CanonicalCompiler UiChecker UiBorrowedValueChecker UiDealGenerator UiSourceGenerator DealUiDealSource UiCheckpointCompiler; do echo "$DEAL_UI_ROOT/src/main/java/deal/ui/$s.java"; done)
+mapfile -t UI_JAVA < <(for s in UiModel UiParser UiDiagnostic UiDiagnosticJson UiRepairDiagnostics UiCompilerWorkspace CanonicalCompiler UiChecker UiFlowScope UiBorrowedValueChecker UiDealGenerator UiViewBindings UiSourceGenerator DealUiDealSource UiCheckpointCompiler; do echo "$DEAL_UI_ROOT/src/main/java/deal/ui/$s.java"; done)
 INPUTS=("$JDK_RELEASE" "$DEAL_ROOT/deal" "${UI_JAVA[@]}" "$ANDROID_JAR" "$AIDL" "$ROOT/android/aidl" "$ROOT/tools/pack-conformance.py" "$ROOT/tools/ui-vocabulary.json" "$ROOT/tools/vocabulary-inventory.py" "$ROOT/ui/platform.dealui-pack" "$ROOT/ui/theme.json" "$ROOT/ui/prop-constraints.json")
 OUTPUTS=("$OUTPUT_DIR/java-classes" "$OUTPUT_DIR/generated/PackProjections.kt" "$OUTPUT_DIR/projections"); stage java_base
 INPUTS=("$JDK_RELEASE" "$OUTPUT_DIR/java-classes" "$ROOT/tools/FragmentSyntax.java" "$ROOT/tools/FragmentRegions.java" "$ROOT/tools/FragmentQualifier.java" "$ROOT/tools/FragmentAnalysis.java" "$ROOT/tools/FragmentMechanisms.java" "$ROOT/tools/PayloadConsumption.java")

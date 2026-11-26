@@ -103,7 +103,7 @@ internal enum class RenderComponent(val component: String) {
                 val prop = identity.substringAfterLast('.')
                 val field = declared[component]?.let { pack.classes()[it.propsType()] }?.fields()?.firstOrNull { it.name() == prop }
                     ?: throw IllegalStateException("$PACK_MISMATCH constraint $identity: pack declares no such prop")
-                val kind = field.type().name() + if (field.type().array()) "[]" else ""
+                val kind = field.type().sourceType(field.type().name())
                 val compatible = when (constraint) {
                     "pose" -> kind == "number[]"
                     "finite" -> kind == "number" || kind == "number[]"
@@ -148,7 +148,7 @@ internal enum class RenderComponent(val component: String) {
                 if (kindOf(field.type()) != row.kind) {
                     throw IllegalStateException("$PACK_MISMATCH prop $name.${row.prop}: kind ${row.kind} != ${kindOf(field.type())}")
                 }
-                if (field.type().optional() != row.optional) {
+                if (field.optional() != row.optional) {
                     throw IllegalStateException("$PACK_MISMATCH optionality $name.${row.prop}: metadata disagrees with the pack")
                 }
                 if ((field.defaultValue() == null) != (row.default == null)) {
@@ -161,6 +161,7 @@ internal enum class RenderComponent(val component: String) {
         }
 
         private fun kindOf(type: UiModel.TypeRef): String = when {
+            type.nullish() -> "json"
             type.array() && type.name() == "number" -> "numbers"
             type.array() -> "json"
             type.name() == "Action" -> "action"

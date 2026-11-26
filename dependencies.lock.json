@@ -9,7 +9,7 @@
     "deal-ui": {
       "path": "dependencies/deal-ui",
       "repository": "https://github.com/arkts-dev/deal-ui.git",
-      "commit": "39e1b269df9cc4a3b7161d9ead679ae5ffd9d866"
+      "commit": "c9f3d2bb237d825623a238ffd3b322c6adeaacfd"
     }
   }
 }

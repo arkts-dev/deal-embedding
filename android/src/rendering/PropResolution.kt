@@ -7,7 +7,7 @@ internal object PropDeclarationFacts {
     fun defaultOf(expression: UiModel.Expr?, type: UiModel.TypeRef): PropDefault? {
         if (expression == null) return null
         return when {
-            type.array() -> PropDefault.Json(literalText(expression))
+            type.nullish() || type.array() -> PropDefault.Json(literalText(expression))
             type.name() == "string" -> PropDefault.Text(literalText(expression).let { text ->
                 require(text.startsWith("\"")) { "expected a string default" }
                 NeutralJson.parse(text)?.let { (it as? JsonValue.Str)?.value } ?: error("expected a string default")

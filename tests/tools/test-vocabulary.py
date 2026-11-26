@@ -176,39 +176,51 @@ def main():
     number_boolean = replace_line(PACK.read_text(), "export class ButtonProps",
         'export class ButtonProps { text: string; onClick?: Action; value: number = 0; enabled: boolean = 1; style: string = ""; accessibilityLabel?: string; }')
     expect_rejected("PACK_CONFORMANCE", "Button.enabled", *prepared(pack_text=number_boolean))
-    # `| null` is the optionality spelling, as deal-ui parses it: a required prop or a prop with
-    # a declared default so spelled rejects before any projection is written.
+    # The vocabulary's exact value types reject added null admission independently of presence.
     nullable_pose = replace_line(PACK.read_text(), "export class TransformProps",
         'export class TransformProps { pose: number[] | null; durationMs: number; size: number = 0; style: string = ""; }')
     message = expect_rejected("PACK_CONFORMANCE", "Transform.pose", *prepared(pack_text=nullable_pose))
-    assert "optionality" in message, message
+    assert "type" in message, message
     nullable_text = replace_line(PACK.read_text(), "export class TextProps",
         'export class TextProps { text: string | null; style: string = ""; }')
     message = expect_rejected("PACK_CONFORMANCE", "Text.text", *prepared(pack_text=nullable_text))
-    assert "optionality" in message, message
+    assert "type" in message, message
     nullable_defaulted = replace_line(PACK.read_text(), "export class TransformProps",
         'export class TransformProps { pose: number[]; durationMs: number; size: number | null = 0; style: string = ""; }')
     message = expect_rejected("PACK_CONFORMANCE", "Transform.size", *prepared(pack_text=nullable_defaulted))
-    assert "optionality" in message, message
+    assert "type" in message, message
     nullable_payload = PACK.read_text().replace("event onChange(payload: boolean); ",
                                                 "event onChange(payload: boolean | null); ", 1)
     message = expect_rejected("PACK_CONFORMANCE", "Toggle.onChange", *prepared(pack_text=nullable_payload))
     assert "event-payload" in message, message
 
-    # The positive half of the same rule: `| null` on an optional prop is accepted and projects
-    # as optional in the declaration data and in the generated Kotlin table.
-    nullable_optional = replace_line(PACK.read_text(), "export class ButtonProps",
+    nullable_action = replace_line(PACK.read_text(), "export class ButtonProps",
         'export class ButtonProps { text: string; onClick: Action | null; value: number = 0; enabled: boolean = true; style: string = ""; accessibilityLabel?: string; }')
-    pack, theme_path, constraint_path, inventory_path = prepared(pack_text=nullable_optional)
-    nullable_out = pathlib.Path(tempfile.mkdtemp(prefix="vocabulary-nullable-"))
-    accepted = validate(pack, theme_path, constraint_path, inventory_path, nullable_out, nullable_out)
-    assert accepted.returncode == 0, f"a nullable optional prop must be accepted: {accepted.stdout}{accepted.stderr}"
-    projected = json.loads((nullable_out / "prop-declarations.json").read_text())
-    button = next(entry for entry in projected["components"] if entry["component"] == "Button")
-    onClick = next(prop for prop in button["props"] if prop["name"] == "onClick")
-    assert onClick.get("optional") is True and "required" not in onClick, onClick
-    generated = (nullable_out / "PackProjections.kt").read_text()
-    assert 'Row("Button", "onClick", "action", false, true, null),' in generated, generated
+    message = expect_rejected("PACK_CONFORMANCE", "Button.onClick", *prepared(pack_text=nullable_action))
+    assert "type" in message, message
+
+    # Presence, null admission and defaults remain independent in parser and projections.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("pack_conformance", VALIDATOR)
+    conformance = importlib.util.module_from_spec(spec); spec.loader.exec_module(conformance)
+    probe = conformance.parse_pack('pack version "2"; export class Props { '
+        'required: number | null; absent?: number; both?: number | null; '
+        'defaulted: number | null = null; } export component Probe(props: Props): View {}')
+    fields = conformance.prop_map(probe, "Probe")
+    assert fields["required"]["type"] == "number | null" and not fields["required"]["optional"]
+    assert fields["absent"]["type"] == "number" and fields["absent"]["optional"]
+    assert fields["both"]["type"] == "number | null" and fields["both"]["optional"]
+    assert fields["defaulted"]["hasDefault"] and fields["defaulted"]["default"] is None
+    projection = conformance.declaration_projection(probe)
+    props = {prop["name"]: prop for prop in projection["components"][0]["props"]}
+    assert props["required"] == {"name": "required", "kind": "json", "required": True}
+    assert props["absent"] == {"name": "absent", "kind": "number", "optional": True}
+    assert props["both"] == {"name": "both", "kind": "json", "optional": True}
+    assert props["defaulted"] == {"name": "defaulted", "kind": "json", "default": None, "required": True}
+    generated = conformance.kotlin_projection({"version": 2, "constraints": []},
+        conformance.card_projection(inventory), projection)
+    assert 'Row("Probe", "required", "json", true, false, null),' in generated
+    assert 'Row("Probe", "absent", "number", false, true, null),' in generated
     theme = json.loads(THEME.read_text()); theme["version"] = 1
     message = expect_rejected("PACK_CONFORMANCE", "version", *prepared(theme=theme))
     assert "2" in message and "1" in message

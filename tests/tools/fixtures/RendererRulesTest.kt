@@ -75,6 +75,18 @@ fun main(args: Array<String>) {
     check(RenderComponent.entries.all { it.capability == "renderer.${it.component}" })
     check(RenderComponent.entries.map { it.component }.toSet() == pack.components().keys)
     RenderComponent.verify(pack)
+    val packPath = root.resolve("ui/platform.dealui-pack")
+    val packSource = Files.readString(packPath)
+    for (declaration in listOf("onClick: Action", "onClick?: Action | null", "onClick: Action | null")) {
+        val changed = deal.ui.UiParser.parsePack(packPath,
+            packSource.replace("onClick?: Action;", "$declaration;"))
+        expectMismatch({ RenderComponent.verify(changed) }, "presence/value type $declaration")
+    }
+    val nullableDefaults = deal.ui.UiParser.parsePack(Path.of("defaults.pack"),
+        "export class Props { value: number | null = null; }")
+    val nullableField = nullableDefaults.classes().getValue("Props").fields().first()
+    check(!nullableField.optional() && nullableField.type().optional())
+    check(PropDeclarationFacts.defaultOf(nullableField.defaultValue(), nullableField.type()) == PropDefault.Json("null"))
 
     // Prop resolution: defaults only for omitted optional props, absence for optional without default.
     accepted(surface())
