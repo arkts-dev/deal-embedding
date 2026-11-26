@@ -57,6 +57,10 @@ def lane_bound(lane):
         return lane_bounds.catalogue_lane(lane.split(':', 1)[1])
     if lane == 'construction':
         return lane_bounds.construction_lane()
+    if lane == 'interaction':
+        return lane_bounds.interaction_lane()
+    if lane == 'surface':
+        return lane_bounds.surface_lane()
     if lane == 'renderer':
         # The renderer rules compile the JVM harness before they assert: a cold run measured 34.8 s here,
         # 33 s of it compilation, so this lane keeps the headroom the other compiling lanes keep instead of
@@ -89,6 +93,8 @@ LANES = {
     'harness': ['python3','tests/tools/test-host-check.py'],
     'cache': ['python3','tests/tools/test-build-cache.py'],
     'construction': ['python3','tests/tools/test-construction-contracts.py'],
+    'interaction': ['python3','tests/tools/test-interaction-contracts.py'],
+    'surface': ['python3','tests/tools/test-surface-script.py'],
     'catalogue': ['python3','tests/tools/test-catalogue.py'],
     'composer-prepare': ['python3','tests/tools/test-composer.py','--prepare-only'],
     'composer': ['python3','tests/tools/test-composer.py','--contracts-only'],

@@ -15,6 +15,8 @@ data class EmbeddingConfig(
     /** Clock driver cadence and wall-clock jump tolerance; both host configuration, never a literal in generated source. */
     val clockIntervalMs: Long = 1_000,
     val clockToleranceMs: Long = 2_000,
+    /** Host placement of the compiled human questions; absent means an admitted question stays unanswered. */
+    val questions: QuestionProvider? = null,
 ) {
     init {
         require(CompileInput.target(target) != null) { "Invalid host presentation target: $target" }
@@ -33,4 +35,15 @@ data class InferenceRequest(
 )
 fun interface InferenceProvider {
     fun complete(request: InferenceRequest, cancellation: GenerationCancellation): String
+}
+
+/** One host question answer. Both fields null means unanswered; DEAL validates exclusivity and bounds. */
+data class QuestionAnswer(val optionId: String?, val text: String?, val cancelled: Boolean = false)
+
+/**
+ * Host question adapter: the application shows the compiled question and returns what the human chose.
+ * The adapter carries no threshold, admission or replan decision; compiled DEAL owns those.
+ */
+fun interface QuestionProvider {
+    fun ask(requestId: String, question: String): QuestionAnswer
 }

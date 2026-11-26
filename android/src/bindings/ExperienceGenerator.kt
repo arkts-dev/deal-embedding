@@ -76,9 +76,36 @@ internal class ExperienceGenerator(private val context: Context, private val con
                             catch(error:deal.ui.UiDiagnostic){reject(request,"FRAGMENT_SYNTAX",error.message ?: "Invalid fragment view syntax");continue}
                             catch(error:IllegalArgumentException){reject(request,"FRAGMENT_SYNTAX",error.message ?: "Invalid fragment syntax");continue}
                         }
+                        "embedding/lookup"->{
+                            // One mechanism call carries an issued batch; the host performs the concurrent
+                            // lookups and returns each raw reply with its provider finish and refusal. Stage,
+                            // budget, reasoning, admission and any retained reply stay in compiled DEAL.
+                            check(function=="find");val batch=args.getJSONObject(0);val needs=batch.getJSONArray("needs");val results=JSONArray()
+                            val stage=batch.getString("stage");val maxTokens=batch.getInt("maxTokens");val thinking=batch.getBoolean("thinking")
+                            val pool=java.util.concurrent.Executors.newFixedThreadPool(minOf(needs.length().coerceAtLeast(1),4))
+                            try{
+                                val futures=(0 until needs.length()).map{index->val item=needs.getJSONObject(index);pool.submit(java.util.concurrent.Callable{
+                                    val inference=InferenceRequest(item.getString("input"),"","",batch.getString("operation"),stage,batch.getInt("asks")+index,maxTokens,thinking,"")
+                                    cancellation.check();progress("Looking up missing behavior")
+                                    val reply=log.operation("inference",operation=inference.operation,target=inference.stage,detail=item.toString()){child->model.dispatch(inference,cancellation,child)}
+                                    JSONObject().put("need",item.getString("id")).put("content",reply.content).put("finish",reply.finish).put("refusal",reply.refusal)
+                                })}
+                                // A failed lookup keeps its own classification: a worker's cancellation is the
+                                // generation's cancellation, never an execution failure of the batch.
+                                for(future in futures){
+                                    cancellation.check()
+                                    try{results.put(future.get())}
+                                    catch(error:java.util.concurrent.ExecutionException){val cause=error.cause;if(cause is java.util.concurrent.CancellationException)throw cause;throw (cause ?: error)}
+                                }
+                            }finally{pool.shutdownNow()}
+                            JSONObject().put("results",results).toString()
+                        }
                         "embedding/questions"->{
-                            // No host UI callback is registered: unanswered is explicitly resolved to the issued default by DEAL.
-                            check(function=="ask");JSONObject().put("optionId",JSONObject.NULL).put("text",JSONObject.NULL).put("cancelled",false)
+                            check(function=="ask")
+                            // The application's adapter answers; without one the compiled policy resolves
+                            // the issued default. Admission and the answered replan stay compiled.
+                            val answer=config.questions?.ask(args.getString(0),args.getString(1)) ?: QuestionAnswer(null,null,false)
+                            JSONObject().put("optionId",answer.optionId ?: JSONObject.NULL).put("text",answer.text ?: JSONObject.NULL).put("cancelled",answer.cancelled)
                         }
                         "embedding/policy-data"->when(function){
                             "catalogJson"->args.getJSONArray(0).toString()

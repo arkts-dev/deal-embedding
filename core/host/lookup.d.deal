@@ -1,0 +1,9 @@
+// Host search mechanism for missing needs. One batch call carries one prompt per uncached need; the
+// mechanism performs the concurrent lookups and returns each raw reply with its provider finish and
+// refusal. Stage, budget, reasoning, admission and caching are compiled policy.
+export class Need { id: string; input: string; }
+// `asks` is the first ask index of this batch: need `i` is ask `asks + i`.
+export class Batch { operation: string; stage: string; asks: number; maxTokens: number; thinking: boolean; needs: Need[]; }
+export class Found { need: string; content: string; finish: string; refusal: string; }
+export class Results { results: Found[]; }
+export function find(batch: Batch): Promise<string>;

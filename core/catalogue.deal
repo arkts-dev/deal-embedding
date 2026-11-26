@@ -119,7 +119,11 @@ function checkDefinition(definition: Definition): void {
   for (let declared of definition.holes) {
     s.unique(holes,s.identifier(declared.id)); s.nonblank(declared.signature); s.nonblank(declared.purpose);
     if (declared.writer !== "fill" && declared.writer !== "controller") { s.reject("Catalogue hole writer: "+definition.kind+" "+declared.id); }
-    if (declared.body.length > 600) { s.reject("Catalogue hole body bound: "+definition.kind+" "+declared.id); } s.text(declared.requires);
+    // The issued default is judged by the same bound owner the composition decode and the authored body
+    // use, so a definition this contract lane validates and a composition built from it cannot disagree
+    // about the bound. The table's own decode refuses an over-bound default with that owner's message.
+    let over: string = screens.overBound(definition.kind+" "+declared.id,declared.body);
+    if (over !== "") { s.reject(over); } s.text(declared.requires);
   }
 }
 export function definitionOf(name: string): Definition { for (let entry of definitions()) { if (entry.kind === name) { return entry; } } s.reject("Unknown catalogue kind: "+name); throw {name:"CONSTRUCTION_SCHEMA",message:"Unknown catalogue kind"}; }

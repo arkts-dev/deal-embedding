@@ -1,0 +1,107 @@
+import * as plans from "./plan";
+import * as s from "./construction-schema";
+
+// Chat retains the first five visible needs with their hidden dependencies, removes orphan dependents
+// to a fixpoint and discloses every omission as missing (docs/spec-v0.8.md:291;
+// generation-recovery-and-source-editing "Chat projection"). A hidden feeder is a plan need another
+// need reads: it supplies a value to a retained behavior and consumes no chat place. The projection is
+// a plan-level decision made once before construction, so every later stage reads the retained plan.
+export class Projection { plan: plans.Plan; omitted: string[]; }
+function feeder(plan: plans.Plan, id: string): boolean {
+  for (let need of plan.needs) { if (!(need.id === id) && s.contains(need.reads,id)) { return true; } }
+  return false;
+}
+function present(needs: plans.Need[], id: string): boolean { for (let need of needs) { if (need.id === id) { return true; } } return false; }
+function planned(plan: plans.Plan, id: string): boolean { return present(plan.needs,id); }
+// Every hidden dependency of a retained need is retained with it, transitively: the projection never
+// leaves a retained behavior reading a removed source.
+function close(plan: plans.Plan, kept: plans.Need[]): plans.Need[] {
+  let pending: string[] = [];
+  for (let need of kept) { for (let read of need.reads) { pending[pending.length] = read; } }
+  let cursor: number = 0;
+  while (cursor < pending.length) {
+    let id: string = pending[cursor]; cursor = cursor+1;
+    if (present(kept,id)) { continue; }
+    for (let need of plan.needs) { if (need.id === id && feeder(plan,id)) {
+      kept[kept.length] = need;
+      for (let read of need.reads) { pending[pending.length] = read; }
+    } }
+  }
+  // A retained set never keeps a dependent whose source the chat dropped. The closure above already
+  // retains every read of a retained need, so this fixpoint is the invariant's own guard: it fires only
+  // for a plan whose reads could not be closed (plan decode rejects unresolved or cyclic reads).
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    let next: plans.Need[] = [];
+    for (let need of kept) {
+      let orphan: boolean = false;
+      // Only a read that names another plan need can orphan this one: an input or constant read is a
+      // disclosed source, not a dropped behavior.
+      for (let read of need.reads) { if (planned(plan,read) && !present(kept,read)) { orphan = true; } }
+      if (orphan) { changed = true; } else { next[next.length] = need; }
+    }
+    kept = next;
+  }
+  // Plan order is preserved in the projected plan: the retained set is a filter, never a reordering.
+  let ordered: plans.Need[] = [];
+  for (let need of plan.needs) { if (present(kept,need.id)) { ordered[ordered.length] = need; } }
+  return ordered;
+}
+export function project(plan: plans.Plan, target: string): Projection {
+  // Only a chat target is projected; a screen or card target keeps its complete plan.
+  if (target !== "chat") { return {plan:plan,omitted:[]}; }
+  let visible: plans.Need[] = [];
+  for (let need of plan.needs) { if (!feeder(plan,need.id)) { visible[visible.length] = need; } }
+  let kept: plans.Need[] = [];
+  let index: number = 0;
+  while (index < visible.length && index < 5) { kept[kept.length] = visible[index]; index = index+1; }
+  kept = close(plan,kept);
+  let omitted: string[] = [];
+  for (let need of plan.needs) { if (!present(kept,need.id)) { omitted[omitted.length] = need.id; } }
+  // A requirement names only planned behaviors, so the projected plan carries the requirement's own
+  // needs filtered to the retained set: a projected plan that named an omitted need would violate the
+  // plan invariant `plans.decode` enforces and would report the projection's own decision as a lost
+  // requirement. The omitted behavior is disclosed as missing like every other omission.
+  let requirements: plans.Requirement[] = [];
+  for (let requirement of plan.requirements) {
+    let needs: string[] = [];
+    for (let id of requirement.needs) { if (present(kept,id)) { needs[needs.length] = id; } }
+    requirements[requirements.length] = {id:requirement.id,text:requirement.text,sources:requirement.sources,needs:needs};
+  }
+  return {plan:{title:plan.title,eyebrow:plan.eyebrow,subtitle:plan.subtitle,inputs:plan.inputs,constants:plan.constants,requirements:requirements,needs:kept,questions:plan.questions},omitted:omitted};
+}
+// The one disclosure sentence for a need the chat projection omitted: the projection owns the rule and
+// every emitting route renders this text, so the disclosure cannot drift between them.
+export function omission(need: string): string { return need+": missing — Chat retains the first five visible needs"; }
+// A whole custom chat is compact, headerless and at most two sections (docs/spec-v0.8.md:291). The
+// compiler-parsed view facts are inspected before emission: a header anywhere in the draft or a third
+// section under its root container is a source constraint the writer can repair, never a silent layout
+// change. The rule reads structure, not source text, so a comment or a string literal can neither refuse
+// a compliant draft nor hide a header, and the same facts describe a fresh draft's view region and an
+// edited draft's emitted view. The specification's 'compact' clause is this whole-chat shape: the style
+// token 'compact' is a Column/Row/List/Grid style (docs/spec-v0.8.md:640,645,646) and this sentence
+// mandates no container style for a whole chat.
+export function compact(views: Record<string, unknown>[]): string {
+  for (let view of views) {
+    for (let declared of s.stringArray(view.elements)) {
+      let element: string = name(declared);
+      if (element === "Header" || element === "Hero") { return "A whole chat draft is headerless"; }
+    }
+    // The section count is the compiler's own structural fact: every Section reachable from the root's
+    // children without crossing another Section, so neither a nested section of a section nor a wrapper
+    // container can change the count this rule reads. A missing or mistyped fact rejects instead of
+    // defaulting to zero, so the rule can never be silently disabled for a headerless third section.
+    let sections: number = s.integral(view.sections);
+    if (sections > 2) { return "A whole chat draft carries at most two sections"; }
+  }
+  return "";
+}
+// A parsed element carries its bound alias (`ui.Section`); the rule is about the element, so the alias the
+// draft chose can neither hide an element nor invent one.
+function name(declared: string): string {
+  let dot: number = declared.lastIndexOf(".");
+  if (dot < 0) { return declared; }
+  return declared.substring(dot+1);
+}
+export function main(): void { return; }

@@ -46,6 +46,20 @@ class WireDefinitionHole { id:string; signature:string; }
 class WireDefinition { fields:WireDefinitionField[]; ports:WireDefinitionPort[]; actions:string[]; holes:WireDefinitionHole[]; }
 class WireComposition { screen:WireScreen; bindings:Record<string, unknown>; actions:Record<string, unknown>; connections:Connection[]; composites?:Composite[]; }
 
+// The one authored-body bound and its located message: the composition decode, the catalogue
+// definition decode and the body classifier all refuse an over-bound body through this owner.
+export function overBound(id: string, body: string): string {
+  if (body.length > 600) { return "Catalogue hole body bound: "+id; }
+  return "";
+}
+// The one emitted disclosure instance. A missing, reverted or abandoned behavior is disclosed as a
+// rendered notice, so the owner of the instance shape issues it and every emitting route calls this
+// factory: a disclosure cannot drift between the ordinary composition and the whole custom writer.
+export function notice(id: string, message: string): Instance {
+  // Encode data through the same compiler expression mechanism used by other fragments.
+  let escaped: string = s.encode(message);
+  return {id:id,kind:"notice",origin:"notice",parameters:{text:message},fragment:{declarations:"",fields:[],updates:[],effects:[],helpers:"",view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Text(text: "+escaped+", style: \"muted\")}",options:[],content:[],ports:[],holes:[],covers:[],owns:[]},bodies:{}};
+}
 export function catalogueKinds(): string[] {
   return ["checklist","metrics","timer","calendar_event","actions","progress_goal","key_facts","trend_chart","note","rating","spotlight","search_list","master_list","filter_box","detail_view","list_summary","record_log","number_strip","breakdown_table","series_chart","settle_up","itinerary","progress_line","intent_panel","data_table","timeline","bar_chart","quick_log","reminders","dose_schedule","due_items","points_ledger","idea_deck","interval_timer","reading_status","live_figure"];
 }
@@ -181,13 +195,13 @@ function screen(raw: WireScreen, frozenTarget: string, needIds: string[]): Scree
         s.closed(hole,["id","signature","purpose","body","writer","requires"],[]);
         s.nonblank(hole.signature); s.nonblank(hole.purpose); s.text(hole.requires); s.oneOf(hole.writer,["fill","controller"]);
         if (typeof hole.body !== "string") { s.reject("Catalogue hole body must be text: "+s.text(hole.id)); }
-        if (s.text(hole.body).length > 600) { s.reject("Catalogue hole body bound: "+s.text(hole.id)); }
+        let declaredOver: string = overBound(s.text(hole.id),s.text(hole.body)); if (declaredOver !== "") { s.reject(declaredOver); }
       }
     }
     for (let holeId of Object.keys(entry.bodies)) {
       if (!s.contains(holes,holeId)) { s.reject("Unissued body: "+holeId); }
       if (typeof entry.bodies[holeId] !== "string") { s.reject("Catalogue hole body must be text: "+holeId); }
-      if (s.text(entry.bodies[holeId]).length > 600) { s.reject("Catalogue hole body bound: "+holeId); }
+      let issuedOver: string = overBound(holeId,s.text(entry.bodies[holeId])); if (issuedOver !== "") { s.reject(issuedOver); }
       for (let hole of entry.fragment.holes) { if (s.text(hole.id) === holeId && Object.hasOwn(hole,"writer") && s.text(hole.writer) !== "fill") { s.reject("Controller-writer hole body: "+holeId); } }
     }
     // An issued catalogue or part instance carries the definition it was built from; a composition

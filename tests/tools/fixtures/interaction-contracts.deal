@@ -1,0 +1,277 @@
+import * as plans from "./plan";
+import * as screens from "./screen";
+import * as chat from "./chat";
+import * as lookup from "./lookup";
+import * as bodies from "./catalogue-bodies";
+import * as s from "./construction-schema";
+import * as syntax from "embedding/fragment-syntax";
+import * as strings from "std/string";
+
+function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
+function joined(needs: plans.Need[]): string { let values: string[] = []; for (let need of needs) { values[values.length] = need.id; } return values.join(","); }
+function joined2(values: string[]): string { return values.join(","); }
+function contentNeed(id: string, reads: string): string { return "{\"id\":\""+id+"\",\"type\":\"content\",\"words\":\""+id+" behavior\",\"reads\":"+reads+",\"spec\":{}}"; }
+function projectionPlan(needs: string, requirements: string, inputs: string): plans.Plan { return plans.decode("{\"title\":\"Chat\",\"inputs\":"+inputs+",\"constants\":[],\"requirements\":"+requirements+",\"needs\":"+needs+",\"questions\":[]}",[],[],"",""); }
+function sixNeeds(): string { return contentNeed("shared","[]")+","+contentNeed("one","[\"shared\"]")+","+contentNeed("two","[\"shared\"]")+","+contentNeed("three","[\"shared\"]")+","+contentNeed("four","[\"shared\"]")+","+contentNeed("five","[\"shared\"]")+","+contentNeed("six","[\"shared\"]"); }
+function inputNeeds(): string { return contentNeed("a","[\"value\"]")+","+contentNeed("b","[\"value\"]")+","+contentNeed("c","[\"value\"]")+","+contentNeed("d","[\"value\"]")+","+contentNeed("e","[\"value\"]")+","+contentNeed("f","[\"value\"]"); }
+// Every read of a retained need resolves to that plan's own disclosed input/constant or to another
+// retained behavior. This is the projection's own invariant: a dropped behavior read by a retained
+// behavior is the failure the closure and the orphan fixpoint exist to prevent.
+function closedReads(plan: plans.Plan, kept: plans.Need[]): void {
+  let sources: string[] = [];
+  for (let input of plan.inputs) { sources[sources.length] = input.id; }
+  for (let constant of plan.constants) { sources[sources.length] = constant.id; }
+  for (let need of kept) { for (let read of need.reads) {
+    let readable: boolean = s.contains(sources,read);
+    for (let value of kept) { if (value.id === read) { readable = true; } }
+    insist(readable,"A retained need reads a dropped behavior: "+need.id+" -> "+read);
+  } }
+}
+
+// The whole-chat shape rule reads the compiler's parsed view facts, never the source text.
+async function shape(view: string): Promise<string> {
+  let facts: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:"",view:view})));
+  return chat.compact(s.records(facts,"views"));
+}
+// ---- Chat retained-child projection -------------------------------------------------
+export async function chatProjection(): Promise<null> {
+  // A hidden feeder is read by other needs: it consumes no chat place and travels with the retained
+  // behaviors. Six visible needs therefore keep the first five plus the feeder.
+  let plan: plans.Plan = projectionPlan("["+sixNeeds()+"]","[{\"id\":\"preserve\",\"text\":\"Keep six\",\"sources\":[\"request\"],\"needs\":[\"six\"]},{\"id\":\"keep_one\",\"text\":\"Keep one\",\"sources\":[\"request\"],\"needs\":[\"one\",\"six\"]}]","[]");
+  let projected: chat.Projection = chat.project(plan,"chat");
+  insist(joined(projected.plan.needs) === "shared,one,two,three,four,five","Chat projection kept: "+joined(projected.plan.needs));
+  insist(projected.omitted.join(",") === "six","Chat omission: "+projected.omitted.join(","));
+  // A projected plan is a decodable plan: a requirement names only behaviors the plan still carries,
+  // so the omitted need is never reported as a lost requirement and a retained one keeps its own.
+  insist(projected.plan.requirements.length === 2 && projected.plan.requirements[0].id === "preserve","Requirement IDs were not preserved");
+  insist(projected.plan.requirements[0].needs.length === 0,"An omitted need stayed in a projected requirement: "+s.encode(projected.plan.requirements[0]));
+  insist(joined2(projected.plan.requirements[1].needs) === "one","A retained requirement need was dropped: "+s.encode(projected.plan.requirements[1]));
+  // A screen or card target is never projected.
+  insist(chat.project(plan,"screen").omitted.length === 0 && chat.project(plan,"screen").plan.needs.length === 7,"A screen target was projected");
+  // A need that reads an input is not an orphan: disclosed sources are not chat behaviors.
+  let inputPlan: plans.Plan = projectionPlan("["+inputNeeds()+"]","[]","[{\"id\":\"value\",\"label\":\"Value\",\"kind\":\"count\",\"measure\":\"count\",\"value\":3}]");
+  let inputs: chat.Projection = chat.project(inputPlan,"chat");
+  insist(inputs.plan.needs.length === 5 && inputs.omitted.join(",") === "f","An input read orphaned its need: "+joined(inputs.plan.needs)+" omitted "+inputs.omitted.join(","));
+  // The closure keeps every read of a retained need, so a projected set never reads a dropped
+  // behavior. The source list is each plan's own inputs and constants, so a read naming a behavior
+  // must still be in the retained set: a closure that dropped a feeder fails here.
+  closedReads(plan,projected.plan.needs);
+  closedReads(inputPlan,inputs.plan.needs);
+  // A whole custom chat is compact, headerless and at most two sections, decided on the parsed view:
+  // an element name inside a comment or a text literal is not an element, and structure decides the
+  // section count rather than the spelling of a call.
+  let header: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){ui.Header(title: \"Hi\")}}";
+  insist(await shape(header) === "A whole chat draft is headerless","A chat header was admitted: "+await shape(header));
+  let hero: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){ui.Hero(title: \"Hi\")}}";
+  insist(await shape(hero) === "A whole chat draft is headerless","A chat hero was admitted: "+await shape(hero));
+  let three: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){ui.Section(title: \"1\"){ui.Text(text: \"a\")}ui.Section(title: \"2\"){ui.Text(text: \"b\")}ui.Section(title: \"3\"){ui.Text(text: \"c\")}}}";
+  insist(await shape(three) === "A whole chat draft carries at most two sections","A third chat section was admitted: "+await shape(three));
+  let two: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){ui.Section(title: \"1\"){ui.Text(text: \"a\")}ui.Section(title: \"2\"){ui.Text(text: \"b\")}}}";
+  insist(await shape(two) === "","Two chat sections were refused: "+await shape(two));
+  // A nested section is not a section of the whole chat, and the token in a text literal is not an
+  // element: the rule reads structure, so neither can refuse a compliant draft.
+  let nested: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){ui.Section(title: \"1\"){ui.Section(title: \"inner\"){ui.Text(text: \"a\")}}ui.Section(title: \"2\"){ui.Text(text: \"ui.Section( ui.Header( \")}}}";
+  insist(await shape(nested) === "","A nested section or a literal refused a two-section chat: "+await shape(nested));
+  // A wrapper container cannot hide a third section: the count is every section reachable from the
+  // root's children without crossing another section.
+  let wrapped: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){ui.Column(){ui.Section(title: \"1\"){ui.Text(text: \"a\")}ui.Section(title: \"2\"){ui.Text(text: \"b\")}ui.Section(title: \"3\"){ui.Text(text: \"c\")}}}}";
+  insist(await shape(wrapped) === "A whole chat draft carries at most two sections","A wrapped third chat section was admitted: "+await shape(wrapped));
+  let wrappedTwo: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){ui.Column(){ui.Section(title: \"1\"){ui.Text(text: \"a\")}ui.Section(title: \"2\"){ui.Text(text: \"b\")}}}}";
+  insist(await shape(wrappedTwo) === "","A wrapped two-section chat was refused: "+await shape(wrappedTwo));
+  // A view rooted at Section is one section that holds its nested ones, exactly as a nested section
+  // under another root belongs to the section that holds it: the root is counted, never passed over.
+  let sectionRoot: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Section(title: \"Only\"){ui.Section(title: \"1\"){ui.Text(text: \"a\")}ui.Section(title: \"2\"){ui.Text(text: \"b\")}ui.Section(title: \"3\"){ui.Text(text: \"c\")}}}";
+  insist(await shape(sectionRoot) === "","A Section root and its nested sections were counted as three: "+await shape(sectionRoot));
+  return null;
+}
+
+// ---- Missing-need lookup and refusal caching ----------------------------------------
+function lookupNeed(id: string): plans.Need { return {id:id,type:"content",words:id+" behavior",quote:"",reads:[],required:true,spec:{}}; }
+// The issued reference is the one kind-table owner's text: the lookup never restates the catalogue.
+function target(need: string, kinds: string[]): lookup.Target { return {need:need,kinds:kinds}; }
+function reference(targets: lookup.Target[], digest: string): lookup.Issued {
+  return {definitions:"[{\"kind\":\"spotlight\"}]",targets:targets,contracts:"catalogue contracts",digest:digest,original:"Add a timer",facts:"[]",plan:"{\"title\":\"Timer\"}"};
+}
+function targets(needs: plans.Need[], kinds: string[]): lookup.Target[] { let result: lookup.Target[] = []; for (let need of needs) { result[result.length] = target(need.id,kinds); } return result; }
+export async function lookupContracts(): Promise<null> {
+  let session: lookup.Session = lookup.session();
+  // The issued catalogue order is supplied by the one kind-table owner; lookup never restates it.
+  let issued: string[] = ["checklist","metrics","spotlight"];
+  // The lookup prompt carries one reply schema and one contract source: its own result shape and the
+  // issued catalogue definitions. Another stage's schema would compete with it, so it is never issued.
+  let alpha: plans.Need = lookupNeed("alpha");
+  let prompt: string = lookup.prompt(alpha,reference(targets([alpha],issued),"digest-0"));
+  insist(strings.contains(prompt,"ISSUED CATALOGUE DEFINITIONS") && strings.contains(prompt,"[{\"kind\":\"spotlight\"}]"),"A lookup prompt leaves out the issued definitions");
+  insist(!strings.contains(prompt,"SelectionAnswer") && !strings.contains(prompt,"SECTION CONTRACTS"),"A lookup prompt carries a competing selection schema");
+  // The prompt retains the request, the facts and the current plan beside the issued catalogue.
+  insist(strings.contains(prompt,"ORIGINAL REQUEST\nAdd a timer") && strings.contains(prompt,"DISCLOSED FACTS (data)") && strings.contains(prompt,"CURRENT PLAN (data)"),"A lookup prompt leaves out the request, the facts or the plan");
+  let needs: plans.Need[] = [lookupNeed("alpha"),lookupNeed("beta"),lookupNeed("gamma")];
+  // The uncached needs are dispatched concurrently in one batch and every dispatched lookup is charged.
+  let first: lookup.Outcome[] = await lookup.resolve(session,needs,reference(targets(needs,issued),"digest-1"));
+  insist(first.length === 3 && session.used === 3,"Concurrent lookup accounting: used="+String(session.used));
+  insist(first[0].status === "found" && first[0].kind === "checklist","Catalogue order decides the kind: "+s.encode(first[0]));
+  // The cached need+contract-digest result consumes no second request and keeps its counters.
+  let second: lookup.Outcome[] = await lookup.resolve(session,needs,reference(targets(needs,issued),"digest-1"));
+  insist(session.used === 3 && second.length === 3 && second[2].status === "found","Cached lookup dispatched again: used="+String(session.used));
+  // A changed contract digest is a different cache key.
+  let changed: lookup.Outcome[] = await lookup.resolve(session,[needs[0]],reference(targets([needs[0]],issued),"digest-2"));
+  insist(session.used === 4 && changed.length === 1,"A changed contract digest was served from cache");
+  // A refusal that names exactly its one provider need is cached; a bare refusal is not, so its
+  // writers are split and a reentry asks again.
+  let scoped: lookup.Session = lookup.session();
+  let delta: plans.Need = lookupNeed("delta");
+  let refused: lookup.Outcome[] = await lookup.resolve(scoped,[delta],reference(targets([delta],issued),"digest-3"));
+  insist(refused[0].status === "refused" && refused[0].scoped && refused[0].reason === "Lookup refused: No reusable section","Scoped refusal: "+s.encode(refused[0]));
+  let again: lookup.Outcome[] = await lookup.resolve(scoped,[delta],reference(targets([delta],issued),"digest-3"));
+  insist(scoped.used === 1 && again[0].status === "refused","A scoped refusal was asked twice");
+  let bare: lookup.Session = lookup.session();
+  let epsilon: plans.Need = lookupNeed("epsilon");
+  let unscoped: lookup.Outcome[] = await lookup.resolve(bare,[epsilon],reference(targets([epsilon],issued),"digest-4"));
+  insist(unscoped[0].status === "refused" && !unscoped[0].scoped,"Bare refusal scope: "+s.encode(unscoped[0]));
+  let retried: lookup.Outcome[] = await lookup.resolve(bare,[epsilon],reference(targets([epsilon],issued),"digest-4"));
+  insist(bare.used === 2 && retried[0].status === "refused","A bare refusal was cached or not re-asked");
+  // A refusal that also names another need is a multineed refusal: it is not this need's own refusal,
+  // so the writers split and the need is asked again instead of keeping a narrow refusal.
+  let multineed: lookup.Session = lookup.session();
+  let zeta: plans.Need = lookupNeed("zeta");
+  let partial: lookup.Outcome[] = await lookup.resolve(multineed,[zeta],reference(targets([zeta],issued),"digest-4b"));
+  insist(partial[0].status === "refused" && !partial[0].scoped,"Multineed refusal scope: "+s.encode(partial[0]));
+  let asked: lookup.Outcome[] = await lookup.resolve(multineed,[zeta],reference(targets([zeta],issued),"digest-4b"));
+  insist(multineed.used === 2 && asked[0].status === "refused","A multineed refusal was cached or not re-asked");
+  // The 8000-character bound is inclusive, and an unknown kind is an unusable result rather than a
+  // substituted contract.
+  let bound: lookup.Session = lookup.session();
+  let large: lookup.Outcome[] = await lookup.resolve(bound,[lookupNeed("large")],reference(targets([lookupNeed("large")],issued),"digest-5"));
+  insist(large[0].status === "found","The inclusive content bound: "+s.encode(large[0]));
+  let over: lookup.Session = lookup.session();
+  let larger: plans.Need = lookupNeed("overflow");
+  let overflow: lookup.Outcome[] = await lookup.resolve(over,[larger],reference(targets([larger],issued),"digest-6"));
+  insist(overflow[0].status === "unavailable" && strings.contains(overflow[0].reason,"8000"),"Over-bound lookup: "+s.encode(overflow[0]));
+  let unknown: lookup.Session = lookup.session();
+  let invalidNeed: plans.Need = lookupNeed("invalid");
+  let invalid: lookup.Outcome[] = await lookup.resolve(unknown,[invalidNeed],reference(targets([invalidNeed],issued),"digest-7"));
+  insist(invalid[0].status === "unavailable" && strings.contains(invalid[0].reason,"Unusable lookup result"),"Unissued kind: "+s.encode(invalid[0]));
+  // An over-bound reply and an unissued kind are unusable, never remembered: a reentry asks again.
+  let overflowAgain: lookup.Outcome[] = await lookup.resolve(over,[larger],reference(targets([larger],issued),"digest-6"));
+  insist(over.used === 2 && overflowAgain[0].status === "unavailable","An over-bound lookup was cached: used="+String(over.used));
+  let invalidAgain: lookup.Outcome[] = await lookup.resolve(unknown,[invalidNeed],reference(targets([invalidNeed],issued),"digest-7"));
+  insist(unknown.used === 2 && invalidAgain[0].status === "unavailable","An unissued kind was cached: used="+String(unknown.used));
+  // A found reply whose contract text is not one complete contract is unusable, so a reentry asks
+  // again instead of serving a parameter set the fill can never decode.
+  let incomplete: lookup.Session = lookup.session();
+  let incompleteNeed: plans.Need = lookupNeed("incomplete");
+  let incompleteOutcome: lookup.Outcome[] = await lookup.resolve(incomplete,[incompleteNeed],reference(targets([incompleteNeed],issued),"digest-10"));
+  insist(incompleteOutcome[0].status === "unavailable" && strings.contains(incompleteOutcome[0].reason,"Unusable lookup result"),"An incomplete contract: "+s.encode(incompleteOutcome[0]));
+  let incompleteAgain: lookup.Outcome[] = await lookup.resolve(incomplete,[incompleteNeed],reference(targets([incompleteNeed],issued),"digest-10"));
+  insist(incomplete.used === 2 && incompleteAgain[0].status === "unavailable","An incomplete contract was cached: used="+String(incomplete.used));
+  // A refusal that names only another need says nothing about this one: it is unusable, asked again.
+  let elsewhere: lookup.Session = lookup.session();
+  let foreign: plans.Need = lookupNeed("foreign");
+  let foreignOutcome: lookup.Outcome[] = await lookup.resolve(elsewhere,[foreign],reference(targets([foreign],issued),"digest-11"));
+  insist(foreignOutcome[0].status === "unavailable" && strings.contains(foreignOutcome[0].reason,"another need"),"A refusal for another need: "+s.encode(foreignOutcome[0]));
+  let foreignAgain: lookup.Outcome[] = await lookup.resolve(elsewhere,[foreign],reference(targets([foreign],issued),"digest-11"));
+  insist(elsewhere.used === 2 && foreignAgain[0].status === "unavailable","A refusal naming another need was cached: used="+String(elsewhere.used));
+  // The 8000-character bound is the sum of every returned contract, not one contract's own length.
+  let summed: lookup.Session = lookup.session();
+  let splitNeed: plans.Need = lookupNeed("split");
+  let splitOutcome: lookup.Outcome[] = await lookup.resolve(summed,[splitNeed],reference(targets([splitNeed],issued),"digest-12"));
+  insist(splitOutcome[0].status === "unavailable" && strings.contains(splitOutcome[0].reason,"8000"),"The summed content bound: "+s.encode(splitOutcome[0]));
+  // A model reply is data: a truncated, empty, non-object or unparsable reply is an unusable lookup
+  // result, not an operational failure of the request, and none of them is cached.
+  let broken: lookup.Session = lookup.session();
+  let brokenNeeds: plans.Need[] = [lookupNeed("malformed"),lookupNeed("empty"),lookupNeed("nulljson"),lookupNeed("truncated")];
+  let malformed: lookup.Outcome[] = await lookup.resolve(broken,brokenNeeds,reference(targets(brokenNeeds,issued),"digest-8"));
+  insist(malformed[0].status === "unavailable" && strings.contains(malformed[0].reason,"Unusable lookup result"),"Malformed reply: "+s.encode(malformed[0]));
+  insist(malformed[1].status === "unavailable" && strings.contains(malformed[1].reason,"Unusable lookup result"),"Empty reply: "+s.encode(malformed[1]));
+  insist(malformed[2].status === "unavailable" && strings.contains(malformed[2].reason,"Unusable lookup result"),"Non-object reply: "+s.encode(malformed[2]));
+  insist(malformed[3].status === "unavailable" && strings.contains(malformed[3].reason,"truncated"),"Truncated reply: "+s.encode(malformed[3]));
+  let unmemoized: lookup.Outcome[] = await lookup.resolve(broken,brokenNeeds,reference(targets(brokenNeeds,issued),"digest-8"));
+  insist(broken.used === 8 && unmemoized.length === 4,"An unusable reply was cached: used="+String(broken.used));
+  // A provider refusal answers the one need it was asked for, so it is that need's refusal and is kept.
+  let provider: lookup.Session = lookup.session();
+  let providerNeed: plans.Need = lookupNeed("provider");
+  let refusedByProvider: lookup.Outcome[] = await lookup.resolve(provider,[providerNeed],reference(targets([providerNeed],issued),"digest-9"));
+  insist(refusedByProvider[0].status === "refused" && refusedByProvider[0].scoped && strings.contains(refusedByProvider[0].reason,"content filtered"),"Provider refusal: "+s.encode(refusedByProvider[0]));
+  let providerAgain: lookup.Outcome[] = await lookup.resolve(provider,[providerNeed],reference(targets([providerNeed],issued),"digest-9"));
+  insist(provider.used === 1 && providerAgain[0].status === "refused","A single-need provider refusal was asked twice");
+  return null;
+}
+
+// ---- Catalogue hole body authoring ---------------------------------------------------
+function holeInstance(id: string, signature: string): screens.Instance {
+  let hole: Record<string, unknown> = {id:"whenFinished",signature:signature,purpose:"Runs once when the timer ends.",body:"return state;",writer:"fill",requires:"clock"};
+  let fragment: screens.Fragment = {declarations:"",fields:[],updates:[],effects:[],helpers:"",view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){ui.Text(text: \"Hole\")}}",options:[],content:[],ports:[],holes:[hole],covers:[id],owns:[id]};
+  return {id:id,kind:"timer",origin:"catalogue",parameters:{},fragment:fragment,bodies:{}};
+}
+function emptyPlan(): plans.Plan { return projectionPlan("[]","[]","[]"); }
+// Two issued fill holes on one instance: one authoring ask must cover both regions, and both bodies are
+// written together.
+function twinHoles(id: string): screens.Instance {
+  let first: Record<string, unknown> = {id:"whenFinished",signature:"(state: AppState): AppState",purpose:"Runs once when the timer ends.",body:"return state;",writer:"fill",requires:"clock"};
+  let second: Record<string, unknown> = {id:"rowMatches",signature:"(state: AppState, item: Entry): boolean",purpose:"Decides whether one row matches the query.",body:"return true;",writer:"fill",requires:""};
+  let fragment: screens.Fragment = {declarations:"",fields:[],updates:[],effects:[],helpers:"",view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){ui.Text(text: \"Holes\")}}",options:[],content:[],ports:[],holes:[first,second],covers:[id],owns:[id]};
+  return {id:id,kind:"master_list",origin:"catalogue",parameters:{},fragment:fragment,bodies:{}};
+}
+export async function catalogueBodies(): Promise<null> {
+  // An authored body is returned with its own counter, one ask for the instance.
+  let authored: bodies.Authored = await bodies.author(holeInstance("section_a","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(authored.status === "authored" && authored.asks === 1 && (authored.bodies.whenFinished as string).includes("return state;"),"Authored body: "+s.encode(authored));
+  // A body that never compiles is repaired twice and then reverted to the compiling default.
+  let reverted: bodies.Authored = await bodies.author(holeInstance("section_b","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(reverted.status === "reverted" && reverted.asks === 3 && strings.contains(reverted.reason,"Catalogue hole body bound"),"Reverted body: "+s.encode(reverted));
+  // Source outside the issued hole region abandons the generated bodies at once.
+  let abandoned: bodies.Authored = await bodies.author(holeInstance("section_c","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(abandoned.status === "abandoned" && abandoned.asks === 1 && abandoned.bodies.whenFinished === undefined,"Abandoned body: "+s.encode(abandoned));
+  // A second instance gets its own operation and its own first ask: counters are independent.
+  let independent: bodies.Authored = await bodies.author(holeInstance("section_d","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(independent.status === "authored" && independent.asks === 1,"Independent body counter: "+s.encode(independent));
+  // A body the compiler cannot parse is a repairable failure of its own ask: it is repaired twice and
+  // then reverts to the compiling default instead of ending the request.
+  let unparsed: bodies.Authored = await bodies.author(holeInstance("section_e","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(unparsed.status === "reverted" && unparsed.asks === 3 && strings.contains(unparsed.reason,"is not valid syntax"),"Unparsed body: "+s.encode(unparsed));
+  insist(unparsed.bodies.whenFinished === undefined,"An unparsed body reached the instance");
+  // A body exactly at the 600-character bound is admitted; the bound is inclusive.
+  let inclusive: bodies.Authored = await bodies.author(holeInstance("section_f","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(inclusive.status === "authored" && inclusive.asks === 1,"The inclusive body bound: "+s.encode({status:inclusive.status,asks:inclusive.asks,reason:inclusive.reason}));
+  // A body that closes its issued declaration and writes a second one is source outside the hole: the
+  // generated bodies are abandoned at once instead of being emitted beside it.
+  let escaped: bodies.Authored = await bodies.author(holeInstance("section_g","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(escaped.status === "abandoned" && escaped.asks === 1 && escaped.bodies.whenFinished === undefined,"Body source outside its hole: "+s.encode(escaped));
+  // A class after the closing brace is source outside the hole by the same verdict the composer
+  // applies: the author abandons instead of reaching an assembly that would reject the pair.
+  let declared: bodies.Authored = await bodies.author(holeInstance("section_h","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(declared.status === "abandoned" && declared.asks === 1 && declared.bodies.whenFinished === undefined,"Body class outside its hole: "+s.encode(declared));
+  // The region shapes a reply can get wrong are repairable format failures: each is asked again twice
+  // and then reverts to the compiling default.
+  let missing: bodies.Authored = await bodies.author(holeInstance("section_i","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(missing.status === "reverted" && missing.asks === 3 && strings.contains(missing.reason,"Missing body region"),"A missing region: "+s.encode(missing));
+  let unclosed: bodies.Authored = await bodies.author(holeInstance("section_j","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(unclosed.status === "reverted" && unclosed.asks === 3 && strings.contains(unclosed.reason,"Unclosed body region"),"An unclosed region: "+s.encode(unclosed));
+  let blank: bodies.Authored = await bodies.author(holeInstance("section_k","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(blank.status === "reverted" && blank.asks === 3 && strings.contains(blank.reason,"Empty hole body"),"A blank region: "+s.encode(blank));
+  let duplicated: bodies.Authored = await bodies.author(holeInstance("section_l","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(duplicated.status === "reverted" && duplicated.asks === 3 && strings.contains(duplicated.reason,"Duplicated or unissued body region"),"An unissued region: "+s.encode(duplicated));
+  // A second copy of an issued region and a stray closing terminator are the same repairable format
+  // failure: region syntax the reply got wrong is repaired, never source outside the hole.
+  let copied: bodies.Authored = await bodies.author(holeInstance("section_n","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(copied.status === "reverted" && copied.asks === 3 && strings.contains(copied.reason,"Duplicated or unissued body region"),"A duplicated region: "+s.encode(copied));
+  let stray: bodies.Authored = await bodies.author(holeInstance("section_o","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(stray.status === "reverted" && stray.asks === 3 && strings.contains(stray.reason,"Duplicated or unissued body region"),"A stray terminator: "+s.encode(stray));
+  // Surplus region syntax beside real source writing leaves the source: the abandonment route wins
+  // over the format failure, so the reply is not repaired and the bodies are abandoned at once.
+  let mixed: bodies.Authored = await bodies.author(holeInstance("section_p","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(mixed.status === "abandoned" && mixed.asks === 1 && mixed.bodies.whenFinished === undefined && strings.contains(mixed.reason,"source outside the issued hole region"),"Source beside a duplicated region: "+s.encode(mixed));
+  // A repair that succeeds is a recovery, not only a cap: the second ask's compiling body is accepted
+  // and the first ask's format failure stays its own located diagnostic.
+  let repaired: bodies.Authored = await bodies.author(holeInstance("section_m","(state: AppState): AppState"),emptyPlan(),"Add a timer","{}");
+  insist(repaired.status === "authored" && repaired.asks === 2 && (repaired.bodies.whenFinished as string).includes("return state;"),"A repaired body: "+s.encode(repaired));
+  // One instance with two issued fill holes: one authoring ask carries both regions and both bodies are
+  // written together, so a second hole never costs a second operation or a separate counter.
+  let twin: bodies.Authored = await bodies.author(twinHoles("section_twin"),emptyPlan(),"Add a timer","{}");
+  insist(twin.status === "authored" && twin.asks === 1 && (twin.bodies.whenFinished as string).includes("running: false") && (twin.bodies.rowMatches as string).includes("item.done"),"Both hole bodies: "+s.encode(twin));
+  // The second hole is checked like the first: a class after its declaration abandons both bodies.
+  let twinOutside: bodies.Authored = await bodies.author(twinHoles("section_twin_outside"),emptyPlan(),"Add a timer","{}");
+  insist(twinOutside.status === "abandoned" && twinOutside.asks === 1 && twinOutside.bodies.whenFinished === undefined,"A second hole escaped its declaration: "+s.encode(twinOutside));
+  return null;
+}
+export function main(): void { return; }

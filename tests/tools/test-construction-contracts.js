@@ -20,10 +20,13 @@ assert.strictEqual(vm.runInContext('recordHoleRefused',context),true,'Hole in a 
 let ids=0,dispatches=0,planningDispatches=0,reviews=0,replans=0,hostQuestions=0,classificationAsks=0;
 // The human-question review winners, in the order the fixture's scenarios dispatch them. The driver
 // only serves mechanisms; every admission assertion lives in the production policy under test.
-const reviewScript=[{winner:'ask',p:0.59},{winner:'ask',p:0.6},{winner:'ask',p:0.75},{winner:'default',p:0.9},{malformed:true},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9}];
+const reviewScript=[{winner:'ask',p:0.59},{winner:'ask',p:0.6},{winner:'ask',p:0.75},{winner:'default',p:0.9},{malformed:true},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9},{winner:'ask',p:0.9}];
 // Host replies for the admitted questions: unanswered, a nondefault option, then the answer-boundary
 // cases of the question adapter.
-const hostScript=[{optionId:null,text:null,cancelled:false},{optionId:'b',text:null,cancelled:false},{optionId:null,text:null,cancelled:false},{optionId:null,text:null,cancelled:false},{optionId:null,text:'x'.repeat(4096),cancelled:false},{optionId:null,text:'x'.repeat(4097),cancelled:false},{optionId:null,text:'   ',cancelled:false},{optionId:'b',text:'free text',cancelled:false},{optionId:'zzz',text:null,cancelled:false},{optionId:null,text:null,cancelled:true}];
+const hostScript=[{optionId:null,text:null,cancelled:false},{optionId:'b',text:null,cancelled:false},{optionId:null,text:null,cancelled:false},{optionId:null,text:null,cancelled:false},{optionId:null,text:'x'.repeat(4096),cancelled:false},
+ // A non-BMP character is two UTF-16 units: 2048 astral pairs are 4096 units, 2049 pairs are 4098.
+ {optionId:null,text:'\u{1F600}'.repeat(2048),cancelled:false},{optionId:null,text:'\u{1F600}'.repeat(2049),cancelled:false},
+ {optionId:null,text:'x'.repeat(4097),cancelled:false},{optionId:null,text:'   ',cancelled:false},{optionId:'b',text:'free text',cancelled:false},{optionId:'zzz',text:null,cancelled:false},{optionId:null,text:null,cancelled:true}];
 const replanPlan={title:'Pick',inputs:[],constants:[],requirements:[{id:'preserve',text:'Keep the request',sources:['request'],needs:[]}],needs:[{id:'body',type:'other',words:'Something useful',reads:[],spec:{}}],questions:[{id:'q9',text:'Still needed?',default:'a',options:[{id:'a',label:'A'},{id:'b',label:'B'}]}]};
 // One reply per dispatched alignment batch, in the order the fixture runs its scenarios. The driver
 // serves the mechanism only: it never decides a round, a threshold or a kind.
@@ -134,7 +137,7 @@ const classificationScript=[
   }
   if(vm.runInContext('finished',context)){
    assert.equal(vm.runInContext('failure',context),null);assert.equal(dispatches,2);assert.equal(planningDispatches,6);assert(ids>=4,'the host issues every construction identity');
-   assert.equal(reviews,reviewScript.length,'every review scenario dispatched once');assert.equal(hostQuestions,hostScript.length);assert.equal(replans,2,'only a nondefault option or free text replans');
+   assert.equal(reviews,reviewScript.length,'every review scenario dispatched once');assert.equal(hostQuestions,hostScript.length);assert.equal(replans,3,'only a nondefault option or free text replans');
    assert.equal(classificationAsks,classificationScript.length,'every classification scenario asked exactly once');assert.equal(alignments,alignmentScript.length,'every alignment batch dispatched once');
    console.log('construction contracts: schemas, selection, ordered alignment rounds, atomic revisions, charged dispatch limits, the events question, human question review and repair admission passed');return;
   }

@@ -363,6 +363,7 @@ export function triggers(): null {
 }
 // ---- Human question review closes every proposed question exactly once -----------------------
 function humanQuestion(id: string): string { return "{\"id\":\""+id+"\",\"text\":\"Which option?\",\"default\":\"a\",\"options\":[{\"id\":\"a\",\"label\":\"A\"},{\"id\":\"b\",\"label\":\"B\"}]}"; }
+
 function questionPlan(questions: string): plans.Plan { return plans.decode("{\"title\":\"Pick\",\"inputs\":[],\"constants\":[],\"requirements\":[{\"id\":\"preserve\",\"text\":\"Keep the request\",\"sources\":[\"request\"],\"needs\":[]}],\"needs\":[{\"id\":\"body\",\"type\":\"other\",\"words\":\"Something useful\",\"reads\":[],\"spec\":{}}],\"questions\":["+questions+"]}",[],[],"",""); }
 function seeded(plan: plans.Plan, closed: string[]): planning.Result { return {plan:plan,diagnostics:"",answers:[],asks:0,review:[],closed:closed}; }
 function reviewInput(requestId: string): planning.Input { return {requestId:requestId,request:"Keep the request",facts:"{}",factIds:[],sourceIds:[],contracts:"[]",specification:"Plan contract",target:"screen"}; }
@@ -399,6 +400,14 @@ export async function reviewAdmission(): Promise<null> {
   // Free text is bounded in UTF-16 units: 4096 is accepted exactly and triggers the answered replan.
   let long: planning.Result = await planning.review(reviewInput("request-long"),seeded(questionPlan(humanQuestion("q1")),[]));
   insist((long.answers[0].text as string).length === 4096 && long.asks === 2,"Accepted free text length lost");
+  // The bound is UTF-16 units, so a non-BMP character counts twice: 2048 astral pairs are exactly 4096
+  // units and are accepted, while 2049 pairs are 4098 units and are refused.
+  let astral: planning.Result = await planning.review(reviewInput("request-astral"),seeded(questionPlan(humanQuestion("q1")),[]));
+  insist((astral.answers[0].text as string).length === 4096 && astral.asks === 2,"Astral free text length lost");
+  let astralOverlong: string = "";
+  try { await planning.review(reviewInput("request-astral-overlong"),seeded(questionPlan(humanQuestion("q1")),[])); }
+  catch (errorUnknown) { let error: Error = errorUnknown as Error; astralOverlong = error.name+":"+error.message; }
+  insist(astralOverlong === "CONSTRUCTION_SCHEMA:Question text length","Astral over-bound answer admitted: "+astralOverlong);
   // 4097 units, blank text, both answer kinds and an unissued option each reject with their
   // located reason and authorize no source repair.
   for (let kind of ["overlong","blank","both","unissued"]) {
@@ -413,9 +422,11 @@ export async function reviewAdmission(): Promise<null> {
   try { await planning.review(reviewInput("request-at"),seeded(questionPlan(humanQuestion("q1")),["q1"])); }
   catch (errorUnknown) { let error: Error = errorUnknown as Error; reissue = error.name+":"+error.message; }
   insist(reissue === "CONSTRUCTION_SCHEMA:Question already closed: q1","Closed question reissue: "+reissue);
-  // Cancellation ends generation with the cancellation classification.
+  // Cancellation ends generation with the cancellation classification the host reports, so the request
+  // is a cancellation and not a generic generation failure.
   let cancelled: boolean = false;
-  try { await planning.review(reviewInput("request-cancel"),seeded(questionPlan(humanQuestion("q1")),[])); } catch (errorUnknown) { let error: Error = errorUnknown as Error; cancelled = error.name === "CANCELLED"; }
+  try { await planning.review(reviewInput("request-cancel"),seeded(questionPlan(humanQuestion("q1")),[])); }
+  catch (errorUnknown) { let error: Error = errorUnknown as Error; cancelled = error.name === "CANCELLED"; }
   insist(cancelled,"Cancelled question did not end generation");
   return null;
 }

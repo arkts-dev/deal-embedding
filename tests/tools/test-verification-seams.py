@@ -80,7 +80,7 @@ SEAMS = [
      'new': 'const val nativeTimers = 4',
      'command': ['bash', 'tests/tools/test-renderer-rules.sh']},
     # AC-06's "attempts": the packaged generation entry charges one attempt per candidate check. The
-    # anchored statement is `custom-writing.deal:287 attempts = attempts+1`, the increment the
+    # anchored statement is `custom-writing.deal:317 attempts = attempts+1`, the increment the
     # counted-check mode executes. That bundle is compiled from the whole generation module graph, so its
     # statement numbers are a global counter over every module the compiler numbered in the same build and
     # a hard-coded one moves off the increment whenever an earlier module changes; the compiler's own
@@ -91,7 +91,7 @@ SEAMS = [
     # names that one mode: the unbounded matrix of the packaged entry would otherwise let the control's own
     # bound, not the broken rule, decide the outcome.
     {'id': 'attempts', 'family': 'checking-admission', 'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'after': 'custom-writing.deal:287:',
+     'after': 'custom-writing.deal:376:',
      'match': r'\$s\d+ = \(\$rt\.numOf\(\$[sg]\d+\) \+ \$rt\.numOf\(\$[sg]\d+\)\);',
      'mutate': (' + ', ' * '),
      'expect': 'candidate checks are counted as attempts',
@@ -115,6 +115,54 @@ SEAMS = [
      'new': 'if (false) { note(outcome,need,"Catalogue kind already selected: "+chosen.kind);',
      'expect': 'Once-per-kind kept the first answer only',
      'command': ['python3', 'tests/tools/test-construction-contracts.py']},
+    # The chat projection retains five visible needs. Admitting a sixth consumes a place the omitted
+    # behavior keeps and the interaction lane refuses the projection.
+    {'id': 'chat-projection', 'family': 'chat-construction', 'path': 'core/chat.deal',
+     'old': 'while (index < visible.length && index < 5)',
+     'new': 'while (index < visible.length && index < 6)',
+     'expect': 'Chat projection kept',
+     'command': ['python3', 'tests/tools/test-interaction-contracts.py']},
+    # A whole custom chat is headerless and at most two sections. Inverting the chat-target guard makes
+    # the assembled source constraint skip a whole chat draft, so the packaged chat mode admits the
+    # header the rule refuses instead of repairing it.
+    {'id': 'chat-compact', 'family': 'chat-construction',
+     'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
+     'after': 'generation/src/custom-writing.deal:108:7',
+     'match': r'\$s\d+ = \(\$s\d+ === \$s\d+\);',
+     'mutate': (' === ', ' !== '),
+     'expect': 'the refused chat draft was written again',
+     'command': ['node', 'tests/tools/test-generation-cutover.js', '--mode=chat-whole']},
+    # The same rule on an edited pair: inverting the edited-draft shape comparison accepts the pair an
+    # edit widened into a header, which the packaged chat-edited mode observes in the accepted source.
+    # The statement is anchored by the compiler's own attribution, like the fresh-draft control above.
+    {'id': 'chat-edited-shape', 'family': 'chat-construction',
+     'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
+     'after': 'generation/src/custom-writing.deal:359:13',
+     'match': r'\$s\d+ = \(\$s\d+ !== \$s\d+\);',
+     'mutate': (' !== ', ' === '),
+     'expect': 'a chat header reached the accepted source',
+     'command': ['node', 'tests/tools/test-generation-cutover.js', '--mode=chat-edited']},
+    # A catalogue body's independent counter is the initial ask plus two repairs. Dropping the repairs
+    # leaves the reverting body unrepaired and the interaction lane observes the exhausted operation.
+    {'id': 'body-repair', 'family': 'holes-bodies', 'path': 'core/catalogue-bodies.deal',
+     'old': 'inference.operation(await identity.issue(),3)',
+     'new': 'inference.operation(await identity.issue(),1)',
+     'expect': 'Reverted body: ',
+     'command': ['python3', 'tests/tools/test-interaction-contracts.py']},
+    # The human-question review threshold is copied from the decision table. Lowering it admits the
+    # below-threshold proposal the review contract refuses.
+    {'id': 'question-threshold', 'family': 'fill-coverage-budgets', 'path': 'core/selection.deal',
+     'old': 'if (category === "human-question" || category === "structural-edit") { return 0.6; }',
+     'new': 'if (category === "human-question" || category === "structural-edit") { return 0.59; }',
+     'expect': 'Below-threshold review admission',
+     'command': ['python3', 'tests/tools/test-construction-contracts.py']},
+    # The lookup cache: an uncached result is remembered by need and contract digest, so a reentry
+    # dispatches nothing and keeps its counters. Dropping the cache asks again.
+    {'id': 'lookup-cache', 'family': 'lookup-refusals', 'path': 'core/lookup.deal',
+     'old': 'if (outcome.cacheable) { remember(session,',
+     'new': 'if (false) { remember(session,',
+     'expect': 'Cached lookup dispatched again',
+     'command': ['python3', 'tests/tools/test-interaction-contracts.py']},
     {'id': 'binding', 'family': 'bindings-descriptors', 'path': 'core/bindings.deal',
      'old': 'actual.maximum > expected.maximum',
      'new': 'actual.maximum >= expected.maximum',

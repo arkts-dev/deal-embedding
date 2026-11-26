@@ -68,8 +68,11 @@ else:
     cp=str(root/'build/embedding-library/classes')
     classes=stage/'classes';classes.mkdir(exist_ok=True)
     java_sources=[*[embedding/'tools'/f'{name}.java' for name in ['FragmentSyntax','FragmentRegions','FragmentQualifier','FragmentMechanisms','FragmentAnalysis']],*[root/'tests/tools/fixtures'/f'{name}.java' for name in ['CompileComposer','FragmentRegionsTest','FragmentQualifierTest','FragmentMechanismsTest']]]
+    # Each compile names the bound its kind declares: the javac stage the Java fixture bound, and the
+    # whole generation module graph the DEAL fixture bound. `compile_artifact`'s default is the narrow
+    # Java one, so an unnamed DEAL compile would die at 30 s as an unnamed stage timeout on a loaded host.
     compile_artifact(root,'composer-java',[*java_sources,cp,root/'tests/tools/host_check.py',pathlib.Path(shutil.which('javac')).resolve().parents[1]/'release'],[classes],
-        ['bash','-euc','rm -rf "$1"; mkdir -p "$1"; shift; exec "$@"','compile',str(classes),'javac','--release','21','-cp',cp,'-d',str(classes),*map(str,java_sources)])
+        ['bash','-euc','rm -rf "$1"; mkdir -p "$1"; shift; exec "$@"','compile',str(classes),'javac','--release','21','-cp',cp,'-d',str(classes),*map(str,java_sources)],timeout=lane_bounds.JAVA)
     compile_artifact(root,'composer-deal',[source,stage/'ui',*stage.glob('*.d.deal'),stage/'deal.json',deal/'std',cp,pathlib.Path(shutil.which('java')).resolve().parents[1]/'release'],[stage/'js'],
         ['bash','-euc','rm -rf "$1"; shift; exec "$@"','compile',str(stage/'js'),'java','-Ddeal.home='+str(deal),'-cp',cp,'deal.Main','compile',str(source/'checks.deal'),'--backend','js','--output',str(stage/'js')],timeout=lane_bounds.DEAL)
     if args.prepare_only:

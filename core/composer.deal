@@ -1,5 +1,6 @@
 import * as plans from "./plan";
 import * as screens from "./screen";
+import * as bodies from "./hole-body";
 import * as decoded from "./decoded";
 import * as s from "./construction-schema";
 import * as tables from "std/table";
@@ -42,16 +43,19 @@ export class Metadata { slots: SlotRecord[]; operations: OperationRecord[]; runt
 export class ChildLabel { instance: string; label: string; }
 export class ChatRoot { children: ChildLabel[]; initialSelection: number; }
 // The chat root generation issues: one child per placed fragment in placement order, the label the
-// covering need issued and the initial selection. Both the construction route and the custom writer ask
-// this one rule, so the wrapper and its labels are decided once. The label text is the plan need's own
-// wording; a child the plan does not name (a notice instance, or a custom draft built without a plan)
-// keeps its issued instance identity, so this rule never invents or reformats text of its own.
+// covering need or the disclosure issued and the initial selection. Both the construction route and the
+// custom writer ask this one rule, so the wrapper and its labels are decided once. The label text is the
+// plan need's own wording; a disclosure instance carries its own rendered sentence, so its tab names the
+// disclosure instead of an internal identity; any other child the plan does not name keeps its issued
+// instance identity, so this rule never invents or reformats text of its own.
 export function chatRoot(composition: screens.Composition, plan: plans.Plan | null): ChatRoot | null {
   if (composition.screen.target !== "chat" || composition.screen.instances.length < 2) { return null; }
   let children: ChildLabel[] = [];
   for (let instance of composition.screen.instances) {
     let label: string = instance.id;
     if (plan !== null) { for (let need of (plan as plans.Plan).needs) { if (s.contains(instance.fragment.covers,need.id)) { label = need.words; } } }
+    // A notice is emitted for a disclosure, so its own disclosure sentence is its user-facing label.
+    if (instance.kind === "notice" && typeof instance.parameters.text === "string") { label = instance.parameters.text as string; }
     children[children.length] = {instance:instance.id,label:label};
   }
   return {children:children,initialSelection:0};
@@ -215,22 +219,11 @@ async function holeFunctions(instance: screens.Instance): Promise<string> {
       if (typeof supplied !== "string") { s.reject("Catalogue hole body must be text: "+id); }
       body = supplied as string;
     }
-    if (body.trim() === "") { s.reject("Empty hole body: "+id); }
-    if (body.length > 600) { s.reject("Hole body over 600 UTF-16 code units: "+id); }
-    let composed: string = "export function "+id+signature+" { "+body+" }\n";
-    let described: Record<string, unknown> = {};
-    try { described = JSON.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:composed,view:instance.fragment.view}))); }
-    catch (unknownError) { let error: Error = unknownError as Error; if (error.name === "CONSTRUCTION_SCHEMA") { throw error; } s.reject("Catalogue hole body is not valid syntax: "+id); }
-    let declared: Record<string, unknown>[] = decoded.records(described.functions);
-    if (declared.length !== 1 || (declared[0].name as string) !== id) {
-      for (let fn of declared) { let name: string = fn.name as string; if (name !== id) { s.reject("Catalogue hole body declaration: "+instance.id+" "+name); } }
-      s.reject("Hole body changes the composed function signature: duplicate "+id);
-    }
-    if (decoded.records(described.classes).length !== 0) { s.reject("Hole body declares a top-level class: "+id); }
-    // Only the original view's imports may occur; a body must not escape into an import.
-    let baseline: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:"",view:instance.fragment.view})));
-    if (s.encode(described.imports) !== s.encode(baseline.imports) || s.encode(described.views) !== s.encode(baseline.views)) { s.reject("Catalogue hole body import or view: "+instance.id+" "+id); }
-    result = result+composed;
+    // The composed text, the body bound and every outside-hole verdict are the one classifier's, so the
+    // body the author accepted is the body this emitter emits.
+    let verdict: bodies.Verdict = await bodies.classify(instance.fragment.view,instance.id,id,signature,body);
+    if (verdict.reason !== "") { s.reject(verdict.reason); }
+    result = result+verdict.composed;
   }
   return result;
 }

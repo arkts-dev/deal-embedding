@@ -30,6 +30,12 @@ LANE_SLACK = 10
 # bundle, so each bound contains more than twice its measured cost and a slow host still reports the
 # assertion that failed.
 CONTRACT_NODE = 90
+# The two interaction harnesses drive their own compiled policy fixtures and no section suite: the chat,
+# lookup and hole-body exports in one process, and the Surface exploration's whole frame window in the
+# other. Both measured under 20 s of CPU warm and 40 s on a loaded gate host, so each keeps more than
+# twice its measured cost instead of turning host contention into an unnamed timeout.
+INTERACTION_NODE = 90
+SURFACE_NODE = 120
 CATALOGUE_GROUP = 150
 CATALOGUE_SUITE = 600
 CATALOGUE_BUNDLES = ('all', 'local')
@@ -115,6 +121,14 @@ def catalogue_contract_lane():
 
 def construction_lane():
     return fixture_lane(CONTRACT_NODE)
+
+
+def interaction_lane():
+    return fixture_lane(INTERACTION_NODE)
+
+
+def surface_lane():
+    return fixture_lane(SURFACE_NODE)
 
 
 def catalogue_lane(group):

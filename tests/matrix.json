@@ -500,9 +500,42 @@
       "id": "chat-construction",
       "family": "chat-construction",
       "owner": "generation-recovery-and-source-editing",
-      "requirement": "A chat target retains the first five visible needs with their hidden dependencies, removes orphan dependents to a fixpoint, discloses every omission as missing, rejects a header or three-section custom draft, and wraps multiple fragments in labelled Tabs with a retained selection.",
-      "status": "partial",
-      "blocker": "Screen.target is decoded and carried as a host-frozen compile input (core/generation.deal; android/src/EmbeddingConfig.kt:12-19; android/src/bindings/ExperienceGenerator.kt:44), core/screen.deal rejects a promotion, and the composer emits the labelled Tabs root with its authoritative selection over the placed fragments (core/composer.deal; proved by tests/tools/fixtures/composer-contracts.deal and tests/tools/test-composer.py, which compiles a chat-target pair). Still missing: nothing produces the chat projection, the five-need cut, the orphan-dependent fixpoint, the omission disclosure, the compact draft bound or the header/three-section custom-draft rejection, and no seam probe controls this family. Owner generation-recovery-and-source-editing (ISSUE-0005)."
+      "requirement": "A chat target retains the first five visible needs with their hidden dependencies, removes orphan dependents, discloses every omission as missing, keeps a whole custom chat compact, headerless and at most two sections (on a fresh draft and after an edit), and wraps multiple fragments in labelled Tabs with a retained selection.",
+      "status": "covered",
+      "seam": "chat-projection",
+      "test": "python3 tests/tools/test-interaction-contracts.py node tests/tools/test-interaction-contracts.js node tests/tools/test-generation-cutover.js",
+      "sources": [
+        "tests/tools/fixtures/interaction-contracts.deal"
+      ],
+      "evidence": "core/chat.deal projects a chat plan once before construction: a hidden feeder (a need another need reads) consumes no chat place and travels with its dependents, the first five visible needs are retained with their transitive hidden dependencies, and every omitted need is disclosed as a missing notice on its own need. The projected plan is itself a decodable plan: a requirement names only the behaviors the plan still carries, so the projection's own decision is disclosed as a missing notice instead of being reported as a lost requirement. The view's section count is the compiler's structural fact (every Section reachable from the root's children without crossing another Section), so neither a nested section of a section nor a wrapper container can change the count the shape rule reads. The closure removes orphan dependents: every read of a retained need is retained transitively, so no retained behavior depends on a dropped one, and the contract lane's closed-read assertion proves it over both projection plans. The fixpoint is that invariant's own guard as well as the rule's own statement: for a decodable plan the closure already retains every read a retained need names, so the guard cannot fire and its refusal is not claimed as exercised. A read that names an input or constant is not a dropped behavior. The disclosure is emitted into the composition before admission, coverage and the gap writer, so it survives a writer that succeeds: the packaged chat mode fills one retained need from the catalogue, writes the rest through a gap section, and the accepted experience is that writer's own authored field carrying the omission notice beside the labelled Tabs root, so neither the disclosure nor the writer's candidate can be a fallback artifact. The omission notice carries its disclosure sentence as the child's tab label, so a labelled multi-fragment chat names the omission instead of an internal instance identity. A whole custom chat draft at the frozen chat target - the chat route is never classified, so that draft is the ordinary whole writing, and a whole draft is the composition's only content - is refused before emission when it carries a header or hero or more than two sections, authorizing a source repair; the same rule reads an edited draft's emitted view, so an accepted pair edited into a header is source feedback for the next ask and the previous draft stays. The specification's 'compact' clause is enforced as that whole-chat shape (headerless and at most two sections): the style token 'compact' is a Column/Row/List/Grid style and no container style is mandated for a whole chat by this sentence. The rule is scoped to the whole chat the specification constrains, so a gap section written beside an existing composition is not a whole chat. The contract lane proves the five-need cut, the hidden feeder, requirement-ID preservation, the closed-read invariant, the input-read case and the exact compact refusals; the packaged chat modes prove the projected plan reaching selection (the sixth need never offered), the omission notice in the accepted experience beside a succeeding gap writer and again on the whole-draft route when construction is not runnable, the labelled Tabs root with its authoritative retained-selection field, and the whole-chat constraint at its production call site (an unusable-plan chat request writes a header draft first, the assembled refusal repairs it, and only the compact two-section draft reaches a candidate check), and the same constraint on an edited pair (a checked chat draft is edited into a header, the edit is refused with that diagnostic, the previous draft stays and the accepted chat carries its two sections); the shape rule reads the compiler's parsed view facts - each element by its unqualified name and the view's own section count (every Section reachable from the root's children without crossing another Section) - so a nested section, a comment or a text literal can neither refuse a compliant draft nor hide a header behind another alias; the chat-compact control inverts the fresh-draft guard and the packaged chat mode then admits the header, and the chat-edited-shape control inverts the edited-draft guard and the packaged chat-edited mode then accepts the header the edit added. A chat edit whose pair the compiler cannot parse is source feedback exactly as a fresh draft is: the previously accepted revision stays and the compiler's own syntax diagnostic reaches the next ask, so an unparsable edit can never fail the request.",
+      "asserts": [
+        "Chat projection kept: ",
+        "Chat omission: ",
+        "An input read orphaned its need: ",
+        "A retained need reads a dropped behavior: ",
+        "A chat header was admitted",
+        "A third chat section was admitted",
+        "the projected needs: ",
+        "the omitted need reached selection",
+        "Chat retains the first five visible needs",
+        "ui.Tabs(labels: state.chat_labels",
+        "the omission tab label is an internal identity",
+        "A Section root and its nested sections were counted as three",
+        "acceptedSource.deal.includes('chat_selected')",
+        "A whole chat draft is headerless",
+        "a chat header reached the accepted source",
+        "the accepted chat carries two sections",
+        "the edited chat header is not source feedback: ",
+        "the accepted chat is not the second edit: ",
+        "the retained need did not reach the gap writer",
+        "the accepted chat is not the gap writer",
+        "the whole chat was not written: ",
+        "an unrunnable construction still ran a section write",
+        "A wrapped third chat section was admitted: ",
+        "An omitted need stayed in a projected requirement: ",
+        "A retained requirement need was dropped: ",
+        "the unparsable chat edit was not repaired: "
+      ]
     },
     {
       "id": "scenes",
@@ -510,8 +543,24 @@
       "owner": "generation-recovery-and-source-editing",
       "requirement": "A scene need snapshots its read inputs at start, settles once, never mutates a plan input from its frame reducer, and the frame-scene exploration accepts or rejects per the Surface script.",
       "status": "partial",
-      "test": "node tests/tools/test-generation-cutover.js python3 tests/tools/test-construction-contracts.py",
-      "blocker": "A part classification now inserts exactly one scene need that reads every plan input, keeps a scene the planner already proposed, is never offered to a selection batch, is written by the ordinary writing operation at the 7000 ordinary-scene budget with the snapshot/start/settle contract issued in its prompt, and the existing compiled Surface script plus six-button exploration accept or reject static versus frame Surfaces. The scene contract and the ordinary-scene budget follow the need, not the whole write: a section write that carries the scene beside another unfilled need still receives them, proven by a packaged vector where the scene and an unfilled other need reach one writer ask. The scene-owned semantic behavior is only instructed, not verified: no check proves that start copies every read input into a snapshot, that a settled scene ignores frames/recomputation/cold restore, that a second start takes a new snapshot, or the exact 240-frame/120-frame/sixth-versus-seventh-button boundary matrix."
+      "test": "node tests/tools/test-generation-cutover.js python3 tests/tools/test-construction-contracts.py python3 tests/tools/test-surface-script.py python3 tests/tools/test-composer.py",
+      "blocker": "A part classification inserts exactly one scene need that reads every plan input, keeps a scene the planner already proposed (proven by the construction contract lane), is never offered to a selection or alignment batch, is written by the ordinary writing operation at the 7000 ordinary-scene budget with the snapshot/start/settle contract issued in its prompt, and the deterministic lanes prove the Surface exploration's 240-frame window, six-button bound and inclusive 120-frame per-button bound: a change on a button's frame 120 is admitted, a change on frame 121 is not, and the driver pins the exact frames and presses each rejection spent, so a narrower per-button window cannot satisfy the cases (python3 tests/tools/test-surface-script.py). The frame handler's purity is enforced structurally rather than left to review: a borrowed-state write to a plan input is refused by the compiled ownership analysis (tests/tools/fixtures/composer-contracts.deal, composer lane). Still unproven: that a start copies every read input into its snapshot, that a settled scene ignores frames, recomputation and cold restore, and that a second start takes a new snapshot. Those are properties of model-authored scene code a mechanical checker cannot execute for arbitrary behavior, so the semantic scene lifecycle remains a source-review obligation.",
+      "asserts": [
+        "Proposed scene was duplicated",
+        "A change on a button's frame 120 was rejected",
+        "explored '+state.frames+' frames",
+        "A change after a button's frame 120 was admitted",
+        "the scene entered a selection batch",
+        "the scene entered an alignment batch",
+        "the scene uses its token budget",
+        "the scene contract was not issued",
+        "fixture scenarios: "
+      ],
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal",
+        "tests/tools/fixtures/surface-script.deal",
+        "tests/tools/test-surface-script.js"
+      ]
     },
     {
       "id": "selection-batches",
@@ -581,9 +630,23 @@
       "family": "fill-coverage-budgets",
       "owner": "generation-recovery-and-source-editing",
       "requirement": "Thresholded human-question review at 0.6, two blocking questions, option/text exclusivity and bounds, one answered replan, no reopen, cancellation ends generation.",
-      "status": "partial",
-      "test": "python3 tests/tools/test-construction-contracts.py node tests/tools/test-generation-cutover.js",
-      "blocker": "The review admits at the copied 0.6 boundary, retains its winning probability and admission decision, closes every proposed question once and performs one answered replan, but the production host adapter answers every admitted question as unanswered (android/src/bindings/ExperienceGenerator.kt:78-81), so no end-to-end human answer reaches the replan."
+      "status": "covered",
+      "test": "python3 tests/tools/test-construction-contracts.py python3 tests/tools/test-admission-policy.py node tests/tools/test-generation-cutover.js",
+      "sources": [
+        "tests/tools/fixtures/construction-contracts.deal"
+      ],
+      "evidence": "The compiled review admits at the copied 0.6 boundary, retains its winning probability and admission decision, shows at most two blocking questions, closes every proposed question once and performs exactly one answered replan; the contract lane drives an unanswered default, a nondefault option and a 4096-unit free-text answer through the compiled replan, and rejects 4097 units, blank text, both answer kinds, an unissued option, a reopened question and cancellation with their located classifications; the free-text bound is UTF-16 units, so 2048 astral pairs (4096 units) are accepted and 2049 pairs (4098 units) are refused. A cancelled answer ends generation with the cancellation classification the host reports, so a cancelled question surfaces as a cancellation instead of a generic generation failure. The Android question adapter is a transport only: it asks the host placement for the compiled request and question identities, forwards the host's answer unchanged, answers both fields null only when no placement is configured (which DEAL resolves to the issued default), and carries no threshold and no replan decision (pinned by the structural test; the exclusivity, bound and unanswered-default rules are compiled DEAL's and are proven by the policy rows above). The adapter is device-only transport, so these deterministic rows prove the compiled policy and the adapter's shape, not a device round trip.",
+      "asserts": [
+        "Inclusive human-question threshold",
+        "One answered replan expected",
+        "Cancelled question did not end generation",
+        "a cancelled question ended generation as a cancellation",
+        "Accepted free text length lost",
+        "Astral free text length lost",
+        "Astral over-bound answer admitted: ",
+        "config.questions?.ask(args.getString(0),args.getString(1))",
+        "?: QuestionAnswer(null,null,false)"
+      ]
     },
     {
       "id": "fill-order",
@@ -592,7 +655,10 @@
       "requirement": "Fill order options -> concurrent grounding/live -> content -> active bodies with one owner per parameter and conflict rejection.",
       "status": "partial",
       "test": "node tests/tools/test-generation-cutover.js",
-      "blocker": "Content fill and the catalogue disclosure gate run, but active hole-body fill is absent and the one-owner-per-parameter conflict has no vector."
+      "blocker": "Content fill runs before catalogue body authoring and the packaged entry proves that order (the content ask precedes the body ask), an authored body replacing its default and an over-bound body reverting with its located notice. The options and concurrent grounding/live stages that precede content have no ordering vector of their own, and the one-owner-per-parameter conflict still has none.",
+      "asserts": [
+        "catalogue bodies were authored before the content fill"
+      ]
     },
     {
       "id": "coverage-budgets",
@@ -601,7 +667,7 @@
       "requirement": "Coverage judgment against assembled behaviour, stage budgets and escalation, attempts counted per candidate check including failures, stop on repeated misses with the least-missing draft.",
       "status": "partial",
       "test": "node tests/tools/test-generation-cutover.js",
-      "blocker": "Stage budgets, exact repair, check accounting and repeated-miss stopping run, and the packaged entry asserts one attempt per completed candidate check across every mode (whole plus fallback, retained least-missing draft, rejected admission and accepted repair); catalogue body counters and the nested caps are absent.",
+      "blocker": "Stage budgets, exact repair, check accounting and repeated-miss stopping run, and the packaged entry asserts one attempt per completed candidate check across every mode (whole plus fallback, retained least-missing draft, rejected admission and accepted repair); catalogue body counters, their two-repair cap and the revert notice are now proven by the packaged catalogue-body modes and the interaction lane, while the remaining nested caps of the recovery table have no vector.",
       "asserts": [
         "the refused need stays open for its own section write",
         "table: missing \u2014 Catalogue instance table: Catalogue columns match headers"
@@ -611,17 +677,100 @@
       "id": "lookup-refusals",
       "family": "lookup-refusals",
       "owner": "generation-recovery-and-source-editing",
-      "requirement": "Concurrent missing-need lookup with cache by need and contract digest, an 8000-character bound, named-refusal scoping and no provider substitution.",
-      "status": "missing",
-      "blocker": "No lookup mechanism declaration or refusal cache exists in compiled policy."
+      "requirement": "Concurrent missing-need lookup with cache by need and contract digest, one reply schema of its own (the issued definitions and per-need eligible kinds, never another stage's schema), an 8000-character bound, named-refusal scoping and no provider substitution.",
+      "status": "covered",
+      "seam": "lookup-cache",
+      "test": "python3 tests/tools/test-interaction-contracts.py node tests/tools/test-interaction-contracts.js python3 tests/tools/test-admission-policy.py node tests/tools/test-generation-cutover.js",
+      "sources": [
+        "tests/tools/fixtures/interaction-contracts.deal"
+      ],
+      "evidence": "core/lookup.deal dispatches every uncached missing need in one concurrent host batch before any reply is consumed, charges one retained counter per dispatched lookup, and caches a complete result by need and contract digest, so a reentry dispatches nothing. Only a refusal scoped to its one need is cached: a bare refusal and a refusal that also names another need are never accepted for that need: each is re-asked and the need keeps its own writer, and an unusable reply (unissued kind, a found contract whose content is not one complete contract, over-bound content, truncation, empty or non-object text, or a refusal that names only other needs) is never remembered - each is asked again on reentry - while a refusal that names only other needs never becomes this need's refusal. The 8000-character bound is the sum of every returned contract, not one contract's own length. One lookup admits at most 8000 content characters, admits complete contracts only in the supplied catalogue order and never substitutes provider data. The prompt retains the original request, the disclosed facts and the current plan beside the issued catalogue, so a looked-up contract is judged against the request it serves. The model is issued the one kind owner's text - the offered definitions and the per-need eligible kinds from the same predicate the Select and alignment batches use - and no other stage's schema, so the one reply shape in the prompt is the lookup's own and a reply can only name a kind this composition can instantiate for that need; the mechanism returns each reply with its provider finish and refusal, so a provider refusal is that need's own refusal instead of a silent no-match, and the stage, budget, reasoning policy and operation identity are compiled DEAL's rather than the adapter's. A kind the composition already holds is not issued to the model at all and a second need of one batch that names the same kind keeps its own writer with the located reason, so a lookup can never emit a second instance of one catalogue kind. The compiled session is created once per request and carried by the one construction entry that looks needs up, so the cache hit, the changed-digest miss and the re-asked refusals run at that same compiled seam, which the contract lane drives directly with repeated resolves on one session; the v0.8 route enters that seam once per request. The contract lane drives the concurrent batch, the cache hit, the changed-digest miss, both refusal scopes including the multineed refusal, the inclusive and over-bound content, an unissued kind, catalogue ordering, the issued catalogue text on every mechanism request and the absence of any competing selection schema in that prompt, the malformed/empty/non-object/truncated replies with their non-caching, and a single-need provider refusal; the packaged entry proves a found contract fills the need from the issued catalogue without a writer, a reply naming a kind the composition holds is an unusable result that keeps the need's writer, a need whose own selection lost the once-per-kind dedupe is filled with another issued kind and the composition accepts that slot instead of rejecting a filled slot whose declared kind no instance has, one batch that names one kind twice fills only the first need, a named refusal stays open with its located reason, and a found contract whose facts are undisclosed is refused by the shared disclosure predicate so the need keeps its own writer. The host adapter is transport only: one mechanism call carries the issued batch, submits every need (bounded to four workers) before any reply is read, fills the per-need ask index and returns the raw reply with its finish and refusal, and holds no cache, refusal scope, budget or content bound (pinned by the structural test).",
+      "asserts": [
+        "lookup batches dispatched: ",
+        "Concurrent lookup accounting: used=",
+        "Catalogue order decides the kind: ",
+        "Cached lookup dispatched again: used=",
+        "A changed contract digest was served from cache",
+        "A single-need provider refusal was asked twice",
+        "The inclusive content bound: ",
+        "Over-bound lookup: ",
+        "An unusable reply was cached: used=",
+        "a found lookup still sent the need to the writer",
+        "the refusal reason is lost: ",
+        "the disclosure refusal is lost: ",
+        "an undisclosed lookup contract reached the composition",
+        "a lookup prompt leaves out the issued catalogue",
+        "a lookup prompt carries a competing selection schema",
+        "a lookup prompt leaves out the original request",
+        "Non-object reply: ",
+        "Truncated reply: ",
+        "Provider refusal: ",
+        "Multineed refusal scope: ",
+        "A multineed refusal was cached or not re-asked",
+        "the composition holds two instances of one catalogue kind: ",
+        "assertNotIn('cache', branch)",
+        "the missing needs are looked up once",
+        "newFixedThreadPool(minOf(needs.length().coerceAtLeast(1),4))",
+        "a held kind was offered to the lookup: ",
+        "the lookup fill of the deduped need is absent",
+        "An incomplete contract: ",
+        "An incomplete contract was cached: used=",
+        "A refusal for another need: ",
+        "A refusal naming another need was cached: used=",
+        "The summed content bound: ",
+        "An over-bound lookup was cached: used=",
+        "An unissued kind was cached: used="
+      ]
     },
     {
       "id": "body-recovery",
-      "family": "lookup-refusals",
+      "family": "holes-bodies",
       "owner": "catalogue-sections",
-      "requirement": "Catalogue body fill: one ask per instance, two repairs, revert to default, per-instance abandonment, 600-character bound, independent counters.",
-      "status": "partial",
-      "blocker": "Hole definitions with compiling default bodies are issued and a body that replaces its default is proven (holes-bodies), so what is missing is the authorship half: no ask per instance, no two-repair budget, no revert-to-default and no per-instance abandonment path, and therefore no independent counter or coverage notice for a reverted or abandoned body."
+      "requirement": "Catalogue bodies: initial plus two repairs; failing bodies revert to defaults; outside-hole errors abandon generated bodies; a body is at most 600 characters (docs/spec-v0.8.md:464,478,505). A checked rejection a placed body can have caused, including an authority verdict that authorizes no source repair, reverts the generated bodies to their compiling defaults and checks the reverted composition once, so an authored body cannot fail the request it was written for.",
+      "status": "covered",
+      "seam": "body-repair",
+      "test": "python3 tests/tools/test-interaction-contracts.py node tests/tools/test-interaction-contracts.js node tests/tools/test-generation-cutover.js",
+      "sources": [
+        "tests/tools/fixtures/interaction-contracts.deal"
+      ],
+      "evidence": "core/hole-body.deal owns the one classification of a hole body - the composed declaration text, the inclusive 600-character bound and every verdict about source written outside the hole - and both the emitter (core/composer.deal), which emits the classifier's own composed source, and the author (core/catalogue-bodies.deal), which reports its own verdict, consume it, so a body the author accepted is the body the emitter emits and the composed text and every authored-body verdict have one owner. Each accepted catalogue instance is authored with its own independent operation: the initial ask plus two repairs, a compiler-parsed verdict whose located reason is the next ask's diagnostic, an immediate abandonment of the generated bodies for source declared outside the issued declaration (a second function, a class or an import), an abandonment for source written beside an issued region, a repairable verdict for missing, unclosed, duplicated or unissued region syntax - a second copy of an issued region and a stray closing terminator included - and for a blank, over-bound or unparsable body (hole-body), each repaired twice and reverted, while source written beside the regions the reply used abandons the generated bodies even when a region was also duplicated, a revert to the compiling default after the repair cap, and a located notice on the need for a reverted or abandoned body. A body the compiler accepts syntactically but not semantically is still a failing body: construction reverts every authored body to its compiling default after the assembled checks fail, discloses the revert on its need and checks the reverted composition once instead of failing the request; when that reverted pair also fails, nothing ships and the returned diagnostics carry the failing checked pair's diagnostic and the reverted pair's own verdict under their own labels. The authoring ask retains the original request, the instance, the issued holes, the plan and the facts, so a body is written against the request it serves and not only against its default. A reader's bodies are authored only after its ports connect, so an instance the composition cannot place spends no authoring ask and carries no disclosure. Reversion is the fallback for every checked rejection that can be a body failure, not only a repairable one: an authority verdict that authorizes no source repair still reverts the authored bodies and checks the reverted pair once, so a body that reaches a provider from its handler cannot fail the request it was written for. The contract lane drives the authored body, two over-bound repairs and the revert, the unparsed body repaired twice and reverted, a repair that succeeds on its second ask, the exactly-600-character body, the outside-declaration abandonment by a second function and by a class, the outside-region abandonment, a missing, unclosed, blank and unissued region each repaired twice and reverted, a second fill hole on one instance authored from the same single ask, and two instances with independent operations and first asks; the packaged catalogue-body modes prove the authored body reaching the assembled source, an over-bound body reverting with its located notice, an abandoned body leaving the compiling default with its disclosure in the accepted experience, a rejected authored body reverting to the default with its notice and its own candidate check, and an authority verdict caused by an authored body reverting it to the default and accepting the reverted candidate with no source repair ask.",
+      "asserts": [
+        "catalogue body asks: ",
+        "a catalogue body ask leaves out the original request",
+        "Authored body: ",
+        "Reverted body: ",
+        "Abandoned body: ",
+        "A repaired body: ",
+        "A missing region: ",
+        "An unclosed region: ",
+        "A blank region: ",
+        "An unissued region: ",
+        "Independent body counter: ",
+        "the reverting body was asked three times: ",
+        "each instance keeps its own body operation",
+        "one body ask per instance: ",
+        "the over-bound body reached the source",
+        "the unparsed body was repaired twice: ",
+        "an unparsed body carries the compiler diagnostic",
+        "The inclusive body bound: ",
+        "Body source outside its hole: ",
+        "Body class outside its hole: ",
+        "Both hole bodies: ",
+        "A second hole escaped its declaration: ",
+        "the abandoned body replaced the compiling default: ",
+        "source outside the hole reached the emitted pair",
+        "an authority verdict authorized a source repair",
+        "the reverted body lost the compiling default: ",
+        "the authored body did not replace the default",
+        "the reverted source lost the compiling default",
+        "the rejected composition and the reverted one",
+        "a failing reverted pair still shipped a candidate",
+        "the failure that triggered the revert is lost: ",
+        "verdict is lost: ",
+        "A duplicated region: ",
+        "A stray terminator: ",
+        "Source beside a duplicated region: "
+      ]
     },
     {
       "id": "checking-admission",
@@ -637,7 +786,7 @@
         "assert.equal(isolatedStarts,0,'admission rejects before any isolated step')",
         "assert.equal(asks.filter(r=>r.stage==='assembled-edit').length,1)",
         "assert.equal(snapshot.result.attempts,2,'candidate checks are counted as attempts')",
-        "assert.equal(r.diagnostics,'FIXTURE_CHECK: retain exact pair and revise label')",
+        "assert(r.diagnostics.includes('FIXTURE_CHECK: retain exact pair and revise label')",
         "assert.equal(snapshot.error.code,'PROVIDER_HTTP')"
       ]
     },
@@ -2513,7 +2662,7 @@
       "requirement": "Issued hole definitions with compiling default bodies; an issued body replaces only its hole body at emission; unissued IDs, duplicate or over-bound bodies reject without partial commit.",
       "status": "partial",
       "test": "python3 tests/tools/test-catalogue.py python3 tests/tools/test-catalogue-runtime.py",
-      "blocker": "Decode and emission reject an unissued hole id, a duplicate body key, a non-text hole id, signature, purpose, requires or body, a controller-writer body and a body over the 600 UTF-16 bound. An authored body that is not valid syntax rejects with its hole identifier, and a body that adds a declaration or redeclares the hole function rejects with the instance and the offending name; a read-only summary that binds an import alias to a local is refused so the receiver of an effectful call cannot be hidden. Semantic errors of the assembled pair stay with the whole-source checker diagnostics. Ask/counter/repair-budget authorship and the reverted-or-abandoned coverage report belong to the generation catalogue-fill contract and have no vector here.",
+      "blocker": "Decode and emission reject an unissued hole id, a duplicate body key, a non-text hole id, signature, purpose, requires or body, a controller-writer body and a body over the 600 UTF-16 bound. An authored body that is not valid syntax rejects with its hole identifier, and a body that adds a declaration or redeclares the hole function rejects with the instance and the offending name; a read-only summary that binds an import alias to a local is refused so the receiver of an effectful call cannot be hidden. Semantic errors of the assembled pair stay with the whole-source checker diagnostics. Ask/counter/repair-budget authorship and the reverted-or-abandoned coverage report belong to the generation catalogue-fill contract and are proven there (python3 tests/tools/test-interaction-contracts.py and the catalogue-body modes of node tests/tools/test-generation-cutover.js), not by this emission lane.",
       "evidence": "Hole definitions are issued with the instance (id, fixed signature, purpose, compiling default body and writer); the composer emits the default body, an issued body replaces it in place, and an unissued body key, a non-text body, an over-bound body, a controller-writer body and a duplicate JSON key all reject before emission. Timer whenFinished and master_list rowMatches defaults run, and an issued whenFinished/rowMatches changes behaviour through the packaged runtime.",
       "asserts": [
         "the issued end body ran",

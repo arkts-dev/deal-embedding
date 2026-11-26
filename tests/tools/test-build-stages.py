@@ -464,7 +464,8 @@ elif name=='jar':
             self.assertGreaterEqual(lanes.lane_bound('catalogue:'+group),
                                     preparation+lane_bounds.catalogue_seconds(group),
                                     f'the catalogue:{group} lane is tighter than the stages it wraps')
-        for lane,node in (('catalogue',lane_bounds.CONTRACT_NODE),('construction',lane_bounds.CONTRACT_NODE)):
+        for lane,node in (('catalogue',lane_bounds.CONTRACT_NODE),('construction',lane_bounds.CONTRACT_NODE),
+                          ('interaction',lane_bounds.INTERACTION_NODE),('surface',lane_bounds.SURFACE_NODE)):
             self.assertGreaterEqual(lanes.lane_bound(lane),preparation+node,
                                     f'the {lane} lane is tighter than the stages it wraps')
         java_assertions=lane_bounds.COMPOSER_JVM_ASSERTIONS
@@ -530,6 +531,19 @@ elif name=='jar':
             self.assertIn('import lane_bounds',source,f'{relative} does not read the declared lane bounds')
             for literal in re.findall(r'\b(?:timeout|deal_timeout|seconds)=([0-9]+)\b',source):
                 self.fail(f'{relative} passes the literal bound {literal} instead of its declaration')
+        # Dropping the bound is not a literal either: `compile_artifact` then runs the stage on the narrow
+        # Java default, so a DEAL module-graph compile is killed unnamed at 30 s on a loaded host instead of
+        # reporting the rule that broke. Every compile call names the bound its kind declares.
+        for path in sorted((ROOT/'tests/tools').glob('*.py')):
+            text=path.read_text()
+            for match in re.finditer(r'compile_artifact'+r'\(',text):
+                depth,index=1,match.end()
+                while depth:
+                    depth+=1 if text[index]=='(' else -1 if text[index]==')' else 0
+                    index+=1
+                call=text[match.end():index]
+                self.assertIn('timeout=',call,
+                              f'{path.name} compiles a stage on the default bound: {call[:80]}')
 
 
 

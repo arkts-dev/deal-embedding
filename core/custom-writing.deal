@@ -16,8 +16,9 @@ import * as selection from "./selection";
 import * as selecting from "./construction-selection";
 import * as syntax from "embedding/fragment-syntax";
 import * as admission from "./admission";
+import * as chat from "./chat";
 
-export class Input { original: string; facts: string; contracts: string; specification: string; language: string; pack: string; target: string; plan: plans.Plan | null; answers: Record<string, unknown>[]; providers: string[]; base?: screens.Composition; computations?: composer.Computation[]; openNeeds?: string[]; wholeSurface?: boolean; registry?: bindings.Registry; clockIntervalMs: number; clockToleranceMs: number; }
+export class Input { original: string; facts: string; contracts: string; specification: string; language: string; pack: string; target: string; plan: plans.Plan | null; answers: Record<string, unknown>[]; providers: string[]; base?: screens.Composition; computations?: composer.Computation[]; openNeeds?: string[]; wholeSurface?: boolean; registry?: bindings.Registry; clockIntervalMs: number; clockToleranceMs: number; omitted?: string[]; }
 export class Result { candidateId: string; attempts: number; diagnostics: string; }
 // The emitted pair with the issued assembly metadata the compiler and checking admission consume.
 export class Assembled { deal: string; dealui: string; metadata: string; }
@@ -99,6 +100,15 @@ export async function assemble(response: string, input: Input): Promise<Assemble
   let owner: string = "whole"; if (Object.hasOwn(input,"base")) { owner = "gap"; }
   let parsed: fragments.Parsed = fragments.parse(response); if (!parsed.accepted) { s.reject(parsed.diagnostics); }
   let facts: Record<string, unknown> = JSON.parse(await fragments.describe(parsed.regions));
+  // Every whole custom chat is compact, headerless and at most two sections (docs/spec-v0.8.md:291).
+  // The chat target is never classified, so the whole-chat draft is the ordinary whole writing; a gap
+  // section written beside an existing composition is not a whole chat. The constraint is decided on the
+  // compiler-parsed view facts before emission, so a header or a third section is a source diagnostic the
+  // writer can repair.
+  if (input.target === "chat" && !Object.hasOwn(input,"base")) {
+    let refusal: string = chat.compact(s.records(facts,"views"));
+    if (refusal !== "") { s.reject(refusal); }
+  }
   let fields: screens.Field[] = [];
   for (let value of decoded.records(facts.fields)) { fields[fields.length] = {name:s.identifier(value.name),type:s.nonblank(value.type),role:"authoritative",dependencies:[],initial:s.nonblank(value.initial),owner:owner}; }
   let updates: screens.Handler[] = []; let effects: screens.Handler[] = [];
@@ -130,8 +140,14 @@ export async function assemble(response: string, input: Input): Promise<Assemble
   let fragment: screens.Fragment = {declarations:parsed.regions.classes,fields:fields,updates:updates,effects:effects,helpers:parsed.regions.functions,view:parsed.regions.view,options:[],content:[],ports:ports,holes:[],covers:covers,owns:[owner]};
   let instance: screens.Instance = {id:owner,kind:"custom",origin:"custom",parameters:{},fragment:fragment,bodies:{}};
   instance.definition = screens.issueDefinition(fragment);
+  // The chat projection is decided once, before construction, and construction owns the omission
+  // disclosure on the route that carries a composition; the whole-draft route below is the only one
+  // that needs to add it here because no construction ran for it.
+  let omittedInstances: screens.Instance[] = [];
+  if (!Object.hasOwn(input,"base") && Object.hasOwn(input,"omitted")) { for (let id of input.omitted as string[]) { omittedInstances[omittedInstances.length] = screens.notice("notice_chat_"+s.identifier(id),chat.omission(id)); } }
   let title: string = "Requested outcome"; if (input.plan !== null) { title = (input.plan as plans.Plan).title; }
   let composition: screens.Composition = {screen:{title:title,target:input.target,layout:{kind:"stack",positions:[]},slots:slots,instances:[instance]},bindings:{},actions:{},connections:[]};
+  for (let omittedInstance of omittedInstances) { composition.screen.instances[composition.screen.instances.length] = omittedInstance; }
   let computations: composer.Computation[] = [];
   if (Object.hasOwn(input,"base")) {
     let base: screens.Composition = input.base as screens.Composition;
@@ -325,10 +341,25 @@ export async function run(input: Input): Promise<Result> {
     if (edit) {
       edits = edits+1;
       let applied: revisions.Applied = await revisions.apply(draft as revisions.Revision,response.content);
-      // An edited pair keeps the issued facts as a consistency check but is no longer the pair the
-      // assembly described.
-      if (applied.accepted) { draft = applied.current; source = applied.current.source; fresh = false; }
+      // An edit keeps the whole-chat shape: a pair edited into a header or a third section is source
+      // feedback for the next ask, and the previous draft stays the accepted revision
+      // (docs/spec-v0.8.md:291). The rule reads the emitted pair's parsed view facts.
+      if (applied.accepted) {
+        let shape: string = "";
+        if (input.target === "chat" && !Object.hasOwn(input,"base")) {
+          // An edited pair the compiler cannot parse is source feedback for the next ask, exactly as the
+          // fresh-draft route classifies it: the previous draft stays the accepted revision.
+          try { let edited: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:"",view:applied.current.source.dealui}))); shape = chat.compact(s.records(edited,"views")); }
+          catch (unknownError) {
+            let error: Error = unknownError as Error;
+            if (s.contains(["CONSTRUCTION_SCHEMA","E8001","E8007","E8010","FRAGMENT_SYNTAX"],error.name)) { shape = error.message; }
+            else { throw error; }
+          }
+        }
+        if (shape !== "") { diagnostics = shape; } else { draft = applied.current; source = applied.current.source; fresh = false; }
+      }
       else { diagnostics = revisions.rejectedFeedback(repairGoal,applied); }
+      // Rejected edits preserve the accepted revision and source diagnostics.
     } else {
       draft = null; edits = 0;
       // A freshly assembled whole or gap draft is again the pair its issued metadata describes.

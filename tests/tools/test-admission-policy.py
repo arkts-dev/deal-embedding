@@ -17,6 +17,8 @@ CONTROLLER = ROOT / 'core/controller.deal'
 DISCOVERY = ROOT / 'android/src/discovery/Discovery.kt'
 BRIDGE = ROOT / 'android/src/discovery/DiscoveryPolicy.kt'
 CONFIG = ROOT / 'android/src/EmbeddingConfig.kt'
+GENERATOR = ROOT / 'android/src/bindings/ExperienceGenerator.kt'
+EMBEDDING = ROOT / 'android/src/Embedding.kt'
 
 
 def body(text, start, name):
@@ -113,6 +115,63 @@ class DiscoveryAdmissionTest(unittest.TestCase):
         # Admission is a decision, not a bare call: a decision error must keep its code.
         self.assertIn('decision("admit"', bridge)
         self.assertNotIn('call("admit"', bridge)
+
+
+class HostQuestionAdapterTest(unittest.TestCase):
+    """The human question adapter is host transport; compiled DEAL owns admission and replan."""
+
+    def test_the_configured_host_answers_the_compiled_question(self):
+        generator = GENERATOR.read_text()
+        start = generator.index('"embedding/questions"')
+        branch = generator[start:generator.index('"embedding/policy-data"', start)]
+        # The one adapter asks the host's placement for the compiled request and question identities.
+        self.assertIn('config.questions?.ask(args.getString(0),args.getString(1))', branch)
+        # Only an absent placement resolves unanswered; the adapter never invents an option or text.
+        self.assertIn('?: QuestionAnswer(null,null,false)', branch)
+        self.assertIn('.put("optionId",answer.optionId ?: JSONObject.NULL)', branch)
+        self.assertIn('.put("text",answer.text ?: JSONObject.NULL)', branch)
+        self.assertIn('.put("cancelled",answer.cancelled)', branch)
+        # No threshold, answer selection or replan decision lives in the adapter: DEAL validates the
+        # answer (option/text exclusivity, bounds, unissued options) and owns the answered replan.
+        self.assertNotIn('threshold', branch)
+        self.assertNotIn('replan(', branch)
+        # The host placement is configuration carried to the generation mechanism beside the frozen target.
+        config = CONFIG.read_text()
+        self.assertIn('fun interface QuestionProvider', config)
+        self.assertIn('val questions: QuestionProvider? = null', config)
+        self.assertIn('questions=config.questions', EMBEDDING.read_text())
+
+
+class HostLookupAdapterTest(unittest.TestCase):
+    """The missing-need lookup adapter is host transport; compiled DEAL owns policy and caching."""
+
+    def test_the_configured_host_serves_the_issued_batch(self):
+        generator = GENERATOR.read_text()
+        start = generator.index('"embedding/lookup"')
+        branch = generator[start:generator.index('"embedding/questions"', start)]
+        # One mechanism call carries one issued batch; every lookup of the batch is submitted before
+        # any reply is read, so the needs are looked up concurrently.
+        self.assertIn('check(function=="find");val batch=args.getJSONObject(0);val needs=batch.getJSONArray("needs")', branch)
+        self.assertIn('pool.submit(', branch)
+        self.assertIn('for(future in futures){', branch)
+        self.assertIn('pool.shutdownNow()', branch)
+        # The adapter's own resource bound: at most four concurrent workers, never one lookup per call.
+        self.assertIn('newFixedThreadPool(minOf(needs.length().coerceAtLeast(1),4))', branch)
+        # The stage, budget, reasoning policy and operation identity come from the batch Compiled DEAL
+        # issued; the adapter fills the one per-need ask index and returns the raw reply with the
+        # provider's finish and refusal.
+        self.assertIn('val stage=batch.getString("stage")', branch)
+        self.assertIn('val maxTokens=batch.getInt("maxTokens")', branch)
+        self.assertIn('batch.getInt("asks")+index', branch)
+        self.assertIn('.put("finish",reply.finish).put("refusal",reply.refusal)', branch)
+        # The obvious policy regressions: any adapter-side memory of a reply, a content bound and a
+        # client-side refusal classification. The memory pin refuses even the word, so an adapter that
+        # remembers a reply cannot pass behind a comment. These are spelling-level pins for those three
+        # shapes, not a proof that no other policy could be written here; compiled DEAL's own rows prove
+        # the policy.
+        self.assertNotIn('cache', branch)
+        self.assertNotIn('8000', branch)
+        self.assertNotIn('refused', branch)
 
 
 class AssistanceLifecycleTest(unittest.TestCase):

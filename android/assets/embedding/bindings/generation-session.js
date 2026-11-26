@@ -10,7 +10,9 @@ globalThis.runGeneration = function(factories, input) {
   entry.generate.$f(entry['GenerationInput$new'](input)).then(value => {
     generationResult = protocolPlain(value); generationDone = true;
   }).catch(error => {
-    generationError = {code:error.code || 'GENERATION_FAILED',message:error.message || String(error)};
+    // The compiled policy classifies a cancelled question by its DEAL error name; the adapter maps that
+    // classification and leaves every other compiled failure a generation failure.
+    generationError = {code:error.code || (error.name === 'CANCELLED' ? 'CANCELLED' : 'GENERATION_FAILED'),message:error.message || String(error)};
     generationDone = true;
   });
   return '';

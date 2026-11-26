@@ -6,6 +6,8 @@ import * as s from "./construction-schema";
 import * as plans from "./plan";
 import * as planning from "./planning";
 import * as classification from "./classification";
+import * as chat from "./chat";
+import * as lookup from "./lookup";
 import * as selection from "./construction-selection";
 import * as construction from "./construction";
 import * as bindings from "./bindings";
@@ -46,10 +48,18 @@ export async function generate(request: GenerationInput): Promise<GenerationResu
   let result: planning.Result = await planning.review(input,await planning.run(input));
   // A part classification enters the plan as exactly one scene need that reads the plan inputs.
   if (result.plan !== null && classified.classification === "part") { classification.scene(result.plan as plans.Plan,request.intent); }
+  // A chat projection is decided once, before construction: it retains the first five visible needs
+  // with their hidden dependencies and discloses every omission as missing. One lookup session carries
+  // the missing-need cache and counters across the route.
+  let projection: chat.Projection | null = null;
+  if (result.plan !== null) { projection = chat.project(result.plan as plans.Plan,target); }
+  let planned: plans.Plan | null = null; let omitted: string[] = [];
+  if (projection !== null) { planned = (projection as chat.Projection).plan; omitted = (projection as chat.Projection).omitted; }
+  let lookups: lookup.Session = lookup.session();
   let context: selection.Context = {original:request.intent,facts:disclosed,contracts:contracts,specification:assets.selectionSpecification()};
-  let writingInput: writing.Input = {original:request.intent,facts:disclosed,contracts:contracts,specification:assets.writingSpecification(),language:assets.language(),pack:assets.pack(),target:input.target,plan:result.plan,answers:result.answers,providers:providers,registry:bindings.create(request.capabilities),clockIntervalMs:clockIntervalMs,clockToleranceMs:clockToleranceMs};
-  if (result.plan !== null) {
-    let ordinary: construction.Result = await construction.run(writingInput,context,result.plan as plans.Plan,bindings.create(request.capabilities));
+  let writingInput: writing.Input = {original:request.intent,facts:disclosed,contracts:contracts,specification:assets.writingSpecification(),language:assets.language(),pack:assets.pack(),target:input.target,plan:planned,answers:result.answers,providers:providers,registry:bindings.create(request.capabilities),clockIntervalMs:clockIntervalMs,clockToleranceMs:clockToleranceMs,omitted:omitted};
+  if (planned !== null) {
+    let ordinary: construction.Result = await construction.run(writingInput,context,planned as plans.Plan,bindings.create(request.capabilities),lookups,omitted);
     if (ordinary.runnable) { return {candidateId:ordinary.candidateId,attempts:ordinary.attempts,diagnostics:ordinary.diagnostics,origin:"generated",classification:trace,classificationReason:reason}; }
   }
   // The only whole-writing admission: no runnable ordinary composition (or no usable plan).

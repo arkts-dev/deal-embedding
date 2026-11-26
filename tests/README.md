@@ -7,6 +7,8 @@ White-box construction, composition, checkpoint/runtime and packaged controller 
 ```sh
 python3 tests/check.py --list
 python3 tests/check.py construction
+python3 tests/check.py interaction
+python3 tests/check.py surface
 python3 tests/check.py catalogue
 python3 tests/check.py composer-prepare  # compilation only, no pass/snapshot claim
 python3 tests/check.py composer:clocks   # one assertion group, not the combined batch
@@ -144,6 +146,13 @@ python3 tests/tools/test-composer.py --pair clock
 python3 tests/tools/test-catalogue-runtime.py --group timers
 ```
 
+`test-interaction-contracts.py` compiles the chat projection, missing-need lookup with its cache and refusals, the
+hole-body authoring rule and its reverts as one policy fixture, and `test-surface-script.py` drives the compiled
+Surface exploration with a fake host: the 240-frame window, the six-button bound and the inclusive 120-frame
+per-button bound (a change on frame 120 is admitted, frame 121 is not), with the driver pinning the exact frames
+and presses each rejection spent so a narrower window cannot satisfy the cases. Each owns its own staging tree
+(`interaction-tests`, `surface-script`) and neither writes a tree another item reads.
+
 Composer `--pair` requires an exact input/output-validated snapshot from `--contracts-only`, or all six
 current assertion groups (`validation`, `basics`, `clocks`, `operations`, `entries`, `presentation` via
 `tests/check.py composer:GROUP`). Each group executes its assertions; all 33 original fixture calls and
@@ -171,7 +180,7 @@ against a stubbed adapter, so the dispatch, the recorded pending attempt and the
 executed rather than inspected.
 These four Python harnesses check dependency pins and take the repository build lock (busy exit 75).
 Each subprocess tree is bounded (normally 45 seconds, the construction-contract lane 90 seconds, the
-catalogue contract lane 90 seconds, the
+catalogue contract lane 90 seconds, the interaction lane 90 seconds, the Surface-script lane 120 seconds, the
 catalogue runtime lane 150 seconds per section group and 600 seconds for the `all` and `local` bundles,
 one composer pair's compiler call 120 seconds since three of them share the host, and a cold fixture
 module graph 120 seconds);
@@ -181,7 +190,8 @@ their own calls; every `tests/check.py` lane over one of those harnesses derives
 same declaration, so a lane always contains the stages its harness declares and the harness names the
 stage that overran instead of an outer lane timeout. `tests/tools/test-build-stages.py` re-derives that
 containment for every catalogue group, contract, construction, composer and pair lane, and refuses a
-harness that passes a literal bound beside the declaration.
+harness that passes a literal bound beside the declaration or compiles a stage on the default instead
+of the bound its kind declares.
 Full/default commands remain longer than focused
 lanes. Do not run them concurrently with packaging or edit their inputs during a run.
 

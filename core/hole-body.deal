@@ -1,0 +1,44 @@
+import * as decoded from "./decoded";
+import * as screens from "./screen";
+import * as s from "./construction-schema";
+import * as syntax from "embedding/fragment-syntax";
+
+// One classification of one catalogue hole body (docs/spec-v0.8.md:464,478; catalogue-sections
+// "Qualified holes"). The body is emitted inside its issued declaration, so this module owns the one
+// composed text and every verdict about an authored body, including the bound it reads from its screen
+// owner and source written outside the hole. The emitter (composer.holeFunctions) refuses the pair with
+// the returned reason and emits the returned composed source; the body author (catalogue-bodies)
+// reports the same reason as its located diagnostic. A body one stage accepts can therefore never be
+// rejected by the other, and the composed shape has a single owner.
+// `outside` marks the verdicts that abandon generated bodies: the body declared source the issued hole
+// does not own. An empty reason is an accepted body.
+export class Verdict { reason: string; outside: boolean; composed: string; }
+function verdict(reason: string, outside: boolean, composed: string): Verdict {
+  return {reason:reason,outside:outside,composed:composed};
+}
+export async function classify(view: string, owner: string, id: string, signature: string, body: string): Promise<Verdict> {
+  let composed: string = "export function "+id+signature+" { "+body+" }\n";
+  if (body.trim() === "") { return verdict("Empty hole body: "+id,false,composed); }
+  let over: string = screens.overBound(id,body);
+  if (over !== "") { return verdict(over,false,composed); }
+  let described: Record<string, unknown> = {};
+  try { described = JSON.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:composed,view:view}))); }
+  catch (unknownError) {
+    // A syntax diagnostic is this body's own repairable verdict; anything else is an operational fault
+    // of the mechanism and stays the request's failure instead of becoming a silent body revert.
+    let error: Error = unknownError as Error;
+    if (!s.contains(["CONSTRUCTION_SCHEMA","FRAGMENT_SYNTAX","E8001","E8007","E8010"],error.name)) { throw error; }
+    return verdict("Catalogue hole body is not valid syntax: "+id,false,composed);
+  }
+  let declared: Record<string, unknown>[] = decoded.records(described.functions);
+  if (declared.length !== 1 || (declared[0].name as string) !== id) {
+    for (let fn of declared) { let name: string = fn.name as string; if (name !== id) { return verdict("Catalogue hole body declaration: "+owner+" "+name,true,composed); } }
+    return verdict("Hole body changes the composed function signature: duplicate "+id,true,composed);
+  }
+  if (decoded.records(described.classes).length !== 0) { return verdict("Hole body declares a top-level class: "+id,true,composed); }
+  // Only the fragment's own imports and view may occur beside the issued declaration.
+  let baseline: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:"",fields:"",functions:"",view:view})));
+  if (s.encode(described.imports) !== s.encode(baseline.imports) || s.encode(described.views) !== s.encode(baseline.views)) { return verdict("Catalogue hole body import or view: "+owner+" "+id,true,composed); }
+  return verdict("",false,composed);
+}
+export function main(): void { return; }

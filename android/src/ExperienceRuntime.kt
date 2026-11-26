@@ -7,7 +7,7 @@ import dev.deal.embedding.capabilities.*
 import java.io.File
 import java.util.UUID
 
-internal data class RuntimeConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val retainState: Boolean = false, val execution: ExecutionLimits = ExecutionLimits(), val target: String = "screen", val clockIntervalMs: Long = 1_000, val clockToleranceMs: Long = 2_000) {
+internal data class RuntimeConfig(val sourceName: String, var contracts: List<CapabilityContract>, val storageName: String, val generationAssets: String = "generation", val retainState: Boolean = false, val execution: ExecutionLimits = ExecutionLimits(), val target: String = "screen", val clockIntervalMs: Long = 1_000, val clockToleranceMs: Long = 2_000, val questions: QuestionProvider? = null) {
 }
 internal data class ExperienceSource(val deal: String, val ui: String)
 internal data class SavedWorkspace(val id: String, val title: String, val origin: WorkspaceOrigin, val attempts: Int, val target: String?)

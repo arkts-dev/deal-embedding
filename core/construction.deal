@@ -7,6 +7,9 @@ import * as scalar from "./scalar-read";
 import * as textgen from "./text-generation";
 import * as catalogue from "./catalogue";
 import * as alignment from "./alignment";
+import * as lookup from "./lookup";
+import * as bodies from "./catalogue-bodies";
+import * as chat from "./chat";
 import * as bindings from "./bindings";
 import * as composer from "./composer";
 import * as coverage from "./coverage";
@@ -22,6 +25,72 @@ import * as identity from "embedding/construction-identity";
 import * as tables from "std/table";
 
 export class Result { candidateId: string; attempts: number; diagnostics: string; runnable: boolean; }
+// A catalogue body that reverted to its default or was abandoned is disclosed on its need.
+export class BodyNotice { need: string; status: string; reason: string; }
+// Ownership and disclosure for one configured section, from the first batch's ownership answer. The
+// rule is independent of the winning option and applies to every section whichever stage issued it: a
+// lookup result is judged exactly as a selected one, and unchecked ownership keeps its need open.
+function disclose(entry: catalogue.Configured, plan: plans.Plan, answers: selections.Answer[], context: selecting.Context): void {
+  let userOwned: boolean = false; let ownershipChecked: boolean = false;
+  for (let answer of answers) { if (answer.id === "ownership_"+entry.need && answer.accepted) {
+    ownershipChecked = true;
+    for (let probability of answer.probabilities) { if ((probability.id as string) === "user" && (probability.p as number) >= selections.threshold("ownership")) {
+      userOwned = true;
+      for (let need of plan.needs) { if (need.id === entry.need && !disclosure.admitsQuote(context.original,need.quote)) { entry.accepted = false; entry.reason = "User-owned content has no exact request quote"; } }
+    } }
+  } }
+  if (!ownershipChecked) { entry.accepted = false; entry.reason = "Content ownership unchecked"; }
+  if (entry.accepted) { let undecided: string = catalogue.disclosed(entry,context.original,context.facts,userOwned); if (undecided !== "") { entry.accepted = false; entry.reason = undecided; } }
+}
+// One authoring ask per accepted catalogue instance with its own counter. Resolution writes the
+// authored bodies onto the instance; a reverted or abandoned author leaves the compiling defaults in
+// place and records the located notice its need carries.
+async function authorBodies(instance: screens.Instance, plan: plans.Plan, original: string, facts: string, notices: BodyNotice[], live: screens.Instance[]): Promise<void> {
+  let authored: bodies.Authored = await bodies.author(instance,plan,original,facts);
+  if (authored.status === "authored") { instance.bodies = authored.bodies; live[live.length] = instance; return; }
+  if (authored.status === "none") { return; }
+  notices[notices.length] = {need:bodyNeed(instance),status:authored.status,reason:authored.reason};
+}
+function bodyNeed(instance: screens.Instance): string {
+  let need: string = instance.id;
+  if (instance.fragment.covers.length > 0) { need = instance.fragment.covers[0]; }
+  return need;
+}
+// One revert of every authored catalogue body after a checked rejection. A failing body reverts to its
+// compiling default, the revert is disclosed on its need, and the reverted composition is checked once
+// instead of failing the request on a body no stage could verify (docs/spec-v0.8.md:505). The assembled
+// verdict does not name the party at fault, so every generated body reverts with the same located
+// disclosure rather than one being blamed for another; the verdict that triggered the revert is kept in
+// the accepted result's diagnostics, and a failing recheck reports both verdicts under their own labels.
+// The reverted pair is reassembled from the composition the bodies were authored into, never from an
+// intermediate assembled repair: the verdict that ended the repair operation is the one the diagnostics
+// keep, and a repaired pair would otherwise ship carrying a body that repair never saw.
+async function revertBodies(composition: screens.Composition, computations: composer.Computation[], registry: bindings.Registry, plan: plans.Plan, authored: screens.Instance[], notices: string, diagnostic: string, attempts: number): Promise<Result> {
+  for (let instance of authored) {
+    // A body on an instance this composition never placed is never emitted, so it has no failing body
+    // to revert and no need to disclose.
+    let placed: boolean = false; for (let entry of composition.screen.instances) { if (entry.id === instance.id) { placed = true; } }
+    if (!placed) { continue; }
+    instance.bodies = {};
+    let need: string = bodyNeed(instance);
+    composition.screen.instances[composition.screen.instances.length] = screens.notice("notice_body_reverted_"+need,need+": body reverted — the checked composition was rejected, so the compiling default is used");
+  }
+  let replacement: composer.Result = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan));
+  let total: number = attempts+1;
+  let kept: string = notices; if (diagnostic !== "") { kept = kept+"reverted: "+diagnostic+"; "; }
+  let rechecked: checker.Result = await checker.run(replacement.source.deal,replacement.source.dealui,s.encode(replacement.metadata),true);
+  if (rechecked.accepted as boolean) { return {candidateId:rechecked.candidateId as string,attempts:total,diagnostics:kept,runnable:true}; }
+  let explanation: string = kept;
+  let reverted: string = rechecked.diagnostics as string;
+  if (reverted !== "") { explanation = explanation+"reverted pair: "+reverted; }
+  return {candidateId:"",attempts:total,diagnostics:explanation,runnable:true};
+}
+// Any authored body this composition actually placed: only such a body can be the cause of a rejected
+// pair, so only then does the failing-body recovery run.
+function reverting(composition: screens.Composition, authored: screens.Instance[]): boolean {
+  for (let instance of authored) { for (let entry of composition.screen.instances) { if (entry.id === instance.id) { return true; } } }
+  return false;
+}
 // The outcome of the Bind stage: the located reasons of bindings that kept their need open, and
 // whether the parts implementation must be placed for the operations that were issued.
 export class Bound { unbound: string[]; placed: boolean; }
@@ -126,11 +195,6 @@ function mark(screen: screens.Screen, instance: screens.Instance): void {
     // no allowed kind, because no issued alternative kind produced it.
     if (slot.allowedKinds.length === 0 && instance.origin === "catalogue") { slot.allowedKinds = [instance.kind]; }
   } }
-}
-function notice(id: string, message: string): screens.Instance {
-  // Encode data through the same compiler expression mechanism used by other fragments.
-  let escaped: string = s.encode(message);
-  return {id:id,kind:"notice",origin:"notice",parameters:{text:message},fragment:{declarations:"",fields:[],updates:[],effects:[],helpers:"",view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Text(text: "+escaped+", style: \"muted\")}",options:[],content:[],ports:[],holes:[],covers:[],owns:[]},bodies:{}};
 }
 function issueSources(registry: bindings.Registry, instance: screens.Instance): void {
   for (let port of instance.fragment.ports) { if (port.direction === "publish") {
@@ -250,7 +314,7 @@ export function planBindings(plan: plans.Plan, registry: bindings.Registry): Pla
   }
   return {bindings:result,reasons:reasons};
 }
-export async function run(input: writing.Input, context: selecting.Context, plan: plans.Plan, registry: bindings.Registry): Promise<Result> {
+export async function run(input: writing.Input, context: selecting.Context, plan: plans.Plan, registry: bindings.Registry, lookupSession: lookup.Session, omitted: string[]): Promise<Result> {
   let scalarCandidates: scalar.Candidate[] = scalar.candidates(plan,registry.contracts);
   // Runtime text generation binds a disclosed text-generation capability as an ordinary issued part;
   // its alternatives are offered beside the catalogue kinds for the same content/other needs.
@@ -303,10 +367,17 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   // recorded, so a refused figure type or formula is reported against its need instead of a generic
   // "No implementation".
   for (let problem of definitions.unavailable) { for (let slot of composition.screen.slots) { if (slot.need === problem.need) { slot.status = "missing"; slot.reason = problem.reason; } } }
-  // A filled slot carries the kind its accepted alternative declares, so the issued slot resource
-  // names what may fill it.
+  // The entries this stage selected: a catalogue kind is selected at most once, so a later choice of a
+  // kind already selected has no entry and its need stays open for a lookup or its own writer.
+  let entries: catalogue.Configured[] = catalogue.selected(plan,second.choices);
+  // A slot names the kind its implementation has, so the issued slot resource says what may fill it. A
+  // choice the once-per-kind rule dropped issues no entry and declares no kind: its slot keeps the
+  // reserve default until a lookup or the writer fills it, and a lookup fill declares its own kind.
   for (let choice of second.choices) {
     let kind: string = alternativeKind(choice);
+    let issued: boolean = !choice.alternative.startsWith("cat_");
+    for (let entry of entries) { if (entry.need === choice.need && entry.definition.kind === kind) { issued = true; } }
+    if (!issued) { continue; }
     for (let slot of composition.screen.slots) { if (slot.need === choice.need) { slot.allowedKinds = [kind]; } }
   }
   let computations: composer.Computation[] = [];
@@ -318,7 +389,6 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   let reasons: string = "";
   for (let reason of bound.unbound) { reasons = reasons+"unbound "+reason+"; "; }
   for (let reason of built.unavailable) { reasons = reasons+"unavailable "+reason+"; "; }
-  let entries: catalogue.Configured[] = catalogue.selected(plan,second.choices);
   // Alignment runs after both selection batches and before Fill, over the needs no accepted choice
   // fills (docs/spec-v0.8.md:256,285). Publishers of the accepted composition and of the sections a
   // round accepts decide which readers each round may offer; the stage never declares them itself.
@@ -329,18 +399,7 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   for (let need of aligned.open) { locate(composition,need,alignment.reason(aligned,need)); }
   await catalogue.fill(context,plan,entries);
   // Ownership is checked independently of the winning option, at the user threshold.
-  for (let entry of entries) {
-    let userOwned: boolean = false; let ownershipChecked: boolean = false;
-    for (let answer of first.answers) { if (answer.id === "ownership_"+entry.need && answer.accepted) {
-      ownershipChecked = true;
-      for (let probability of answer.probabilities) { if ((probability.id as string) === "user" && (probability.p as number) >= selections.threshold("ownership")) {
-        userOwned = true;
-        for (let need of plan.needs) { if (need.id === entry.need && !disclosure.admitsQuote(context.original,need.quote)) { entry.accepted = false; entry.reason = "User-owned content has no exact request quote"; } }
-      } }
-    } }
-    if (!ownershipChecked) { entry.accepted = false; entry.reason = "Content ownership unchecked"; }
-    if (entry.accepted) { let undecided: string = catalogue.disclosed(entry,context.original,context.facts,userOwned); if (undecided !== "") { entry.accepted = false; entry.reason = undecided; } }
-  }
+  for (let entry of entries) { disclose(entry,plan,first.answers,context); }
   // A selected alignment, fill, ownership or disclosure refusal keeps its need visibly missing with the
   // located reason that step recorded, instead of reverting to the generic coverage gap. One loop covers
   // every refusal the stages above recorded, and the same reason joins the candidate diagnostics so a
@@ -348,13 +407,105 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   // alternative per need makes that unreachable today, and the guard keeps a future second
   // implementation from silently losing its coverage.
   for (let entry of entries) { if (!entry.accepted) { locate(composition,entry.need,entry.reason); reasons = reasons+entry.need+": "+entry.reason+"; "; } }
+  // Missing needs nothing accepted are looked up concurrently before any custom writing: a found
+  // complete contract fills the need from the issued catalogue, an unavailable or refused lookup
+  // leaves it open for its own writer with the located reason. The lookup result never substitutes
+  // provider data, and the cache keeps a reentry's counters (docs/spec-v0.8.md:495).
+  let missing: plans.Need[] = [];
+  for (let need of plan.needs) {
+    if (need.type !== "content" && need.type !== "other") { continue; }
+    // Only an accepted catalogue entry implements the need: a selected, aligned or lookup-filled
+    // section whose fill or disclosure was refused left the need open and is looked up like any other.
+    let filledNow: boolean = false; for (let entry of entries) { if (entry.need === need.id && entry.accepted) { filledNow = true; } }
+    // A need an accepted alternative already implements is not missing: a second implementation would
+    // overwrite the slot's owner and silently lose the first one's behavior. Only a non-catalogue
+    // alternative is its own implementation here: a catalogue choice is counted by its accepted entry
+    // above, because the once-per-kind rule drops a later choice of a kind already selected and that
+    // need has neither an entry nor an instance.
+    for (let choice of second.choices) { if (choice.need === need.id && !choice.alternative.startsWith("cat_")) { filledNow = true; } }
+    if (!filledNow) { missing[missing.length] = need; }
+  }
+  if (missing.length > 0) {
+    // Only the kinds the same eligibility predicate issues for that need are offered to a lookup, so a
+    // reply can never name a kind this build cannot instantiate or whose required readers this
+    // composition cannot satisfy; anything else stays the need's own writer's work.
+    let offeredAlternatives: selecting.Alternative[] = catalogue.alternatives(plan);
+    // The kinds this composition already selected, accepted or not. Alignment is given this same set as
+    // its reserved kinds and the entries this stage is about to add join it as they are accepted, so the
+    // one-instance-per-kind rule has one owner and every later stage reads it.
+    let taken: string[] = usedKinds(entries);
+    let targets: lookup.Target[] = [];
+    for (let need of missing) {
+      let kinds: string[] = [];
+      // A kind this composition already holds is never offered again: one instance per catalogue kind
+      // is the same rule the alignment stage enforces, so a lookup can never duplicate an instance.
+      for (let alternative of offeredAlternatives) { if (alternative.need === need.id && alternative.eligible && !s.contains(taken,alternative.kind)) { kinds[kinds.length] = alternative.kind; } }
+      targets[targets.length] = {need:need.id,kinds:kinds};
+    }
+    let offered: catalogue.Definition[] = [];
+    for (let definition of catalogue.definitions()) { if (catalogue.offered(definition)) { offered[offered.length] = definition; } }
+    let issued: lookup.Issued = {definitions:s.encode(offered),targets:targets,contracts:context.contracts,digest:await lookup.digestOf(context.contracts),original:context.original,facts:context.facts,plan:s.encode(plan)};
+    let outcomes: lookup.Outcome[] = await lookup.resolve(lookupSession,missing,issued);
+    let firstAdded: number = entries.length;
+    for (let outcome of outcomes) {
+      if (outcome.status === "found") {
+        let definition: catalogue.Definition = catalogue.definitionOf(outcome.kind);
+        // Two needs of one batch can name the same kind: the first fills its need and the second keeps
+        // its own writer with the located reason instead of becoming a duplicate instance.
+        if (s.contains(usedKinds(entries),outcome.kind)) {
+          locate(composition,outcome.need,"Catalogue kind already selected: "+outcome.kind); reasons = reasons+outcome.need+": Catalogue kind already selected: "+outcome.kind+"; ";
+          continue;
+        }
+        try {
+          let parameters: Record<string, unknown> = await catalogue.decode(definition,lookup.content(outcome.content));
+          let found: catalogue.Configured = {need:outcome.need,definition:definition,parameters:parameters,accepted:true,reason:""};
+          disclose(found,plan,first.answers,context);
+          // The lookup fills the slot with the kind it found, exactly as the selection stage declares the
+          // kind of the alternative it accepted: a slot whose selection was dropped by the once-per-kind
+          // rule must not keep naming a kind no instance has.
+          if (found.accepted) { for (let slot of composition.screen.slots) { if (slot.need === outcome.need) { slot.allowedKinds = [outcome.kind]; } } }
+          entries[entries.length] = found;
+        } catch (unknownError) {
+          let error: Error = unknownError as Error;
+          if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; }
+          entries[entries.length] = {need:outcome.need,definition:definition,parameters:{},accepted:false,reason:"Lookup content rejected: "+error.message};
+        }
+      } else if (outcome.status === "refused") {
+        // A refusal is a catalogue verdict about this need, so it is located even when alignment left the
+        // need open: the need keeps its own writer with the refusal as its reason.
+        locate(composition,outcome.need,outcome.reason); reasons = reasons+outcome.need+": "+outcome.reason+"; ";
+      } else {
+        // No catalogue contract matched, or the reply was unusable: the need keeps its own writer. The
+        // plain no-match is recorded only where no stage located a more specific reason already, so a
+        // refused fill, disclosure or alignment keeps its reason and its single diagnostic entry.
+        let entered: boolean = false;
+        for (let entry of entries) { if (entry.need === outcome.need) { entered = true; } }
+        if (!entered && !s.contains(aligned.open,outcome.need)) { locate(composition,outcome.need,outcome.reason); reasons = reasons+outcome.need+": "+outcome.reason+"; "; }
+      }
+    }
+    // A lookup result that failed decoding or disclosure keeps its need open with the same located
+    // reason a selected refusal carries, so the candidate reports why the writer was asked. Only the
+    // entries this stage added are located again; the earlier ones already reported theirs.
+    let position: number = firstAdded;
+    while (position < entries.length) { let entry: catalogue.Configured = entries[position]; position = position+1; if (!entry.accepted) { locate(composition,entry.need,entry.reason); reasons = reasons+entry.need+": "+entry.reason+"; "; } }
+  }
   // Publishers first; typed reader resolution is deterministic and never model-issued.
   let pending: screens.Instance[] = [];
+  let bodyNotices: BodyNotice[] = [];
+  let authoredBodies: screens.Instance[] = [];
   for (let entry of entries) { if (entry.accepted) { let instance: screens.Instance = await catalogue.instantiate(entry,registry); let reader: boolean = false; for (let port of instance.fragment.ports) { if (port.direction === "read") { reader = true; } }
-    if (reader) { pending[pending.length] = instance; } else { mark(composition.screen,instance); issueSources(registry,instance); for (let computation of catalogue.computations(instance,[],composition.screen.instances)) { computations[computations.length] = computation; } }
+    if (reader) { pending[pending.length] = instance; } else { await authorBodies(instance,plan,context.original,context.facts,bodyNotices,authoredBodies); mark(composition.screen,instance); issueSources(registry,instance); for (let computation of catalogue.computations(instance,[],composition.screen.instances)) { computations[computations.length] = computation; } }
   } }
-  for (let instance of pending) { let failure: string = connect(composition,instance,registry,plan); if (failure === "") { mark(composition.screen,instance); for (let computation of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = computation; } } else { for (let need of instance.fragment.covers) { locate(composition,need,failure); } } }
+  // A reader's bodies are authored only after its ports connect: an instance the composition cannot
+  // place is never emitted, so it carries no body disclosure and spends no authoring ask.
+  for (let instance of pending) { let failure: string = connect(composition,instance,registry,plan); if (failure === "") { await authorBodies(instance,plan,context.original,context.facts,bodyNotices,authoredBodies); mark(composition.screen,instance); for (let computation of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = computation; } } else { for (let need of instance.fragment.covers) { locate(composition,need,failure); } } }
   if (composition.screen.instances.length === 0) { return {candidateId:"",attempts:0,diagnostics:"No runnable ordinary implementation; "+reasons,runnable:false}; }
+  // A chat projection discloses every need it omitted as missing, and a catalogue body that reverted to
+  // its default or was abandoned is disclosed on its need. Both notices join the composition before
+  // admission, coverage and the gap writer, so the accepted experience carries the disclosure whether
+  // the ordinary composition ships as it stands or the writer replaces one of its needs.
+  for (let id of omitted) { composition.screen.instances[composition.screen.instances.length] = screens.notice("notice_chat_"+id,chat.omission(id)); }
+  for (let body of bodyNotices) { composition.screen.instances[composition.screen.instances.length] = screens.notice("notice_body_"+body.need,body.need+": body "+body.status+" — "+body.reason); }
   // The composition is admitted before emission: an import outside the issued surface or a storage
   // call outside an effect position is an authority verdict, not source feedback, so it authorizes no
   // repair and no candidate check (generation-recovery-and-source-editing "Checking and repair
@@ -399,10 +550,10 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   // A runnable partial ships its missing and unchecked behavior as notices whether or not a writer
   // ran for it, so an unhandled need is never silently dropped.
   let noticed: boolean = false;
-  for (let need of ledger.needs) { if (need.status !== "covered") { composition.screen.instances[composition.screen.instances.length] = notice("notice_"+need.id,need.id+": "+need.status+" — "+need.reason); noticed = true; } }
+  for (let need of ledger.needs) { if (need.status !== "covered") { composition.screen.instances[composition.screen.instances.length] = screens.notice("notice_"+need.id,need.id+": "+need.status+" — "+need.reason); noticed = true; } }
   if (noticed || wrote) { assembled = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan)); }
   if (missingRequirements.length > 0) {
-    for (let id of missingRequirements) { composition.screen.instances[composition.screen.instances.length] = notice("requirement_"+id,"Requirement "+id+": missing or unchecked original behavior"); }
+    for (let id of missingRequirements) { composition.screen.instances[composition.screen.instances.length] = screens.notice("requirement_"+id,"Requirement "+id+": missing or unchecked original behavior"); }
     assembled = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan));
   }
   for (let note of assembled.metadata.notices) { if (!diagnostics.includes(note)) { diagnostics = diagnostics+"composition: "+note+"; "; } }
@@ -410,27 +561,36 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
   // An admission or authority verdict is not source feedback: it authorizes no repair and leaves the
   // accepted source and saved data untouched (generation-recovery-and-source-editing "Checking and
-  // repair admission").
-  if (!checker.repairable(checked.diagnostics as string)) { return {candidateId:"",attempts:attempts,diagnostics:checked.diagnostics as string,runnable:true}; }
-  let revision: revisions.Revision = await revisions.issue({deal:assembled.source.deal,dealui:assembled.source.dealui});
-  let repair: inference.Operation = inference.operation(await identity.issue(),2);
+  // repair admission"). A generated body that reached a provider or a storage call from a handler is
+  // still a failing body, so it also authorizes the revert below; only a composition that authored no
+  // placed body ends the request on that verdict.
   let diagnostic: string = checked.diagnostics as string; let repairGoal: string = diagnostic; let previous: string = "";
-  while (repair.used < repair.cap) {
-    let response = await inference.ask(repair,"assembled-edit","SPECIFICATION\n"+context.specification+"\nORIGINAL REQUEST\n"+context.original+"\nFACTS (data)\n"+context.facts+"\nFROZEN CONTRACTS\n"+context.contracts+"\nCURRENT PLAN\n"+s.encode(plan)+"\nCURRENT ISSUED SOURCE REVISION\n"+s.encode(revision)+"\nRepair only source diagnostics. Preserve existing owners and working behavior. Return {revision,digest,edits:[{file,search,replace}]} with exact unique disjoint nonempty searches.",previous,diagnostic,2000,false);
-    previous = response.content; if (response.refusal !== "" || response.content.trim() === "") { break; }
-    let applied: revisions.Applied = await revisions.apply(revision,response.content);
-    if (applied.accepted) {
-      revision = applied.current; attempts = attempts+1;
-      // A repaired pair keeps the issued facts as a consistency check but is no longer the pair the
-      // assembly described, so admission does not require it to account for every declaration.
-      checked = await checker.run(revision.source.deal,revision.source.dealui,s.encode(assembled.metadata),false);
-      if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
-      // A repaired candidate rejected by an admission or authority verdict ends the request: the
-      // verdict is never fed back as a source diagnostic.
-      if (!checker.repairable(checked.diagnostics as string)) { return {candidateId:"",attempts:attempts,diagnostics:checked.diagnostics as string,runnable:true}; }
-      diagnostic = checked.diagnostics as string; repairGoal = diagnostic;
-    } else { diagnostic = revisions.rejectedFeedback(repairGoal,applied); }
+  if (checker.repairable(diagnostic)) {
+    let revision: revisions.Revision = await revisions.issue({deal:assembled.source.deal,dealui:assembled.source.dealui});
+    let repair: inference.Operation = inference.operation(await identity.issue(),2);
+    while (repair.used < repair.cap) {
+      let response = await inference.ask(repair,"assembled-edit","SPECIFICATION\n"+context.specification+"\nORIGINAL REQUEST\n"+context.original+"\nFACTS (data)\n"+context.facts+"\nFROZEN CONTRACTS\n"+context.contracts+"\nCURRENT PLAN\n"+s.encode(plan)+"\nCURRENT ISSUED SOURCE REVISION\n"+s.encode(revision)+"\nRepair only source diagnostics. Preserve existing owners and working behavior. Return {revision,digest,edits:[{file,search,replace}]} with exact unique disjoint nonempty searches.",previous,diagnostic,2000,false);
+      previous = response.content; if (response.refusal !== "" || response.content.trim() === "") { break; }
+      let applied: revisions.Applied = await revisions.apply(revision,response.content);
+      if (applied.accepted) {
+        revision = applied.current; attempts = attempts+1;
+        // A repaired pair keeps the issued facts as a consistency check but is no longer the pair the
+        // assembly described, so admission does not require it to account for every declaration.
+        checked = await checker.run(revision.source.deal,revision.source.dealui,s.encode(assembled.metadata),false);
+        if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
+        // A repaired candidate rejected by an admission or authority verdict ends the check phase: the
+        // verdict is never fed back as a source diagnostic, and a placed authored body still reverts below.
+        diagnostic = checked.diagnostics as string;
+        if (!checker.repairable(diagnostic)) { break; }
+        repairGoal = diagnostic;
+      } else { diagnostic = revisions.rejectedFeedback(repairGoal,applied); }
+    }
   }
+  // An authored catalogue body the compiler accepts syntactically but not semantically is still a
+  // failing body: it reverts to its compiling default under the disclosure and recheck above, whether
+  // the checked pair failed a repairable diagnostic, exhausted its repair asks or carried an authority
+  // verdict a body can have caused.
+  if (reverting(composition,authoredBodies)) { return await revertBodies(composition,computations,registry,plan,authoredBodies,diagnostics,diagnostic,attempts); }
   return {candidateId:"",attempts:attempts,diagnostics:diagnostic,runnable:true};
 }
 export function main(): void { return; }

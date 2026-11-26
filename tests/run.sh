@@ -114,6 +114,13 @@ gate_sequence_constructive() {
 }
 gate_sequence_contracts() {
     python3 tests/tools/test-construction-contracts.py
+    # Missing-need lookup with its cache, refusals and abandoned asks, hole-body authoring and its repairs,
+    # human question answers and the chat projection: one compiled policy fixture over its own
+    # `interaction-tests` staging tree, so it shares no output tree with any other item.
+    python3 tests/tools/test-interaction-contracts.py
+    # The Surface exploration's frame window, six-button and per-button frame bounds, over its own
+    # `surface-script` staging tree.
+    python3 tests/tools/test-surface-script.py
     # Session execution policy: dependency revisions, currentness, expiry trust, authority and text admission.
     python3 tests/tools/test-execution-contracts.py
     # Provider authority and operation currentness in the running Session: the generated Experience's own

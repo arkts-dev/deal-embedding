@@ -25,6 +25,8 @@ export async function resolve(requestId: string, questions: plans.HumanQuestion[
   let result: Resolution = {answers:[],changed:false};
   for (let question of questions) {
     let response: host.Answer = await host.ask(requestId,s.encode(question));
+    // A cancelled question ends generation as a cancellation: the name is the classification the host
+    // adapter reports, so the request never surfaces as a generic generation failure.
     if (response.cancelled) { throw {name:"CANCELLED",message:"Question cancelled"}; }
     if (response.optionId !== null && response.text !== null) { s.reject("Option and text are mutually exclusive"); }
     let optionId: string | null = response.optionId; let text: string | null = response.text;
