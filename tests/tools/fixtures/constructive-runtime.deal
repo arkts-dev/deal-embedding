@@ -276,5 +276,7 @@ export async function negatives(): Promise<string> {
   // An element access checks its position at run time whether it reads or writes, so a write at a position
   // the array does not hold unwinds the same way a read does and the write after the catch stays refused.
   results[results.length] = await rejection("export function probe(state: AppState): number { let held: Record<string, unknown>[] = []; let own: Record<string, unknown>[] = []; try { held = state.menu; own[9] = {id: \"x\"}; held = []; } catch (e) { } held[0] = {id: \"stolen\"}; return held.length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function probe(state: AppState): number { let held: Record<string, unknown>[] = []; try { held = state.menu; let n = held.length; held = []; } catch (e) { } held[0] = {}; return held.length; }","probe(state)",["f_gap_menu"]);
+  results[results.length] = await rejection("export function probe(state: AppState): number { let held: Record<string, unknown>[] = []; let record: Record<string, unknown> = state.menu[0]; try { held = state.menu; let n = record.length; held = []; } catch (e) { } held[0] = {}; return held.length; }","probe(state)",["f_gap_menu"]);
   return s.encode(results);
 }

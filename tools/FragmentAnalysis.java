@@ -1,4 +1,7 @@
 import deal.ast.*;
+import deal.checker.NameResolver;
+import deal.checker.TypeChecker;
+import deal.types.Type;
 import java.util.*;
 
 /** Conservative AST facts. DEAL decides purity, ownership and admitted calls from these facts. */
@@ -47,13 +50,30 @@ public final class FragmentAnalysis {
             }
         }
     }
+    /** Compiler types are evidence for intrinsic operations, never inferred from a method spelling. */
+    private Map<ExpressionNode,Type> types=Map.of();
+    private static Map<ExpressionNode,Type> checkedTypes(ProgramNode program){
+        var resolver=new NameResolver("fragment.deal",new deal.checker.ModuleResolver(){
+            public Map<String,Type> resolveModule(String module,String from,Set<String> active){return Map.of();}
+            public deal.checker.Symbol.ClassSymbol resolveClassSymbol(String name,String module,String from){return null;}
+        });
+        var symbols=resolver.resolve(program);
+        // Fragments can have unresolved external imports at this stage. Their expressions stay
+        // unproven; final project compilation still checks the complete program before execution.
+        return TypeChecker.check("fragment.deal",symbols,resolver,program).typeMap();
+    }
     private boolean indirect=false,returnsState=false;
     private final Set<String> stateParameters=new HashSet<>();
     private static StatementNode unwrap(StatementNode n){return n instanceof ExportDeclaration e?e.declaration():n;}
-    public static Map<String,Object> functions(String source){
+    public static Map<String,Object> functions(String source){return functions(source,Map.of());}
+    public static Map<String,Object> functions(String source,Map<String,String> stateTypes){
+        var original=FragmentSyntax.parse(source);
+        boolean hasState=original.statements().stream().map(FragmentAnalysis::unwrap).anyMatch(s->s instanceof ClassDeclaration c&&c.name().equals("AppState"));
+        if(!hasState&&!stateTypes.isEmpty())source+="\nclass AppState {"+stateTypes.entrySet().stream().map(e->e.getKey()+": "+e.getValue()+";").collect(java.util.stream.Collectors.joining())+"}\n";
+        var program=FragmentSyntax.parse(source);var types=checkedTypes(program);
         Map<String,Object> result=new LinkedHashMap<>();
-        for(var statement:FragmentSyntax.parse(source).statements())if(unwrap(statement) instanceof FunctionDeclaration f){
-            var analysis=new FragmentAnalysis();Set<String> locals=new HashSet<>();f.params().forEach(p->locals.add(p.name()));
+        for(var statement:program.statements())if(unwrap(statement) instanceof FunctionDeclaration f){
+            var analysis=new FragmentAnalysis();analysis.types=types;Set<String> locals=new HashSet<>();f.params().forEach(p->locals.add(p.name()));
             analysis.returnsState=f.returnType() instanceof NamedType named && named.name().endsWith("AppState");
             f.params().forEach(p->{if(p.type() instanceof NamedType n && n.name().equals("AppState"))analysis.stateParameters.add(p.name());});
             analysis.statement(f.body(),locals);result.put(f.name(),analysis.facts());
@@ -306,7 +326,7 @@ public final class FragmentAnalysis {
             case LiteralExpr l->{}
             // A field read admits its receiver and the field at run time; a field of a record nothing
             // validated may be absent, so the read is a possible unwind.
-            case MemberAccessExpr m->{String name=path(m);if(name!=null)reads.add(name);else indirect=true;expression(m.object(),scope);checkedRead(m.object());}
+            case MemberAccessExpr m->{String name=path(m);if(name!=null)reads.add(name);else indirect=true;expression(m.object(),scope);if(!(m.field().equals("length")&&(types.get(m.object()) instanceof Type.Array||types.get(m.object())==Type.String.INSTANCE)))checkedRead(m.object());}
             // An element read admits an element at a position the array may not hold, and an element
             // write admits both the position and the stored value: either one throws on a committed or
             // short array, so the access is a possible unwind wherever it appears.

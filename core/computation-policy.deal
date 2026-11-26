@@ -33,7 +33,7 @@ function boundAlias(source: string, alias: string): boolean {
   }
   return false;
 }
-export async function inspect(source: string, imports: Record<string, string>): Promise<Facts> {
+export async function inspect(source: string, imports: Record<string, string>, types: Record<string, string>): Promise<Facts> {
   let pure: string[] = []; let aliases: string[] = []; let aliased: boolean = false;
   for (let alias of Object.keys(imports)) {
     let module: string = imports[alias] as string;
@@ -41,7 +41,7 @@ export async function inspect(source: string, imports: Record<string, string>): 
     if (boundAlias(source,alias)) { aliased = true; }
     if (s.contains(["std/math","std/string","std/table"],module)) { pure[pure.length] = alias; }
   }
-  return {functions:JSON.parse(await syntax.analyzeFunctions(s.encode({source:source}))),pureImports:pure,aliases:aliases,aliased:aliased};
+  return {functions:JSON.parse(await syntax.analyzeFunctions(s.encode({source:source,types:types}))),pureImports:pure,aliases:aliases,aliased:aliased};
 }
 // The call chain to the rejected construct, so a located reason names the helper that carries it. An
 // empty chain (the computation's own expression) adds no clause instead of a dangling separator.

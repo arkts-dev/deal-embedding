@@ -122,7 +122,7 @@ const plan=JSON.parse(await step('plan'));
 const negatives=JSON.parse(await step('negatives'));
 
 // ---- the committed-value paths and an uninspectable callee stay refused, each with its reason.
-assert.strictEqual(negatives.length,28,'every constructive purity control ran, none silently dropped');
+assert.strictEqual(negatives.length,30,'every constructive purity control ran, none silently dropped');
 // A write to the state parameter, a field write to that parameter after rebinding it to a container the
 // helper allocated, a write through a local that borrows a state array, an indirect callee, an asserted
 // state element, a loop binding that shadows a fresh local, a write through a local whose borrow an early
@@ -161,6 +161,9 @@ assert.strictEqual(negatives[24],'ACCEPTED','the same try helper without the ass
 assert(/Borrowed state is written: gap\.probe held\[\]/.test(negatives[25]),'a failed member read inside a try is admitted: '+negatives[25]);
 assert.strictEqual(negatives[26],'ACCEPTED','the same try helper reading a value it carries is refused: '+negatives[26]);
 assert(/Borrowed state is written: gap\.probe held\[\]/.test(negatives[27]),'an out-of-range element write inside a try is admitted: '+negatives[27]);
+
+assert.strictEqual(negatives[28],'ACCEPTED','a checked borrowed array length creates an impossible unwind: '+negatives[28]);
+assert(/Borrowed state is written/.test(negatives[29]),'a Record field named length must still unwind: '+negatives[29]);
 
 // ---- the emitted pair carries the constructive calculations and no ordering or booking surface.
 const app=open('outcomes',{deal:plan.source.deal,dealui:plan.source.dealui,metadata:plan.metadata});
