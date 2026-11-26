@@ -148,8 +148,11 @@ internal class UiSession(private val context: Context, private val broker: Capab
         for (reply in replies) {
             val id = reply.getInt("id")
             val started = requestStarts.remove(id) ?: now
-            log.event("capability", if (reply.getBoolean("ok")) "completed" else "failed", candidate, workspace, id.toString(),
-                reply.optJSONObject("error")?.optString("code") ?: "", now - started, parentOperation = requestParents.remove(id) ?: "", detail = reply.toString(), span = "${capabilities.identity}:$id")
+            val failure = reply.optJSONObject("error")
+            // The transport publishes a definite failure and an undecidable external mutation differently, so
+            // the evidence keeps that difference instead of reporting every failure as the same outcome.
+            log.event("capability", if (reply.getBoolean("ok")) "completed" else if (failure?.optString("outcome") == "unknown") "unknown" else "failed", candidate, workspace, id.toString(),
+                failure?.optString("code") ?: "", now - started, parentOperation = requestParents.remove(id) ?: "", detail = reply.toString(), span = "${capabilities.identity}:$id")
         }
         // Completions keep their request order even when a host store call answered immediately.
         val delivered = (replies + storageReplies).sortedBy { it.getInt("id") }

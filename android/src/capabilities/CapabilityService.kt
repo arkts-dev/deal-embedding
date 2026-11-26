@@ -16,32 +16,41 @@ abstract class CapabilityService : Service() {
     private val pending = mutableMapOf<String, Work>()
     /** Providers call this when their own consent state changes, regardless of its storage. */
     @Synchronized protected fun consentChanged() {
-        if (!consent()) pending.keys.toList().forEach { id -> remove(id)?.let { failure(it.callback, id, "PROVIDER_REVOKED", "Provider access revoked") } }
+        if (!consent()) pending.keys.toList().forEach { id -> remove(id)?.let { failure(it.callback, id, ProviderFailure.refused("PROVIDER_REVOKED", "Provider access revoked", FailureBounds.TRANSPORT)) } }
     }
     private fun caller(): Int = Binder.getCallingUid().also { if (!authorize(it)) throw SecurityException("Caller is not authorized by provider") }
     private fun remove(id: String): Work? = pending.remove(id)?.also {
         handler.removeCallbacks(it.runnable); try { it.callback.asBinder().unlinkToDeath(it.death, 0) } catch (_: Exception) {}
     }
-    private fun failure(callback: ICapabilityResult, id: String, code: String, message: String) { try { callback.failure(id, code, message.take(200)) } catch (_: RemoteException) {} }
+    /**
+     * One typed failure of this provider, published inside the transport's declared width. The provider's own
+     * code and message cross Binder unchanged, so the consumer never has to substitute a code or a reason; the
+     * consumer narrows them again to the bound its host configured. Every failure this service publishes is a
+     * definite one: the provider answered, or refused before its handler ran, and either way the call itself
+     * reached no further.
+     */
+    private fun failure(callback: ICapabilityResult, id: String, failure: ProviderFailure) {
+        try { callback.failure(id, failure.code, failure.message) } catch (_: RemoteException) {}
+    }
     private val binder = object : ICapabilityService.Stub() {
         override fun describe(): String { caller(); return capabilities.declaration() }
         override fun invoke(id: String, name: String, arguments: String, callback: ICapabilityResult) = synchronized(this@CapabilityService) {
             val uid = caller()
             val sequence=id.substringAfter(':',"").toLongOrNull()
             require(id.matches(Regex("[a-f0-9-]{36}:[1-9][0-9]{0,9}")) && sequence!=null && sequence<=Int.MAX_VALUE && arguments.toByteArray().size <= 16 * 1024)
-            if (!consent()) { failure(callback, id, "PROVIDER_DENIED", "Provider owner has not allowed access"); return@synchronized }
+            if (!consent()) { failure(callback, id, ProviderFailure.refused("PROVIDER_DENIED", "Provider owner has not allowed access", FailureBounds.TRANSPORT)); return@synchronized }
             require(pending.size < 8 && !pending.containsKey(id))
             val args = JSONArray(arguments)
             capabilities.contract.functions.single { it.name == name }.validateArguments(args)
             val death = IBinder.DeathRecipient { synchronized(this@CapabilityService) { remove(id) } }
             val runnable = Runnable { synchronized(this@CapabilityService) {
                 val item = remove(id) ?: return@synchronized
-                if (!consent()) failure(item.callback, id, "PROVIDER_REVOKED", "Provider access revoked")
+                if (!consent()) failure(item.callback, id, ProviderFailure.refused("PROVIDER_REVOKED", "Provider access revoked", FailureBounds.TRANSPORT))
                 else try {
                     val result = JSONArray().put(capabilities.invoke(name, args)).toString()
                     require(result.toByteArray().size <= 16 * 1024)
                     item.callback.success(id, result)
-                } catch (_: RemoteException) {} catch (_: Exception) { failure(item.callback, id, "PROVIDER_ERROR", "Provider operation failed") }
+                } catch (_: RemoteException) {} catch (error: Exception) { failure(item.callback, id, ProviderFailure.answered(error, FailureBounds.TRANSPORT)) }
             } }
             callback.asBinder().linkToDeath(death, 0)
             pending[id] = Work(uid, callback, death, runnable)

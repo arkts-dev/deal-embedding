@@ -342,6 +342,14 @@ SEAMS = [
      'new': 'now + 5000',
      'expect': 'the provider deadline must not be an adapter literal',
      'command': ['python3', 'tests/tools/test-resource-bounds.py', '--call-sites']},
+    # A provider failure answers the invocation that issued the call: both terminal callbacks correlate their
+    # reply with the call this lane issued and still holds, so a callback that answered some other call could
+    # retire it. Dropping that correlation is the defect this control observes.
+    {'id': 'provider-failure-correlation', 'family': 'provider-invocation', 'path': 'android/src/capabilities/CapabilityRegistry.kt',
+     'old': 'if (pending[id] !== item || key != item.key || ended || closed) { log.event("transport", "discarded", operation = item.key, code = "STALE_CALLBACK"); return@synchronized }\n                    // The provider answered its own call',
+     'new': 'if (pending[id] !== item || ended || closed) { log.event("transport", "discarded", operation = item.key, code = "STALE_CALLBACK"); return@synchronized }\n                    // The provider answered its own call',
+     'expect': 'both terminal callbacks correlate their reply with the originating invocation',
+     'command': ['python3', 'tests/tools/test-provider-failures.py']},
 ]
 
 

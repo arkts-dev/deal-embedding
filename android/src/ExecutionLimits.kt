@@ -9,6 +9,10 @@ package dev.deal.embedding
  * `inputBytes` and `transferBytes` bound the sandbox, `providerTimeoutMs` bounds one provider call
  * and `discoveryTimeoutMs` bounds the binding wait of one disclosure refresh.
  *
+ * `failureCodeChars` and `failureMessageChars` bound what one provider failure may publish: its own typed
+ * code and message travel through the local and Binder legs and are shortened to these widths, never
+ * replaced by a substitute code or reason.
+ *
  * Exhaustion is operational, never a source diagnostic that authorizes repair: a sandbox timeout
  * releases the sandbox and fails the operation, and a provider that passes its deadline fails with
  * the typed `TIMEOUT` completion.
@@ -31,6 +35,11 @@ data class ExecutionLimits(
     /** The selected response characters one probe may read and the paths it may resolve from them. */
     val probeCharacters: Int = 6_000,
     val probePaths: Int = 3,
+    /** The characters of a provider failure's code and of its message the transport publishes to the
+     * Session: one typed failure keeps its own code and message inside these bounds instead of being
+     * rewritten, so a host that configures a narrower or a wider bound changes only their width. */
+    val failureCodeChars: Int = 64,
+    val failureMessageChars: Int = 200,
 ) {
     init {
         require(evaluationTimeoutMs > 0 && heapBytes > 0 && inputBytes > 0 && transferBytes > 0 &&
@@ -38,6 +47,7 @@ data class ExecutionLimits(
         require(probeBytes > 0 && probeDepth > 0 && probeTimeoutMs > 0 && probeCharacters > 0 && probePaths > 0) {
             "Probe bounds and deadlines must be positive"
         }
+        require(failureCodeChars > 0 && failureMessageChars > 0) { "Failure bounds must be positive" }
     }
 
     /** The terminal instant of one provider call admitted at [now]. The adapter never decides it. */

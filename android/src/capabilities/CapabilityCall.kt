@@ -93,7 +93,12 @@ internal class CapabilityCall(private val facts: () -> CapabilityFacts) {
         return Refusal("DENIED", "Mutation requires host confirmation")
     }
 
-    /** The validated value of one admitted local call, dispatched only after [admit] returned null. */
+    /** The handler's own answer of one admitted local call, dispatched only after [admit] returned null. [check]
+     * validates that answer, so a reply this boundary refuses is reported as the failure of the call it answered
+     * rather than as the failure of a call that never happened. */
     fun invoke(provider: NativeCapabilities, function: CapabilityFunction, arguments: JSONArray, invocation: InvocationContext): Any =
-        provider.invoke(function.name, arguments, invocation)
+        provider.dispatch(function.name, arguments, invocation)
+
+    /** The reply check of one answered local call: the same contract schema a Binder reply crosses. */
+    fun check(provider: NativeCapabilities, function: CapabilityFunction, value: Any) = provider.check(function.name, value)
 }

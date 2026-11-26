@@ -51,7 +51,7 @@ internal class CapabilityRegistry(private val context: Context, private val disc
     private val confirmations = mutableMapOf<String, Confirmation>()
     private val epochNumbers = mutableMapOf<String, Int>()
     private var nextEpochNumber = 0
-    private data class Pending(val id: Int, val key: String, val provider: Provider, val deadline: Long, val permission: String, val bytes:Int)
+    private data class Pending(val id: Int, val key: String, val provider: Provider, val function: CapabilityFunction, val deadline: Long, val permission: String, val bytes:Int)
     private val sessions = mutableSetOf<Session>()
     private var closed = false
     fun refresh(): List<CapabilityContract> {
@@ -122,10 +122,25 @@ internal class CapabilityRegistry(private val context: Context, private val disc
         private fun bufferedBytes()=replies.sumOf{it.toString().toByteArray().size}+pending.values.sumOf{it.bytes}
         private var ended = false
         private fun live() { check(!closed && !ended) { "Capability session is closed" } }
-        private fun fail(id: Int, code: String, message: String) {
-            log.event("transport", "failed", operation = "$identity:$id", code = code, span = "$identity:$id")
+        /**
+         * One terminal failure of this lane. The reply carries the failure's own code, its bounded message and
+         * the outcome the transport could decide, so the Session receives a typed failure instead of a
+         * substitute code or a substitute reason; the code names the operation only for observation.
+         */
+        private fun fail(id: Int, failure: ProviderFailure) {
+            log.event("transport", if (failure.outcome == ProviderFailure.UNKNOWN) "unknown" else "failed", operation = "$identity:$id", code = failure.code, span = "$identity:$id")
             pending.remove(id)
-            replies.add(JSONObject().put("id", id).put("ok", false).put("error", JSONObject().put("code", code).put("message", message.take(200))))
+            replies.add(JSONObject().put("id", id).put("ok", false).put("error", failure.json()))
+        }
+        /** A refusal or a provider's own answer: the call changed nothing that could still happen. */
+        private fun fail(id: Int, code: String, message: String) { fail(id, ProviderFailure.answered(code, message, limits.failureBounds())) }
+        /**
+         * A failure of a call that had already left the lane: from the instant it became pending the provider
+         * may have received it, so an external mutation's outcome is not decidable here. A read mutated nothing
+         * outside, so only its own result failed.
+         */
+        private fun lost(id: Int, cause: String, message: String, function: CapabilityFunction, provider: Provider) {
+            fail(id, ProviderFailure.lost(cause, message, hostClass(function, provider.local?.classification() ?: emptyMap()) != "read", limits.failureBounds()))
         }
         private fun success(id: Int, value: Any) { log.event("transport", "completed", operation = "$identity:$id", span = "$identity:$id"); pending.remove(id); replies.add(JSONObject().put("id", id).put("ok", true).put("value", value)) }
         override fun receive(request: JSONObject, now: Long) {
@@ -160,36 +175,40 @@ internal class CapabilityRegistry(private val context: Context, private val disc
             if (refusal != null) { fail(id, refusal.code, refusal.reason); return@synchronized }
             if (pending.size >= 8) { fail(id, "LIMIT", "Too many pending requests"); return@synchronized }
             if (provider.local != null) {
-                try {
-                    val value=calls.invoke(provider.local,function,args,InvocationContext(log.experienceIdentity))
-                    require(JSONArray().put(value).toString().toByteArray().size<=16*1024){"Host response too large"}
-                    success(id,value)
-                }
-                catch (error: Exception) { fail(id, "HOST_ERROR", error.message ?: "Host operation failed") }
+                val value = try { calls.invoke(provider.local,function,args,InvocationContext(log.experienceIdentity)) }
+                    catch (error: Exception) { fail(id, ProviderFailure.answered(error, limits.failureBounds())); return@synchronized }
+                // The provider answered, so its own code and message stand; a reply this boundary cannot publish
+                // is a failure of the call it already ran, not of a call that never happened.
+                try { calls.check(provider.local,function,value) }
+                    catch (_: Exception) { lost(id, "BAD_RESPONSE", "Host response failed validation", function, provider); return@synchronized }
+                if (JSONArray().put(value).toString().toByteArray().size > 16*1024) { lost(id, "BAD_RESPONSE", "Host response too large", function, provider); return@synchronized }
+                success(id,value)
                 return@synchronized
             }
             val endpoint = provider.endpoint!!
-            val item = Pending(id, "$identity:$id", provider, limits.providerDeadline(now), epoch(provider.contract.module) ?: run{fail(id,"REVOKED","Capability access revoked");return@synchronized},16*1024)
+            val item = Pending(id, "$identity:$id", provider, function, limits.providerDeadline(now), epoch(provider.contract.module) ?: run{fail(id,"REVOKED","Capability access revoked");return@synchronized},16*1024)
             pending[id] = item
             val callback = object : ICapabilityResult.Stub() {
                 private fun authenticate() { require(Binder.getCallingUid() == endpoint.uid && context.packageManager.getPackagesForUid(endpoint.uid)?.contains(endpoint.component.packageName) == true) { "Unauthenticated provider callback" } }
                 override fun success(key: String, valueJson: String) = synchronized(this@CapabilityRegistry) {
                     authenticate()
                     if (pending[id] !== item || key != item.key || ended || closed) { log.event("transport", "discarded", operation = item.key, code = "STALE_CALLBACK"); return@synchronized }
-                    if (epoch(provider.contract.module)!=item.permission) { fail(id, "REVOKED", "Capability access revoked"); return@synchronized }
+                    if (epoch(provider.contract.module)!=item.permission) { lost(id, "REVOKED", "Capability access revoked", function, provider); return@synchronized }
                     try {
                         require(valueJson.toByteArray().size <= 16 * 1024)
                         val values = JSONArray(valueJson); require(values.length() == 1)
                         val value = values.get(0); function.result.validate(value)
                         success(id, value)
-                    } catch (_: Exception) { fail(id, "BAD_RESPONSE", "Provider response failed validation") }
+                    } catch (_: Exception) { lost(id, "BAD_RESPONSE", "Provider response failed validation", function, provider) }
                 }
                 override fun failure(key: String, code: String, message: String) = synchronized(this@CapabilityRegistry) {
                     authenticate()
-                    if (pending[id] === item && key == item.key && !ended && !closed) {
-                        val safe = if (code in setOf("PROVIDER_DENIED", "PROVIDER_REVOKED", "BAD_REQUEST")) code else "PROVIDER_ERROR"
-                        fail(id, safe, message)
-                    }
+                    // One call admits one terminal reply: a callback that answers another call, a call this lane
+                    // already answered, or the work of a closed Session publishes nothing and retires nothing.
+                    if (pending[id] !== item || key != item.key || ended || closed) { log.event("transport", "discarded", operation = item.key, code = "STALE_CALLBACK"); return@synchronized }
+                    // The provider answered its own call, so its typed code and message are the failure this
+                    // lane publishes: no allow-list rewrites a custom code into a generic one.
+                    fail(id, ProviderFailure.answered(code, message, limits.failureBounds()))
                 }
             }
             io.execute {
@@ -199,14 +218,16 @@ internal class CapabilityRegistry(private val context: Context, private val disc
                     log.event("transport", "sent", operation = item.key, target = provider.contract.module + "." + function.name, span = item.key)
                     endpoint.remote.invoke(item.key, function.name, args.toString(), callback)
                     synchronized(this@CapabilityRegistry) { if (pending[id] !== item) endpoint.remote.cancel(item.key) }
-                } catch (_: Exception) { synchronized(this@CapabilityRegistry) { if (pending[id] === item) fail(id, "PROVIDER_DIED", "Provider unavailable") } }
+                } catch (_: Exception) { synchronized(this@CapabilityRegistry) { if (pending[id] === item) lost(id, "PROVIDER_DIED", "Provider unavailable", function, provider) } }
             }
             }
         }
         override fun drain(now: Long): List<JSONObject> = synchronized(this@CapabilityRegistry) {
             live()
             pending.values.filter { epoch(it.provider.contract.module)!=it.permission || it.deadline <= now || it.provider.endpoint?.remote?.asBinder()?.isBinderAlive == false }.toList().forEach {
-                cancelRemote(it); fail(it.id, if (epoch(it.provider.contract.module)!=it.permission) "REVOKED" else if (it.deadline <= now) "TIMEOUT" else "PROVIDER_DIED", "Capability unavailable")
+                cancelRemote(it); val cause: String = if (epoch(it.provider.contract.module)!=it.permission) "REVOKED" else if (it.deadline <= now) "TIMEOUT" else "PROVIDER_DIED"
+                val message: String = if (cause == "REVOKED") "Capability access revoked" else if (cause == "TIMEOUT") "Capability call timed out" else "Capability unavailable"
+                lost(it.id, cause, message, it.function, it.provider)
             }
             replies.toList().also { replies.clear() }
         }

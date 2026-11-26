@@ -149,6 +149,10 @@ gate_sequence_policy() {
     node tests/tools/test-protocol.js
     python3 tests/tools/test-admission-policy.py
     python3 tests/tools/test-capability-boundary.py
+    # Typed provider failures across the local and Binder transport: the production failure decision is
+    # compiled and executed, and the two Android-only call sites, the configured bound and the observed
+    # outcome are pinned from production source.
+    python3 tests/tools/test-provider-failures.py
     python3 tests/tools/test-cursor.py
     python3 tests/tools/test-journey-rules.py
     node tests/tools/test-discovery.js

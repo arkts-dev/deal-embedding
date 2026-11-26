@@ -37,6 +37,14 @@ delegates to it before anything is pending or invoked (`dispatch-wiring`), so re
 the item instead of passing on the unit alone. The item's own Kotlin harness is the same
 content-validated compiler artifact as the other harnesses: an unchanged source set reuses the compiled
 harness, and the boundary matrix still runs on every invocation.
+`python3 tests/tools/test-provider-failures.py` compiles and executes the one production decision that turns a
+provider failure into the transport's typed failure, then pins the two Android-only call sites from production
+source: `CapabilityService` publishes the provider's own code and message across Binder and `CapabilityRegistry`
+publishes a local or Binder answer unchanged with the outcome it could decide, shortened only to the configured
+`failureCodeChars`/`failureMessageChars` width. A refusal or a provider's own answer is definite; only an external
+mutation whose transport failed after the call left the lane is `unknown`, and the callback guard keeps every
+reply with the invocation that issued it. `UiSession` records that outcome in the observation instead of
+reporting both cases as `failed`.
 ```
 
 One lane per invocation, a **per-lane command-tree bound** (40 seconds by default; the catalogue and

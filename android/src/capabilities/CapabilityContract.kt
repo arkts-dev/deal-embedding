@@ -35,9 +35,14 @@ class NativeCapabilities private constructor(contract: CapabilityContract, handl
     internal companion object {
         fun contextual(contract: CapabilityContract, handlers: Map<String, (JSONArray, InvocationContext) -> Any>, classification: Map<String, String> = emptyMap()) = NativeCapabilities(contract,handlers,classification,true)
     }
-    internal fun invoke(name: String, args: JSONArray, invocation: InvocationContext = InvocationContext(null)): Any {
+    internal fun invoke(name: String, args: JSONArray, invocation: InvocationContext = InvocationContext(null)): Any =
+        dispatch(name, args, invocation).also { check(name, it) }
+    /** The handler's own answer of one invocation, before the contract validates the reply it produced. */
+    internal fun dispatch(name: String, args: JSONArray, invocation: InvocationContext = InvocationContext(null)): Any {
         val function = frozen.functions.single { it.name == name }
         function.validateArguments(args)
-        return handlers.getValue(name)(args,invocation).also { function.result.validate(it) }
+        return handlers.getValue(name)(args,invocation)
     }
+    /** The reply boundary of one answered call: the same schema a Binder reply crosses in the registry. */
+    internal fun check(name: String, value: Any) { frozen.functions.single { it.name == name }.result.validate(value) }
 }
