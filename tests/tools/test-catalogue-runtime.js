@@ -263,7 +263,7 @@ function open(mode,source,capabilities){
     clockPump(monotone,wall===undefined?monotone:wall,true);
     return control;
   }
-  return {raw:()=>{const env=JSON.parse(vm.runInContext('dealUi.checkpoint()',runtime));return JSON.stringify({keys:Object.keys(env),digest:env.schemaDigest,current:vm.runInContext('entry.bridgeSchemaDigest.$f()',runtime),hasValue:Object.hasOwn(env,'value')});},checkpointed:()=>vm.runInContext('dealUi.checkpoint()',runtime),fault:()=>JSON.parse(vm.runInContext('dealUi.snapshot()',runtime)).fault,state,restore,persistedKeys,tree,slot,slotBy,slotsBy,hasText,charts,display,calls,probed,pump,press,pressAt,probe:value=>Object.assign(probe,value),clock:now=>vm.runInContext('globalThis.__now = '+JSON.stringify(now)+'; Date.now = () => globalThis.__now;',runtime),failNext:value=>{runtime.failNext=value===true;},dispatch:(handle,payload)=>{runtime.handle=handle;runtime.payload=payload===undefined?null:payload;return vm.runInContext('dealUi.dispatch(handle,payload)',runtime);},drivers,driver:need=>drivers.find(item=>item.need===need),clockPump,pressClock,persisted,setFrameVisibility:(visible,monotone)=>vm.runInContext('setFrameVisibility('+(visible===true)+(monotone===undefined?'':','+monotone)+')',runtime),reopen:persisted=>vm.runInContext('mount('+JSON.stringify(persisted===undefined?null:persisted)+')',runtime)};
+  return {raw:()=>{const env=JSON.parse(vm.runInContext('dealUi.checkpoint()',runtime));return JSON.stringify({keys:Object.keys(env),digest:env.schemaDigest,current:vm.runInContext('entry.bridgeSchemaDigest.$f()',runtime),hasValue:Object.hasOwn(env,'value')});},checkpointed:()=>vm.runInContext('dealUi.checkpoint()',runtime),fault:()=>JSON.parse(vm.runInContext('dealUi.snapshot()',runtime)).fault,state,restore,persistedKeys,tree,slot,slotBy,slotsBy,hasText,charts,display,calls,probed,pump,press,pressAt,probe:value=>Object.assign(probe,value),clock:now=>vm.runInContext('globalThis.__now = '+JSON.stringify(now)+'; Date.now = () => globalThis.__now;',runtime),failNext:value=>{runtime.failNext=value===true;},dispatch:(handle,payload)=>{runtime.handle=handle;runtime.payload=payload===undefined?null:payload;return vm.runInContext('dealUi.dispatch(handle,payload)',runtime);},drivers,driver:need=>drivers.find(item=>item.need===need),clockPump,pressClock,persisted,setFrameVisibility:(visible,monotone)=>vm.runInContext('setFrameVisibility('+(visible===true)+(monotone===undefined?'':','+monotone)+')',runtime),reopen:persisted=>vm.runInContext('mount('+JSON.stringify(persisted===undefined?null:persisted)+')',runtime),files,manifest:JSON.parse(fs.readFileSync(path.join(emitted,'admission.json'),'utf8')),composition:source.metadata||{}};
 }
 function must(handle,message){assert.ok(Number.isInteger(handle),message);return handle;}
 // ---- the public-probe transport policy ---------------------------------------------------------
@@ -1348,6 +1348,54 @@ if(group==='all'||group==='live') {
   await app.pump();
   assert.deepEqual(reads(),['https://example.com/data.json 65536'],'an explicit retry recovers');
   assert.strictEqual(s().f_section_live_live1_ready,true,'the retry publishes the figure again');
+  // The authorized initial read is the production binding's activation driver: the packaging resolves the
+  // issued one-millisecond carrier from the rendered tree, dispatches it once while the authoritative
+  // activation-needed flag is set, and the compiled reducer clears that marker before the effect starts,
+  // so a queued duplicate dispatch is a guarded no-op and a restored record re-runs no read.
+  async function activate(persisted){
+    const context2=vm.createContext({sources:app.files,rendererContract:require('./fixtures/renderer-contract.js')('screen')});
+    vm.runInContext(fs.readFileSync('android/assets/embedding/bindings/sandbox.js','utf8'),context2);
+    vm.runInContext('globalThis.dealProbeLimits={bytes:65536,depth:32,characters:6000,paths:3,timeoutMs:5000}',context2);
+    for(const asset of ['text-pattern.js','renderer-admission.js','ui-session.js'])vm.runInContext(fs.readFileSync(path.join('android/assets/embedding/bindings',asset),'utf8'),context2);
+    vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js/checkpoint.js'),'utf8'),context2);
+    vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js/session.js'),'utf8'),context2);
+    const composition=app.composition&&Object.keys(app.composition).length>0?app.composition:(app.manifest.composition||{});
+    vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));
+      const loaded=dealLoad(factories,'experience_entry.js','experience.js');
+      globalThis.entry=loaded.entry;globalThis.rt=loaded.rt;globalThis.checkpointSchema=loaded.checkpointSchema;globalThis.app=loaded.app;
+      mountDealUi(factories,'experience_entry.js',${JSON.stringify(persisted)},'experience.js',null,${JSON.stringify(composition.clockDrivers||[])},${JSON.stringify(composition.readings||[])},${JSON.stringify(composition.triggers||[])},${JSON.stringify(composition.activation||[])},${JSON.stringify(composition.expiry||null)});`,context2);
+    const read=[];
+    const reply=request=>({id:request.id,ok:true,value:{status:200,mediaType:'application/json; charset=utf-8',connected:'93.184.216.34',bytes:Buffer.from(JSON.stringify({current:{temp:21.5,wind:12},updated:'2026-11-24T10:00:00Z'}),'utf8').toString('latin1')}});
+    const state=()=>JSON.parse(vm.runInContext("(()=>{const codec=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f());return JSON.stringify(codec.decode(JSON.parse(dealUi.checkpoint()),entry.bridgeInitialState.$sig.substring(4)));})()",context2));
+    async function pump(){
+      let idle=0;
+      for(let turn=0;turn<60&&idle<4;turn++){
+        await new Promise(resolve=>setImmediate(resolve));
+        const probes=JSON.parse(vm.runInContext('dealProbe.take()',context2));
+        if(probes.length>0){idle=0;for(const probe of probes)read.push(probe.url);context2.probeReplies=probes.map(reply);vm.runInContext('dealProbe.deliver(probeReplies)',context2);continue;}
+        idle=idle+1;
+      }
+    }
+    return {run:monotone=>vm.runInContext(`dealActivate(${monotone})`,context2),pump,state,reads:()=>read.slice(),persisted:()=>JSON.parse(vm.runInContext("(()=>{const codec=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f());const live=codec.decode(JSON.parse(dealUi.checkpoint()),entry.bridgeInitialState.$sig.substring(4));return JSON.stringify(codec.encode(app.bridgePersistedState.$f(live)));})()",context2))};
+  }
+  const activation=await activate(null);
+  assert.strictEqual(activation.state().f_section_live_activation_needed,true,'the activation-needed marker does not start set');
+  activation.run(0);
+  activation.run(0);
+  await activation.pump();
+  assert.strictEqual(activation.state().f_section_live_activation_needed,false,'the activation driver left the marker set');
+  assert.strictEqual(activation.state().f_section_live_refresh_outcome,'success','the authorized initial read published no value');
+  // One dispatch per authorized initial read even though the driver ran twice: the pair carries one
+  // activation route per live section and the marker is cleared before either effect starts.
+  assert.deepEqual(activation.reads().slice().sort(),['https://example.com/data.json','https://example.com/search.json'],'the activation driver dispatched no authorized initial read per live section');
+  activation.run(1);
+  await activation.pump();
+  assert.strictEqual(activation.reads().length,2,'a later activation tick started another read');
+  const reopenedActivation=await activate(activation.persisted());
+  reopenedActivation.run(2);
+  await reopenedActivation.pump();
+  assert.strictEqual(reopenedActivation.state().f_section_live_activation_needed,false,'a cold reopen kept the activation marker set');
+  assert.strictEqual(reopenedActivation.reads().length,0,'a cold reopen re-ran the authorized initial read');
   console.log('catalogue live passed');
 }
 // ---- aggregate arithmetic --------------------------------------------------------------------

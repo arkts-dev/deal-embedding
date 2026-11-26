@@ -567,9 +567,9 @@ export async function registryRefusals(): Promise<number> {
   let liveEntry: catalogue.Configured = {need:"live",definition:definition("live_figure"),parameters:await accepts("live_figure","{\"figures\":[{\"id\":\"a\",\"label\":\"Temperature\",\"unit\":\"C\",\"path\":\"/current/temp\"}],\"source\":"+liveSource+"}"),accepted:true,reason:""};
   let live: screens.Instance = await catalogue.instantiate(liveEntry,bindings.create([]));
   let probeImport: boolean = live.fragment.declarations.includes("import * as probe_section_live from \"embedding/probe\"");
-  let probeEffects: boolean = live.fragment.effects.length === 2;
-  let refreshed: boolean = false; let polled: boolean = false; let completed: boolean = false;
-  for (let entryEffect of live.fragment.effects) { if (entryEffect.action === "RefreshLive" && entryEffect.function === "runRefresh") { refreshed = true; } if (entryEffect.action === "PollLive" && entryEffect.function === "runPoll") { polled = true; } }
+  let probeEffects: boolean = live.fragment.effects.length === 3;
+  let refreshed: boolean = false; let polled: boolean = false; let completed: boolean = false; let activated: boolean = false;
+  for (let entryEffect of live.fragment.effects) { if (entryEffect.action === "RefreshLive" && entryEffect.function === "runRefresh") { refreshed = true; } if (entryEffect.action === "PollLive" && entryEffect.function === "runPoll") { polled = true; } if (entryEffect.action === "Activate" && entryEffect.function === "runActivate") { activated = true; } }
   for (let entryHandler of live.fragment.updates) { if (entryHandler.action === "RefreshedLive") { completed = true; } }
   let livePorts: string[] = []; for (let port of live.fragment.ports) { livePorts[livePorts.length] = port.name+":"+port.type; }
   let declaredPorts: boolean = livePorts.length === 5 && livePorts[0] === "live1:number" && livePorts[1] === "live2:number" && livePorts[2] === "live3:number" && livePorts[3] === "live_source:string" && livePorts[4] === "live_asof:string";
@@ -577,7 +577,15 @@ export async function registryRefusals(): Promise<number> {
   let asofFromSource: boolean = live.fragment.helpers.includes("refresh_asof: action.asof");
   let refreshControl: boolean = live.fragment.view.includes("value: state.refresh_attempt, onClick: action app.RefreshLive {sequence: payload}");
   let apiPoll: boolean = live.fragment.view.includes("intervalMs: 60000");
-  insist(probeImport && probeEffects && refreshed && polled && completed,"live_figure issued no public-probe read");
+  insist(probeImport && probeEffects && refreshed && polled && completed && activated,"live_figure issued no public-probe read");
+  // The authorized initial read is one guarded activation action on the issued one-millisecond carrier:
+  // the reducer clears the authoritative marker before its effect starts, and the marker is a runtime
+  // resource so a restored record never re-runs the read.
+  let activationCarrier: boolean = live.activations !== undefined && live.activations.length === 1 && live.activations[0].carrier === "activate_section_live" && live.activations[0].action === "Activate" && live.activations[0].field === "activation_needed";
+  let activationView: boolean = live.fragment.view.includes("ui.Ticker(id: \"activate_section_live\", intervalMs: 1, running: false, onTick: action app.Activate {now: payload})");
+  let activationGuard: boolean = live.fragment.helpers.includes("if (!state.activation_needed || state.refresh_pending) { return state; }") && live.fragment.helpers.includes("activation_needed: false, activation_action: action");
+  let activationRuntime: boolean = live.fragment.fields.some((item: screens.Field): boolean => item.name === "activation_needed" && item.role === "runtime") && live.fragment.fields.some((item: screens.Field): boolean => item.name === "activation_action" && item.role === "runtime");
+  insist(activationCarrier && activationView && activationGuard && activationRuntime,"live_figure issued no guarded activation action for its authorized initial read");
   insist(declaredPorts,"live_figure did not publish its five specification ports: "+livePorts.join(","));
   insist(unavailable && refreshControl && asofFromSource,"live_figure did not stay unavailable until a reply or published a fetch time as its observation time");
   insist(apiPoll,"live_figure did not poll an api source at sixty seconds");

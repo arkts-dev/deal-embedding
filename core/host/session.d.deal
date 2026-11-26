@@ -15,6 +15,10 @@ export function origin(): string;
 export function requestAuthorizes(): boolean;
 export function requestTarget(): string;
 export function clockTrusted(): boolean;
+// The Session clock period this invocation was admitted in. A Session suspend and a resume each start a
+// new period, so a relative window captured under another one is undecidable and its reply admits
+// nothing; a host that never changes it answers one constant period.
+export function period(): number;
 export function now(): number;
 export function relativeMs(module: string, functionName: string): number;
 export function absolute(module: string, functionName: string): number;

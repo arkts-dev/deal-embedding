@@ -1818,7 +1818,7 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     // Read-only polling is the interval the specification names for the declared mode: an API source polls
     // every 60 s and a search source every 300 s. A failed read pauses polling until an explicit Refresh.
     let intervalMs: number = 60000; if (mode === "search") { intervalMs = 300000; }
-    declarations = declarations+"import * as probe_"+id+" from \"embedding/probe\"; export class ProbeRead { values: number[]; asof: string; } export class RefreshLive { sequence: number; } export class PollLive { now: number; } export class RefreshedLive { sequence: number; ok: boolean; outcome: string; code: string; message: string; values: number[]; asof: string; }";
+    declarations = declarations+"import * as probe_"+id+" from \"embedding/probe\"; export class ProbeRead { values: number[]; asof: string; } export class Activate { now: number; } export class RefreshLive { sequence: number; } export class PollLive { now: number; } export class RefreshedLive { sequence: number; ok: boolean; outcome: string; code: string; message: string; values: number[]; asof: string; }";
     fields[fields.length] = authoredField(id,"figure_labels","string[]",await literal(labels,"string[]"));
     fields[fields.length] = authoredField(id,"figure_units","string[]",await literal(units,"string[]"));
     fields[fields.length] = authoredField(id,"figure_paths","string[]",await literal(paths,"string[]"));
@@ -1841,12 +1841,27 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     // the instance this reducer stored, so its effect reports no attempt and can retire nothing.
     fields[fields.length] = {name:"refresh_action",type:"RefreshLive | null",role:"runtime",dependencies:[],initial:"null",owner:id};
     fields[fields.length] = {name:"poll_action",type:"PollLive | null",role:"runtime",dependencies:[],initial:"null",owner:id};
+    // The authorized initial read is the one admission the Session's activation driver starts: the
+    // authoritative activation-needed marker, which the compiled reducer clears before the effect it
+    // enables begins, and the admitted action itself, which the effect correlates against so a queued
+    // duplicate dispatch or a second driver tick starts no call. Both are runtime resources: an
+    // admission marker is never persisted, and a restored record therefore needs an explicit Refresh.
+    fields[fields.length] = {name:"activation_needed",type:"boolean",role:"runtime",dependencies:[],initial:"true",owner:id};
+    fields[fields.length] = {name:"activation_action",type:"Activate | null",role:"runtime",dependencies:[],initial:"null",owner:id};
     fields[fields.length] = derivedField(id,"live1","number"); fields[fields.length] = derivedField(id,"live2","number"); fields[fields.length] = derivedField(id,"live3","number");
     fields[fields.length] = derivedField(id,"live_source","string"); fields[fields.length] = derivedField(id,"live_asof","string"); fields[fields.length] = derivedField(id,"status","string");
     ports[ports.length] = publishPort("live1","number"); ports[ports.length] = publishPort("live2","number"); ports[ports.length] = publishPort("live3","number");
     ports[ports.length] = publishPort("live_source","string"); ports[ports.length] = publishPort("live_asof","string");
     updates[updates.length] = handler("RefreshLive","refreshLive"); updates[updates.length] = handler("PollLive","pollLive"); updates[updates.length] = handler("RefreshedLive","completeLive");
+    updates[updates.length] = handler("Activate","activate");
     effects[effects.length] = {action:"RefreshLive",function:"runRefresh"}; effects[effects.length] = {action:"PollLive",function:"runPoll"};
+    effects[effects.length] = {action:"Activate",function:"runActivate"};
+    // The authorized initial read is admitted once: the reducer clears the activation-needed marker and
+    // records the action it admitted before the effect starts, so a queued duplicate dispatch, a second
+    // driver tick or a restored record admits no second call. A refused or failed read leaves the
+    // marker cleared and the experience exposes Refresh, exactly as a failed explicit attempt pauses it.
+    helpers = helpers+"export function activate(state: AppState, action: Activate): AppState { if (!state.activation_needed || state.refresh_pending) { return state; } return {activation_needed: false, activation_action: action, refresh_attempt: state.refresh_attempt+1, refresh_pending: true, refresh_polled: action.now, refresh_action: null, poll_action: null, refresh_code: \"\", refresh_outcome: \"none\", refresh_message: \"\"}; }";
+    helpers = helpers+"export async function runActivate(state: AppState, action: Activate): Promise<RefreshedLive> { if (!state.refresh_pending || (state.activation_action as Activate) !== action) { return {sequence: -1, ok: false, outcome: \"none\", code: \"NOT_ADMITTED\", message: \"Not admitted\", values: [], asof: \"\"}; } try { let paths: string[] = []; for (let path of state.figure_paths) { paths[paths.length] = path; } let read: ProbeRead = JSON.parse(await probe_"+id+".fetch(state.source_url, state.source_mode, paths, state.source_asof_path)); return {sequence: state.refresh_attempt, ok: true, outcome: \"success\", code: \"\", message: \"\", values: read.values, asof: read.asof}; } catch (unknownError) { let error: Error = unknownError as Error; return {sequence: state.refresh_attempt, ok: false, outcome: \"failure\", code: error.name, message: error.message, values: [], asof: \"\"}; } }";
     // One reading of the adapter clock per explicit attempt and the tick's own instant per poll decide
     // whether a read is due, exactly as the day-scoped kinds take one local-day reading per action;
     // recomputation never reads a clock. Only one read is ever pending, so a poll never overlaps a Refresh.
@@ -1860,7 +1875,7 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     helpers = helpers+"export async function runPoll(state: AppState, action: PollLive): Promise<RefreshedLive> { if (!state.refresh_pending || (state.poll_action as PollLive) !== action) { return {sequence: -1, ok: false, outcome: \"none\", code: \"NOT_ADMITTED\", message: \"Not admitted\", values: [], asof: \"\"}; } try { let paths: string[] = []; for (let path of state.figure_paths) { paths[paths.length] = path; } let read: ProbeRead = JSON.parse(await probe_"+id+".fetch(state.source_url, state.source_mode, paths, state.source_asof_path)); return {sequence: state.refresh_attempt, ok: true, outcome: \"success\", code: \"\", message: \"\", values: read.values, asof: read.asof}; } catch (unknownError) { let error: Error = unknownError as Error; return {sequence: state.refresh_attempt, ok: false, outcome: \"failure\", code: error.name, message: error.message, values: [], asof: \"\"}; } }";
     // A successful read records the values and keeps read-only polling enabled; a failure records its
     // classification, publishes nothing and pauses polling until an explicit Refresh.
-    helpers = helpers+"export function completeLive(state: AppState, action: RefreshedLive): AppState { if (!state.refresh_pending || action.sequence !== state.refresh_attempt) { return state; } if (!action.ok) { return {refresh_pending: false, refresh_code: action.code, refresh_outcome: action.outcome, refresh_message: action.message, refresh_values: [], refresh_asof: \"\", refresh_polling: false}; } return {refresh_pending: false, refresh_code: action.code, refresh_outcome: action.outcome, refresh_message: action.message, refresh_values: action.values, refresh_asof: action.asof, refresh_polling: true}; }";
+    helpers = helpers+"export function completeLive(state: AppState, action: RefreshedLive): AppState { if (!state.refresh_pending || action.sequence !== state.refresh_attempt) { return state; } if (!action.ok) { return {refresh_pending: false, activation_action: null, refresh_code: action.code, refresh_outcome: action.outcome, refresh_message: action.message, refresh_values: [], refresh_asof: \"\", refresh_polling: false}; } return {refresh_pending: false, activation_action: null, refresh_code: action.code, refresh_outcome: action.outcome, refresh_message: action.message, refresh_values: action.values, refresh_asof: action.asof, refresh_polling: true}; }";
     helpers = helpers+"export function liveAt(state: AppState, index: number): number { return state.refresh_values[index]; }";
     helpers = helpers+"export function liveStatus(state: AppState): string { if (state.refresh_pending) { return \"Refreshing\"; } if (state.refresh_outcome === \"failure\") { return state.refresh_message; } if (state.refresh_outcome === \"success\") { return \"Updated\"; } return \"Unavailable\"; }";
     let figure: number = 0;
@@ -1871,6 +1886,9 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
       figure = figure+1;
     }
     body = body+"ui.Button(text: \"Refresh\", value: state.refresh_attempt, onClick: action app.RefreshLive {sequence: payload})";
+    // The activation carrier the Session resolves by this issued identity: it never runs from a renderer
+    // event, so one activation admits one authorized initial read and the renderer acknowledges nothing.
+    body = body+"ui.Ticker(id: \"activate_"+id+"\", intervalMs: 1, running: false, onTick: action app.Activate {now: payload})";
     body = body+"ui.Ticker(id: \"live_"+id+"\", intervalMs: "+String(intervalMs)+", running: state.refresh_polling, onTick: action app.PollLive {now: payload})";
     body = body+"When(state.status_ready) {ui.Text(text: state.status_display)} When(state.live_source_ready) {ui.Text(text: state.live_source_display, style: \"muted\")} When(state.live_asof_ready) {ui.Text(text: state.live_asof_display, style: \"muted\")}";
   } else {
@@ -1883,6 +1901,7 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
   // generated source for a driver.
   if (drivers.length > 0) { instance.drivers = drivers; }
   instance.definition = screens.issueDefinition(instance.fragment);
+  if (kind === "live_figure") { instance.activations = [{carrier:"activate_"+id,action:"Activate",field:"activation_needed"}]; }
   return instance;
 }
 // The field a reader port is bound to: the writer's port getter field when this composition issues a

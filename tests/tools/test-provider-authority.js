@@ -312,6 +312,33 @@ const scalar = name => 'f_parts_scalar_0_' + name;
   assert.equal(current[scalar('code')], 'EXPIRED', 'a retreated clock published a windowed reply');
   assert.equal(current[scalar('valid')], false, 'a retreated clock published a value');
 
+  // A Session suspend and resume start a new clock period, so a relative window captured under the
+  // earlier period is undecidable: the reply is refused although its instant has not passed and the
+  // clock is still trusted. An absolute instant is unaffected by the period.
+  const suspended = open(emitted, grantedFacts({ now: 1000, expiry: { 'host/probe/read': { relativeMs: 5000 } } }));
+  await dispatch(suspended);
+  await tick();
+  const suspendedFlight = suspended.requests();
+  assert.equal(suspendedFlight.length, 1, 'a relative windowed read did not reach the provider');
+  suspended.configure(grantedFacts({ now: 1200, period: 1, expiry: { 'host/probe/read': { relativeMs: 5000 } } }));
+  suspended.deliver({ id: suspendedFlight[0].id, ok: true, value: 42 });
+  for (let turn = 0; turn < 200; turn++) await tick();
+  current = suspended.state();
+  assert.equal(current[scalar('code')], 'EXPIRED', 'a reply from another Session clock period was admitted');
+  assert.equal(current[scalar('valid')], false, 'a reply from another Session clock period published a value');
+  // A call admitted after the resume captures the new period and publishes its reply normally.
+  const resumed = open(emitted, grantedFacts({ now: 1000, period: 2, expiry: { 'host/probe/read': { relativeMs: 5000 } } }));
+  await dispatch(resumed);
+  await tick();
+  const resumedFlight = resumed.requests();
+  assert.equal(resumedFlight.length, 1, 'a read admitted after a resume did not reach the provider');
+  resumed.configure(grantedFacts({ now: 1200, period: 2, expiry: { 'host/probe/read': { relativeMs: 5000 } } }));
+  resumed.deliver({ id: resumedFlight[0].id, ok: true, value: 42 });
+  for (let turn = 0; turn < 200; turn++) await tick();
+  current = resumed.state();
+  assert.equal(current[scalar('valid')], true, 'a reply admitted under its own Session period was refused');
+  assert.equal(current[scalar('value')], 42, 'a reply admitted under its own Session period published no value');
+
   // The host withdrawing the module's grant while the call is in flight discards the reply.
   const withdrawn = open(emitted, grantedFacts());
   await dispatch(withdrawn);

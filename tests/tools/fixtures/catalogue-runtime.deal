@@ -333,6 +333,8 @@ export async function live(): Promise<string> {
   let computations: composer.Computation[] = [];
   for (let instance of composition.screen.instances) { for (let entry of catalogue.computations(instance,composition.connections,composition.screen.instances)) { computations[computations.length] = entry; } }
   let assembled: composer.Result = await composer.assembleWith(composition,computations,registry,null);
+  // The issued composition metadata travels with the pair: the packaged Session schedules the private
+  // activation carrier from it exactly as the compiled admission manifest does.
   return s.encode({deal:assembled.source.deal,dealui:assembled.source.dealui,metadata:assembled.metadata});
 }
 export function main(): void { return; }

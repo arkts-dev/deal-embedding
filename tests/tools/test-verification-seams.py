@@ -46,11 +46,12 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 # A control's bound only has to outlive its owning test, including that test's own cold preparation: a
 # mutated `core/` source invalidates the owning harness's fixture compile, so the widest owning items are
-# the construction lane and the catalogue contract lane at 360 s each. `TIMEOUT` is the default control
+# the construction, interaction and catalogue contract lanes, each 690 s or wider once the fixture
+# compile and its node group carry the declared loaded-host bounds. `TIMEOUT` is the default control
 # bound, and a seam may name its own smaller bound; `--seconds` raises the ceiling for one run, so a
 # bound smaller than the owning test's own declared preparation would report an infrastructure timeout
 # instead of the broken rule. No bound is ever above the ceiling this run allows.
-TIMEOUT = 420
+TIMEOUT = 1500
 BACKUP = ROOT / 'build/verification/seam-backup'
 JOURNAL = BACKUP / 'journal.json'
 
@@ -514,8 +515,8 @@ def main():
     parser.add_argument('--seam', action='append', choices=[s['id'] for s in SEAMS])
     parser.add_argument('--seconds', type=int, default=TIMEOUT)
     args = parser.parse_args()
-    if args.seconds < 1 or args.seconds > 600:
-        parser.error('--seconds must be 1..600')
+    if args.seconds < 1 or args.seconds > 1800:
+        parser.error('--seconds must be 1..1800')
     RUN_BOUND = args.seconds
     selected = [s for s in SEAMS if not args.seam or s['id'] in args.seam]
     if args.list:

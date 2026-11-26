@@ -140,6 +140,63 @@ if(eventSlots.length>0){
   const droppedRow=JSON.parse(manifest);delete droppedRow.composition.operations.find(entry=>entry.id===tapOperation.id).rowKey;
   assert(admit(JSON.stringify(droppedRow),true).includes('ADMISSION_OWNERSHIP'),'a row tap without its captured row identity was admitted: '+tapOperation.id);
  }
+ // The route a committed event is consumed through is issued from the operation identity alone, so a
+ // relabelled, cross-wired or duplicated route rejects: a driver watching another operation's queue
+ // would leave this operation's committed events piling up head-first forever, and a route naming
+ // another slot would dispatch an admission the event was never committed to.
+ const routes=issued.composition.triggers||[];
+ // The pair under test proves the route rule, so a regression that dropped every route cannot pass by
+ // never entering the item. A pair that only taps a row carries no queued route and is skipped.
+ if(process.argv[4]==='trigger')assert(routes.length>0,'the trigger pair under test carries no issued trigger route');
+ const issuedRoute=routes[0];
+ if(issuedRoute){
+  for(const field of ['queue','action','carrier','slot','need']){
+   const relabelledRoute=JSON.parse(manifest);relabelledRoute.composition.triggers.find(route=>route.operation===issuedRoute.operation)[field]='foreign_identity';
+   assert(admit(JSON.stringify(relabelledRoute),true).includes('ADMISSION_OWNERSHIP'),'a trigger route with a relabelled '+field+' was admitted: '+issuedRoute.operation);
+  }
+  const declaredButForeign=JSON.parse(manifest);
+  const unrelatedDeclaration=(issued.composition.declarations||[]).find(name=>!routes.some(route=>route.queue===name));
+  if(unrelatedDeclaration){
+   declaredButForeign.composition.triggers.find(route=>route.operation===issuedRoute.operation).queue=unrelatedDeclaration;
+   assert(admit(JSON.stringify(declaredButForeign),true).includes('ADMISSION_OWNERSHIP'),'a trigger route watching a declared field that is not its queue was admitted: '+issuedRoute.operation);
+  }
+  const otherRoute=routes.find(route=>route.operation!==issuedRoute.operation);
+  if(otherRoute){
+   const crossWired=JSON.parse(manifest);crossWired.composition.triggers.find(route=>route.operation===issuedRoute.operation).queue=otherRoute.queue;
+   assert(admit(JSON.stringify(crossWired),true).includes('ADMISSION_OWNERSHIP'),'a trigger route cross-wired to another operation queue was admitted: '+issuedRoute.operation);
+  }
+ }
+ // The expiry deadlines are exactly one pair per issued operation, re-derived from the operation
+ // identity: a dropped pair leaves an operation nothing ever expires, so an invocation past its
+ // deadline could still satisfy a calculation or an action.
+ const operations=issued.composition.operations||[];
+ const issuedDeadlines=issued.composition.expiry.deadlines||[];
+ assert.strictEqual(issuedDeadlines.length,operations.length,'the compiled pair lost an operation expiry deadline');
+ const droppedDeadline=JSON.parse(manifest);droppedDeadline.composition.expiry.deadlines=droppedDeadline.composition.expiry.deadlines.slice(1);
+ assert(admit(JSON.stringify(droppedDeadline),true).includes('ADMISSION_OWNERSHIP'),'an issued operation without its expiry deadline was admitted');
+ const relabelledDeadline=JSON.parse(manifest);relabelledDeadline.composition.expiry.deadlines[0].expired='expired_other';
+ assert(admit(JSON.stringify(relabelledDeadline),true).includes('ADMISSION_OWNERSHIP'),'a relabelled expiry deadline pair was admitted');
+ const renamedTransition=JSON.parse(manifest);renamedTransition.composition.expiry.action='Expire';
+ assert(admit(JSON.stringify(renamedTransition),true).includes('ADMISSION_OWNERSHIP'),'an expiry transition naming a foreign action was admitted');
+ // An authorized initial read is issued from the instance that performs it: the catalogue live figure
+ // stamps exactly its own activation-needed field, activation action and dispatch carrier. A pair that
+ // places none is extended with those issued identities, so a record naming a foreign field, carrier or
+ // action and a placed live figure whose record was dropped both reject instead of leaving the figure
+ // silently without the read it was authorized to perform.
+ const activationPair=()=>{const copy=JSON.parse(manifest);const activationField='f_live_activation_needed';
+  copy.declarations.push(activationField);copy.composition.declarations.push(activationField);copy.composition.runtime.push(activationField);
+  copy.composition.owners.push({name:activationField,owner:'live',role:'runtime'});
+  copy.composition.instances.push({id:'live',kind:'live_figure',origin:'catalogue',kinds:['live_figure'],writes:[]});
+  copy.composition.activation=[{instance:'live',field:activationField,action:'f_live_Activate',carrier:'activate_live'}];
+  return copy;};
+ assert(!(issued.composition.instances||[]).some(instance=>instance.id==='live'),'the trigger pair already places an instance named live');
+ assert.strictEqual(admit(JSON.stringify(activationPair()),true),'','an issued live figure activation was rejected');
+ for(const [key,value] of [['field','f_live_refresh_attempt'],['carrier','live_refresh'],['action','f_live_RefreshLive'],['instance','missing']]){
+  const forgedActivation=activationPair();forgedActivation.composition.activation[0][key]=value;
+  assert(admit(JSON.stringify(forgedActivation),true).includes('ADMISSION_OWNERSHIP'),'a live figure activation naming a foreign '+key+' was admitted');
+ }
+ const emptiedActivation=activationPair();emptiedActivation.composition.activation=[];
+ assert(admit(JSON.stringify(emptiedActivation),true).includes('ADMISSION_OWNERSHIP'),'a placed live figure without its issued activation was admitted');
  // A dropped carried section is a dropped fact: the driver list, the slot list and one driver entry
  // each reject, so an event can never lose the route that schedules it.
  const noDrivers=JSON.parse(manifest);delete noDrivers.composition.drivers;
@@ -200,6 +257,13 @@ const reusedResume=JSON.parse(manifest);if((reusedResume.composition.clockDriver
 for(const section of ['composites','chatRoot','clockDrivers','readings','sessionClock','notices','owners','composerOwned','instances','sources']){
  const droppedSection=JSON.parse(manifest);delete droppedSection.composition[section];
  assert(admit(JSON.stringify(droppedSection),true).includes('ADMISSION_OWNERSHIP'),'a composition without its '+section+' was admitted');
+}
+// The three metadata sections the Session lane drives are carried facts in their own right: a candidate
+// admitted without its trigger routes, its authorized initial reads or its expiry deadlines would render
+// with nothing consuming its committed events, starting its initial read or expiring its operations.
+for(const section of ['triggers','activation','expiry']){
+ const droppedSessionSection=JSON.parse(manifest);delete droppedSessionSection.composition[section];
+ assert(admit(JSON.stringify(droppedSessionSection),true).includes('ADMISSION_OWNERSHIP'),'a composition without its issued '+section+' metadata was admitted');
 }
 // The issued ownership map and instance facts are carried metadata cross-checked against the compiled
 // declarations: a write moved to another owner, a resource reassigned to a fabricated owner, a slot

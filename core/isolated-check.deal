@@ -127,7 +127,7 @@ function inspect(manifest: Record<string, unknown>, fresh: boolean): string {
   let composition: Record<string, unknown> = manifest.composition as Record<string, unknown>;
   // Every section assembly issues is a carried fact: a composed pair that dropped one would silently
   // lose what this admission validates, so every section the composer always writes must be present.
-  for (let section of ["declarations","slots","operations","runtime","publications","drivers","composites","chatRoot","clockDrivers","readings","sessionClock","notices","owners","composerOwned","instances","sources"]) { if (!Object.hasOwn(composition,section)) { return "ADMISSION_OWNERSHIP: issued composition without its "+section; } }
+  for (let section of ["declarations","slots","operations","runtime","publications","drivers","triggers","activation","expiry","composites","chatRoot","clockDrivers","readings","sessionClock","notices","owners","composerOwned","instances","sources"]) { if (!Object.hasOwn(composition,section)) { return "ADMISSION_OWNERSHIP: issued composition without its "+section; } }
   let issuedSources: string[] = decoded.strings(composition.sources);
   let issuedNeeds: string[] = [];
   // A slot without a textual need is left to the slot loop, which rejects it with the slot identity
@@ -406,6 +406,113 @@ function inspect(manifest: Record<string, unknown>, fresh: boolean): string {
   }
   let driverNeeds: string[] = [];
   let readingCarriers: string[] = [];
+  // The checked event slots that raise a clock-end or an entry-added operation are dispatched by the
+  // issued trigger routes: each names the operation it raises, the ordered queue its committed events
+  // are retained in, the dispatch action and the carrier the Session resolves the dispatch slot from,
+  // and the event and source its slot carries. Every route identity is re-derived from the operation
+  // the composer issues it from, so a dropped, relabelled, cross-wired or duplicated route rejects, and
+  // every event slot that reaches an operation must carry its own route: a dispatch route can never be
+  // lost silently.
+  if (Object.hasOwn(composition,"triggers")) {
+    let queues: string[] = []; let carriers: string[] = []; let routed: string[] = [];
+    for (let value of decoded.records(composition.triggers)) {
+      let operation: string = s.text(value.operation); let event: string = s.text(value.event); let trigger: string = s.text(value.trigger);
+      let queue: string = s.optionalText(value,"queue"); let carrier: string = s.optionalText(value,"carrier"); let action: string = s.optionalText(value,"action");
+      if (!s.contains(["countdown_end","entry_added"],event)) { return "ADMISSION_OWNERSHIP: trigger route for an event it does not queue: "+operation+" "+event; }
+      // The queue, the dispatch action and the carrier are issued from the operation identity, so a route
+      // naming another operation's queue or slot is cross-wired: the driver watching it would never
+      // consume the queue this event was committed to, and the committed events would pile up unseen.
+      if (queue !== "queue_"+operation) { return "ADMISSION_OWNERSHIP: trigger route queue differs from its operation identity: "+operation+" "+queue; }
+      if (action !== "Trigger_"+operation) { return "ADMISSION_OWNERSHIP: trigger route action differs from its operation identity: "+operation+" "+action; }
+      if (carrier !== "trigger_"+operation) { return "ADMISSION_OWNERSHIP: trigger route carrier differs from its operation identity: "+operation+" "+carrier; }
+      if (s.optionalText(value,"slot") !== operation || s.optionalText(value,"need") !== operation) { return "ADMISSION_OWNERSHIP: trigger route names another issued slot: "+operation; }
+      if (!s.contains(declared,queue)) { return "ADMISSION_OWNERSHIP: trigger queue outside the compiled declarations: "+operation+" "+queue; }
+      if (s.contains(queues,queue)) { return "ADMISSION_OWNERSHIP: duplicate trigger queue: "+queue; }
+      queues[queues.length] = queue;
+      if (s.contains(carriers,carrier)) { return "ADMISSION_OWNERSHIP: duplicate trigger dispatch carrier: "+carrier; }
+      carriers[carriers.length] = carrier;
+      if (s.contains(routed,operation)) { return "ADMISSION_OWNERSHIP: operation raised by two trigger routes: "+operation; }
+      routed[routed.length] = operation;
+      let matched: boolean = false;
+      if (Object.hasOwn(composition,"slots")) { for (let slot of decoded.records(composition.slots)) {
+        if (s.text(slot.action) === operation && s.text(slot.event) === event && s.text(slot.trigger) === trigger) { matched = true; }
+      } }
+      if (!matched) { return "ADMISSION_OWNERSHIP: trigger route names no issued event slot: "+operation; }
+      let kind: string = "";
+      if (Object.hasOwn(composition,"operations")) { for (let record of decoded.records(composition.operations)) { if (s.text(record.id) === operation) { kind = s.text(record.trigger); } } }
+      if (kind !== event) { return "ADMISSION_OWNERSHIP: trigger route differs from its operation trigger: "+operation; }
+    }
+    // An event slot that reaches an operation carries exactly that operation's route, whichever of the
+    // four triggers it names, so an action reachable only through the slot still has its dispatch.
+    if (Object.hasOwn(composition,"slots")) {
+      for (let slot of decoded.records(composition.slots)) {
+        let event: string = s.text(slot.event); let action: string = s.text(slot.action);
+        if (!s.contains(["countdown_end","entry_added"],event) || action === "") { continue; }
+        if (!s.contains(routed,action)) { return "ADMISSION_OWNERSHIP: queued event slot without its dispatch route: "+action; }
+      }
+    }
+  }
+  // An authorized initial read is issued metadata too: the authoritative activation-needed field, the
+  // action it admits and the carrier the Session resolves the dispatch slot from. The catalogue live
+  // figure is the issued kind that admits one, and the catalogue contract pins the three identities it
+  // stamps, so admission re-derives them from the instance instead of accepting a record that names a
+  // foreign field, action or carrier. Every live figure carries exactly one record, so an emptied
+  // activation set can never leave a live figure without the read it was authorized to perform.
+  if (Object.hasOwn(composition,"activation")) {
+    let activationInstances: string[] = [];
+    let runtimeFields: string[] = [];
+    if (Object.hasOwn(composition,"runtime")) { runtimeFields = decoded.strings(composition.runtime); }
+    for (let value of decoded.records(composition.activation)) {
+      let instance: string = s.optionalText(value,"instance"); let field: string = s.optionalText(value,"field"); let carrier: string = s.optionalText(value,"carrier"); let action: string = s.optionalText(value,"action");
+      let position: number = -1; let index: number = 0;
+      while (index < instanceIds.length) { if (instanceIds[index] === instance) { position = index; } index = index+1; }
+      if (position < 0) { return "ADMISSION_OWNERSHIP: activation names no issued instance: "+instance; }
+      if (instanceOrigins[position] !== "catalogue" || instanceKinds[position] !== "live_figure") { return "ADMISSION_OWNERSHIP: activation on an instance that admits no read: "+instance; }
+      if (s.contains(activationInstances,instance)) { return "ADMISSION_OWNERSHIP: instance admits more than one authorized initial read: "+instance; }
+      activationInstances[activationInstances.length] = instance;
+      if (field !== "f_"+instance+"_activation_needed") { return "ADMISSION_OWNERSHIP: activation field differs from its instance identity: "+instance+" "+field; }
+      if (!s.contains(declared,field)) { return "ADMISSION_OWNERSHIP: activation field outside the compiled declarations: "+field; }
+      if (!s.contains(runtimeFields,field)) { return "ADMISSION_OWNERSHIP: activation field is not a runtime resource: "+field; }
+      if (carrier !== "activate_"+instance) { return "ADMISSION_OWNERSHIP: activation carrier differs from its instance identity: "+instance+" "+carrier; }
+      if (action !== "f_"+instance+"_Activate") { return "ADMISSION_OWNERSHIP: activation action differs from its instance identity: "+instance+" "+action; }
+    }
+    // The reverse direction: an issued live figure without its record is an authorized read the Session
+    // never starts, which the empty set would otherwise certify as consistent.
+    let position: number = 0;
+    while (position < instanceIds.length) {
+      if (instanceOrigins[position] === "catalogue" && instanceKinds[position] === "live_figure" && !s.contains(activationInstances,instanceIds[position])) { return "ADMISSION_OWNERSHIP: authorized initial read without its issued activation: "+instanceIds[position]; }
+      position = position+1;
+    }
+  }
+  // The expiry transition is issued metadata as well: one action commits the compiled expiry policy at
+  // the reading the Session lane took, and the deadline pairs are exactly one per issued operation,
+  // re-derived from the operation identity. A dropped pair leaves an operation nothing ever expires, so
+  // an invocation past its deadline could still satisfy a calculation or an action while its unexpired
+  // flag stayed false.
+  if (Object.hasOwn(composition,"expiry")) {
+    let expirySection: Record<string, unknown> = composition.expiry as Record<string, unknown>;
+    let action: string = s.optionalText(expirySection,"action"); let carrier: string = s.optionalText(expirySection,"carrier");
+    if (action !== "ExpireSession") { return "ADMISSION_OWNERSHIP: expiry transition names another action: "+action; }
+    if (carrier !== "session_expiry") { return "ADMISSION_OWNERSHIP: expiry transition names another dispatch carrier: "+carrier; }
+    if (!Object.hasOwn(expirySection,"deadlines")) { return "ADMISSION_OWNERSHIP: expiry transition without its deadline records"; }
+    let operationIds: string[] = [];
+    for (let record of decoded.records(composition.operations)) { operationIds[operationIds.length] = s.text(record.id); }
+    let deadlines: Record<string, unknown>[] = decoded.records(expirySection.deadlines);
+    if (deadlines.length !== operationIds.length) { return "ADMISSION_OWNERSHIP: expiry deadline records differ from the issued operations"; }
+    let expiring: string[] = [];
+    for (let pair of deadlines) {
+      let expires: string = s.optionalText(pair,"expires"); let expired: string = s.optionalText(pair,"expired");
+      if (!expires.startsWith("expires_")) { return "ADMISSION_OWNERSHIP: expiry deadline names no issued operation: "+expires; }
+      let operation: string = expires.substring(8);
+      if (expires !== "expires_"+operation || expired !== "expired_"+operation) { return "ADMISSION_OWNERSHIP: expiry deadline differs from its operation identity: "+operation; }
+      if (!s.contains(operationIds,operation)) { return "ADMISSION_OWNERSHIP: expiry deadline names no issued operation: "+operation; }
+      if (s.contains(expiring,operation)) { return "ADMISSION_OWNERSHIP: operation carries two expiry deadlines: "+operation; }
+      expiring[expiring.length] = operation;
+      if (!s.contains(declared,expires)) { return "ADMISSION_OWNERSHIP: expiry deadline outside the compiled declarations: "+expires; }
+      if (!s.contains(declared,expired)) { return "ADMISSION_OWNERSHIP: expiry prerequisite outside the compiled declarations: "+expired; }
+    }
+    for (let id of operationIds) { if (!s.contains(expiring,id)) { return "ADMISSION_OWNERSHIP: issued operation without its expiry deadline: "+id; } }
+  }
   // The private reading carriers a Session publishes its host wall reading into are issued identities:
   // a blank, duplicated or missing one rejects instead of leaving a reading unpublished.
   for (let value of decoded.strings(composition.readings)) {

@@ -82,9 +82,10 @@ else:
         raise SystemExit(0)
     for name in ['FragmentRegionsTest','FragmentQualifierTest','FragmentMechanismsTest']:
         run(['java','-cp',str(classes)+':'+cp,name],check=True)
-    # The complete default executes every group, each with its own unchanged bound.
+    # The complete default executes every group, each under the node stage bound its harness declares,
+    # with the group's own settle deadline passed through so the harness names an unsettled composer.
     for group in ([args.group] if args.group else GROUPS):
-        run(['node',str(root/'tests/tools/test-composer.js'),str(stage),str(classes)+':'+cp,group,str(lane_bounds.COMPOSER_SETTLE*1000)],check=True)
+        run(['node',str(root/'tests/tools/test-composer.js'),str(stage),str(classes)+':'+cp,str(lane_bounds.COMPOSER_SETTLE),group],check=True,seconds=lane_bounds.COMPOSER_NODE)
     if args.group:
         # Receipts authorize only a frozen fixture snapshot, never skip assertions.
         group_record=stage/('group-'+args.group+'.json')
@@ -144,7 +145,7 @@ def compile_pair(name,target='screen'):
         node('test-admission.js',stage/'js',output/'admission.json',*(['trigger'] if name=='trigger' else []))
     runtime={'numeric':'tests/tools/test-composed-runtime.js','assembly':'tests/tools/test-assembly.js','context-operation':'test-issued-data.js','entries':'test-entries-part.js','entries-aggregate':'test-entry-aggregate.js','row-tap':'test-row-tap.js','numeric-text':'test-numeric-text.js','foreign':'test-foreign-binding.js','clock':'test-clock-part.js','clock-input':'test-clock-input.js'}
     if name in runtime: node(runtime[name],output)
-    if name=='trigger': node('tests/tools/test-draft-revision.js',output)
+    if name=='trigger': node('tests/tools/test-draft-revision.js',output); node('tests/tools/test-trigger-driver.js',output)
 lanes=['absent','chat','card','boolean','written','assembly','operation','context-operation','entries','entries-empty','entries-aggregate','row-tap','presentation','numeric-text','foreign','descriptor','trigger','clock','clock-input','numeric']
 def lane_target(name):
     return 'chat' if name in ('chat','assembly') else 'card' if name=='card' else 'screen'

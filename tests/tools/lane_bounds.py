@@ -27,24 +27,25 @@ LANE_SLACK = 10
 # The contract harnesses (`test-catalogue.py`, `test-construction-contracts.py`) each drive one node
 # group. One catalogue runtime section group and the `all`/`local` bundles are wider because the bundle
 # runs every section in one process. The reference cost is 71 s for the coldest group and 294 s for the
-# default bundle; a host running several gates at once measured 95 s for one contract group and 157 s
-# for one section group, so each bound contains that measured cost and a slow host still reports the
-# assertion that failed instead of an unnamed timeout.
-CONTRACT_NODE = 180
+# default bundle; a host running several gates at once measured 95 s for one contract group, 157 s for
+# one section group and 696 s for that default bundle, so each bound contains better than twice its
+# measured cost on the loaded host and a slow host still reports the assertion that failed instead of an
+# unnamed timeout.
+CONTRACT_NODE = 270
 # The two interaction harnesses drive their own compiled policy fixtures and no section suite: the chat,
 # lookup and hole-body exports in one process, and the Surface exploration's whole frame window in the
 # other. Both measured under 20 s of CPU warm, 40 s on a loaded gate host and over 120 s on a host
 # running four gates at once, so each keeps more than twice its measured cost instead of turning host
 # contention into an unnamed timeout.
-INTERACTION_NODE = 180
-SURFACE_NODE = 240
-CATALOGUE_GROUP = 300
+INTERACTION_NODE = 270
+SURFACE_NODE = 360
+CATALOGUE_GROUP = 420
 # The default bundle measured 294 s before the catalogue clocks moved onto their private Session
 # drivers and 473 s after it: each clock-bearing group now compiles its own issued driver metadata and
 # mounts through the packaged Session binding. The bound keeps headroom over the widest measurement of
 # that suite, 888 s on a gate host running two gates at once, so a slow host reports the assertion that
 # failed instead of an unnamed suite timeout.
-CATALOGUE_SUITE = 1200
+CATALOGUE_SUITE = 1500
 CATALOGUE_BUNDLES = ('all', 'local')
 # The construction harness drives the Food and Equipment fixtures through the packaged session. It
 # measured 49-91 s of wall on the reference host and exceeded 180 s on a gate host running four gates
@@ -52,16 +53,23 @@ CATALOGUE_BUNDLES = ('all', 'local')
 CONSTRUCTIVE_NODE = 360
 
 # The composer's own lane: `--contracts-only` compiles the fixtures, runs three JVM assertion classes
-# and then one node group per composer group it drives. A group settles only after every syntax call it
-# issues has returned: `validation` needs 318 calls at a 21 s reference cost and measured 41 s on a host
-# running four gates at once, so its settle deadline is declared here instead of beside the harness.
+# and then one node group per composer group it drives.
 COMPOSER_GROUPS = ['validation', 'basics', 'clocks', 'operations', 'entries', 'presentation']
 COMPOSER_JVM_ASSERTIONS = 3
+# One node group drives the fixture through one long-lived syntax transport and waits for it to settle,
+# so the group's own settle deadline is a stage inside the stage that starts it. The validation group
+# measured 10.3 s idle and 44 s on the loaded gate host, where it completed 371 of its 411 syntax calls
+# inside the 40 s wall it used to declare for itself and was reported as an unsettled composer. The
+# settle deadline contains more than twice that loaded cost, and the stage bound contains the deadline
+# plus the process start and the group's own assertions, so the harness still names a composer that
+# never settles before an outer kill arrives.
 COMPOSER_SETTLE = 120
+COMPOSER_NODE = COMPOSER_SETTLE + 60
 
 # One emitted-pair compile, and the node assertions a pair lane drives. Three pair lanes share the host,
-# so the compiler call keeps the fixture compile's 120 s and every assertion stage uses the same wall.
-PAIR_COMPILE = 120
+# so the compiler call keeps a wide wall and every assertion stage uses the same one: a pair's compile
+# measured 38 s and its runtime assertion 76 s on the loaded gate host.
+PAIR_COMPILE = 300
 PAIR_NODE_STAGES = {
     # A pair lane compiles its own pair and then drives what the harness maps give it: the admission
     # check, the runtime harness, or both, and `trigger` adds its draft-revision harness.
@@ -78,23 +86,25 @@ PAIR_NODE_STAGES = {
 # table instead of a literal beside the harness: the sum is the worst case the lane must contain, so a
 # hung stage is stopped by its own cap and named, never by an outer kill reported as an unnamed TIMEOUT.
 CACHE_CAPS = {
-    # `tests/tools/test-build-cache.py`.
-    'builder-block': (10, 6),   # one run of the extracted bytecode/packaging block
-    'renderer-rules': (10, 8),  # one run of the extracted renderer-rules script
-    'gate-timing': (5, 1),      # one run of the extracted `timed` gate function
-    'gate-block': (180, 5),     # one run of the extracted concurrent-sequence block
-    'demo-batch': (60, 13),     # one run of the extracted demo packaging batch
+    # `tests/tools/test-build-cache.py`. Each cap is above the same run on the 2.4x contended gate host:
+    # the fake compilers are cheap, but every stage still starts the harness's own interpreter tree.
+    'builder-block': (40, 6),   # one run of the extracted bytecode/packaging block
+    'renderer-rules': (40, 8),  # one run of the extracted renderer-rules script
+    'gate-timing': (20, 1),     # one run of the extracted `timed` gate function
+    'gate-block': (450, 5),     # one run of the extracted concurrent-sequence block
+    'demo-batch': (150, 13),    # one run of the extracted demo packaging batch
 }
 INFRA_CAPS = {
-    # `tests/tools/test-build-stages.py`.
-    'stage-runner': (4, 8),     # one run of the stage runner with a fake compiler body
-    'cutover-apk': (10, 8),     # one run of the extracted test-APK packaging script
+    # `tests/tools/test-build-stages.py`. One fake library build measured more than its old 8 s cap on the
+    # loaded gate host before the fake compiler returned, so every cap here contains the loaded cost.
+    'stage-runner': (15, 8),    # one run of the stage runner with a fake compiler body
+    'cutover-apk': (40, 8),     # one run of the extracted test-APK packaging script
     # One run of the extracted library build script over its fake toolchain: a cold reference run takes
     # under 4 s, and a host running several gates at once timed out the 8 s cap in two runs of three, so
     # the cap keeps the same headroom as the assertion bounds instead of failing the item unnamed.
-    'library-build': (20, 11),
-    'boundary-plan': (20, 1),   # one preview of the standalone proof's own plan
-    'lane-refusal': (60, 1),    # one short-check lane, observing the stage-override refusal
+    'library-build': (40, 11),  # one run of the extracted library build script
+    'boundary-plan': (60, 1),   # one preview of the standalone proof's own plan
+    'lane-refusal': (120, 1),   # one short-check lane, observing the stage-override refusal
 }
 
 
@@ -153,8 +163,8 @@ def catalogue_lane(group):
 
 
 def composer_lane(groups=len(COMPOSER_GROUPS)):
-    node = ASSERTION + KILL_GRACE
-    return _lane(*preparation(), *((COMPOSER_JVM_ASSERTIONS + groups) * [node]))
+    assertion = ASSERTION + KILL_GRACE
+    return _lane(*preparation(), *(COMPOSER_JVM_ASSERTIONS * [assertion]), *(groups * [COMPOSER_NODE + KILL_GRACE]))
 
 
 def composer_prepare_lane():

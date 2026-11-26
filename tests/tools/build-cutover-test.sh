@@ -80,21 +80,26 @@ stage() {
 }
 JDK_RELEASE="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}/release"
 args=(); for res in "${RESOURCES[@]}"; do args+=(--input "$res"); done
-stage resources 30 --input "$ANDROID" --input "$TOOLS/aapt2" --input "$OUT/AndroidManifest.xml" \
+stage resources 60 --input "$ANDROID" --input "$TOOLS/aapt2" --input "$OUT/AndroidManifest.xml" \
     --input build/compose/resources.txt --input build/compose/packages.txt --input build/embedding-consumer/assets \
     "${args[@]}" --output "$OUT/resources.apk" --output "$OUT/rjava"
 args=(); for source in "${TEST_SOURCES[@]}" "${JARS[@]}"; do args+=(--input "$source"); done
 # The Kotlin bound covers a cold compile of the whole instrumentation source set with the Compose
-# compiler plugin; measured at 127 s on a cold stage on this toolchain, so the declared bound is wider
-# than the compile cost. The bound is preparation only: no assertion result is cached or reused.
-stage test_kotlin "${DEAL_TEST_COMPILE_SECONDS:-240}" --input "$CP_SOURCES" --input "$OUT/rjava" --input "$ANDROID" \
+# compiler plugin; measured at 127 s on a cold stage on an idle host and 213 s on the loaded gate host,
+# so the declared bound is wider than the compile cost either way. The bound is preparation only: no
+# assertion result is cached or reused.
+stage test_kotlin "${DEAL_TEST_COMPILE_SECONDS:-480}" --input "$CP_SOURCES" --input "$OUT/rjava" --input "$ANDROID" \
     --input "$KOTLIN_HOME/bin/kotlinc" --input "$KOTLIN_HOME/lib/kotlin-compiler.jar" \
     --input "$KOTLIN_HOME/lib/compose-compiler-plugin.jar" "${args[@]}" \
     --output "$OUT/classes" --output "$OUT/test.jar" --output "$OUT/sources.sha256"
 args=(); for j in "${JARS[@]}"; do args+=(--input "$j"); done
-stage dex 45 --input "$CP_SOURCES" --input "$OUT/test.jar" --input "$ANDROID" --input build/toolchain/r8.jar \
+# D8 dexes the whole instrumentation JAR against the packaged runtime classpath; measured at 44 s on
+# the loaded gate host and 8-22 s on an idle one, so the bound contains the loaded cost as well.
+stage dex 150 --input "$CP_SOURCES" --input "$OUT/test.jar" --input "$ANDROID" --input build/toolchain/r8.jar \
     --input build/toolchain/desugar.json "${args[@]}" --output "$OUT/dex"
-stage package_apk 30 --input "$CP_SOURCES" --input "$OUT/resources.apk" --input "$OUT/dex" \
+# Merge, zip, resource packaging, alignment and signing; measured at 24 s on the loaded gate host and
+# 4-14 s on an idle one, so the bound contains the loaded cost as well.
+stage package_apk 90 --input "$CP_SOURCES" --input "$OUT/resources.apk" --input "$OUT/dex" \
     --input build/runtime-dex/host-stable --input build/embedding-dex --input "$KEYSTORE" \
     --input "$TOOLS/zipalign" --input "$TOOLS/apksigner" --input "$TOOLS/lib/apksigner.jar" \
     --input tools/package-java-resources.py "${args[@]}" --output "$OUT/aligned.apk" --output "$OUT/tests.apk"

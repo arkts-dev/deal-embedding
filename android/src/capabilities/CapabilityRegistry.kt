@@ -18,6 +18,9 @@ internal interface CapabilitySession : AutoCloseable {
      * configured window. Facts, never decisions: the generated Experience decides with them, and the
      * host dispatch boundary decides every call with the same facts. */
     fun authority(): String
+    /** A Session suspend or resume starts a new clock period: every relative window captured under an
+     * earlier period becomes undecidable, so compiled admission refuses its reply. */
+    fun periodChanged()
 }
 
 internal interface CapabilityHost {
@@ -113,6 +116,10 @@ internal class CapabilityRegistry(private val context: Context, private val disc
 
     /** Session operations and callbacks serialize; permission queries read trusted isolate epochs. */
     private inner class Session(private val log: dev.deal.embedding.EmbeddingLog, private val origin: String) : CapabilitySession {
+        // The Session clock period. A suspend and a resume each advance it, so a relative expiry an
+        // invocation captured under the previous period is never re-trusted by a later matched reading.
+        private var trustPeriod = 0L
+        override fun periodChanged() { synchronized(this@CapabilityRegistry) { trustPeriod++ } }
         override val identity = UUID.randomUUID().toString()
         private val calls = CapabilityCall { facts(origin) }
         private val pending = mutableMapOf<Int, Pending>()
@@ -262,6 +269,7 @@ internal class CapabilityRegistry(private val context: Context, private val disc
             for ((key, value) in facts.confirmation) { confirmation.put(key, value) }
             JSONObject().put("lifetime", if (closed || ended) "" else identity).put("epochs", epochs).put("granted", granted)
                 .put("classification", classification).put("confirmation", confirmation).put("clockTrusted", !(closed || ended))
+                .put("period", trustPeriod)
                 .put("origin", facts.origin).put("requestAuthorizes", facts.requestAuthorizes).put("requestTarget", facts.requestTarget)
                 .put("now", android.os.SystemClock.elapsedRealtime()).put("expiry", expiry).toString()
         }

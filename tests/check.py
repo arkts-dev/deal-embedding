@@ -79,15 +79,15 @@ def lane_bound(lane):
     if lane.startswith('pair:'):
         return lane_bounds.pair_lane(lane.split(':', 1)[1])
     if lane == 'infra':
-        # The stage-orchestration item drives many fake builds under one cap per stage kind: eight 4 s runs,
-        # eight 10 s runs, eleven 8 s runs, one 20 s proof preview and one 60 s lane refusal. Its own guard
-        # counts those runs against the declaration, and the lane bound is that declaration's sum, so a hung
-        # item is named by its own inner cap instead of being killed by an outer number nobody derived.
+        # The stage-orchestration item drives many fake builds under one cap per stage kind: eight 15 s
+        # runs, eight 40 s runs, eleven 40 s runs, one 60 s proof preview and one 120 s lane refusal. Its own
+        # guard counts those runs against the declaration, and the lane bound is that declaration's sum, so a
+        # hung item is named by its own inner cap instead of being killed by an outer number nobody derived.
         return lane_bounds.infra_lane()
     if lane == 'cache':
         # The cache-control item drives its own fake harnesses and extracted gate blocks under separate
-        # caps, declared and counted the same way: six 10 s, eight 10 s, one 5 s, five 180 s and thirteen
-        # 60 s runs. The lane bound contains that sum rather than the widest cap.
+        # caps, declared and counted the same way: six 40 s, eight 40 s, one 20 s, five 450 s and thirteen
+        # 150 s runs. The lane bound contains that sum rather than the widest cap.
         return lane_bounds.cache_lane()
     if lane == 'harness':
         return 120

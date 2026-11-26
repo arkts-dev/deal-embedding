@@ -22,6 +22,9 @@ internal class UiSession(private val context: Context, private val broker: Capab
     private var lastAction = ""
     private var clockIntervalMs = 0L
     private var nextClockPump = 0L
+    // The private drivers this composed pair issues. A pair that issues none is not evaluated for them on
+    // every tick, so the Session lane pays only for the mechanisms the composition carries.
+    private var driven: Set<String> = emptySet()
     private val requestParents = mutableMapOf<Int, String>()
     private val requestStarts = mutableMapOf<Int, Long>()
     /** The framework storage host for this Experience; the controller's saved record is not it. */
@@ -47,6 +50,7 @@ internal class UiSession(private val context: Context, private val broker: Capab
         check(!closed && capabilitySession == null) { "UI session is closed or already mounted" }
         val bundle = DealSessionBindings.bundle(context, config, output, restored)
         clockIntervalMs = DealSessionBindings.clockInterval(output)
+        driven = DealSessionBindings.driven(output)
         nextClockPump = 0
         capabilitySession = broker.openSession(log, origin)
         log.event("session", "opened", candidate, workspace)
@@ -91,8 +95,24 @@ internal class UiSession(private val context: Context, private val broker: Capab
         // A visible surface is a Session activation/resume; the driver lane publishes the epoch change
         // the expiry consumer reads, and the lifecycle transition is traced with the Session.
         if(visible)log.event("session","resumed",candidate,workspace)
+        // A suspend and a resume each start a new Session clock period, so a relative expiry an
+        // invocation captured under the earlier period is undecidable and compiled admission refuses
+        // its reply. The facts are installed again so the generated Experience reads the new period.
+        checkNotNull(capabilitySession){ "UI session is not mounted" }.periodChanged()
         installSessionFacts()
         evaluate("setFrameVisibility($visible, ${android.os.SystemClock.elapsedRealtime()})")
+        // A resume revalidates expiry before the next recompute publishes, so a displayable stale value
+        // is never briefly usable as a ready prerequisite.
+        if(visible)driveSession(android.os.SystemClock.elapsedRealtime())
+    }
+    /** The three private Session drivers this lane owns: the authorized initial read after activation,
+     * the head of every clock-end and entry-added trigger queue, and the deadline transition. Each is an
+     * issued action dispatched at the reading this lane took, with compiled policy deciding admission. */
+    private fun driveSession(monotone: Long) {
+        if (driven.isEmpty()) return
+        if (driven.contains("activation")) evaluate(DealSessionBindings.activate(monotone))
+        if (driven.contains("triggers")) evaluate(DealSessionBindings.triggers)
+        if (driven.contains("expiry")) evaluate(DealSessionBindings.expire(monotone))
     }
     /** One storage request answered by the Experience-scoped host; a failure is a typed reply. */
     private fun storageReply(request: JSONObject, started: Long): JSONObject {
@@ -116,6 +136,10 @@ internal class UiSession(private val context: Context, private val broker: Capab
         installSessionFacts()
         pumpClocks(force = false)
         evaluate("advanceFrames(${android.os.SystemClock.elapsedRealtime()})")
+        // The driver lane also owns the issued activation, trigger and expiry mechanisms: an authorized
+        // initial read, the head of an ordered trigger queue and a due deadline all progress here,
+        // without a renderer event, a published version or a host poll.
+        driveSession(android.os.SystemClock.elapsedRealtime())
         val encoded = evaluate(DealSessionBindings.requests)
         check(encoded.toByteArray().size <= 16 * 1024) { "Capability request batch too large" }
         val requests = JSONArray(encoded)

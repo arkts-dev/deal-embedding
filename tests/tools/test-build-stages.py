@@ -506,10 +506,10 @@ elif name=='jar':
         java_assertions=lane_bounds.COMPOSER_JVM_ASSERTIONS
         for group in lane_bounds.COMPOSER_GROUPS:
             self.assertGreaterEqual(lanes.lane_bound('composer:'+group),
-                                    preparation+(java_assertions+1)*lane_bounds.ASSERTION,
+                                    preparation+java_assertions*lane_bounds.ASSERTION+lane_bounds.COMPOSER_NODE,
                                     f'the composer:{group} lane is tighter than the stages it wraps')
         self.assertGreaterEqual(lanes.lane_bound('composer'),
-                                preparation+(java_assertions+len(lane_bounds.COMPOSER_GROUPS))*lane_bounds.ASSERTION,
+                                preparation+java_assertions*lane_bounds.ASSERTION+len(lane_bounds.COMPOSER_GROUPS)*lane_bounds.COMPOSER_NODE,
                                 'the composer lane is tighter than the stages it wraps')
         self.assertGreaterEqual(lanes.lane_bound('composer-prepare'),preparation,
                                 'the preparation lane is tighter than the preparation it wraps')
@@ -534,6 +534,17 @@ elif name=='jar':
             stages=int(pair in admitted)+int(pair in driven)+(len(draft) if pair=='trigger' else 0)
             self.assertEqual(lane_bounds.PAIR_NODE_STAGES[pair],stages,
                              f'the declared stage count of pair:{pair} is not what the harness maps drive')
+        # A node group's settle deadline is a stage inside the stage that starts it, so the harness passes
+        # the declaration through and the stage bound contains that deadline: a literal below the group's
+        # loaded cost reports host contention as a composer that never settled.
+        self.assertGreater(lane_bounds.COMPOSER_NODE,lane_bounds.COMPOSER_SETTLE,
+                           'the composer node stage does not contain the settle deadline it starts')
+        node_group=re.search(r"run\(\['node',str\(root/'tests/tools/test-composer\.js'\),([^\n]*)",composer_harness)
+        self.assertIsNotNone(node_group,'test-composer.py runs no composer node group')
+        self.assertIn('str(lane_bounds.COMPOSER_SETTLE)',node_group.group(1),
+                      'the composer node group keeps a literal settle deadline')
+        self.assertIn('seconds=lane_bounds.COMPOSER_NODE',node_group.group(1),
+                      'the composer node group is not bounded by its declared node stage')
         # The composer's own lane declares three JVM assertion classes; the harness must run exactly those.
         java=re.findall(r"for name in \[([^\]]*)\]:\n *run\(\['java'",composer_harness)
         self.assertEqual(len(java),1,'test-composer.py runs no single list of JVM assertion classes')

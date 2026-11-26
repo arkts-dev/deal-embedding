@@ -48,10 +48,10 @@ reporting both cases as `failed`.
 ```
 
 One lane per invocation, a **per-lane command-tree bound** (40 seconds by default; the catalogue and
-composer lanes take 200-1000 seconds because their cold compiler preparation and assertion stages are
+composer lanes take 840-1920 seconds because their cold compiler preparation and assertion stages are
 larger, the renderer-rules lane takes 120 seconds because it compiles its JVM harness first (measured
-34.8 s, 33 s of it compilation), the stage-orchestration lane takes 430 seconds because its inner fake-build caps sum to 412 s, the
-cache-control lane takes 800 seconds because its fake harness caps sum to 745 s, a
+34.8 s, 33 s of it compilation), the stage-orchestration lane takes 1070 seconds because its inner fake-build caps sum to 1060 s, the
+cache-control lane takes 4790 seconds because its fake harness caps sum to 4780 s, a
 `build:`/`isolation:` lane takes its stage's own declared bound plus 30/60 seconds, and a `boundary:`
 or `boundary-plan` lane takes the standalone proof's declared bound), no automatic broad gate or build.
 Full logs and exit/timing receipts are kept in ignored `build/verification/short-checks/`.
@@ -61,7 +61,8 @@ No claim that every cold compiler stage finishes within this bound: unresolved e
 
 Library `build.sh` now has independently content-validated stages, one declared preparation bound per
 stage in `tools/stage-bounds.txt` beside the coldest cost measured on this toolchain with the gate's
-`JAVA_OPTS=-Xmx768m` (the Kotlin stage is the widest at 142 s against its 300 s bound); a single
+`JAVA_OPTS=-Xmx768m` (the Kotlin stage is the widest at 142 s idle and 295 s on the loaded gate host
+against its 600 s bound); a single
 shared default could not contain the coldest stage, so the gate stopped inside a stage instead of
 reporting a real failure. `build.sh` refuses a stage it declares no bound for, and the
 isolated proof and the short-check lanes derive their outer bounds from the same declaration. Separate
@@ -84,7 +85,7 @@ Selected build stages require validated predecessors, not merely existing direct
 preparation retains its own isolated outputs, never canonical compiled outputs; final digest comparison,
 input auditing and negative controls remain mandatory. Demo proofs validate APK output content too.
 Library/composer/construction/catalogue caches store compiler artifacts only; assertions run on every check.
-Seams are selectable, hold the common lock and default to 420 seconds per owning test, because a mutated
+Seams are selectable, hold the common lock and default to 1500 seconds per owning test, because a mutated
 source makes the owning test recompile cold; a seam may name a smaller bound and `--seconds` raises the
 ceiling for one run, so no control outlives the bound the run allows; infrastructure
 exit/timeout never counts as an observed broken rule. Interrupted mutation journals remain recoverable.
@@ -194,12 +195,12 @@ configures the frozen contracts on the host sandbox, and drives each control thr
 against a stubbed adapter, so the dispatch, the recorded pending attempt and the reply reconciliation are
 executed rather than inspected.
 These four Python harnesses check dependency pins and take the repository build lock (busy exit 75).
-Each subprocess tree is bounded (normally 90 seconds, the construction-contract lane 180 seconds, the
-catalogue contract lane 180 seconds, the interaction lane 180 seconds, the Surface-script lane 240 seconds,
-the catalogue runtime lane 300 seconds per section group and 1200 seconds for the `all` and `local` bundles,
+Each subprocess tree is bounded (normally 120 seconds, the construction-contract lane 270 seconds, the
+catalogue contract lane 270 seconds, the interaction lane 270 seconds, the Surface-script lane 360 seconds,
+the catalogue runtime lane 420 seconds per section group and 1500 seconds for the `all` and `local` bundles,
 one composer group's settle deadline 120 seconds, the constructive Food/Equipment lane 360 seconds,
-one composer pair's compiler call 120 seconds, and a cold fixture
-module graph 120 seconds);
+one composer pair's compiler call 300 seconds since three of them share the host, and a cold fixture
+module graph 300 seconds);
 timeouts fail, and terminate descendant JVMs too. Those bounds and the shared preparation bounds are
 declared once in `tests/tools/lane_bounds.py` and `tests/tools/host_check.py`, which the harnesses pass to
 their own calls; every `tests/check.py` lane over one of those harnesses derives its outer wall from the
@@ -257,7 +258,7 @@ mechanisms only); it checks reuse, source/classpath invalidation and damaged/del
 
 `DEAL_ROOT` and `DEAL_UI_ROOT` accept absolute override paths and default to the framework's `dependencies/deal` and `dependencies/deal-ui` independent ignored checkouts. Run `python3 tools/dependencies.py setup` first; the test runner verifies exact lock pins and rejects tracked dependency edits. Tests use the compiler classes built by the framework library build; upstream compiler build outputs are not required. `tests/run.sh` changes to the framework root and works from any caller directory. Individual test tools assume that root as working directory.
 
-Test APK packaging (`bash tests/tools/build-cutover-test.sh`) now validates four independent artifact stages: resources, test Kotlin/JAR, DEX and signed APK. Unchanged stages are reused, damaged outputs invalidate their owner, and a timeout retains validated predecessors. Bounds are 30/240/45/30 seconds respectively (`DEAL_TEST_COMPILE_SECONDS` adjusts the Kotlin bound); the Kotlin bound covers a cold compile of the instrumentation source set with the Compose compiler plugin, measured at 127 s on this toolchain, and a bound is preparation only because no assertion result is ever cached. The standalone boundary's own preparation bounds are derived from that same declaration on a cold tree: 1050 s for the isolated library build (the sum of the declared stage bounds plus the conformance slack, against 136 s measured for one full build) and 1260 s for one demo-packaging batch (900 s declared floor against 327 s measured for the seven declared targets over the two declared jobs, or 180 s per target when a host or `DEAL_DEMO_JOBS=1` runs the batch serially), so one cold proof is bounded at 2370 s in `tests/tools/test-standalone-boundary.py`. The isolated build and the demo batch share no output tree, so one proof prepares both at the same time, each still under its own bound and its own named stop: one cold proof measured 146 s end to end, 117 s of it the isolated build and 82 s of it the batch, prepared together. `DEAL_TEST_KEYSTORE` selects an existing debug signing key explicitly; it never changes an installed package's signing identity or resets data. Device assertions always run separately. For diagnostic gate resumption, `DEAL_GATE_FROM=tests/tools/<script>` starts an explicitly labelled segment, not a complete gate pass: the named item and the items after it in its own concurrent sequence run, no other sequence starts, the exclusive items still run afterwards, and only a name no item of the lane declares is reported as an unknown segment (exit 2).
+Test APK packaging (`bash tests/tools/build-cutover-test.sh`) now validates four independent artifact stages: resources, test Kotlin/JAR, DEX and signed APK. Unchanged stages are reused, damaged outputs invalidate their owner, and a timeout retains validated predecessors. Bounds are 60/480/150/90 seconds respectively (`DEAL_TEST_COMPILE_SECONDS` adjusts the Kotlin bound); the Kotlin bound covers a cold compile of the instrumentation source set with the Compose compiler plugin, measured at 127 s idle and 213 s on the loaded gate host, the DEX bound covers a 44 s dex of the same JAR on that host, and a bound is preparation only because no assertion result is ever cached. The standalone boundary's own preparation bounds are derived from that same declaration on a cold tree: 1350 s for the isolated library build (the sum of the declared stage bounds plus the conformance slack, against 136 s measured for one full build) and 1260 s for one demo-packaging batch (900 s declared floor against 327 s measured for the seven declared targets over the two declared jobs, or 180 s per target when a host or `DEAL_DEMO_JOBS=1` runs the batch serially), so one cold proof is bounded at 2670 s in `tests/tools/test-standalone-boundary.py`. The isolated build and the demo batch share no output tree, so one proof prepares both at the same time, each still under its own bound and its own named stop: one cold proof measured 146 s end to end, 117 s of it the isolated build and 82 s of it the batch, prepared together. `DEAL_TEST_KEYSTORE` selects an existing debug signing key explicitly; it never changes an installed package's signing identity or resets data. Device assertions always run separately. For diagnostic gate resumption, `DEAL_GATE_FROM=tests/tools/<script>` starts an explicitly labelled segment, not a complete gate pass: the named item and the items after it in its own concurrent sequence run, no other sequence starts, the exclusive items still run afterwards, and only a name no item of the lane declares is reported as an unknown segment (exit 2).
 
 Android instrumentation sources are in `tests/android/`; the APK is `build/v08-cutover/device-test/tests.apk`. Installing/running is explicit, never part of the build. Device construction can be selected with `-e construction true -e mode ordinary` (also catalogue, mixed, partial, syntax-recovery, gap-reader, money, time, lazy-formula); `-e providers true`, `-e targets true` and `-e storage true` isolate the other nonvisual groups. Selected groups are not the complete device suite. Existing package names and private test-resource cleanup behavior are unchanged. `-e timer true` runs the production-renderer Timer check in `TimerPainterChecks.kt` (`adb shell am instrument -w -e timer true dev.deal.cutover.tests/.CutoverInstrumentation`): an epoch deadline counts down and an epoch origin counts up while visible, a pre-1970 origin paints its whole elapsed span, the lifecycle owner around the renderer leaving `RESUMED` freezes the painted second while the page stays visible (an ungated tick loop moves it), returning recomputes from the presentation clock without replaying the hidden seconds (the first reading after `RESUMED` that leaves the frozen one is compared with the clock, so a renderer that resumes its frozen reading stays more than the one-second tolerance off instead of converging), a reached deadline paints zero from its deadline and stays there, ticking dispatches no action, and removing the node stops painting. The same check fails against the removed epoch-division painter.
 

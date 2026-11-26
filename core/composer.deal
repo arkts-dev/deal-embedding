@@ -29,6 +29,16 @@ export class Source { deal: string; dealui: string; }
 // generated source.
 export class SlotRecord { id: string; need: string; status: string; reads: string[]; writes: string[]; outputs: string[]; event: string; trigger: string; action: string; provider: boolean; allowedKinds: string[]; instance: string; reason: string; }
 export class OperationRecord { id: string; owner: string; module: string; function: string; trigger: string; triggerResource: string; rowKey: string; dependencies: string[]; arguments: Record<string, string>; expires: string; expired: string; }
+// The runtime route of one checked event slot: the operation its trigger raises, the ordered queue its
+// committed events are retained in and the issued carrier the Session resolves the dispatch slot from.
+// None of it is emitted source and no model string can add, rename or duplicate one.
+export class TriggerRecord { slot: string; need: string; operation: string; event: string; trigger: string; queue: string; action: string; carrier: string; }
+// An authorized initial read: the authoritative activation-needed field the compiled reducer clears
+// before its effect starts and the issued carrier the Session dispatches once at activation.
+export class ActivationRecord { instance: string; field: string; action: string; carrier: string; }
+// The independently scheduled expiry transition and the deadline pair of every emitted operation.
+export class DeadlineRecord { expires: string; expired: string; }
+export class ExpiryRecord { action: string; carrier: string; deadlines: DeadlineRecord[]; }
 export class CompositeRecord { action: string; type: string; update: string; arms: string[]; }
 // The ownership matrix assembly decided over written resources, carried as compiler metadata so
 // admission can re-check every slot against the compiled declarations instead of a source scan. A
@@ -39,7 +49,7 @@ export class InstanceRecord { id: string; kind: string; origin: string; kinds: s
 // The one Session-local clock trust identity the expiry driver reads. It is issued metadata, never a
 // model string, and every clock driver of the composition names these same two compiled fields.
 export class SessionClock { epoch: string; trust: string; resume: string; }
-export class Metadata { slots: SlotRecord[]; operations: OperationRecord[]; runtime: string[]; publications: string[]; drivers: string[]; clockDrivers: screens.Driver[]; readings: string[]; sessionClock: SessionClock; composites: CompositeRecord[]; chatRoot: boolean; notices: string[]; declarations: string[]; owners: ResourceRecord[]; composerOwned: string[]; instances: InstanceRecord[]; sources: string[]; }
+export class Metadata { slots: SlotRecord[]; operations: OperationRecord[]; triggers: TriggerRecord[]; activation: ActivationRecord[]; expiry: ExpiryRecord; runtime: string[]; publications: string[]; drivers: string[]; clockDrivers: screens.Driver[]; readings: string[]; sessionClock: SessionClock; composites: CompositeRecord[]; chatRoot: boolean; notices: string[]; declarations: string[]; owners: ResourceRecord[]; composerOwned: string[]; instances: InstanceRecord[]; sources: string[]; }
 export class ChildLabel { instance: string; label: string; }
 export class ChatRoot { children: ChildLabel[]; initialSelection: number; }
 // The chat root generation issues: one child per placed fragment in placement order, the label the
@@ -440,6 +450,13 @@ export async function assembleWith(composition: screens.Composition, computation
   let producerReads: Record<string, unknown> = {};
   for (let computation of allComputations) { producerReads[qualified(computation.instance,computation.field)] = computation.dependencies; }
   let operations: OperationRecord[] = []; let conditions: string[] = [];
+  // The trigger routes and the emitted operation state that no plan binding describes: the ordered
+  // event queues, the dispatch carriers and the expiry deadlines. They are issued here, once per
+  // assembly, and returned as metadata the mounted Session reads.
+  let operationSource: string = ""; let operationTypes: string = ""; let triggers: TriggerRecord[] = []; let deadlines: DeadlineRecord[] = [];
+  // The trigger routes are emitted after every operation field exists, because each admitted event
+  // records the complete AppState: the bookkeeping of a later operation is not known yet inside the loop.
+  let routeIds: string[] = []; let routeKinds: string[] = []; let routeQueues: string[] = []; let routeClasses: string[] = []; let routeActions: string[] = []; let routeConditions: string[] = []; let routeModules: string[] = []; let routeFunctions: string[] = [];
   for (let binding of registry.bindings) {
     let dependencies: string[] = []; let ready: string[] = [];
     for (let key of Object.keys(binding.arguments)) {
@@ -504,6 +521,36 @@ export async function assembleWith(composition: screens.Composition, computation
       if (suffix === "expired") { still = "false"; kind = "boolean"; }
       allFields[allFields.length] = {instance:"operation",local:name,name:name,type:kind,role:"authoritative",initial:still};
     }
+    deadlines[deadlines.length] = {expires:"expires_"+binding.id,expired:"expired_"+binding.id};
+    // A clock-end or entry-added trigger commits an ordered queue of event identities with the row or
+    // clock data captured at the event. The queue is authoritative, so an event an admission has not
+    // consumed is retained across a committed edit and across a cold reopen; the checked event slot's
+    // carrier is the route that keeps the dispatch reachable without a reducer dispatch.
+    if (triggerKind === "countdown_end" || triggerKind === "entry_added") {
+      let counter: string = "f_parts_triggered_"+triggerTarget; let rows: string = "f_parts_rows_"+triggerTarget;
+      // The event source is the one the trigger kind is raised from: the countdown completion counter for a
+      // clock end and the prepared rows collection for an entry addition. A candidate whose raising
+      // implementation issues neither rejects instead of committing a queue no event can enter.
+      if (triggerKind === "countdown_end" && !issuedField(allFields,counter)) { s.reject("Trigger event queue has no issued completion counter: "+binding.id+" "+triggerTarget); }
+      if (triggerKind === "entry_added" && !issuedField(allFields,rows)) { s.reject("Trigger event queue has no issued rows collection: "+binding.id+" "+triggerTarget); }
+      let queue: string = "queue_"+binding.id; s.unique(storageNames,queue);
+      let eventClass: string = "TriggerEvent_"+binding.id; let dispatch: string = "Trigger_"+binding.id; let carrier: string = "trigger_"+binding.id;
+      allFields[allFields.length] = {instance:"operation",local:queue,name:queue,type:eventClass+"[]",role:"authoritative",initial:"[]"};
+      // The committed event's captured row or clock data is a closed nominal value of the composition.
+      operationTypes = operationTypes+"export class "+eventClass+" { event: number; key: string; at: number; }\n";
+      routeIds[routeIds.length] = binding.id; routeKinds[routeKinds.length] = triggerKind; routeQueues[routeQueues.length] = queue;
+      routeClasses[routeClasses.length] = eventClass; routeActions[routeActions.length] = dispatch; routeConditions[routeConditions.length] = condition;
+      routeModules[routeModules.length] = binding.module; routeFunctions[routeFunctions.length] = binding.function;
+      triggers[triggers.length] = {slot:binding.id,need:binding.id,operation:binding.id,event:triggerKind,trigger:triggerTarget,queue:queue,action:dispatch,carrier:carrier};
+    }
+  }
+  let routeIndex: number = 0;
+  while (routeIndex < routeIds.length) {
+    let routeId: string = routeIds[routeIndex]; let routeKind: string = routeKinds[routeIndex]; let routeQueue: string = routeQueues[routeIndex];
+    let emitted: Record<string, string> = {};
+    emitted[routeQueue] = "rest"; emitted["sequence_"+routeId] = "head.event"; emitted["phase_"+routeId] = literals.quote(routeKind); emitted["status_"+routeId] = "\"ready\"";
+    operationSource = operationSource+triggerRoute(routeId,routeKind,routeQueue,routeClasses[routeIndex],routeActions[routeIndex],routeConditions[routeIndex],copyExpression(allFields,emitted,"state"),routeModules[routeIndex],routeFunctions[routeIndex]);
+    routeIndex = routeIndex+1;
   }
   // A frozen chat target with more than one retained fragment emits one labelled Tabs root with an
   // authoritative selected index; every other target and a single-fragment chat emits no wrapper.
@@ -533,6 +580,34 @@ export async function assembleWith(composition: screens.Composition, computation
     } else if (chatRoot !== null) { s.reject("Single-fragment chat target emits no chat root wrapper"); }
   } else if (chatRoot !== null) { s.reject("Chat root outside a chat target"); }
   let preserved: string[] = [];
+  // The expiry transition is the Session driver's own entry: one issued action commits the compiled
+  // expiry policy at the reading that lane took, independently of next/published polling and of renderer
+  // visibility. An undecidable reading is refused here rather than read as the absence of a deadline.
+  if (deadlines.length > 0) {
+    operationSource = operationSource+"export class ExpireSession { at: number; }\n"
+      +"// @ui-update\nexport function update_ExpireSession(state: AppState, action: ExpireSession): AppState {\n"
+      +"  if (!Number.isFinite(action.at)) { return state; }\n"
+      +"  return bump(expireOperations(state, action.at), state);\n}\n";
+  }
+  // An authorized initial read is issued by the implementation that owns it: its emitted carrier, the
+  // action it dispatches, and the authoritative activation-needed field compiled admission reads.
+  // Assembly admits those facts and carries them to the Session; the flag is cleared before the effect
+  // of the first read and stays cleared on restore, so restored stale data needs an explicit Refresh.
+  let activation: ActivationRecord[] = []; let activationFlags: Record<string, string> = {};
+  for (let instance of composition.screen.instances) {
+    if (!Object.hasOwn(instance,"activations")) { continue; }
+    let exported: string[] = exportedByInstance[instance.id] as string[];
+    for (let record of instance.activations as screens.Activation[]) {
+      let carrier: string = s.nonblank(record.carrier); let action: string = s.identifier(record.action); let local: string = s.identifier(record.field);
+      let issued: string = qualified(instance.id,local); let found: boolean = false;
+      for (let entry of allFields) { if (entry.name === issued && entry.role === "runtime") { found = true; } }
+      if (!found) { s.reject("Activation field is not an issued runtime resource: "+instance.id+"."+local); }
+      if (!s.contains(exported,action)) { s.reject("Activation action is not exported by its owner: "+instance.id+"."+action); }
+      for (let prior of activation) { if (prior.carrier === carrier) { s.reject("Duplicate activation carrier: "+carrier); } }
+      activation[activation.length] = {instance:instance.id,field:issued,action:qualified(instance.id,action),carrier:carrier};
+      activationFlags[issued] = "false";
+    }
+  }
   for (let entry of allFields) { preserved[preserved.length] = entry.name; if (entry.role === "derived") { preserved[preserved.length] = entry.name+"_ready"; preserved[preserved.length] = entry.name+"_reason"; if (displayable(entry.type)) { preserved[preserved.length] = entry.name+"_display"; } } }
   // The action names each emitted view binds, reported by the qualification mechanism. They are
   // resolved against every placed owner below, so a foreign view may bind another owner's export.
@@ -630,7 +705,11 @@ export async function assembleWith(composition: screens.Composition, computation
     for (let declaredField of instance.fragment.fields) { if (declaredField.initial.includes("embeddingDay.")) { dayUsed = true; } }
   }
   if (dayUsed) { addImport(imports,"embedding/day","embeddingDay"); }
-  let declarations: string = importSource(imports)+"export class AppState {\n";
+  // A queued trigger route records the host's window for the target its invocation calls, so a composition
+  // that issues one reads the live Session facts the host installs beside the mounted Session; a
+  // composition with no such route keeps the minimal checked import surface.
+  if (routeIds.length > 0) { addImport(imports,"embedding/session","composerSession"); }
+  let declarations: string = importSource(imports)+operationTypes+"export class AppState {\n";
   for (let item of allFields) { let type: string = item.type; if (item.role === "derived") { type = "("+type+" | null)"; } declarations = declarations+"  "+item.name+": "+type+";\n"; if (item.role === "derived") { declarations = declarations+"  "+item.name+"_ready: boolean;\n  "+item.name+"_reason: string;\n"; if (displayable(item.type)) { declarations = declarations+"  "+item.name+"_display: "+item.type+";\n"; } } }
   declarations = declarations+"}\n";
   // A descriptor's seeded draft is editable state of the composition: the intent panel dispatches this
@@ -660,12 +739,19 @@ export async function assembleWith(composition: screens.Composition, computation
       addImport(viewImports,item.module as string,alias); }
   }
   let viewSource: string = importSource(viewImports);
+  // The private Session carriers emitted beside the placed fragments: one per checked event slot and one
+  // for the expiry transition. Each is a Ticker that never runs from a renderer event, so the renderer
+  // acknowledges none of them; the Session's own lane resolves the issued identity from this tree and
+  // dispatches the head event or the expiry reading it took.
+  let carriers: string = "";
+  for (let record of triggers) { carriers = carriers+"    ui.Ticker(id: "+literals.quote(record.carrier)+", intervalMs: 1, running: false, onTick: action app."+record.action+" {event: payload})\n"; }
+  if (deadlines.length > 0) { carriers = carriers+"    ui.Ticker(id: \"session_expiry\", intervalMs: 1, running: false, onTick: action app.ExpireSession {at: payload})\n"; }
   let actions: string[] = []; let effects: string[] = [];
   for (let item of prepared) {
     declarations = declarations+item.declarations+item.helpers;
     // One placed fragment is the composition root itself: its own view is the root node source, so no
     // pass-through Main is emitted (a view body must produce exactly one root node, not another view).
-    if (prepared.length === 1) { viewSource = viewSource+"// @ui-root\n"; }
+    if (prepared.length === 1 && carriers === "") { viewSource = viewSource+"// @ui-root\n"; }
     viewSource = viewSource+item.view;
     for (let update of item.updates) {
       let action: string = qualified(item.id,update.action); s.unique(actions,action);
@@ -751,6 +837,22 @@ export async function assembleWith(composition: screens.Composition, computation
     if (operation.trigger === "row_tap" && operation.rowKey !== "") { condition = "f_parts_rowChanged_"+operation.id+"(next, previous) || ("+condition+")"; }
     bumpSource = bumpSource+"  let "+name+": number = previous."+name+";\n  if ("+condition+") { "+name+" = "+name+" + 1; }\n";
     revisions[name] = name;
+    // A clock completion or an entry addition commits one ordered event with the row or clock data
+    // captured at that event. The queue is appended in event order, so the oldest event stays the head
+    // until an admission consumes it; a transition that adds nothing keeps the queue it had.
+    for (let record of triggers) { if (record.operation === operation.id) {
+      let eventClass: string = "TriggerEvent_"+operation.id; let local: string = "events_"+operation.id;
+      bumpSource = bumpSource+"  let "+local+": "+eventClass+"[] = next."+record.queue+";\n";
+      if (record.event === "countdown_end") {
+        let counter: string = "f_parts_triggered_"+record.trigger; let reading: string = "f_parts_elapsed_"+record.trigger;
+        let at: string = "0"; if (issuedField(allFields,reading)) { at = "next."+reading; }
+        bumpSource = bumpSource+"  if (next."+counter+" > previous."+counter+") { let appended: "+eventClass+"[] = []; for (let prior of previous."+record.queue+") { appended[appended.length] = prior; } let serial: number = previous."+counter+" + 1; while (serial <= next."+counter+") { appended[appended.length] = {event: serial, key: \"\", at: "+at+"}; serial = serial + 1; } "+local+" = appended; }\n";
+      } else {
+        let rows: string = "f_parts_rows_"+record.trigger;
+        bumpSource = bumpSource+"  if (next."+rows+" !== previous."+rows+") { let appended: "+eventClass+"[] = []; for (let prior of previous."+record.queue+") { appended[appended.length] = prior; } for (let row of next."+rows+") { let known: boolean = false; for (let prior of previous."+rows+") { if (prior.key === row.key) { known = true; } } if (!known) { appended[appended.length] = {event: row.value, key: row.key, at: 0}; } } "+local+" = appended; }\n";
+      }
+      revisions[record.queue] = local;
+    } }
   }
   bumpSource = bumpSource+"  return "+copyExpression(allFields,revisions,"next")+";\n}\n";
   let recompute: string = "export function recompute(candidate: AppState): AppState {\n  let state: AppState = candidate;\n"; let ordered: string[] = [];
@@ -830,7 +932,7 @@ export async function assembleWith(composition: screens.Composition, computation
   recompute = recompute+"  return state;\n}\n";
   let initial: Record<string, string> = {};
   for (let item of allFields) { initial[item.name] = item.initial; if (item.role === "derived") { initial[item.name+"_ready"] = "false"; initial[item.name+"_reason"] = "\"Not ready\""; if (displayable(item.type)) { initial[item.name+"_display"] = placeholder(item.type); } } }
-  declarations = declarations+recompute+initialStateSource(allFields,initial)+hook+expirySource+recordExpiry+bumpSource+"export function main(): void { return; }\n";
+  declarations = declarations+recompute+initialStateSource(allFields,initial)+hook+expirySource+recordExpiry+bumpSource+operationSource+"export function main(): void { return; }\n";
   // The compiled app module owns the persisted authoritative projection: only authoritative fields are
   // written, restore allocates the typed state and rebuilds derived fields with the same recompute
   // before any view exists. A saved record with an unsupported or missing field is refused atomically.
@@ -845,8 +947,10 @@ export async function assembleWith(composition: screens.Composition, computation
     } else {
       // Restore placeholders are the same initial values `initialState` recomputes from. A runtime
       // resource is cleared to its initial and is never written to the persisted record; only a derived
-      // resource has readiness, reason and prepared display companions.
+      // resource has readiness, reason and prepared display companions. An activation-needed marker is
+      // cleared by the restore itself, so a cold reopen never starts an authorized read on stale data.
       restored[item.name] = initial[item.name] as string;
+      if (Object.hasOwn(activationFlags,item.name)) { restored[item.name] = "false"; }
       if (item.role === "derived") {
         restored[item.name+"_ready"] = initial[item.name+"_ready"] as string; restored[item.name+"_reason"] = initial[item.name+"_reason"] as string;
         if (displayable(item.type)) { restored[item.name+"_display"] = initial[item.name+"_display"] as string; }
@@ -898,6 +1002,34 @@ export async function assembleWith(composition: screens.Composition, computation
   if (chat && prepared.length > 1) {
     let selectionChange: Record<string, string> = {}; selectionChange["chat_selected"] = "action.value";
     declarations = declarations+"export class ChangeChat { value: number; }\nexport function changeChat(state: AppState, action: ChangeChat): AppState {\n  if (Math.floor(action.value) !== action.value || action.value < 0 || action.value >= "+String(prepared.length)+") { return state; }\n  return recompute("+copyExpression(allFields,selectionChange,"state")+");\n}\n// @ui-update\nexport function update_chat(state: AppState, action: ChangeChat): AppState {\n  let updated: AppState = changeChat(state, action);\n  return bump(updated, state);\n}\n";
+    // The chat root view is emitted below beside the private carriers when this composition issues any, so
+    // this block only issues the selection action and its fields.
+  }
+  // The root view is emitted by assembly. A composition that issues private Session carriers emits the root
+  // itself, because those carriers are composed nodes beside the placed fragments; a composition with none
+  // keeps the fragment's own view as the root and wraps only several of them.
+  if (carriers !== "") {
+    // A chat root keeps its labelled Tabs wrapper, so the private carriers ride inside a Column view beside
+    // the first retained fragment: the tab children stay one view call per fragment and the root stays the
+    // pack's Tabs component.
+    if (chat && prepared.length > 1) {
+      viewSource = viewSource+"export view SessionCarriers(state: app.AppState): View {\n  ui.Column() {\n    "+prepared[0].viewName+"(state: state)\n"+carriers+"  }\n}\n";
+      viewSource = viewSource+"// @ui-root\nexport view Main(state: app.AppState): View {\n  ui.Tabs(labels: state.chat_labels, selected: state.chat_selected, onChange: action app.ChangeChat {value: payload}) {\n    SessionCarriers(state: state)\n";
+      let children: number = 1;
+      while (children < prepared.length) { viewSource = viewSource+"    "+prepared[children].viewName+"(state: state)\n"; children = children+1; }
+      viewSource = viewSource+"  }\n}\n";
+    } else {
+      let placed: string = "";
+      if (prepared.length === 1) {
+        placed = "    "+prepared[0].viewName+"(state: state)\n";
+      } else {
+        for (let item of prepared) { placed = placed+"    "+item.viewName+"(state: state)\n"; }
+      }
+      // The fragment views are already emitted above; the marked root view is appended beside them so the
+      // carriers are composed nodes of the one root the compiler sees.
+      viewSource = viewSource+"// @ui-root\nexport view Main(state: app.AppState): View {\n  ui.Column() {\n"+placed+carriers+"  }\n}\n";
+    }
+  } else if (chat && prepared.length > 1) {
     viewSource = viewSource+"// @ui-root\nexport view Main(state: app.AppState): View {\n  ui.Tabs(labels: state.chat_labels, selected: state.chat_selected, onChange: action app.ChangeChat {value: payload}) {\n";
     for (let item of prepared) { viewSource = viewSource+"    "+item.viewName+"(state: state)\n"; }
     viewSource = viewSource+"  }\n}\n";
@@ -1048,7 +1180,41 @@ export async function assembleWith(composition: screens.Composition, computation
     ownerRecords[ownerRecords.length] = {name:name,owner:"composer",role:role};
     composerOwned[composerOwned.length] = name;
   }
-  return {source:{deal:declarations,dealui:viewSource},fields:allFields,computations:ordered,metadata:{slots:slots,operations:operations,runtime:map.runtime,publications:publications,drivers:drivers,clockDrivers:clockDrivers,readings:readings,sessionClock:sessionClock,composites:compositeActions,chatRoot:chat,notices:notices,declarations:storageNames,owners:ownerRecords,composerOwned:composerOwned,instances:instanceRecords,sources:sourceIds}};
+  return {source:{deal:declarations,dealui:viewSource},fields:allFields,computations:ordered,metadata:{slots:slots,operations:operations,triggers:triggers,activation:activation,expiry:{action:"ExpireSession",carrier:"session_expiry",deadlines:deadlines},runtime:map.runtime,publications:publications,drivers:drivers,clockDrivers:clockDrivers,readings:readings,sessionClock:sessionClock,composites:compositeActions,chatRoot:chat,notices:notices,declarations:storageNames,owners:ownerRecords,composerOwned:composerOwned,instances:instanceRecords,sources:sourceIds}};
+}
+// One triggered operation's dispatch route. The issued action is bound to the slot's carrier, so the
+// composition keeps the handler reachable without a view or reducer dispatch; the dispatch consumes the
+// head of the ordered queue and records the captured invocation identity, and it consumes nothing while
+// the head is not the dispatched event or the operation is not ready. A refused dispatch therefore
+// retains the event for a later admission instead of dropping it.
+function triggerRoute(id: string, kind: string, queue: string, eventClass: string, dispatch: string, condition: string, accepted: string, moduleName: string, functionName: string): string {
+  return "export class "+dispatch+" { event: number; }\n"
+    +"export function trigger_"+id+"(state: AppState, action: "+dispatch+"): AppState {\n"
+    +"  let queue: "+eventClass+"[] = state."+queue+";\n"
+    +"  if (queue.length === 0) { return state; }\n"
+    +"  let head: "+eventClass+" = queue[0];\n"
+    +"  if (action.event !== head.event) { return state; }\n"
+    +"  if (state.status_"+id+" === \"pending\" || !("+condition+")) { return state; }\n"
+    +"  let rest: "+eventClass+"[] = []; let position: number = 1;\n"
+    +"  while (position < queue.length) { rest[rest.length] = queue[position]; position = position + 1; }\n"
+    // The invocation this route admits records the window the host published for the target it calls, read
+    // at the admission instant the host published for this transition: a relative bound starts at
+    // admission and an absolute bound is the instant the host named, so the recorded deadline is in the
+    // reading domain the Session's own expiry lane reports. A target the host published no bound for
+    // records the absence of a deadline, and a later admission replaces the instant of the invocation it
+    // retries instead of leaving the previous one to refuse it forever.
+    +"  let admittedAt: number = composerSession.now();\n"
+    +"  let relative: number = composerSession.relativeMs("+literals.quote(moduleName)+","+literals.quote(functionName)+");\n"
+    +"  let absolute: number = composerSession.absolute("+literals.quote(moduleName)+","+literals.quote(functionName)+");\n"
+    +"  let expiresAt: number = 0;\n"
+    +"  if (relative >= 0) { expiresAt = admittedAt + relative; }\n"
+    +"  else if (absolute >= 0) { expiresAt = absolute; }\n"
+    +"  return recordExpiry("+accepted+", "+literals.quote(id)+", expiresAt, admittedAt);\n"
+    +"}\n"
+    +"// @ui-update\nexport function update_"+dispatch+"(state: AppState, action: "+dispatch+"): AppState {\n"
+    +"  let updated: AppState = recompute(trigger_"+id+"(state, action));\n"
+    +"  return bump(updated, state);\n"
+    +"}\n";
 }
 function initialStateSource(fields: Field[], initial: Record<string, string>): string {
   return "export function initialState(): AppState {\n  let capturedTime: number = embeddingClock.nowMillis();\n  let candidate: AppState = "+copyExpression(fields,initial,"")+";\n  return recompute(candidate);\n}\n";

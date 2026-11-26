@@ -2,6 +2,14 @@
 'use strict';
 const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('assert');
 const stage=path.resolve(process.argv[2]),base=path.join(stage,'js'),classpath=process.argv[3],sources={};
+// The settle deadline belongs to the harness that starts this process (`tests/tools/lane_bounds.py`
+// `COMPOSER_SETTLE`), above what one group costs on a loaded host: the validation group completed 371
+// of its 411 syntax calls inside the 40 s wall declared here and was then reported as an unsettled
+// composer, when the group simply needed the 44 s the loaded host takes. A deadline below the cost the
+// host really needs turns host contention into an unnamed failure, so the caller passes its declaration
+// ahead of the group it names.
+const settleSeconds=Number(process.argv[4]);
+if(!(settleSeconds>0))throw Error('the composer node group needs its declared settle bound before the group it names');
 // The fixture issues thousands of syntax-mechanism calls per run, so one long-lived transport process
 // replaces one JVM start per call over the same one-invocation entry.
 const transport=require('./fixtures/syntax-transport.js')(classpath);
@@ -18,16 +26,16 @@ const groups={
  entries:[['entriesNeedPart','entries'],['entriesEmptyPart','entriesEmpty'],['rowTapPart','rowTap'],['seedDefaults','seedDefaults'],['figureRejects','figureRejects'],['entryAggregateCases','entryAggregate']],
  presentation:[['presentationCases','presentation'],['foreignAction','foreign'],['numericTextCase','numericText']],
 };
-const group=process.argv[4]||'all';assert(group==='all'||groups[group],'unknown composer group');
+const group=process.argv[5]||'all';assert(group==='all'||groups[group],'unknown composer group');
 // One group settles only after every syntax call it issues has returned, and the number of calls is the
-// fixture's own: `validation` issues 318 of them. The settle deadline is the harness's declared bound
-// (`lane_bounds.COMPOSER_SETTLE`, passed in milliseconds) rather than a literal beside the harness, so a
-// group stops with its completed-call count under host contention instead of claiming a rule failed.
-const settleMs=Number(process.argv[5]);assert(Number.isFinite(settleMs)&&settleMs>0,'the composer settle bound is not declared');
+// fixture's own: `validation` issues 411 of them. The settle deadline is the harness's declared bound
+// (`lane_bounds.COMPOSER_SETTLE`, passed in seconds before the group it names) rather than a literal
+// beside the harness, so a group stops with its completed-call count under host contention instead of
+// claiming a rule failed.
 context.calls=group==='all'?Object.values(groups).flat():groups[group];
 vm.runInContext(`const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function('require','module','exports','process','console',source)]));const {entry}=dealLoad(factories,'checks.js');let finished=false,failure=null;for(const name of ['result','boolean','clock','clockInput','assembly','entries','entriesEmpty','clockNeed','written','operation','contextOperation','trigger','descriptor','rowTap','presentation','seedDefaults','figureRejects','entryAggregate','foreign','numericText'])globalThis[name]=null;
 (async()=>{for(const [name,target] of calls){const value=await entry[name].$f();if(target)globalThis[target]=value;}})().then(()=>finished=true).catch(error=>{failure={code:error.code,message:error.message};finished=true;});`,context);
-(async()=>{const deadline=Date.now()+settleMs;while(Date.now()<deadline){
+(async()=>{const deadline=Date.now()+settleSeconds*1000;while(Date.now()<deadline){
  await new Promise(resolve=>setImmediate(resolve));
  for(const request of JSON.parse(vm.runInContext('dealCapabilities.take()',context))){
   assert.equal(request.module,'embedding/fragment-syntax');
@@ -144,4 +152,4 @@ assert(entriesEmpty.source.deal.includes('export class f_parts_Entry_mark {')&&e
   const transportExit=await transport.close();if(transportExit!==0)throw Error('syntax transport exited '+transportExit);
   console.log('compiled composer: selected group '+group+' passed over '+transportCalls+' syntax calls');return;
  }
-}throw Error('Composer did not settle within '+(settleMs/1000)+'s; completed syntax calls: '+transportCalls);})().catch(error=>{transport.close().catch(()=>{});console.error(error);process.exitCode=1;});
+}throw Error('Composer did not settle within '+settleSeconds+'s; completed syntax calls: '+transportCalls);})().catch(error=>{transport.close().catch(()=>{});console.error(error);process.exitCode=1;});

@@ -439,6 +439,7 @@ export function emittedInvocation(part: EmittedPart): string {
     +"  let classification:string = session.classification("+literals.quote(part.moduleName)+","+literals.quote(part.functionName)+");\n"
     +"  let argument:number = state."+prefix+"argument;\n"
     +"  let trusted:boolean = session.clockTrusted();\n"
+    +"  let period:number = session.period();\n"
     +"  let now:number = session.now();\n"
     +"  let relative:number = session.relativeMs("+literals.quote(part.moduleName)+","+literals.quote(part.functionName)+");\n"
     +"  let absolute:number = session.absolute("+literals.quote(part.moduleName)+","+literals.quote(part.functionName)+");\n"
@@ -471,13 +472,16 @@ export function emittedInvocation(part: EmittedPart): string {
     +"  let liveGranted:boolean = session.granted("+literals.quote(part.moduleName)+");\n"
     +"  let liveNow:number = session.now();\n"
     +"  let liveTrusted:boolean = session.clockTrusted();\n"
+    +"  let livePeriod:number = session.period();\n"
     +"  let current:boolean = liveGranted && liveEpoch === epoch && liveLifetime === lifetime;\n"
     +"  if(!current){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"REVOKED\",\"Invocation no longer authorized\");}\n"
     // The reply is admitted only inside its window, under a clock that still decides, and only while
     // the host's reading has not retreated past the admission instant: as in expiry(), an undecidable
-    // window is treated as expired. The Session facts expose no pause fact, so a suspend the host does
-    // not report cannot be decided here; a host that reports an untrusted clock is refused.
-    +"  let unexpired:boolean = !windowed || (liveNow >= now && liveNow < expiresAt && liveTrusted);\n"
+    // window is treated as expired. A Session suspend and a resume each start a new clock period, so a
+    // relative window captured in another period is undecidable and admits nothing; an absolute instant
+    // is an instant and a pause does not reopen it. A host that reports an untrusted clock is refused.
+    +"  let sameWindow:boolean = relative < 0 || livePeriod === period;\n"
+    +"  let unexpired:boolean = !windowed || (liveNow >= now && liveNow < expiresAt && liveTrusted && sameWindow);\n"
     +"  if(!unexpired){return refused_"+part.id+"(state."+prefix+"sequence,argument,\"EXPIRED\",\"Invocation expired\");}\n"
     +"  return {accepted:true,sequence:state."+prefix+"sequence,argument:argument,ok:ok,value:value,code:code,outcome:outcome,message:message};\n"
     +"}";

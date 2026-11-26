@@ -335,7 +335,7 @@ globalThis.configureDealCapabilities = function(contracts) {
 // The live Session facts compiled admission re-reads before a send and before a reply. The host
 // configures them; the isolate never invents one. An unconfigured host answers the fail-closed
 // default, so an unclassified or ungranted call admits nothing instead of running on a placeholder.
-let dealSessionFacts = Object.freeze({lifetime:'',epochs:Object.freeze({}),granted:Object.freeze([]),classification:Object.freeze({}),confirmation:Object.freeze({}),clockTrusted:false,now:0,expiry:Object.freeze({})});
+let dealSessionFacts = Object.freeze({lifetime:'',epochs:Object.freeze({}),granted:Object.freeze([]),classification:Object.freeze({}),confirmation:Object.freeze({}),clockTrusted:false,period:0,now:0,expiry:Object.freeze({})});
 function freezeNumbers(value) {
   const map = Object.create(null);
   for (const key of Object.keys(value||{})) { const entry = value[key]; if (!Number.isInteger(entry)) throw Error('Session epoch must be an integer'); map[key] = entry; }
@@ -390,7 +390,11 @@ globalThis.configureDealSession = function(config) {
   const origin = typeof config.origin === 'string' ? config.origin : '';
   const requestAuthorizes = config.requestAuthorizes === true;
   const requestTarget = typeof config.requestTarget === 'string' ? config.requestTarget : '';
-  dealSessionFacts = Object.freeze({lifetime:lifetime,epochs:freezeNumbers(config.epochs),granted:Object.freeze(granted),classification:freezeMap(config.classification),confirmation:freezeMap(config.confirmation),origin:origin,requestAuthorizes:requestAuthorizes,requestTarget:requestTarget,clockTrusted:config.clockTrusted === true,now:now,expiry:freezeExpiry(windows)});
+  // The Session clock period is a host fact: a suspend and a resume each publish a new integral period,
+  // so a relative window captured under another one is undecidable. An omitted or malformed period is
+  // the host's constant first period, never a value the isolate invents.
+  const period = Number.isInteger(config.period) && config.period >= 0 ? config.period : 0;
+  dealSessionFacts = Object.freeze({lifetime:lifetime,epochs:freezeNumbers(config.epochs),granted:Object.freeze(granted),classification:freezeMap(config.classification),confirmation:freezeMap(config.confirmation),origin:origin,requestAuthorizes:requestAuthorizes,requestTarget:requestTarget,clockTrusted:config.clockTrusted === true,period:period,now:now,expiry:freezeExpiry(windows)});
   return '';
 };
 // A host that publishes no window answers -1 for both bounds, so the absence of a window stays
@@ -413,6 +417,7 @@ const dealSession = Object.freeze({
   requestAuthorizes: () => dealSessionFacts.requestAuthorizes,
   requestTarget: () => dealSessionFacts.requestTarget,
   clockTrusted: () => dealSessionFacts.clockTrusted,
+  period: () => dealSessionFacts.period,
   now: () => dealSessionFacts.now,
   relativeMs: (module, functionName) => sessionExpiry(module, functionName).relativeMs,
   absolute: (module, functionName) => sessionExpiry(module, functionName).absolute

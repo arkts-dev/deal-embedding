@@ -3,7 +3,7 @@
 // the persisted record is the compiled authoritative projection only. Restore runs the codec's
 // digest/tag checks, the compiled nominal allocation and the compiled recompute before Deal UI
 // publishes the first tree. No inference, provider call or effect runs for restore.
-globalThis.mountDealUi = function(factories, entryId, persistedState = null, appModule = null, prepare = null, clockDrivers = null, readingCarriers = null) {
+globalThis.mountDealUi = function(factories, entryId, persistedState = null, appModule = null, prepare = null, clockDrivers = null, readingCarriers = null, triggerRoutesIn = null, activationRoutesIn = null, expiryRouteIn = null) {
   const {entry, rt, checkpointSchema, app} = dealLoad(factories, entryId, appModule);
   const scheduleEffect = (invoke, complete, fail, exited) => {
     // Start immediately after commit; synchronous throws follow the same exit accounting. The host
@@ -140,17 +140,100 @@ globalThis.mountDealUi = function(factories, entryId, persistedState = null, app
     return found;
   };
   // The session only exposes state while no effect is in flight. The driver keeps the last readable
-  // state so a running clock still advances during a provider call; a press intent recorded in that
-  // window is admitted as soon as the state is readable again, at the reading prepared at admission.
-  const clockState = () => { try { return JSON.parse(session.state()); } catch (_) { return null; } };
-  let cached = clockState();
+  // state, and the exact text it read, so a running clock still advances during a provider call and a
+  // press intent recorded in that window is admitted as soon as the state is readable again, at the
+  // reading prepared at admission. The text is the business state's own identity: a driver uses it to
+  // tell a transition that really changed the state from a lane tick that changed nothing.
+  const clockText = () => { try { const text = session.state(); return typeof text === 'string' ? text : null; } catch (_) { return null; } };
+  const parsed = text => { try { return JSON.parse(text); } catch (_) { return null; } };
+  let cachedText = clockText();
+  let cached = cachedText === null ? null : parsed(cachedText);
   // Always attempt a fresh read: state is unavailable while an effect is in flight, and a press
   // recorded in that window is admitted by the next pump that can read it. `checkPress` documents the
   // dispatch path (the forced pump) but never withholds a refresh.
   const stateNow = checkPress => {
-    const fresh = clockState();
-    if (fresh !== null) cached = fresh;
+    const fresh = clockText();
+    if (fresh !== null && fresh !== cachedText) { cachedText = fresh; cached = parsed(fresh); }
     return cached;
+  };
+  // The issued trigger routes: one ordered queue per checked clock-end or entry-added slot, the issued
+  // carrier whose bound action consumes its head, and the operation whose admission records the captured
+  // event. The activation routes are the authorized initial reads, and the expiry route is the
+  // independently scheduled deadline transition. All three are compiler metadata: a rendered node that
+  // does not carry the issued identity is never dispatched.
+  const triggerRoutes = Array.isArray(triggerRoutesIn) ? triggerRoutesIn : [];
+  const activationRoutes = Array.isArray(activationRoutesIn) ? activationRoutesIn : [];
+  const expiryRoute = expiryRouteIn !== null && typeof expiryRouteIn === 'object' ? expiryRouteIn : null;
+  const carrierSlot = identity => {
+    const slot = actionSlots()[identity];
+    return Number.isInteger(slot) && slot >= 0 ? slot : -1;
+  };
+  // An authorized initial read is one admitted action: the compiled reducer clears the authoritative
+  // activation-needed marker before its effect starts, so a queued duplicate dispatch is a guarded no-op
+  // and no later tick repeats the read. A dispatch the state cannot accept leaves the marker for the next
+  // driver tick instead of losing the read.
+  globalThis.dealActivate = function(monotone) {
+    if (activationRoutes.length === 0) return '';
+    const state = stateNow(false);
+    if (state === null) return '';
+    for (const route of activationRoutes) {
+      if (state[route.field] !== true) continue;
+      const slot = carrierSlot(route.carrier);
+      if (slot < 0) continue;
+      try { session.dispatch(slot, String(monotone)); } catch (_) {}
+    }
+    return '';
+  };
+  // Trigger queues drain head-first. Each dispatch carries the captured event identity of the head and the
+  // compiled admission consumes it only when it admits that event; a refused admission retains the event,
+  // so the driver stops at the head it could not consume rather than skipping past it. A head the state
+  // did not admit at its current business state is not dispatched again: nothing changed, so a second
+  // dispatch would commit a revision that carries no business change. It waits for the state to change
+  // again, which is exactly when an unready argument or a pending operation becomes admissible.
+  const refusedHead = Object.create(null);
+  globalThis.dealTriggers = function() {
+    if (triggerRoutes.length === 0) return '';
+    for (const route of triggerRoutes) {
+      const slot = carrierSlot(route.carrier);
+      for (let guard = 0; guard < 64; guard++) {
+        const state = stateNow(false);
+        if (state === null) break;
+        const queue = state[route.queue];
+        if (!Array.isArray(queue) || queue.length === 0) { delete refusedHead[route.queue]; break; }
+        const head = queue[0];
+        if (head === null || typeof head !== 'object' || typeof head.event !== 'number' || !Number.isFinite(head.event)) break;
+        if (slot < 0) break;
+        const refused = refusedHead[route.queue];
+        if (refused !== undefined && refused.event === head.event && refused.state === cachedText) break;
+        session.dispatch(slot, String(head.event));
+        const after = stateNow(false);
+        if (after === null) break;
+        const remaining = after[route.queue];
+        if (!Array.isArray(remaining) || remaining.length >= queue.length) { refusedHead[route.queue] = {event: head.event, state: cachedText}; break; }
+        delete refusedHead[route.queue];
+      }
+    }
+    return '';
+  };
+  // The expiry transition is scheduled by the Session's own lane and is dispatched only for a deadline
+  // the reading that lane took has reached, so it progresses while detached and costs no revision, no
+  // recompute and no render while every recorded deadline is still ahead. An undecidable reading is not
+  // the absence of a deadline: the compiled transition expires an operation that has one.
+  globalThis.dealExpire = function(monotone) {
+    if (expiryRoute === null || !Array.isArray(expiryRoute.deadlines) || expiryRoute.deadlines.length === 0) return '';
+    const state = stateNow(false);
+    if (state === null) return '';
+    let due = false;
+    for (const pair of expiryRoute.deadlines) {
+      const at = state[pair.expires];
+      if (typeof at !== 'number' || at === 0 || state[pair.expired] !== false) continue;
+      if (!Number.isFinite(monotone) || monotone >= at) due = true;
+    }
+    if (!due) return '';
+    const slot = carrierSlot(expiryRoute.carrier);
+    if (slot < 0) return '';
+    session.dispatch(slot, String(monotone));
+    return '';
   };
   globalThis.dealClockPump = function(monotone, wall, checkPress) {
     if (drivers.length === 0) return '';

@@ -9,14 +9,22 @@ import sys
 # its own process calls and `tests/check.py` derives its outer lane bound from the same declaration, so
 # a lane bound always contains each stage the harness declares for itself and the harness names the
 # stage that overran. A bound is preparation only: no assertion result is cached, skipped or accepted.
+# The assertion bound contains the same assertion on a host that is already busy: the composer's node
+# groups measured 34-45 s each on the loaded gate host against the 45 s default they used to inherit, so
+# the default is declared above twice that measurement instead of below it. A stage that drives more than
+# one assertion tree of its own declares a wider stage bound instead: the composer's node groups pass
+# `lane_bounds.COMPOSER_NODE`, which contains the settle deadline those groups declare for themselves.
 PIN_SECONDS = 10
-JAVA_FIXTURE_SECONDS = 30
-DEAL_FIXTURE_SECONDS = 120
+# A fixture compile contains the same compile on a busy host: the catalogue fixture's cold DEAL compile
+# measured 64 s at 2.4x host contention, and the Java fixture compile beside it is the same order of
+# javac work over the packaged library.
+JAVA_FIXTURE_SECONDS = 90
+DEAL_FIXTURE_SECONDS = 300
 # One assertion stage is one process tree that compiles and drives a fixture: a composer node group
 # measured 21 s on the reference host and 41-45 s on a host running four gates at once, so the shared
 # default contains twice the loaded cost. A runaway stage is still stopped, with its name, well inside
 # the lane bound every harness derives from this declaration.
-ASSERTION_SECONDS = 90
+ASSERTION_SECONDS = 120
 
 
 def compile_artifact(root, name, inputs, outputs, command, *, timeout=JAVA_FIXTURE_SECONDS):

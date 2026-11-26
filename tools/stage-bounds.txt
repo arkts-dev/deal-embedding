@@ -5,10 +5,16 @@
 # declaration, so a stage's declared bound is always the one that stops it first. A bound is
 # preparation only: no bound accepts, skips or caches an assertion result.
 #
+# Each bound has to contain the same stage on a host that is already busy: the gate host measured the
+# Kotlin stage at 295 s when this file declared 300 s, so a bound below the loaded cost stops the gate
+# inside a stage instead of reporting an assertion, exactly as the shared default it replaced did. The
+# measured column is the idle-host cost of the same cold stage, and every bound below stays above twice
+# it.
+#
 # name            seconds  measured coldest (s)
 java_base         120      25
 mechanisms        60       5.5
-kotlin            300      142.6
+kotlin            600      142.6
 generation        150      49
 discovery         60       6.7
 assistance_policy 60       6.1
