@@ -1,0 +1,49 @@
+import * as revisions from "./source-revisions";
+import * as checker from "./isolated-check";
+import * as s from "./construction-schema";
+
+// One commit route for every rebuilt source pair (spec v0.8 "Source edits" and "Structural
+// editing"): the rebuild replaces the accepted pair through the shared atomic edit mechanism, is
+// compiled and checked with effects discarded, and only then becomes the accepted revision. A
+// rejection retains the accepted source, the issued revision and the diagnostics.
+export class Committed { accepted: boolean; revision: revisions.Revision; candidateId: string; diagnostics: string; checks: number; }
+class WireEdit { file: string; search: string; replace: string; }
+class EditRequest { revision: string; digest: string; edits: WireEdit[]; }
+// Structural edits and live refinement are enabled only while the deterministic projection still
+// matches the accepted canonical bytes; an incompatible text edit invalidates the record instead of
+// editing stale state. The commit route also refuses a canonical pair that is not the accepted
+// source, so two equal copies of some other bytes cannot stand in for the accepted bytes.
+export function editable(projection: revisions.Source, canonical: revisions.Source): boolean {
+  return projection.deal === canonical.deal && projection.dealui === canonical.dealui;
+}
+// The rebuilt pair replaces the accepted pair in one atomic edit through the issued edit mechanism,
+// so every search is validated against the accepted bytes and the whole pair applies all or none.
+function request(current: revisions.Revision, rebuilt: revisions.Source): string {
+  let edits: WireEdit[] = [
+    {file:"deal",search:current.source.deal,replace:rebuilt.deal},
+    {file:"dealui",search:current.source.dealui,replace:rebuilt.dealui}];
+  const value: EditRequest = {revision:current.revision,digest:current.digest,edits:edits};
+  return JSON.stringify(value) as string;
+}
+// `checks` is the number of candidate checks this route performed: zero for a refusal that never
+// reached the checking mechanism, one for a checked rebuild whatever its verdict. The caller counts
+// it, because Experience.attempts counts candidate checks including failures.
+export async function commit(current: revisions.Revision, issued: revisions.Revision, rebuilt: revisions.Source, metadata: string, projection: revisions.Source, canonical: revisions.Source, restored: string): Promise<Committed> {
+  if (!editable(projection,canonical)) { return {accepted:false,revision:current,candidateId:"",diagnostics:"Record invalidated by an incompatible text edit",checks:0}; }
+  // The canonical bytes are the accepted pair: a projection compared with anything else - a stale
+  // copy, or the same pair twice - would admit a record the accepted bytes never matched.
+  if (canonical.deal !== current.source.deal || canonical.dealui !== current.source.dealui) { return {accepted:false,revision:current,candidateId:"",diagnostics:"Canonical bytes differ from the accepted source",checks:0}; }
+  // The record was issued from one accepted revision: a source replaced since then invalidates it
+  // instead of letting a structural change rebuild stale selections.
+  if (issued.revision !== current.revision || issued.digest !== current.digest) { return {accepted:false,revision:current,candidateId:"",diagnostics:"Record invalidated: the accepted source revision changed",checks:0}; }
+  let applied: revisions.Applied = await revisions.apply(current,request(current,rebuilt));
+  if (!applied.accepted) { return {accepted:false,revision:current,candidateId:"",diagnostics:"Rebuild rejected: "+applied.diagnostics,checks:0}; }
+  // The rebuilt pair is checked exactly as a text-repaired pair is: production compilation, manifest
+  // admission, the isolated startup, the issued handlers, renderer validity and the scene check, with
+  // effects discarded. Only a checked candidate becomes the accepted revision, and its identity is
+  // carried so the caller mounts the artifact that passed instead of compiling the bytes again.
+  let checked: checker.Result = await checker.run(applied.current.source.deal,applied.current.source.dealui,metadata,false,restored);
+  if (!(checked.accepted as boolean)) { return {accepted:false,revision:current,candidateId:"",diagnostics:checked.diagnostics as string,checks:1}; }
+  return {accepted:true,revision:applied.current,candidateId:checked.candidateId,diagnostics:"",checks:1};
+}
+export function main(): void { return; }

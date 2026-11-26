@@ -1,0 +1,32 @@
+// Production framework store mechanism: the declared asynchronous surface of `host/storage` as an
+// emitted application reaches it. No copy of the host routing lives in the test.
+import * as storage from "host/storage";
+
+export class Summary { absent: boolean; roundTrip: string; removed: boolean; gone: boolean; removedAgain: boolean; failure: string; }
+
+export async function roundTrip(): Promise<string> {
+  // An absent key is the declared null, never an empty record.
+  let absent: string | null = await storage.load("draft");
+  let body: string = "line one 😀 \ud83d inline\ntrailing  ";
+  await storage.save("draft", body);
+  let held: string | null = await storage.load("draft");
+  let removed: boolean = await storage.remove("draft");
+  let gone: string | null = await storage.load("draft");
+  let removedAgain: boolean = await storage.remove("draft");
+  // A host refusal reaches the application as a classified error, never as a silent success.
+  let failure: string = "";
+  try { await storage.save("boom", "value"); } catch (unknownError) { let error: Error = unknownError as Error; failure = error.name+":"+error.message; }
+  const result: Summary = {absent:absent === null,roundTrip:held === null ? "" : held,removed:removed,gone:gone === null,removedAgain:removedAgain,failure:failure};
+  return JSON.stringify(result) as string;
+}
+// A retained record, so a key written by one loaded context can be read from another.
+export async function hold(key: string, value: string): Promise<null> {
+  await storage.save(key,value);
+  return null;
+}
+export async function read(key: string): Promise<string> {
+  let value: string | null = await storage.load(key);
+  if (value === null) { return ""; }
+  return value;
+}
+export function main(): void { return; }

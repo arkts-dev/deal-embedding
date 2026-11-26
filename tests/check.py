@@ -57,6 +57,10 @@ def lane_bound(lane):
         return lane_bounds.catalogue_lane(lane.split(':', 1)[1])
     if lane == 'construction':
         return lane_bounds.construction_lane()
+    if lane in ('structure', 'storage-host'):
+        # The two edit/store lanes compile a fixture and then drive one node group, exactly as the
+        # construction lane does, so their bound is that lane's declaration, never a literal here.
+        return lane_bounds.fixture_lane(lane_bounds.CONTRACT_NODE)
     if lane == 'interaction':
         return lane_bounds.interaction_lane()
     if lane == 'surface':
@@ -93,6 +97,8 @@ LANES = {
     'harness': ['python3','tests/tools/test-host-check.py'],
     'cache': ['python3','tests/tools/test-build-cache.py'],
     'construction': ['python3','tests/tools/test-construction-contracts.py'],
+    'structure': ['python3','tests/tools/test-structure-contracts.py'],
+    'storage-host': ['python3','tests/tools/test-storage-host.py'],
     'interaction': ['python3','tests/tools/test-interaction-contracts.py'],
     'surface': ['python3','tests/tools/test-surface-script.py'],
     'catalogue': ['python3','tests/tools/test-catalogue.py'],

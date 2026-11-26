@@ -466,8 +466,11 @@ function inspect(manifest: Record<string, unknown>, fresh: boolean): string {
   }
   return "";
 }
-export async function run(deal: string, dealui: string, composition: string, fresh: boolean): Promise<Result> {
-  let compiled: Record<string, unknown> = await host.compile(deal,dealui,composition,fresh);
+// `restored` is the copied authoritative record a live refinement overlays on the replacement's
+// initial persisted projection: the candidate's first tree is then validated against the state it
+// will actually run with, never from fresh initializers alone. An empty value restores nothing.
+export async function run(deal: string, dealui: string, composition: string, fresh: boolean, restored: string): Promise<Result> {
+  let compiled: Record<string, unknown> = await host.compile(deal,dealui,composition,fresh,restored);
   if (!(compiled.accepted as boolean)) { return {accepted:false,candidateId:"",diagnostics:compiled.diagnostics as string}; }
   let id: string = compiled.candidateId as string;
   // The import surface and pack identity are one policy generation also applies before emission; the

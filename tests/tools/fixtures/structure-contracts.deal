@@ -1,0 +1,480 @@
+// Production structural-edit and live-refinement policy: revision-bound rebuilds, the composition
+// record's structural rules, and the state-preserving schema copy. Only construction identity, digest
+// and the checking mechanisms are host boundaries; every decision is the compiled policy.
+import * as screens from "./screen";
+import * as structural from "./structural-edit";
+import * as refinement from "./refinement";
+import * as sourceCommit from "./source-commit";
+import * as revisions from "./source-revisions";
+import * as s from "./construction-schema";
+import * as editing from "./editing";
+import * as composer from "./composer";
+import * as bindings from "./bindings";
+import * as plans from "./plan";
+
+function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
+function fragment(covers: string[], ports: screens.Port[]): screens.Fragment {
+  return {declarations:"",fields:[],updates:[],effects:[],helpers:"",view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Text(text: \"structure\") }",options:[],content:[],ports:ports,holes:[],covers:covers,owns:[]};
+}
+function publisher(name: string): screens.Port { return {name:name,type:"number",direction:"publish",getter:"value",optional:false}; }
+function reader(name: string): screens.Port { return {name:name,type:"number",direction:"read",getter:"value",optional:false}; }
+function instance(id: string, kind: string, origin: string, covers: string[], ports: screens.Port[]): screens.Instance {
+  // A catalogue or part instance is issued with the definition it was built from: the composition
+  // decoder refuses one that cannot prove its fragment implements the issued declaration.
+  let built: screens.Fragment = fragment(covers,ports);
+  let entry: screens.Instance = {id:id,kind:kind,origin:origin,parameters:{},fragment:built,bodies:{}};
+  if (origin === "catalogue" || origin === "part") { entry.definition = screens.issueDefinition(built); }
+  return entry;
+}
+function slot(need: string, status: string, filled: string | null): screens.Slot {
+  return {id:need,need:need,reads:[],writes:[],provider:false,allowedKinds:[],valueType:"",status:status,instance:filled,reason:""};
+}
+function record(layoutKind: string, slots: screens.Slot[], instances: screens.Instance[], connections: screens.Connection[]): screens.Composition {
+  return {screen:{title:"Structure",target:"screen",layout:{kind:layoutKind,positions:[]},slots:slots,instances:instances},bindings:{},actions:{},connections:connections};
+}
+// A chat target with two placed fragments and one open need a structural addition fills: the chat root
+// labels its tabs, so an edit of this record rebuilds the workspace the user reads.
+function chatRecord(): screens.Composition {
+  return {screen:{title:"Chat",target:"chat",layout:{kind:"stack",positions:[]},slots:[slot("facts","filled","first"),slot("extra","filled","second"),slot("advice","open",null)],instances:[instance("first","note","catalogue",["facts"],[]),instance("second","spotlight","catalogue",["extra"],[])]},bindings:{},actions:{},connections:[]};
+}
+// The plan the chat record was issued from: each placed fragment implements one need, and the label of
+// its tab is that need's own wording.
+function chatPlan(): plans.Plan {
+  return {title:"Chat",eyebrow:"",subtitle:"",inputs:[],constants:[],requirements:[],needs:[{id:"facts",type:"content",words:"Show the disclosed facts",quote:"",reads:[],required:true,spec:{}},{id:"extra",type:"content",words:"Highlight the disclosed message",quote:"",reads:[],required:true,spec:{}},{id:"advice",type:"content",words:"Offer the next step",quote:"",reads:[],required:true,spec:{}}],questions:[]};
+}
+function requested(op: string, target: string, kind: string): structural.Request { return {op:op,target:target,kind:kind}; }
+function slotOf(composition: screens.Composition, need: string): screens.Slot { for (let value of composition.screen.slots) { if (value.need === need) { return value; } } s.reject("Missing slot"); throw {name:"CONSTRUCTION_SCHEMA",message:"Missing slot"}; }
+function ids(composition: screens.Composition): string[] { let result: string[] = []; for (let value of composition.screen.instances) { result[result.length] = value.id; } return result; }
+function catalogue(composition: screens.Composition): number { let count: number = 0; for (let value of composition.screen.instances) { if (value.origin === "catalogue") { count = count+1; } } return count; }
+// A composition that already implements two needs: a record-log publisher and a summary reader that
+// resolves it through an explicit connection.
+function wired(): screens.Composition {
+  let ledger: screens.Instance = instance("ledger","record_log","catalogue",["spend"],[publisher("total")]);
+  let summary: screens.Instance = instance("summary","number_strip","catalogue",["summary"],[reader("total")]);
+  return record("stack",[slot("spend","filled","ledger"),slot("summary","filled","summary"),slot("advice","open",null)],[ledger,summary],[{readerInstance:"summary",readerPort:"total",writerInstance:"ledger",writerPort:"total"}]);
+}
+function six(): screens.Composition {
+  let base: screens.Composition = record("stack",[slot("first","filled","one"),slot("advice","open",null)], [instance("one","checklist","catalogue",["first"],[])], []);
+  let kinds: string[] = ["metrics","note","rating","spotlight","key_facts"];
+  let index: number = 0;
+  for (let kind of kinds) {
+    let id: string = "extra_"+String(index); index = index+1;
+    base.screen.instances[base.screen.instances.length] = instance(id,kind,"catalogue",[],[]);
+    base.screen.slots[base.screen.slots.length] = slot("need_"+id,"filled",id);
+  }
+  return base;
+}
+export async function structuralEdits(): Promise<null> {
+  let base: screens.Composition = wired();
+  // The record may be structurally edited only while its deterministic projection still equals the
+  // accepted canonical bytes.
+  let canonical: revisions.Source = {deal:"accepted deal bytes",dealui:"accepted dealui bytes"};
+  insist(sourceCommit.editable({deal:"accepted deal bytes",dealui:"accepted dealui bytes"},canonical),"an unchanged projection was not editable");
+  insist(!sourceCommit.editable({deal:"accepted deal bytes\n",dealui:"accepted dealui bytes"},canonical),"an incompatible text edit kept the record editable");
+  // Request decoding: the closed record, the operation set and the plan identifier syntax.
+  insist(structural.decode("{\"op\":\"remove\",\"target\":\"ledger\"}").op === "remove","a structural request did not decode");
+  let unknown: boolean = false;
+  try { structural.decode("{\"op\":\"rotate\",\"target\":\"ledger\"}"); } catch (error) { unknown = true; }
+  insist(unknown,"an unissued structural operation was admitted");
+  unknown = false;
+  try { structural.decode("{\"op\":\"remove\",\"target\":\"ledger\",\"extra\":1}"); } catch (error) { unknown = true; }
+  insist(unknown,"a structural request with an unknown field was admitted");
+  unknown = false;
+  try { structural.decode("null"); } catch (error) { unknown = true; }
+  insist(unknown,"a null structural request was admitted");
+  // A hand-built request never falls through to another operation's branch.
+  let unissued: structural.Outcome = structural.apply(base,{op:"rotate",target:"ledger",kind:""},null);
+  insist(!unissued.accepted && unissued.reason.includes("Unknown structural operation"),"an unissued operation reordered the record");
+  // Add: the six-catalogue-instance bound counts catalogue instances only. The composition below has
+  // six of them, so a seventh addition is refused with its bound while parts, custom and notices stay
+  // outside the count.
+  let full: screens.Composition = six();
+  let addition: screens.Instance = instance("added","data_table","catalogue",["advice"],[]);
+  let outcome: structural.Outcome = structural.apply(full,requested("add","advice","data_table"),addition);
+  insist(!outcome.accepted && outcome.reason.includes("six catalogue instances"),"the catalogue instance bound was not refused");
+  insist(outcome.composition === full,"a refused addition replaced the record");
+  insist(catalogue(full) === 6,"the fixture did not hold six catalogue instances");
+  let part: screens.Instance = instance("parts","parts","part",[],[]);
+  full.screen.instances[full.screen.instances.length] = part;
+  full.screen.instances[full.screen.instances.length] = instance("custom","custom","custom",[],[]);
+  full.screen.instances[full.screen.instances.length] = instance("notice","notice","notice",[],[]);
+  insist(catalogue(full) === 6,"non-catalogue instances entered the catalogue count");
+  outcome = structural.apply(full,requested("add","advice","data_table"),addition);
+  insist(!outcome.accepted && outcome.reason.includes("six catalogue instances"),"a part, custom or notice consumed a catalogue slot");
+  // The positive half of the same rule: five catalogue instances beside parts, custom sections and
+  // notices still admit a sixth catalogue section.
+  let five: screens.Composition = six();
+  five.screen.instances = [];
+  five.screen.slots = [slot("first","filled","one"),slot("advice","open",null)];
+  five.screen.instances[0] = instance("one","checklist","catalogue",["first"],[]);
+  let extraKinds: string[] = ["metrics","note","rating","spotlight"];
+  let extraIndex: number = 0;
+  for (let kind of extraKinds) {
+    let id: string = "kept_"+String(extraIndex); extraIndex = extraIndex+1;
+    five.screen.instances[five.screen.instances.length] = instance(id,kind,"catalogue",[],[]);
+  }
+  five.screen.instances[five.screen.instances.length] = part;
+  five.screen.instances[five.screen.instances.length] = instance("custom","custom","custom",[],[]);
+  five.screen.instances[five.screen.instances.length] = instance("notice","notice","notice",[],[]);
+  outcome = structural.apply(five,requested("add","advice","data_table"),addition);
+  insist(outcome.accepted,"a part, custom section or notice consumed a catalogue capacity: "+outcome.reason);
+  insist(catalogue(outcome.composition) === 6,"an accepted addition did not become the sixth catalogue instance");
+  // Duplicate catalogue kinds and a composer-part target are refused.
+  let grown: screens.Composition = base;
+  outcome = structural.apply(grown,requested("add","advice","record_log"),instance("second_log","record_log","catalogue",["advice"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Duplicate catalogue kind"),"a duplicate catalogue kind was added");
+  // An addition is the fragment the catalogue issued: without one, and with one whose identity the
+  // record already holds, nothing is added.
+  outcome = structural.apply(base,requested("add","advice","note"),null);
+  insist(!outcome.accepted && outcome.reason.includes("requires an issued fragment"),"an addition without an issued fragment was admitted");
+  outcome = structural.apply(base,requested("add","advice","note"),instance("ledger","note","catalogue",["advice"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Duplicate instance identity"),"a fragment whose identity the record already holds was added");
+  let partTarget: screens.Composition = record("stack",[slot("spend","filled","parts")],[instance("parts","parts","part",["spend"],[])],[]);
+  outcome = structural.apply(partTarget,requested("add","spend","note"),instance("memo","note","catalogue",["spend"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Composer-part target"),"a composer part was a structural add target");
+  outcome = structural.apply(partTarget,requested("move-to-top","parts",""),null);
+  insist(!outcome.accepted && outcome.reason.includes("Composer-part target"),"a composer part was moved structurally");
+  outcome = structural.apply(partTarget,requested("move-to-bottom","parts",""),null);
+  insist(!outcome.accepted && outcome.reason.includes("Composer-part target"),"a composer part was moved to the bottom");
+  outcome = structural.apply(partTarget,requested("replace","parts","note"),instance("memo","note","catalogue",["spend"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Composer-part target"),"a composer part was replaced structurally");
+  // A target no slot issues, a need another fragment already implements, a selected kind outside the
+  // catalogue, and an addition that is not the issued catalogue fragment are refusals, not no-ops.
+  outcome = structural.apply(base,requested("add","absent","note"),instance("memo","note","catalogue",["absent"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Unissued structural target"),"an addition targeted an unissued need");
+  outcome = structural.apply(base,requested("remove","absent",""),null);
+  insist(!outcome.accepted && outcome.reason.includes("Unissued structural target"),"a removal targeted an unissued fragment");
+  outcome = structural.apply(base,requested("add","spend","note"),instance("memo","note","catalogue",["spend"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Target need is already implemented"),"an addition targeted a filled need");
+  outcome = structural.apply(base,requested("add","advice","mystery"),instance("memo","mystery","catalogue",["advice"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Not a catalogue kind"),"an addition selected a non-catalogue kind");
+  outcome = structural.apply(base,requested("add","advice","note"),instance("memo","note","part",["advice"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Not an issued catalogue instance"),"an addition used a fragment the catalogue did not issue");
+  outcome = structural.apply(base,requested("add","advice","note"),instance("memo","record_log","catalogue",["advice"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Issued fragment kind differs"),"an addition used a fragment of another kind");
+  // A successful add appends the issued catalogue fragment and fills the open slot it covers, and
+  // declares the kind the new instance imposes on that slot.
+  outcome = structural.apply(base,requested("add","advice","note"),instance("memo","note","catalogue",["advice"],[]));
+  insist(outcome.accepted,"an eligible catalogue addition was refused: "+outcome.reason);
+  insist(ids(outcome.composition).includes("memo"),"an accepted addition is absent from the record");
+  insist(slotOf(outcome.composition,"advice").status === "filled" && (slotOf(outcome.composition,"advice").instance as string) === "memo","an accepted addition did not fill its slot");
+  insist(slotOf(outcome.composition,"advice").allowedKinds.length === 1 && slotOf(outcome.composition,"advice").allowedKinds[0] === "note","an accepted addition left the slot carrying another kind");
+  insist(!ids(base).includes("memo") && slotOf(base,"advice").status === "open","an accepted addition mutated the original record");
+  // A declared position carries a kind list and a capacity: a new fragment cannot be placed there
+  // without one, and it is never silently degraded to a stack.
+  let positioned: screens.Composition = record("positions",[slot("only","open",null)],[instance("first","note","catalogue",["only"],[])],[]);
+  positioned.screen.layout.positions = [{id:"top",allowedKinds:["note"],minimum:0,maximum:2}];
+  positioned.screen.instances[0].position = "top";
+  outcome = structural.apply(positioned,requested("add","only","note"),instance("second","note","catalogue",["only"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("stack layout"),"a structural addition was admitted in a positions layout");
+  // An addition whose fragment reads a published port is connected to the first exact publisher in
+  // screen order; without one the addition is refused instead of a record assembly cannot wire.
+  let secondReader: screens.Instance = instance("progress","progress_line","catalogue",["advice"],[reader("total")]);
+  outcome = structural.apply(base,requested("add","advice","progress_line"),secondReader);
+  insist(outcome.accepted,"an addition with an exact publisher was refused: "+outcome.reason);
+  insist(outcome.composition.connections.length === 2 && outcome.composition.connections[1].readerInstance === "progress" && outcome.composition.connections[1].writerInstance === "ledger","an addition's reader port was not connected to the exact publisher");
+  // Two publishers: the first in screen order owns the connection, never the later one.
+  let order: screens.Composition = record("stack",[slot("advice","open",null)],[instance("first","record_log","catalogue",[],[publisher("total")]),instance("second_pub","record_log","custom",[],[publisher("total")])],[]);
+  outcome = structural.apply(order,requested("add","advice","progress_line"),instance("progress","progress_line","catalogue",["advice"],[reader("total")]));
+  insist(outcome.accepted,"an addition with two eligible publishers was refused: "+outcome.reason);
+  insist(outcome.composition.connections[0].writerInstance === "first","an addition resolved its reader port to a later publisher");
+  let orphan: screens.Instance = instance("detail","detail_view","catalogue",["advice"],[reader("throughput")]);
+  outcome = structural.apply(base,requested("add","advice","detail_view"),orphan);
+  insist(!outcome.accepted && outcome.reason.includes("no publisher for its read port"),"an addition with an unserved reader port was admitted");
+  // The addition implements the selected need and covers only issued needs.
+  outcome = structural.apply(base,requested("add","advice","note"),instance("memo","note","catalogue",["spend"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("does not implement the target need"),"an addition for another need was admitted");
+  outcome = structural.apply(base,requested("add","advice","note"),instance("memo","note","catalogue",["advice","unissued"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("covers an unissued need"),"an addition covering an unissued need was admitted");
+  // Remove: the last fragment and a still-read publisher both reject; an unread fragment removes and
+  // re-opens the needs it filled, dropping only its own reader connections.
+  let single: screens.Composition = record("stack",[slot("only","filled","lonely")],[instance("lonely","note","catalogue",["only"],[])],[]);
+  outcome = structural.apply(single,requested("remove","lonely",""),null);
+  insist(!outcome.accepted && outcome.reason.includes("Last-fragment removal"),"the last fragment was removed");
+  // A notice is not a fragment. One catalogue fragment beside the notices a construction appends for
+  // uncovered needs is a normal record: removing that fragment is still the last-fragment removal,
+  // while removing an advisory notice is admitted and leaves the fragment in place.
+  let advised: screens.Composition = record("stack",[slot("only","filled","lonely")],[instance("lonely","note","catalogue",["only"],[]),instance("notice_spend","notice","notice",[],[])],[]);
+  outcome = structural.apply(advised,requested("remove","lonely",""),null);
+  insist(!outcome.accepted && outcome.reason.includes("Last-fragment removal"),"a notice was counted as a fragment, so the last fragment was removed");
+  insist(ids(advised).includes("lonely"),"a refused last-fragment removal changed the record");
+  outcome = structural.apply(advised,requested("remove","notice_spend",""),null);
+  insist(outcome.accepted,"an advisory notice could not be removed: "+outcome.reason);
+  insist(ids(outcome.composition).includes("lonely") && !ids(outcome.composition).includes("notice_spend"),"removing a notice removed a fragment or kept the notice");
+  outcome = structural.apply(base,requested("remove","ledger",""),null);
+  insist(!outcome.accepted && outcome.reason.includes("Still-read publisher"),"a still-read publisher was removed");
+  let trimmed: screens.Composition = wired();
+  outcome = structural.apply(trimmed,requested("remove","summary",""),null);
+  insist(outcome.accepted,"an unread fragment could not be removed: "+outcome.reason);
+  insist(!ids(outcome.composition).includes("summary"),"a removed fragment remained in the record");
+  insist((slotOf(outcome.composition,"summary").instance === null) && slotOf(outcome.composition,"summary").status === "open" && slotOf(outcome.composition,"summary").reason.includes("summary"),"a removal did not open the needs it covered");
+  insist(outcome.composition.connections.length === 0,"a removal retained the removed reader's connection");
+  insist(ids(trimmed).includes("summary"),"a removal mutated the original record");
+  // Replace: the still-read publisher rule applies, a duplicate catalogue kind rejects, and an eligible
+  // replacement keeps the fragment's position in the record.
+  outcome = structural.apply(base,requested("replace","ledger","note"),instance("memo","note","catalogue",["spend"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Still-read publisher"),"a still-read publisher was replaced");
+  let redundant: screens.Composition = record("stack",[slot("spend","filled","ledger"),slot("advice","filled","note")],[instance("ledger","record_log","catalogue",["spend"],[]),instance("note","note","catalogue",["advice"],[])],[]);
+  redundant.screen.slots[1].allowedKinds = ["note"];
+  outcome = structural.apply(redundant,requested("replace","note","record_log"),instance("second_log","record_log","catalogue",["advice"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Duplicate catalogue kind"),"a replacement duplicated a catalogue kind");
+  // An accepted replacement declares its own kind on the slot it re-fills and keeps its position.
+  outcome = structural.apply(trimmed,requested("replace","summary","note"),instance("memo","note","catalogue",["summary"],[]));
+  insist(outcome.accepted,"an eligible replacement was refused: "+outcome.reason);
+  insist(ids(outcome.composition)[1] === "memo","a replacement changed the fragment's position");
+  insist((slotOf(outcome.composition,"summary").instance as string) === "memo","a replacement did not fill the replaced need");
+  insist(slotOf(outcome.composition,"summary").allowedKinds.length === 1 && slotOf(outcome.composition,"summary").allowedKinds[0] === "note","a replacement left the slot claiming the replaced kind");
+  // A replacement resolves its reader ports against the remaining record: the fragment it replaces
+  // is gone before a connection is issued, so it can never be wired to the instance it removed.
+  let paired: screens.Composition = record("stack",[slot("list","filled","master")],[instance("master","master_list","catalogue",["list"],[publisher("items"),publisher("selected")])],[]);
+  let replacedReader: screens.Instance = instance("detail","detail_view","catalogue",["list"],[{name:"items",type:"number",direction:"read",getter:"items",optional:false},{name:"selected",type:"number",direction:"read",getter:"selected",optional:false}]);
+  outcome = structural.apply(paired,requested("replace","master","detail_view"),replacedReader);
+  insist(!outcome.accepted && outcome.reason.includes("no publisher for its read port"),"a replacement was wired to the instance it replaced");
+  // A declared position admits only the kinds it lists.
+  let placed: screens.Composition = record("positions",[slot("advice","filled","memo")],[instance("memo","note","catalogue",["advice"],[])],[]);
+  placed.screen.layout.positions = [{id:"top",allowedKinds:["note"],minimum:1,maximum:1}];
+  placed.screen.instances[0].position = "top";
+  outcome = structural.apply(placed,requested("replace","memo","rating"),instance("stars","rating","catalogue",["advice"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("not allowed in the replaced position"),"a replacement escaped the kinds its position allows");
+  let unrelated: screens.Composition = wired();
+  outcome = structural.apply(unrelated,requested("replace","summary","note"),instance("memo","note","catalogue",["elsewhere"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("none of the replaced needs"),"a replacement implementing none of the replaced needs was admitted");
+  insist(ids(unrelated).includes("summary"),"a refused replacement changed the original record");
+  // A replacement selects a catalogue kind too: a kind outside the catalogue is refused on the
+  // replace path, not only by the addition check.
+  outcome = structural.apply(base,requested("replace","ledger","mystery"),instance("memo","mystery","catalogue",["spend"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Not a catalogue kind"),"a replacement selected a non-catalogue kind");
+  // A replaced instance keeps only a declared position: an unknown one is a rejection, not a silent
+  // move into the stack layout.
+  let stray: screens.Composition = record("positions",[slot("summary","filled","summary")],[instance("summary","number_strip","catalogue",["summary"],[])],[]);
+  stray.screen.instances[0].position = "absent";
+  outcome = structural.apply(stray,requested("replace","summary","note"),instance("memo","note","catalogue",["summary"],[]));
+  insist(!outcome.accepted && outcome.reason.includes("Unknown layout position"),"a replacement inherited an unknown layout position");
+  // Moves reorder a stack layout and reject any other layout.
+  outcome = structural.apply(base,requested("move-to-top","summary",""),null);
+  insist(outcome.accepted && ids(outcome.composition)[0] === "summary","move-to-top did not move the fragment");
+  outcome = structural.apply(base,requested("move-to-bottom","ledger",""),null);
+  insist(outcome.accepted && ids(outcome.composition)[1] === "ledger","move-to-bottom did not move the fragment");
+  let positionedMove: screens.Composition = record("positions",[], [instance("first","note","catalogue",[],[])],[]);
+  outcome = structural.apply(positionedMove,requested("move-to-top","first",""),null);
+  insist(!outcome.accepted && outcome.reason.includes("stack layout"),"a move was admitted in a nonstack layout");
+  // A declared position keeps its minimum: removing below it would silently degrade the layout.
+  let occupied: screens.Composition = record("positions",[], [instance("first","note","catalogue",[],[]),instance("second","note","catalogue",[],[])],[]);
+  occupied.screen.layout.positions = [{id:"top",allowedKinds:["note"],minimum:2,maximum:2}];
+  occupied.screen.instances[0].position = "top";
+  occupied.screen.instances[1].position = "top";
+  outcome = structural.apply(occupied,requested("remove","first",""),null);
+  insist(!outcome.accepted && outcome.reason.includes("breaks the declared layout position"),"a removal broke a declared layout position");
+  // A composer part is never a structural target, whatever the operation.
+  outcome = structural.apply(partTarget,requested("remove","parts",""),null);
+  insist(!outcome.accepted && outcome.reason.includes("Composer-part target"),"a composer part was removed structurally");
+  // The rebuilt pair is committed only through the revision-bound edit and a checked candidate: a
+  // compile failure, a startup failure and a stale base each retain the original source and revision.
+  let current: revisions.Revision = await revisions.issue({deal:"export class AppState { value: number; }\nexport function main(): void { return; }\n",dealui:"export view Panel(state: app.AppState): View { ui.Text(text: \"a\") }\n"});
+  let accepted = await structural.commit(current,current,{deal:current.source.deal+"// rebuilt\n",dealui:current.source.dealui},"",current.source,current.source);
+  insist(accepted.accepted,"a checked rebuild was refused: "+accepted.diagnostics);
+  insist(accepted.revision.revision !== current.revision && accepted.revision.digest !== current.digest,"an accepted rebuild reused the issued revision");
+  insist(accepted.revision.source.deal === current.source.deal+"// rebuilt\n","an accepted rebuild did not carry the rebuilt bytes");
+  insist(accepted.candidateId !== "","an accepted rebuild lost the checked candidate identity");
+  let compiled = await structural.commit(current,current,{deal:current.source.deal+"// CHECK_FAIL\n",dealui:current.source.dealui},"",current.source,current.source);
+  insist(!compiled.accepted && compiled.diagnostics.includes("FIXTURE_COMPILE"),"a rejected compilation was not reported: "+compiled.diagnostics);
+  insist(compiled.candidateId === "","a rejected rebuild carried a candidate identity");
+  insist(compiled.revision.revision === current.revision && compiled.revision.digest === current.digest,"a rejected compilation replaced the revision");
+  insist(compiled.revision.source.deal === current.source.deal && compiled.revision.source.dealui === current.source.dealui,"a rejected compilation changed the accepted source");
+  let startup = await structural.commit(current,current,{deal:current.source.deal+"// STEP_FAIL\n",dealui:current.source.dealui},"",current.source,current.source);
+  insist(!startup.accepted && startup.diagnostics.includes("CHECK_TREE"),"a rejected startup was not reported: "+startup.diagnostics);
+  insist(startup.revision.source.deal === current.source.deal,"a rejected startup changed the accepted source");
+  // The record was issued from one accepted revision: a source replaced since then invalidates it
+  // instead of rebuilding stale selections, and the newer accepted source is retained.
+  let later: revisions.Revision = await revisions.issue({deal:current.source.deal+"// accepted later\n",dealui:current.source.dealui});
+  let stale = await structural.commit(later,current,{deal:later.source.deal+"// rebuilt\n",dealui:later.source.dealui},"",later.source,later.source);
+  insist(!stale.accepted && stale.diagnostics.includes("invalidated"),"a stale structural record authorized a rebuild: "+stale.diagnostics);
+  insist(stale.revision.revision === later.revision && stale.revision.source.deal === later.source.deal,"a stale rebuild replaced the current source");
+  // An incompatible text edit invalidates the record: the deterministic projection no longer equals
+  // the accepted canonical bytes, so no structural rebuild is applied.
+  let edited: revisions.Revision = await revisions.issue({deal:current.source.deal+"// accepted edit\n",dealui:current.source.dealui});
+  let invalid: sourceCommit.Committed = await structural.commit(edited,edited,{deal:edited.source.deal+"// rebuilt\n",dealui:edited.source.dealui},"",current.source,edited.source);
+  insist(!invalid.accepted && invalid.diagnostics.includes("incompatible text edit"),"an incompatible text edit authorized a structural rebuild: "+invalid.diagnostics);
+  insist(invalid.revision.revision === edited.revision && invalid.revision.source.deal === edited.source.deal,"an invalidated record replaced the accepted source");
+  // The canonical bytes are the accepted pair: two equal copies of some other bytes are not the bytes
+  // the record's projection was compared with, so they authorize no rebuild.
+  let detached: sourceCommit.Committed = await structural.commit(current,current,{deal:current.source.deal+"// rebuilt\n",dealui:current.source.dealui},"",{deal:"stated bytes",dealui:"stated bytes"},{deal:"stated bytes",dealui:"stated bytes"});
+  insist(!detached.accepted && detached.diagnostics.includes("accepted source"),"a canonical pair that is not the accepted source authorized a rebuild: "+detached.diagnostics);
+  insist(detached.revision.revision === current.revision && detached.revision.source.deal === current.source.deal,"a detached canonical pair replaced the accepted source");
+  return null;
+}
+export async function refinementPolicy(): Promise<null> {
+  // The issued schema decodes before any copy decision; a malformed declaration is located.
+  let issued: refinement.Field[] = refinement.decode([{owner:"ledger",name:"total",type:"number",role:"authoritative",key:"f_ledger_total"}]);
+  insist(issued.length === 1 && issued[0].key === "f_ledger_total","an issued refinement schema did not decode");
+  let malformed: boolean = false;
+  try { refinement.decode([{owner:"ledger",name:"total",type:"number",role:"authoritative"}]); } catch (error) { malformed = true; }
+  insist(malformed,"a refinement schema field without its emitted identity was admitted");
+  let before: refinement.Field[] = [
+    {owner:"ledger",name:"total",type:"number",role:"authoritative",key:"f_ledger_total"},
+    {owner:"ledger",name:"note",type:"string",role:"authoritative",key:"f_ledger_note"},
+    {owner:"ledger",name:"tags",type:"[string]",role:"authoritative",key:"f_ledger_tags"},
+    {owner:"ledger",name:"derived",type:"number",role:"derived",key:"f_ledger_derived"},
+    {owner:"ledger",name:"pending",type:"boolean",role:"authoritative",key:"f_ledger_pending"}];
+  let after: refinement.Field[] = [
+    {owner:"ledger",name:"total",type:"number",role:"authoritative",key:"f_ledger_total"},
+    {owner:"ledger",name:"tags",type:"[string]",role:"authoritative",key:"f_ledger_tags"},
+    {owner:"ledger",name:"pending",type:"boolean",role:"authoritative",key:"f_ledger_pending"},
+    {owner:"ledger",name:"memo",type:"string",role:"authoritative",key:"f_ledger_memo"},
+    {owner:"ledger",name:"derived",type:"number",role:"derived",key:"f_ledger_derived"}];
+  let state: string = "{\"f_ledger_total\":42,\"f_ledger_note\":\"kept\",\"f_ledger_tags\":[\"kept\",\"list\"],\"f_ledger_pending\":false,\"f_ledger_derived\":7}";
+  let copied: refinement.Copied = refinement.copy(before,after,state);
+  insist(copied.accepted,"a compatible schema copy was refused: "+copied.diagnostics);
+  const held: Record<string, unknown> = JSON.parse(copied.record);
+  insist(s.finite(held.f_ledger_total) === 42,"a retained value was not copied by owner and field identity");
+  insist(s.truth(held.f_ledger_pending) === false,"a retained boolean was not copied");
+  // A retained list keeps its declared type and its values: the copy is by identity and exact resolved
+  // type, so a field whose type is a list is carried whole instead of dropped or flattened.
+  let tags: string[] = s.stringArray(held.f_ledger_tags);
+  insist(tags.length === 2 && tags[0] === "kept" && tags[1] === "list","a retained list value was not copied by its declared type");
+  insist(!Object.hasOwn(held,"f_ledger_note"),"an explicitly removed field survived the replacement");
+  insist(!Object.hasOwn(held,"f_ledger_memo"),"a new field replaced its initializer with a copied value");
+  // The introduced field is reported so the caller keeps its compiled initializer, and it is not part
+  // of the copied record.
+  insist(copied.introduced.length === 1 && copied.introduced[0] === "f_ledger_memo","an introduced field was not reported for its initializer");
+  insist(!Object.hasOwn(held,"f_ledger_derived"),"a derived value was copied instead of recomputed");
+  // An incompatible retained field rejects the whole copy instead of coercing the value.
+  let retyped: refinement.Field[] = [
+    {owner:"ledger",name:"total",type:"string",role:"authoritative",key:"f_ledger_total"}];
+  let incompatible: refinement.Copied = refinement.copy(before,retyped,state);
+  insist(!incompatible.accepted && incompatible.diagnostics.includes("Incompatible retained field"),"an incompatible retained field was copied: "+incompatible.diagnostics);
+  // The same rule covers a retained list whose element type moved: it is the resolved type, not the
+  // JSON shape, that authorizes the copy.
+  let relisted: refinement.Field[] = [
+    {owner:"ledger",name:"tags",type:"[number]",role:"authoritative",key:"f_ledger_tags"}];
+  let relistedCopy: refinement.Copied = refinement.copy(before,relisted,state);
+  insist(!relistedCopy.accepted && relistedCopy.diagnostics.includes("Incompatible retained field"),"a retained list of another element type was copied: "+relistedCopy.diagnostics);
+  // A retained identity whose value the record does not hold is a rejection, never a default.
+  let missing: refinement.Copied = refinement.copy(before,after,"{\"f_ledger_pending\":false}");
+  insist(!missing.accepted && missing.diagnostics.includes("Missing retained state"),"a retained field without state was admitted");
+  // A saved record of the wrong shape is an incompatibility, not a fault: null, an array and text
+  // all reject the refinement instead of escaping as a JavaScript error.
+  let wrongShape: refinement.Copied = refinement.copy(before,after,"null");
+  insist(!wrongShape.accepted && wrongShape.diagnostics.includes("Malformed authoritative record"),"a null authoritative record was not a located rejection");
+  let arrayShape: refinement.Copied = refinement.copy(before,after,"[]");
+  insist(!arrayShape.accepted && arrayShape.diagnostics.includes("Malformed authoritative record"),"an array authoritative record was not a located rejection");
+  let broken: refinement.Copied = refinement.copy(before,after,"{");
+  insist(!broken.accepted && broken.diagnostics.includes("Malformed authoritative record"),"an unparseable authoritative record was not a located rejection");
+  // A field that becomes authoritative keeps its compiled initializer: a value the replacement
+  // computes cannot become authority merely because the field changed role.
+  let promoted: refinement.Field[] = [
+    {owner:"ledger",name:"total",type:"number",role:"authoritative",key:"f_ledger_total"},
+    {owner:"ledger",name:"derived",type:"number",role:"authoritative",key:"f_ledger_derived"}];
+  let roleChange: refinement.Copied = refinement.copy(before,promoted,state);
+  insist(roleChange.accepted,"a field that became authoritative refused the copy: "+roleChange.diagnostics);
+  const promotedRecord: Record<string, unknown> = JSON.parse(roleChange.record);
+  insist(!Object.hasOwn(promotedRecord,"f_ledger_derived"),"a newly authoritative field was copied from a derived value");
+  insist(roleChange.introduced.includes("f_ledger_derived"),"a field that became authoritative was not reported as introduced");
+  let repeated: refinement.Field[] = [
+    {owner:"ledger",name:"total",type:"number",role:"authoritative",key:"f_ledger_total"},
+    {owner:"ledger",name:"total",type:"number",role:"authoritative",key:"f_ledger_total"}];
+  let duplicate: refinement.Copied = refinement.copy(before,repeated,state);
+  insist(!duplicate.accepted && duplicate.diagnostics.includes("Duplicate retained identity"),"a duplicated retained identity was admitted");
+  // Two retained identities may not collapse onto one emitted record key: the replacement could hold
+  // only one of them and would silently lose the other.
+  let sharedKey: refinement.Field[] = [
+    {owner:"ledger",name:"total",type:"number",role:"authoritative",key:"f_shared"},
+    {owner:"ledger",name:"memo",type:"string",role:"authoritative",key:"f_shared"}];
+  let collapsed: refinement.Copied = refinement.copy(before,sharedKey,state);
+  insist(!collapsed.accepted && collapsed.diagnostics.includes("Duplicate retained record key"),"a duplicated retained record key was admitted");
+  // The replacement is atomic: an invalidated record, a rejected copy and a rejected candidate view
+  // each retain the old source, revision and state. The canonical bytes are the accepted pair.
+  let current: revisions.Revision = await revisions.issue({deal:"export class AppState { total: number; }\nexport function main(): void { return; }\n",dealui:"export view Panel(state: app.AppState): View { ui.Text(text: \"a\") }\n"});
+  let canonical: revisions.Source = current.source;
+  let invalidated: refinement.Refined = await refinement.replace(current,current,{deal:current.source.deal+"// refined\n",dealui:current.source.dealui},"",before,after,state,{deal:"edited",dealui:canonical.dealui},canonical);
+  insist(!invalidated.accepted && invalidated.diagnostics.includes("invalidated"),"an incompatible text edit authorized a refinement: "+invalidated.diagnostics);
+  insist(invalidated.revision.revision === current.revision && invalidated.record === state && !invalidated.dispose,"an invalidated refinement replaced the Session");
+  let refusedCopy: refinement.Refined = await refinement.replace(current,current,{deal:current.source.deal+"// refined\n",dealui:current.source.dealui},"",before,retyped,state,canonical,canonical);
+  insist(!refusedCopy.accepted && refusedCopy.record === state && refusedCopy.revision.revision === current.revision && !refusedCopy.dispose,"an incompatible schema replaced the Session data");
+  let rejectedView: refinement.Refined = await refinement.replace(current,current,{deal:current.source.deal+"// CHECK_FAIL\n",dealui:current.source.dealui},"",before,after,state,canonical,canonical);
+  insist(!rejectedView.accepted && rejectedView.diagnostics.includes("FIXTURE_COMPILE"),"a rejected candidate view was not reported: "+rejectedView.diagnostics);
+  insist(rejectedView.revision.revision === current.revision && rejectedView.revision.source.deal === current.source.deal,"a rejected refinement changed the accepted source");
+  insist(rejectedView.record === state && !rejectedView.dispose,"a rejected refinement discarded the old store");
+  let rejectedStartup: refinement.Refined = await refinement.replace(current,current,{deal:current.source.deal+"// STEP_FAIL\n",dealui:current.source.dealui},"",before,after,state,canonical,canonical);
+  insist(!rejectedStartup.accepted && rejectedStartup.diagnostics.includes("CHECK_TREE"),"a replacement store that failed its first tree was admitted: "+rejectedStartup.diagnostics);
+  insist(rejectedStartup.revision.revision === current.revision && rejectedStartup.record === state && !rejectedStartup.dispose,"a failed replacement store replaced the Session");
+  // The canonical pair a refinement compares is the accepted source, so a pair of some other bytes
+  // authorizes no refinement even when the projection matches it.
+  let detached: refinement.Refined = await refinement.replace(current,current,{deal:current.source.deal+"// refined\n",dealui:current.source.dealui},"",before,after,state,{deal:"other bytes",dealui:canonical.dealui},{deal:"other bytes",dealui:canonical.dealui});
+  insist(!detached.accepted && detached.diagnostics.includes("accepted source"),"a canonical pair that is not the accepted source authorized a refinement: "+detached.diagnostics);
+  insist(detached.revision.revision === current.revision && detached.record === state && !detached.dispose,"a detached canonical pair replaced the Session");
+  let refined: refinement.Refined = await refinement.replace(current,current,{deal:current.source.deal+"// refined\n",dealui:current.source.dealui},"",before,after,state,canonical,canonical);
+  insist(refined.accepted,"a checked refinement was refused: "+refined.diagnostics);
+  insist(refined.revision.revision !== current.revision,"an accepted refinement reused the issued revision");
+  insist(refined.record === copied.record,"a refinement did not carry the copied authoritative state");
+  insist(refined.dispose,"an accepted refinement did not dispose the old store");
+  insist(refined.candidateId !== "","an accepted refinement lost the prepared replacement store identity");
+  return null;
+}
+// The production edit route: the issued record is assembled by the composer, issued as the accepted
+// pair, then edited by one structural operation and rebuilt from the record. A live refinement copies
+// the running state into the replacement's schema and only its success disposes the replaced store.
+export async function editingRoute(): Promise<string> {
+  // The issued record: one catalogue fragment that implements the only need and one open need a
+  // structural addition can fill. It is assembled first, because the accepted bytes are the record's
+  // deterministic projection and the edit route refuses a record whose accepted pair moved.
+  let base: screens.Composition = record("stack",[slot("only","filled","lonely"),slot("advice","open",null)],[instance("lonely","note","catalogue",["only"],[])],[]);
+  // A filled catalogue slot carries the one kind its instance imposes, as the structural addition
+  // declares it; the assembler re-derives that fact and refuses a slot that claims another kind.
+  base.screen.slots[0].allowedKinds = ["note"];
+  let registry: bindings.Registry = bindings.create([]);
+  let acceptedPair: composer.Result = await composer.assembleWith(base,[],registry,composer.chatRoot(base,null));
+  let current: revisions.Revision = await revisions.issue({deal:acceptedPair.source.deal,dealui:acceptedPair.source.dealui});
+  let issued: editing.Issued = {revision:current.revision,digest:current.digest,target:"screen",needs:["only","advice"],record:screens.encode(base),metadata:s.encode(acceptedPair.metadata),fields:editing.schema(acceptedPair.fields),registry:registry,computations:[],plan:null,projection:current.source,canonical:current.source};
+  // The selector decides below the structural-edit threshold: no operation runs and the record stays.
+  let below: editing.Edited = await editing.structuralEdit(issued,"{\"op\":\"add\",\"target\":\"advice\",\"kind\":\"rating\"}",s.encode(instance("stars","rating","catalogue",["advice"],[])),0.59);
+  insist(!below.accepted && below.reason.includes("threshold"),"a structural decision below the issued threshold edited the record");
+  insist(below.deal === current.source.deal && below.record === screens.encode(base),"a refused structural edit changed the accepted source or record");
+  // A rule of the issued record still refuses before any assembly: the record already holds a note,
+  // so a second note is not an addition, and a refusal carries no candidate and leaves the pair alone.
+  let refusedEdit: editing.Edited = await editing.structuralEdit(issued,"{\"op\":\"add\",\"target\":\"advice\",\"kind\":\"note\"}",s.encode(instance("second_note","note","catalogue",["advice"],[])),0.8);
+  insist(!refusedEdit.accepted && refusedEdit.reason.includes("Duplicate catalogue kind"),"a duplicated catalogue kind was edited by the production route: "+refusedEdit.reason);
+  insist(refusedEdit.candidateId === "" && refusedEdit.deal === current.source.deal,"a refused structural rule carried a candidate or replaced the source");
+  insist(refusedEdit.checks === 0,"a refusal before the checking mechanism counted a candidate check");
+  // An accepted edit is rebuilt from the record by the one assembler, never from supplied bytes.
+  let accepted: editing.Edited = await editing.structuralEdit(issued,"{\"op\":\"add\",\"target\":\"advice\",\"kind\":\"rating\"}",s.encode(instance("stars","rating","catalogue",["advice"],[])),0.8);
+  insist(accepted.accepted,"the production route refused an eligible structural edit: "+accepted.reason);
+  insist(accepted.deal !== current.source.deal || accepted.dealui !== current.source.dealui,"the production route did not rebuild the pair");
+  insist(accepted.deal.includes("export class AppState"),"the rebuilt pair is not assembled source");
+  insist(accepted.candidateId !== "","the checked candidate identity was lost");
+  insist(accepted.revision !== current.revision && accepted.digest !== current.digest,"an accepted edit reused the issued revision");
+  const rebuilt: Record<string, unknown> = JSON.parse(accepted.record);
+  insist((rebuilt.screen as Record<string, unknown>).instances !== undefined,"the accepted record did not carry the edit");
+  insist(accepted.metadata !== "","the rebuild lost the assembler metadata beside the pair");
+  insist(accepted.checks === 1,"an accepted rebuild did not report the one candidate check it performed");
+  // A chat target's rebuild asks the same chat root rule with the plan the record was issued from: the
+  // accepted pair keeps the plan's need wording in its authoritative labels instead of replacing the
+  // tab text with the internal instance identity.
+  let chat: screens.Composition = chatRecord();
+  chat.screen.slots[0].allowedKinds = ["note"];
+  chat.screen.slots[1].allowedKinds = ["spotlight"];
+  let chatIssuedPlan: plans.Plan = chatPlan();
+  let chatPair: composer.Result = await composer.assembleWith(chat,[],registry,composer.chatRoot(chat,chatIssuedPlan));
+  insist(chatPair.source.dealui.includes("ui.Tabs"),"the chat fixture did not assemble a chat root");
+  insist(composer.chatRoot(chat,chatIssuedPlan) !== null,"the chat fixture issued no chat root");
+  let chatRevision: revisions.Revision = await revisions.issue({deal:chatPair.source.deal,dealui:chatPair.source.dealui});
+  let chatIssued: editing.Issued = {revision:chatRevision.revision,digest:chatRevision.digest,target:"chat",needs:["facts","extra","advice"],record:screens.encode(chat),metadata:s.encode(chatPair.metadata),fields:editing.schema(chatPair.fields),registry:registry,computations:[],plan:chatIssuedPlan,projection:chatRevision.source,canonical:chatRevision.source};
+  let labels: string = "[\"Show the disclosed facts\", \"Highlight the disclosed message\"]";
+  insist(chatPair.source.deal.includes("chat_labels: "+labels),"the chat fixture did not issue the plan wording as its authoritative labels");
+  let chatEdit: editing.Edited = await editing.structuralEdit(chatIssued,"{\"op\":\"add\",\"target\":\"advice\",\"kind\":\"rating\"}",s.encode(instance("stars","rating","catalogue",["advice"],[])),0.8);
+  insist(chatEdit.accepted,"the production route refused an eligible chat structural edit: "+chatEdit.reason);
+  insist(chatEdit.deal.includes("chat_labels: [\"Show the disclosed facts\", \"Highlight the disclosed message\", \"Offer the next step\"]"),"the rebuilt chat root lost the plan wording in chat_labels: "+chatEdit.deal.slice(0,600));
+  // A live refinement checks the replacement with the copied authoritative record overlaid on its own
+  // initial state; only its success disposes the replaced store, and it carries the copied record.
+  let saved: string = s.encode({});
+  let refined: editing.Edited = await editing.refine(issued,{deal:current.source.deal+"// refined\n",dealui:current.source.dealui},s.encode(acceptedPair.metadata),editing.schema(acceptedPair.fields),editing.schema(acceptedPair.fields),saved);
+  insist(refined.accepted,"a checked refinement was refused: "+refined.reason);
+  insist(refined.dispose,"an accepted refinement did not dispose the replaced store");
+  insist(refined.candidateId !== "","an accepted refinement lost the replacement candidate");
+  let failed: editing.Edited = await editing.refine(issued,{deal:current.source.deal+"// CHECK_FAIL\n",dealui:current.source.dealui},s.encode(acceptedPair.metadata),editing.schema(acceptedPair.fields),editing.schema(acceptedPair.fields),saved);
+  insist(!failed.accepted && !failed.dispose,"a rejected replacement store disposed the old Session");
+  insist(failed.checks === 1,"a checked replacement that was refused did not report its candidate check");
+  insist(failed.deal === current.source.deal && failed.record === screens.encode(base),"a rejected refinement changed the accepted source or record");
+  return refined.record;
+}
+export function main(): void { return; }

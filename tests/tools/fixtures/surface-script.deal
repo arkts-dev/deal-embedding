@@ -6,21 +6,21 @@ import * as checking from "./isolated-check";
 function insist(value: boolean, message: string): void { if (!value) { throw {name:"TEST_FAILED",message:message}; } }
 function scenario(name: string): string { return "{\"scenario\":\""+name+"\"}"; }
 export async function surfaceScript(): Promise<null> {
-  let accepted: checking.Result = await checking.run("root","root",scenario("frame-240"),false);
+  let accepted: checking.Result = await checking.run("root","root",scenario("frame-240"),false,"");
   insist(accepted.accepted,"A change at frame 240 was rejected: "+accepted.diagnostics);
-  let late: checking.Result = await checking.run("root","root",scenario("frame-241"),false);
+  let late: checking.Result = await checking.run("root","root",scenario("frame-241"),false,"");
   insist(!late.accepted && late.diagnostics === "CHECK_SURFACE: missing, blank or unchanged frame scene","A change at frame 241 was admitted: "+late.diagnostics);
-  let settled: checking.Result = await checking.run("root","root",scenario("settle-twice"),false);
+  let settled: checking.Result = await checking.run("root","root",scenario("settle-twice"),false,"");
   insist(settled.accepted,"A changing Surface was rejected: "+settled.diagnostics);
-  let sixth: checking.Result = await checking.run("root","root",scenario("button-6"),false);
+  let sixth: checking.Result = await checking.run("root","root",scenario("button-6"),false,"");
   insist(sixth.accepted,"The sixth button's change was rejected: "+sixth.diagnostics);
-  let seventh: checking.Result = await checking.run("root","root",scenario("button-7"),false);
+  let seventh: checking.Result = await checking.run("root","root",scenario("button-7"),false,"");
   insist(!seventh.accepted && seventh.diagnostics === "CHECK_SURFACE: missing, blank or unchanged frame scene","A seventh button was tried: "+seventh.diagnostics);
   // The per-button window is inclusive: a change on the button's 120th frame is admitted, a change one
   // frame later is not. Both boundaries run, so a narrower window cannot satisfy the pair.
-  let within: checking.Result = await checking.run("root","root",scenario("button-120"),false);
+  let within: checking.Result = await checking.run("root","root",scenario("button-120"),false,"");
   insist(within.accepted,"A change on a button's frame 120 was rejected: "+within.diagnostics);
-  let over: checking.Result = await checking.run("root","root",scenario("button-121"),false);
+  let over: checking.Result = await checking.run("root","root",scenario("button-121"),false,"");
   insist(!over.accepted && over.diagnostics === "CHECK_SURFACE: missing, blank or unchanged frame scene","A change after a button's frame 120 was admitted: "+over.diagnostics);
   return null;
 }

@@ -20,6 +20,7 @@ import * as admission from "./admission";
 import * as s from "./construction-schema";
 import * as disclosure from "./disclosure";
 import * as revisions from "./source-revisions";
+import * as editing from "./editing";
 import * as inference from "./inference";
 import * as identity from "embedding/construction-identity";
 import * as tables from "std/table";
@@ -78,7 +79,7 @@ async function revertBodies(composition: screens.Composition, computations: comp
   let replacement: composer.Result = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan));
   let total: number = attempts+1;
   let kept: string = notices; if (diagnostic !== "") { kept = kept+"reverted: "+diagnostic+"; "; }
-  let rechecked: checker.Result = await checker.run(replacement.source.deal,replacement.source.dealui,s.encode(replacement.metadata),true);
+  let rechecked: checker.Result = await checker.run(replacement.source.deal,replacement.source.dealui,s.encode(replacement.metadata),true,"");
   if (rechecked.accepted as boolean) { return {candidateId:rechecked.candidateId as string,attempts:total,diagnostics:kept,runnable:true}; }
   let explanation: string = kept;
   let reverted: string = rechecked.diagnostics as string;
@@ -534,10 +535,30 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   } }
   let writeable: string[] = [];
   for (let id of open) { if (!s.contains(unsettled,id)) { writeable[writeable.length] = id; } }
+  // A validated coverage gap on behavior a catalogue section implements authorizes one structural
+  // repair: the selector chooses another issued kind at the structural-edit threshold and the edit route
+  // rebuilds the pair from the issued record, compiles, manifest-admits and checks it, and only a checked
+  // rebuild becomes the candidate. A refusal changes nothing below, so the ordinary missing-behavior
+  // writing still runs over the untouched composition and source.
+  // Only a validated coverage gap authorizes the structural repair: the judge's accepted `missing`
+  // verdict on behavior a catalogue section implements, never a need a missing requirement drags in
+  // beside a covered section.
+  let gaps: string[] = [];
+  for (let value of ledger.needs) { if (value.status === "missing" && value.reason === "Validated coverage gap") { gaps[gaps.length] = value.id; } }
+  let repairedEdit: editing.Edited | null = await structuralRepair(input,context,plan,composition,assembled,computations,registry,gaps,first);
+  if (repairedEdit !== null) {
+    let committed: editing.Edited = repairedEdit as editing.Edited;
+    // A candidate check the edit route performed is an attempt whether or not it accepted the rebuild:
+    // Experience.attempts counts candidate checks including failures, so a failed structural check is
+    // charged before the writer's own checks are added below.
+    attempts = attempts+committed.checks;
+    if (committed.accepted) { return {candidateId:committed.candidateId,attempts:attempts,diagnostics:diagnostics+"structural edit committed: "+committed.candidateId+"; ",runnable:true}; }
+    diagnostics = diagnostics+"structural edit refused: "+committed.reason+"; ";
+  }
   let wrote: boolean = false;
   if (writeable.length > 0) {
     let written: writing.Result = await writing.run({original:input.original,facts:input.facts,contracts:input.contracts,specification:input.specification,language:input.language,pack:input.pack,target:input.target,plan:plan,answers:input.answers,base:composition,computations:computations,openNeeds:writeable,providers:providers,registry:registry,clockIntervalMs:input.clockIntervalMs,clockToleranceMs:input.clockToleranceMs});
-    attempts = written.attempts;
+    attempts = attempts+written.attempts;
     // The writer's own draft is admitted before emission too; its verdict is an authority decision
     // that ends the request instead of falling back to a partial composition. One predicate decides
     // both classifications: a non-repairable diagnostic is never source feedback.
@@ -557,7 +578,7 @@ export async function run(input: writing.Input, context: selecting.Context, plan
     assembled = await composer.assembleWith(composition,computations,registry,composer.chatRoot(composition,plan));
   }
   for (let note of assembled.metadata.notices) { if (!diagnostics.includes(note)) { diagnostics = diagnostics+"composition: "+note+"; "; } }
-  let checked: checker.Result = await checker.run(assembled.source.deal,assembled.source.dealui,s.encode(assembled.metadata),true); attempts = attempts+1;
+  let checked: checker.Result = await checker.run(assembled.source.deal,assembled.source.dealui,s.encode(assembled.metadata),true,""); attempts = attempts+1;
   if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
   // An admission or authority verdict is not source feedback: it authorizes no repair and leaves the
   // accepted source and saved data untouched (generation-recovery-and-source-editing "Checking and
@@ -576,7 +597,7 @@ export async function run(input: writing.Input, context: selecting.Context, plan
         revision = applied.current; attempts = attempts+1;
         // A repaired pair keeps the issued facts as a consistency check but is no longer the pair the
         // assembly described, so admission does not require it to account for every declaration.
-        checked = await checker.run(revision.source.deal,revision.source.dealui,s.encode(assembled.metadata),false);
+        checked = await checker.run(revision.source.deal,revision.source.dealui,s.encode(assembled.metadata),false,"");
         if (checked.accepted as boolean) { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:diagnostics,runnable:true}; }
         // A repaired candidate rejected by an admission or authority verdict ends the check phase: the
         // verdict is never fed back as a source diagnostic, and a placed authored body still reverts below.
@@ -594,3 +615,103 @@ export async function run(input: writing.Input, context: selecting.Context, plan
   return {candidateId:"",attempts:attempts,diagnostics:diagnostic,runnable:true};
 }
 export function main(): void { return; }
+
+// --- structural repair of a validated coverage gap -------------------------------------------------
+
+// The catalogue section a need is implemented by, or null when the need no catalogue section holds. A
+// validated coverage gap authorizes repair, and this is the record position a structural replacement
+// applies to: the slot names the instance, and only a catalogue instance is a structural target.
+function repairTarget(composition: screens.Composition, need: string): screens.Instance | null {
+  for (let slot of composition.screen.slots) {
+    if (slot.need !== need || slot.instance === null || slot.status !== "filled") { continue; }
+    for (let instance of composition.screen.instances) { if (instance.id === (slot.instance as string) && instance.origin === "catalogue") { return instance; } }
+  }
+  return null;
+}
+// The registry the rebuild assembles against is the record's own: the replaced section's reserved
+// sources leave with it, so no source identity outlives the instance that issued it.
+function withoutOwner(registry: bindings.Registry, owner: string): bindings.Registry {
+  let sources: bindings.Source[] = [];
+  for (let source of registry.sources) { if (source.owner !== owner) { sources[sources.length] = source; } }
+  return {sources:sources,bindings:registry.bindings,actions:registry.actions,contracts:registry.contracts};
+}
+// One structural replacement for a validated coverage gap, at the selector's structural-edit choice:
+// the applicable issued kind is filled from disclosed data, the replaced section's reserved sources
+// leave the registry with it, and the edit route rebuilds the pair from the issued record and commits it
+// only after compilation, manifest admission and checking. A refusal returns no candidate, so the
+// caller keeps the assembled composition and its source untouched.
+async function structuralKind(input: writing.Input, context: selecting.Context, plan: plans.Plan, composition: screens.Composition, assembled: composer.Result, computations: composer.Computation[], registry: bindings.Registry, need: string, kind: string, confidence: number, first: selecting.Result): Promise<editing.Edited | null> {
+  let found: screens.Instance | null = repairTarget(composition,need);
+  if (found === null) { return null; }
+  let target: screens.Instance = found as screens.Instance;
+  let definition: catalogue.Definition | null = null;
+  for (let value of catalogue.definitions()) { if (value.kind === kind) { definition = value; } }
+  if (definition === null) { return null; }
+  let entries: catalogue.Configured[] = [{need:need,definition:definition as catalogue.Definition,parameters:{},accepted:false,reason:catalogue.notFilled()}];
+  await catalogue.fill(context,plan,entries);
+  let filled: catalogue.Configured = entries[0];
+  if (!filled.accepted) { return null; }
+  // Ownership and disclosure govern a structural addition exactly as they govern an accepted
+  // alignment: a section that may not reproduce the requested content is not a repair of it.
+  let userOwned: boolean = false; let ownershipChecked: boolean = false;
+  for (let answer of first.answers) { if (answer.id === "ownership_"+need && answer.accepted) {
+    ownershipChecked = true;
+    for (let probability of answer.probabilities) { if ((probability.id as string) === "user" && (probability.p as number) >= selections.threshold("ownership")) {
+      userOwned = true;
+      for (let prompt of plan.needs) { if (prompt.id === need && !disclosure.admitsQuote(context.original,prompt.quote)) { return null; } }
+    } }
+  } }
+  if (!ownershipChecked) { return null; }
+  if (catalogue.disclosed(filled,context.original,context.facts,userOwned) !== "") { return null; }
+  let replacement: screens.Instance = await catalogue.instantiate(filled,registry);
+  let repaired: bindings.Registry = withoutOwner(registry,target.id);
+  issueSources(repaired,replacement);
+  let current: revisions.Revision = await revisions.issue({deal:assembled.source.deal,dealui:assembled.source.dealui});
+  let needs: string[] = []; for (let needValue of plan.needs) { needs[needs.length] = needValue.id; }
+  let issued: editing.Issued = {revision:current.revision,digest:current.digest,target:input.target,needs:needs,record:screens.encode(composition),metadata:s.encode(assembled.metadata),fields:editing.schema(assembled.fields),registry:repaired,computations:computations,plan:plan,projection:current.source,canonical:current.source};
+  let request: Record<string, string> = {op:"replace",target:target.id,kind:kind};
+  return await editing.structuralEdit(issued,s.encode(request),s.encode(replacement),confidence);
+}
+// A validated coverage gap on a need a catalogue section implements authorizes one structural repair
+// round (docs/spec-v0.8.md "Structural editing"): the selector chooses the applicable kind at the
+// structural-edit threshold, and the edit route decides. Only an accepted, checked rebuild carries a
+// candidate identity; every refusal returns null and the assembled composition stays the candidate.
+async function structuralRepair(input: writing.Input, context: selecting.Context, plan: plans.Plan, composition: screens.Composition, assembled: composer.Result, computations: composer.Computation[], registry: bindings.Registry, open: string[], first: selecting.Result): Promise<editing.Edited | null> {
+  let needs: string[] = []; let kinds: string[][] = []; let questions: selections.Question[] = [];
+  for (let need of open) {
+    let held: screens.Instance | null = repairTarget(composition,need);
+    if (held === null) { continue; }
+    let choices: string[] = [];
+    // The applicable issued kinds are every eligible catalogue kind this record does not already hold
+    // in that position: replacing a section with its own kind is not a structural change.
+    for (let candidate of alignmentCandidates(plan,[])) {
+      if (candidate.need !== need || candidate.kind === (held as screens.Instance).kind || s.contains(choices,candidate.kind)) { continue; }
+      choices[choices.length] = candidate.kind;
+    }
+    if (choices.length === 0) { continue; }
+    let options: selections.Option[] = [];
+    for (let kind of choices) { options[options.length] = {id:"kind_"+kind,criteria:"An issued "+kind+" section preserves every requested behavior, reader, trigger and required aggregate of the original need."}; }
+    options[options.length] = {id:"unavailable",criteria:"No issued section preserves the complete original need; retain the assembled composition and write the missing behavior."};
+    needs[needs.length] = need; kinds[kinds.length] = choices;
+    questions[questions.length] = selections.question("structural_"+need,need,"structural-edit","Replace the section that failed coverage only with an issued kind that preserves the complete original need; unavailable retains the assembled composition.",options);
+  }
+  if (questions.length === 0) { return null; }
+  let answers: selections.Answer[] = await selecting.repair(context,plan,questions);
+  if (answers.length === 0) { return null; }
+  // The first accepted structural choice runs; a later one never edits a record the earlier decision
+  // did not produce, so one round edits the record once.
+  let index: number = 0;
+  while (index < questions.length) {
+    let answer: selections.Answer | null = null;
+    for (let value of answers) { if (value.id === questions[index].id) { answer = value; } }
+    if (answer !== null) {
+      let decided: selections.Answer = answer as selections.Answer;
+      if (decided.accepted && decided.selected !== "unavailable" && decided.selected.startsWith("kind_")) {
+        let kind: string = decided.selected.substring("kind_".length);
+        if (s.contains(kinds[index],kind)) { return await structuralKind(input,context,plan,composition,assembled,computations,registry,needs[index],kind,decided.probability,first); }
+      }
+    }
+    index = index+1;
+  }
+  return null;
+}

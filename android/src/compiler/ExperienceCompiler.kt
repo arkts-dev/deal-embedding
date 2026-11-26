@@ -53,6 +53,13 @@ internal class ExperienceCompiler(private val context: Context, private val conf
             // emitted provider import compiles exactly as it does in the deterministic lanes.
             File(project,"session.d.deal").writeText(context.assets.open("generation/session.d.deal").bufferedReader().use { it.readText() })
             externals.put("embedding/session",JSONObject().put("declaration","session.d.deal"))
+            // Deal UI's framework-owned store: the emitted effect-bound calls compile against the same
+            // declaration the packaged renderer compiles against, so the module resolves instead of
+            // failing as an unknown external.
+            val storageDeclaration = File(distribution, "ui/host/storage.d.deal")
+            check(storageDeclaration.isFile) { "Deal UI storage host declaration is missing: " + storageDeclaration }
+            File(project, "storage.d.deal").writeText(storageDeclaration.readText())
+            externals.put("host/storage", JSONObject().put("declaration", "storage.d.deal"))
             config.contracts.forEachIndexed { index, module ->
                 val declaration = "host-$index.d.deal"
                 File(project, declaration).writeText(dev.deal.embedding.capabilities.CapabilityBindings.declaration(module))

@@ -41,6 +41,21 @@ function checked(saved,appModule='experience.js'){
     +'openChecking(factories,\'experience_entry.js\',dealPersisted(__saved),'+(appModule===null?'null':JSON.stringify(appModule))+');',context);
   return JSON.parse(vm.runInContext('checkingStep("start",0,null)',context));
 }
+/** A live refinement hands the replacement's checking isolate the copied authoritative record: no
+ * saved envelope, only the copied fields, which the isolate overlays on the replacement's own
+ * initial persisted projection before its compiled restore validates the candidate view. `directory`
+ * is the composed pair the isolate loads, so a copy is observed on a pair whose compiled view reads
+ * the copied field. */
+function copiedLane(fields,directory=base){
+  const pair={};
+  (function walk(root){for(const name of fs.readdirSync(root)){const file=path.join(root,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))pair[path.relative(directory,file)]=fs.readFileSync(file,'utf8');}})(directory);
+  const context=vm.createContext({sources:pair,rendererContract:rendererContract(JSON.parse(fs.readFileSync(path.join(directory,'admission.json'),'utf8')).target)});
+  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),'android/assets/embedding/bindings/text-pattern.js','android/assets/embedding/bindings/renderer-admission.js','android/assets/embedding/bindings/checking-session.js'])
+    vm.runInContext(fs.readFileSync(file,'utf8'),context);
+  vm.runInContext('const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function(\'require\',\'module\',\'exports\',\'process\',\'console\',source)]));'
+    +'openChecking(factories,\'experience_entry.js\',null,\'experience.js\','+JSON.stringify(JSON.stringify(fields))+');',context);
+  return JSON.parse(vm.runInContext('checkingStep("start",0,null)',context));
+}
 const tree=context=>JSON.parse(vm.runInContext('dealUi.snapshot()',context)).tree;
 const projected=context=>vm.runInContext('persistDealUi()',context);
 const readState=context=>vm.runInContext(`if(!globalThis.__state){const loaded=dealLoad(factories,'experience_entry.js','experience.js');
@@ -156,6 +171,41 @@ assert.equal(refused.ok,false,'the checking isolate refuses a poisoned record');
 assert.ok(refused.diagnostics.startsWith('CHECK_'),refused.diagnostics);
 assert.equal(checked(saved,null).ok,false,'the checking isolate refuses a record without issued roles');
 
+// A live refinement checks the replacement with the copied authoritative record: the copy overlays
+// the replacement's own initial persisted projection by emitted record key, so an introduced field
+// keeps its compiled initializer and the candidate's first tree is the state the user will see.
+const refinedView=copiedLane({f_calculation_value:7});
+assert.equal(refinedView.ok,true,'the checking isolate refused a copied authoritative record: '+refinedView.diagnostics);
+assert.equal(numberText(JSON.parse(refinedView.tree)),14,'a copied authoritative value did not reach the first rendered tree');
+const refinedFresh=copiedLane({});
+assert.equal(refinedFresh.ok,true,'an empty copy was not the replacement initial state: '+refinedFresh.diagnostics);
+assert.equal(numberText(JSON.parse(refinedFresh.tree)),6,'a copy that names no field replaced the replacement initial state');
+const uncopied=copiedLane({f_calculation_absent:1});
+assert.equal(uncopied.ok,false,'a copied field the replacement does not persist was admitted');
+assert.ok(uncopied.diagnostics.includes('PERSISTENCE_SCHEMA: copied state names a field the replacement does not persist: f_calculation_absent'),uncopied.diagnostics);
+// The copy is by declared type, not by JSON shape: a list keeps the compiled element descriptor and a
+// class its nominal identity, so the compiled restore admits the state the user will actually see
+// instead of refusing a bare JSON carrier.
+const copiedList=copiedLane({f_calculation_samples:[4,5]});
+assert.equal(copiedList.ok,true,'the checking isolate refused a copied list: '+copiedList.diagnostics);
+const copiedMatrix=copiedLane({f_calculation_matrix:[[1,null],[3,4]]});
+assert.equal(copiedMatrix.ok,true,'the checking isolate refused a copied nested list: '+copiedMatrix.diagnostics);
+const copiedRecord=copiedLane({f_calculation_head:{value:4,next:{value:5}}});
+assert.equal(copiedRecord.ok,true,'the checking isolate refused a copied record: '+copiedRecord.diagnostics);
+// A copy the declaration does not admit is a located rejection, never a dropped value: the same copy
+// against the replacement's initializer would have been admitted.
+const mistypedList=copiedLane({f_calculation_samples:['not a number']});
+assert.equal(mistypedList.ok,false,'a copied list the declaration does not admit was applied');
+assert.ok(mistypedList.diagnostics.includes('PERSISTENCE_SCHEMA: copied state does not fit the replacement declaration of f_calculation_samples'),mistypedList.diagnostics);
+const mistypedRecord=copiedLane({f_calculation_head:{value:'not a number'}});
+assert.equal(mistypedRecord.ok,false,'a copied record the declaration does not admit was applied');
+assert.ok(mistypedRecord.diagnostics.includes('PERSISTENCE_SCHEMA: copied state does not fit the replacement declaration of f_calculation_head'),mistypedRecord.diagnostics);
+// The copied list is in the candidate's own state, not merely accepted: a composed pair whose compiled
+// view iterates an authoritative list of issued records renders the copied rows in its first tree.
+const copiedRows=copiedLane({f_parts_rows_spend:[{key:'copied',text:'Copied row',value:5}]},path.resolve(base,'../../../entries/composed-executable/js'));
+assert.equal(copiedRows.ok,true,'the checking isolate refused a copied authoritative list of records: '+copiedRows.diagnostics);
+assert.ok(copiedRows.tree.includes('Copied row'),'the copied authoritative list did not reach the first rendered tree');
+
 // The host passes saved bytes as a quoted literal; malformed bytes are a typed incompatibility.
 assert.equal(numberText(tree(openBytes(saved))),8,'the host byte path restores the same record');
 rejects(()=>openBytes('{'),/PERSISTENCE_RECORD/,'malformed saved bytes are refused as data');
@@ -170,4 +220,4 @@ rejects(()=>open(missing),/Missing/);
 const wrongType=JSON.parse(saved);
 wrongType.value[3]=wrongType.value[3].map(pair=>pair[0]==='f_calculation_value'?['f_calculation_value',['string','4']]:pair);
 rejects(()=>open(wrongType),undefined,'an incompatible authoritative type rejects the record');
-console.log('persistence: authoritative projection, cold restore before mount, recomputed derived values, graph identity and fail-closed records passed');
+console.log('persistence: authoritative projection, cold restore before mount, recomputed derived values, graph identity, the copied refinement record in the candidate view and fail-closed records passed');

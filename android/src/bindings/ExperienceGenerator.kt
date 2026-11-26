@@ -120,7 +120,7 @@ internal class ExperienceGenerator(private val context: Context, private val con
                                 "step"->checked.step(args.getString(0),args.getString(1),args.getInt(2),args.getString(3))
                                 "compile"->{
                                     progress("Checking constructed source")
-                                    checked.compile(ExperienceSource(args.getString(0),args.getString(1)),args.getString(2),args.getBoolean(3))
+                                    checked.compile(ExperienceSource(args.getString(0),args.getString(1)),args.getString(2),args.getBoolean(3),if(args.length()>4)args.getString(4) else "")
                                 }
                                 else->error("Unissued checking mechanism")
                             }

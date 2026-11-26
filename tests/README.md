@@ -7,6 +7,8 @@ White-box construction, composition, checkpoint/runtime and packaged controller 
 ```sh
 python3 tests/check.py --list
 python3 tests/check.py construction
+python3 tests/check.py structure       # structural editing and live refinement policy
+python3 tests/check.py storage-host    # the framework store module through the production binding
 python3 tests/check.py interaction
 python3 tests/check.py surface
 python3 tests/check.py catalogue

@@ -45,7 +45,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
         CheckedCandidate(context,source, log.operation("check", candidate = identity) { child -> CandidateChecks(context,config,sandbox(),child).use { it.check(source) } }, catalogRevision(config), attempts, log, identity, origin)
     }
     fun savedWorkspaces(): List<SavedWorkspace> = storage.savedWorkspaces()
-    fun forgetWorkspace(id: String) { closeWorkspace(id); storage.forgetWorkspace(id); EmbeddingLog(context).event("storage", "deleted", workspace = id) }
+    fun forgetWorkspace(id: String) { closeWorkspace(id); storage.forgetWorkspace(id); ExperienceScopedStorage.forget(context, config.storageName, id); EmbeddingLog(context).event("storage", "deleted", workspace = id) }
     private val prepared = mutableMapOf<String,PreparedWorkspace>()
     internal fun prepareWorkspace(id:String,title:String,candidate:CheckedCandidate,session:String):PreparedWorkspace = guarded(live = false) {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }

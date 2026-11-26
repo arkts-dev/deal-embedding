@@ -36,6 +36,23 @@ export async function batch(stage: string, context: Context, plan: plans.Plan, q
   }
   return [];
 }
+// One structural-edit batch: the selector chooses the replacement kind at the structural-edit
+// threshold (docs/spec-v0.8.md "Structural editing"). Its budget is the specification's
+// structural/missing-behavior edit budget, and the batch is issued once, never retried: an unusable or
+// unanswered answer leaves the issued record untouched, because a structural edit is a repair of an
+// existing composition and not a selection whose absence may be filled in.
+export async function repair(context: Context, plan: plans.Plan, questions: selections.Question[]): Promise<selections.Answer[]> {
+  if (questions.length === 0) { return []; }
+  let operation: inference.Operation = inference.operation(await identity.issue(),1);
+  let result = await inference.choose(operation,"structural-edit",prompt(context,plan,questions),"","",4000,s.encode(questions));
+  if (result.refusal !== "" || result.content.trim() === "") { return []; }
+  try {
+    let envelope: Record<string, unknown> = JSON.parse(result.content); s.closed(envelope,["answers"],[]);
+    if (s.records(envelope,"answers").length === 0) { return []; }
+    return selections.decode(result.content,questions);
+  }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA" && error.name !== "E8001" && error.name !== "E8007") { throw error; } return []; }
+}
 export function implementationQuestions(plan: plans.Plan, alternatives: Alternative[], settled: string[]): selections.Question[] {
   let ids: string[] = []; for (let alternative of alternatives) { s.unique(ids,s.identifier(alternative.id)); }
   let questions: selections.Question[] = [];

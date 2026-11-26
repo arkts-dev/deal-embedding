@@ -98,6 +98,7 @@ elif name=='timeout':
             for name in ('bin/javac','bin/java','bin/jar','bin/timeout','kotlin/bin/kotlinc','sdk/build-tools/36.0.0/aapt2','sdk/build-tools/36.0.0/zipalign','sdk/build-tools/36.0.0/apksigner'):
                 (root/name).write_text(fake);(root/name).chmod(0o755)
             env={**os.environ,'ROOT':str(root),'PATH':str(root/'bin')+':'+os.environ['PATH'],'JAVA_HOME':str(root/'jdk'),'KOTLIN_HOME':str(root/'kotlin'),'ANDROID_SDK_ROOT':str(root/'sdk')}
+            env.pop('DEAL_TEST_COMPILE_SECONDS',None)  # the default bound is the property under test
             def run(**extra):
                 return capped('cutover-apk', ['bash','tests/tools/build-cutover-test.sh'],cwd=root,env={**env,**extra},capture_output=True,text=True)
             result=run();self.assertEqual(result.returncode,0,result.stdout+result.stderr)
@@ -128,6 +129,29 @@ elif name=='timeout':
         expected='rejects disclosureReplay construct booleanFigure clockPart clockInputPart clockNeedSource clockDurationUnbuilt clockRejects writtenFormula writtenFormulaCases writtenFormulaPart assemblyRejects effectCompletion definitionConflict admissionCases readerConnection planOperation descriptorDraft contextOperation bindingReasons customWholeTrigger triggerOperations assemblyCases entriesNeedPart entriesEmptyPart rowTapPart presentationCases foreignAction numericTextCase seedDefaults figureRejects entryAggregateCases'.split()
         self.assertCountEqual(calls,expected)
         self.assertEqual(len(calls),len(set(calls)))
+
+    def test_each_control_gets_a_bound_that_outlives_its_owning_test(self):
+        spec=importlib.util.spec_from_file_location('seams',ROOT/'tests/tools/test-verification-seams.py')
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        # A renderer control compiles its 26-source Kotlin set cold before any assertion runs: 19 s idle
+        # and 33 s under this gate's load, so a control bound below that kills the control before its
+        # owning test can report the broken rule and the family counts as unobserved.
+        renderer=['bash','tests/tools/test-renderer-rules.sh']
+        self.assertGreater(module.RUN_BOUND,36)
+        # The resolved bound is the one the owning test's process tree actually receives.
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); path=root/'policy.kt';path.write_text('enabled')
+            seam={'id':'bound-control','path':'policy.kt','command':renderer}
+            with patch.object(module,'ROOT',root), patch.object(module,'anchor',return_value=(b'enabled',b'broken')), patch.object(module,'track'), patch.object(module,'release'), patch.object(module,'bounded_run',return_value=subprocess.CompletedProcess([],1,'the owning test failed','')) as bounded:
+                module.observe(seam)
+            self.assertEqual(bounded.call_args.kwargs['timeout'],module.RUN_BOUND)
+            # `--seconds` still decides that bound, which is how the lane's own timeout control is
+            # observed without waiting for the declared one.
+            with patch.object(module,'ROOT',root), patch.object(module,'anchor',return_value=(b'enabled',b'broken')), patch.object(module,'track'), patch.object(module,'release'), patch.object(module,'bounded_run',return_value=subprocess.CompletedProcess([],1,'the owning test failed','')) as bounded:
+                module.RUN_BOUND=5
+                module.observe(seam)
+            self.assertEqual(bounded.call_args.kwargs['timeout'],5)
 
     def test_seam_timeout_restores_bytes_and_never_counts_as_pass(self):
         from unittest.mock import patch
@@ -222,6 +246,7 @@ elif name=='jar':
                 (root/'bin'/tool).write_text(fake); (root/'bin'/tool).chmod(0o755)
             (root/'kotlin/bin/kotlinc').write_text(fake); (root/'kotlin/bin/kotlinc').chmod(0o755)
             env = {**os.environ, 'PATH':str(root/'bin')+':'+os.environ['PATH'], 'ROOT':str(root), 'DEAL_ROOT':str(root/'dep'), 'DEAL_UI_ROOT':str(root/'ui-dep'), 'JAVA_HOME':str(root/'jdk'), 'KOTLIN_HOME':str(root/'kotlin'), 'ANDROID_JAR':str(root/'android.jar'), 'RUNTIME_CP':str(root/'runtime.jar'), 'AIDL':str(root/'bin/aidl'), 'OUTPUT_DIR':str(root/'out')}
+            env.pop('DEAL_BUILD_STAGE_SECONDS',None)  # the default bound is the property under test
             def run(**extra):
                 return capped('library-build', ['bash', 'build.sh'], cwd=root, env={**env, **extra}, capture_output=True, text=True)
             result=run(); self.assertEqual(result.returncode,0,result.stdout+result.stderr)
@@ -474,6 +499,7 @@ elif name=='jar':
                                     preparation+lane_bounds.catalogue_seconds(group),
                                     f'the catalogue:{group} lane is tighter than the stages it wraps')
         for lane,node in (('catalogue',lane_bounds.CONTRACT_NODE),('construction',lane_bounds.CONTRACT_NODE),
+                          ('structure',lane_bounds.CONTRACT_NODE),('storage-host',lane_bounds.CONTRACT_NODE),
                           ('interaction',lane_bounds.INTERACTION_NODE),('surface',lane_bounds.SURFACE_NODE)):
             self.assertGreaterEqual(lanes.lane_bound(lane),preparation+node,
                                     f'the {lane} lane is tighter than the stages it wraps')

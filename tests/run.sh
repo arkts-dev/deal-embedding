@@ -78,7 +78,8 @@ export DEAL_BUILD_LOCK_HELD="$PWD"
 # observe another item's work.
 gate_sequence_composed() {
     python3 tests/tools/test-composer.py
-    # The persistence replay reads the last numeric pair the composer emitted, from the pair's own tree.
+    # The persistence replay reads the last numeric pair the composer emitted, from the pair's own tree,
+    # plus the entries pair whose compiled view iterates an authoritative list the copy can observe.
     node tests/tools/test-persistence.js build/v08-cutover/composer-pairs/numeric/composed-executable/js
     node tests/tools/test-assistance.js
     node tests/tools/test-assistance-lifecycle.js
@@ -129,6 +130,11 @@ gate_sequence_contracts() {
     # Host-configured containment: provider, discovery, evaluation, heap, input and transfer bounds.
     python3 tests/tools/test-resource-bounds.py
     python3 tests/tools/test-source-edits.py
+    # Structural editing and live refinement: the issued record's structural rules, revision-bound
+    # rebuilds, the state-preserving schema copy and refused-edit retention.
+    python3 tests/tools/test-structure-contracts.py
+    # The framework store: an emitted effect-bound call reaches one per-Experience host store.
+    python3 tests/tools/test-storage-host.py
     python3 tests/tools/test-fragment-semantics.py
     bash tests/tools/test-renderer-rules.sh
     # Exact shipped ECMAScript mechanism and precommit boundary ordering.

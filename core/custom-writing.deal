@@ -280,7 +280,7 @@ async function surface(input: Input): Promise<Result> {
     if (source !== null) {
       let current: revisions.Source = source as revisions.Source;
       attempts = attempts+1;
-      let checked: checking.Result = await checking.run(current.deal,current.dealui,metadata,fresh);
+      let checked: checking.Result = await checking.run(current.deal,current.dealui,metadata,fresh,"");
       if (checked.accepted as boolean) {
         let judged: Coverage = await judgeCoverage(input,current);
         if (judged.diagnostics === "") { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:""}; }
@@ -377,7 +377,7 @@ export async function run(input: Input): Promise<Result> {
     if (source !== null) {
       attempts = attempts+1;
       let value: revisions.Source = source as revisions.Source;
-      let checked: checking.Result = await checking.run(value.deal,value.dealui,metadata,fresh);
+      let checked: checking.Result = await checking.run(value.deal,value.dealui,metadata,fresh,"");
       if (checked.accepted as boolean) {
         let judged: Coverage = await judgeCoverage(input,value);
         if (judged.diagnostics === "") { return {candidateId:checked.candidateId as string,attempts:attempts,diagnostics:""}; }
@@ -404,7 +404,7 @@ export async function run(input: Input): Promise<Result> {
     // freshness it was checked under: appended notices are view nodes, so they add no declaration and
     // every compiled declaration of a fresh pair still has its issued owner. An edited pair was already
     // checked as repaired.
-    let checked: checking.Result = await checking.run(retained.deal,retained.dealui,bestMetadata,bestFresh);
+    let checked: checking.Result = await checking.run(retained.deal,retained.dealui,bestMetadata,bestFresh,"");
     if (checked.accepted) { return {candidateId:checked.candidateId,attempts:attempts,diagnostics:"Missing or unchecked original behavior: "+s.encode(bestMissing)}; }
     // A retained draft rejected by an authority verdict is not downgraded to a partial: the verdict is
     // the request's result and authorizes no repair.

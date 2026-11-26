@@ -80,18 +80,19 @@ SEAMS = [
      'new': 'const val nativeTimers = 4',
      'command': ['bash', 'tests/tools/test-renderer-rules.sh']},
     # AC-06's "attempts": the packaged generation entry charges one attempt per candidate check. The
-    # anchored statement is `custom-writing.deal:317 attempts = attempts+1`, the increment the
-    # counted-check mode executes. That bundle is compiled from the whole generation module graph, so its
-    # statement numbers are a global counter over every module the compiler numbered in the same build and
-    # a hard-coded one moves off the increment whenever an earlier module changes; the compiler's own
-    # source attribution names the increment instead. The anchor names that source line, not its emitted
-    # column or statement number, so another module's change never re-pins it; only an edit of
-    # core/custom-writing.deal that moves the increment, or a change to the attribution the compiler emits
-    # for it, does. `expect` keeps a rebound anchor from passing on an unrelated assertion. The command
-    # names that one mode: the unbounded matrix of the packaged entry would otherwise let the control's own
-    # bound, not the broken rule, decide the outcome.
+    # anchored statement is `custom-writing.deal:378 attempts = attempts+1`, the increment the
+    # counted-check mode executes (the ordinary whole-generation loop; the whole-Surface loop's own
+    # increment is a different source line and is not what this mode runs). That bundle is compiled from
+    # the whole generation module graph, so its statement numbers are a global counter over every module
+    # the compiler numbered in the same build and a hard-coded one moves off the increment whenever an
+    # earlier module changes; the compiler's own source attribution names the increment instead. The anchor
+    # names that source line, not its emitted column or statement number, so another module's change never
+    # re-pins it; only an edit of core/custom-writing.deal that moves the increment, or a change to the
+    # attribution the compiler emits for it, does. `expect` keeps a rebound anchor from passing on an
+    # unrelated assertion. The command names that one mode: the unbounded matrix of the packaged entry
+    # would otherwise let the control's own bound, not the broken rule, decide the outcome.
     {'id': 'attempts', 'family': 'checking-admission', 'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'after': 'custom-writing.deal:376:',
+     'after': 'custom-writing.deal:378:',
      'match': r'\$s\d+ = \(\$rt\.numOf\(\$[sg]\d+\) \+ \$rt\.numOf\(\$[sg]\d+\)\);',
      'mutate': (' + ', ' * '),
      'expect': 'candidate checks are counted as attempts',
@@ -127,7 +128,7 @@ SEAMS = [
     # header the rule refuses instead of repairing it.
     {'id': 'chat-compact', 'family': 'chat-construction',
      'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'after': 'generation/src/custom-writing.deal:108:7',
+     'after': 'generation/src/custom-writing.deal:110:7',
      'match': r'\$s\d+ = \(\$s\d+ === \$s\d+\);',
      'mutate': (' === ', ' !== '),
      'expect': 'the refused chat draft was written again',
@@ -137,7 +138,7 @@ SEAMS = [
     # The statement is anchored by the compiler's own attribution, like the fresh-draft control above.
     {'id': 'chat-edited-shape', 'family': 'chat-construction',
      'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'after': 'generation/src/custom-writing.deal:359:13',
+     'after': 'generation/src/custom-writing.deal:361:13',
      'match': r'\$s\d+ = \(\$s\d+ !== \$s\d+\);',
      'mutate': (' !== ', ' === '),
      'expect': 'a chat header reached the accepted source',
@@ -175,6 +176,21 @@ SEAMS = [
      'old': 'if (source.indexOf(search,found+1) >= 0) { s.reject("Ambiguous edit search"); }',
      'new': 'if (false) { s.reject("Ambiguous edit search"); }',
      'command': ['python3', 'tests/tools/test-source-edits.py']},
+    # Structural editing's publisher preservation: a structural removal that no longer asks whether a
+    # remaining reader resolves the fragment removes a still-read publisher, which the owning test
+    # observes. `expect` keeps a rebound anchor from passing on an unrelated assertion.
+    {'id': 'structural-edits', 'family': 'structural-edits', 'path': 'core/structural-edit.deal',
+     'old': '    if (connection.writerInstance === id) {',
+     'new': '    if (false) {',
+     'expect': 'a still-read publisher was removed',
+     'command': ['python3', 'tests/tools/test-structure-contracts.py']},
+    # Live refinement's state preservation: accepting a derived or runtime prior field as retained
+    # copies a value the replacement must recompute, which the owning test observes.
+    {'id': 'refinement', 'family': 'refinement', 'path': 'core/refinement.deal',
+     'old': 'if (held.role !== "authoritative") { introduced[introduced.length] = field.key; continue; }',
+     'new': 'if (held.role === "never") { introduced[introduced.length] = field.key; continue; }',
+     'expect': 'a newly authoritative field was copied from a derived value',
+     'command': ['python3', 'tests/tools/test-structure-contracts.py']},
     {'id': 'waits', 'family': 'host-protocol', 'path': 'core/controller.deal',
      'old': 'waitLimit >= 2 && waitLimit <= 64',
      'new': 'waitLimit >= 1 && waitLimit <= 64',

@@ -1,0 +1,132 @@
+import * as screens from "./screen";
+import * as structural from "./structural-edit";
+import * as refinement from "./refinement";
+import * as composer from "./composer";
+import * as catalogue from "./catalogue";
+import * as bindings from "./bindings";
+import * as decoded from "./decoded";
+import * as sourceCommit from "./source-commit";
+import * as revisions from "./source-revisions";
+import * as selection from "./selection";
+import * as plan from "./plan";
+import * as s from "./construction-schema";
+
+// The one production edit route (spec v0.8 "Source edits" and "Structural editing"). It owns neither
+// the compiler nor a model: it edits the issued composition record or copies the running state into a
+// replacement's own schema, rebuilds the pair through the one assembler, and commits it through the
+// revision-bound edit route that compiles, manifest-admits and checks the result. A refusal returns
+// the accepted source, revision and record unchanged, so the caller retains the original Session.
+//
+// `Issued` is the edit record that belongs with an accepted pair: the composition record whose
+// deterministic projection the accepted bytes are, the assembler's registry and computations, the
+// assembly metadata the compiler and checking admission consume, the resolved field schema of the
+// pair the assembler emitted, and the plan the record was issued from - the one input the chat root
+// rule reads besides the record, so a rebuild labels its children exactly as the unchanged
+// composition did. Nothing here invents a fragment, a binding or a parameter.
+export class Issued {
+  revision: string; digest: string; target: string; needs: string[];
+  record: string; metadata: string; fields: string;
+  registry: bindings.Registry; computations: composer.Computation[];
+  plan: plan.Plan | null;
+  projection: revisions.Source; canonical: revisions.Source;
+}
+// `record` is the composition record a structural edit produced, or - for a refinement - the copied
+// authoritative record the replacement is mounted with. `dispose` is the replacement decision: only an
+// accepted refinement disposes the replaced store and invalidates its calls and completions. `checks`
+// is the number of candidate checks the route performed, so the caller counts a failed check as an
+// attempt (spec v0.8 Experience.attempts counts candidate checks including failures).
+export class Edited {
+  accepted: boolean; reason: string; dispose: boolean; checks: number;
+  revision: string; digest: string; deal: string; dealui: string;
+  record: string; metadata: string; fields: string; candidateId: string;
+}
+// A refusal the commit route reached after checking the rebuilt candidate carries that check: the
+// caller counts it as an attempt even though nothing was committed.
+function refused(issued: Issued, reason: string, checks: number): Edited {
+  return {accepted:false,reason:reason,dispose:false,checks:checks,revision:issued.revision,digest:issued.digest,deal:issued.canonical.deal,dealui:issued.canonical.dealui,record:issued.record,metadata:issued.metadata,fields:issued.fields,candidateId:""};
+}
+function accepted(current: revisions.Revision, record: string, metadata: string, fields: string, candidateId: string, dispose: boolean, checks: number): Edited {
+  return {accepted:true,reason:"",dispose:dispose,checks:checks,revision:current.revision,digest:current.digest,deal:current.source.deal,dealui:current.source.dealui,record:record,metadata:metadata,fields:fields,candidateId:candidateId};
+}
+// The accepted revision the record was issued from: the commit route refuses a record whose revision
+// or digest was replaced, and every accepted edit issues a new one.
+function current(issued: Issued): revisions.Revision {
+  return {revision:issued.revision,digest:issued.digest,source:{deal:issued.canonical.deal,dealui:issued.canonical.dealui}};
+}
+// Every catalogue fragment's derived values are a function of the record's final connections, so a
+// structural change recomputes them instead of carrying values that name fragments the record no
+// longer holds. Values the assembler issued for a non-catalogue instance (parts) are retained: they
+// are the composition's own authoritative record of that part, not a rebuild input.
+function computations(record: screens.Composition, retained: composer.Computation[]): composer.Computation[] {
+  let result: composer.Computation[] = [];
+  for (let value of retained) {
+    let keep: boolean = true;
+    for (let instance of record.screen.instances) { if (instance.id === value.instance && instance.origin === "catalogue") { keep = false; } }
+    if (keep) { result[result.length] = value; }
+  }
+  for (let instance of record.screen.instances) {
+    if (instance.origin !== "catalogue") { continue; }
+    for (let value of catalogue.computations(instance,record.connections,record.screen.instances)) { result[result.length] = value; }
+  }
+  return result;
+}
+// The resolved field schema of an assembled pair as the refinement copy reads it: one identity per
+// owner and field name, its exact resolved type and the emitted record key. The caller asks this for
+// the accepted pair and for the replacement, so both sides of the copy are the compiler's own facts.
+export function schema(assembled: composer.Field[]): string {
+  let result: refinement.Field[] = [];
+  for (let field of assembled) { result[result.length] = {owner:field.instance,name:field.local,type:field.type,role:field.role,key:field.name}; }
+  return s.encode(result);
+}
+function fields(raw: string): refinement.Field[] { return refinement.decode(decoded.records(JSON.parse(raw))); }
+// Edit the issued record by one structural operation and rebuild the pair from the edited record. The
+// addition is the catalogue fragment the selector issued for the selected kind; the assembler decides
+// the declarations, the connections and the metadata, and the commit route decides admission.
+export async function structuralEdit(issued: Issued, request: string, addition: string, confidence: number): Promise<Edited> {
+  // The selector issues a structural choice only at the structural-edit threshold: a decision below it
+  // is not a structural request, so no operation runs and the record is untouched.
+  if (!(confidence >= selection.threshold("structural-edit"))) { return refused(issued,"Structural edit below the issued threshold",0); }
+  let asked: structural.Request = structural.decode(request);
+  let fragment: screens.Instance | null = null;
+  if (addition.trim() !== "") {
+    try { fragment = screens.decodeInstance(addition,issued.needs); }
+    catch (unknownAddition) { let additionError: Error = unknownAddition as Error; return refused(issued,"Unreadable issued fragment: "+additionError.message,0); }
+  }
+  // The record is decoded by the module that serialized it: the same validated identities, port
+  // types and layout capacities a supplied composition is admitted with, never a raw table.
+  let projected: screens.Projection | null = null;
+  try { projected = screens.decode(issued.record,issued.target,issued.needs); }
+  catch (unknownRecord) { let recordError: Error = unknownRecord as Error; return refused(issued,"Unreadable issued record: "+recordError.message,0); }
+  let record: screens.Composition = (projected as screens.Projection).composition;
+  let outcome: structural.Outcome = structural.apply(record,asked,fragment);
+  if (!outcome.accepted) { return refused(issued,outcome.reason,0); }
+  let rebuilt: composer.Result | null = null;
+  try {
+    // The rebuild asks the same chat root rule the construction route and the custom writer ask, with
+    // the plan the record was issued from: the label wording of a placed fragment is the plan need's
+    // own wording, so an accepted edit of a chat target never replaces a tab label with an identity.
+    rebuilt = await composer.assembleWith(outcome.composition,computations(outcome.composition,issued.computations),issued.registry,composer.chatRoot(outcome.composition,issued.plan));
+  } catch (unknownError) {
+    let error: Error = unknownError as Error;
+    // A record the assembler cannot turn into a pair is a refusal with its located reason, never a
+    // partially committed edit: the accepted source and record are retained.
+    if (error.name !== "CONSTRUCTION_SCHEMA" && error.name !== "E8001" && error.name !== "E8007") { throw error; }
+    return refused(issued,"Structural rebuild rejected: "+error.message,0);
+  }
+  let assembled: composer.Result = rebuilt as composer.Result;
+  let before: revisions.Revision = current(issued);
+  let rebuiltSource: revisions.Source = {deal:assembled.source.deal,dealui:assembled.source.dealui};
+  let committed: sourceCommit.Committed = await structural.commit(before,before,rebuiltSource,s.encode(assembled.metadata),issued.projection,issued.canonical);
+  if (!committed.accepted) { return refused(issued,committed.diagnostics,committed.checks); }
+  return accepted(committed.revision,screens.encode(outcome.composition),s.encode(assembled.metadata),schema(assembled.fields),committed.candidateId,false,committed.checks);
+}
+// Live refinement: the replacement pair is checked with the copied authoritative record overlaid on
+// its own initial state, so its first tree is the one the user will see after the refinement. Only an
+// accepted refinement disposes the replaced store; every refusal retains the old Session and data.
+export async function refine(issued: Issued, rebuilt: revisions.Source, metadata: string, before: string, after: string, record: string): Promise<Edited> {
+  let held: revisions.Revision = current(issued);
+  let refined: refinement.Refined = await refinement.replace(held,held,rebuilt,metadata,fields(before),fields(after),record,issued.projection,issued.canonical);
+  if (!refined.accepted) { return refused(issued,refined.diagnostics,refined.checks); }
+  return accepted(refined.revision,refined.record,metadata,after,refined.candidateId,refined.dispose,refined.checks);
+}
+export function main(): void { return; }

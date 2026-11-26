@@ -443,6 +443,9 @@ globalThis.dealLoad = function(factories, entryId, appModule = null) {
     // The host Session facts of compiled admission are a host-owned module, not a bundle file: the
     // generated Experience resolves it by its declared identity, exactly as it resolves the filter.
     if (name === 'embedding/session' || name === 'embedding/session.js') return 'embedding/session';
+    // Deal UI's framework-owned per-Experience store: the host owns the records and the boundary,
+    // the isolate only expresses the declared asynchronous surface.
+    if (name === 'host/storage' || name === 'host/storage.js') return 'host/storage';
     if (typeof protocolDeclarations !== 'undefined' && Object.hasOwn(protocolDeclarations, name.replace(/\.js$/, ""))) return name.replace(/\.js$/, "");
     if (Object.hasOwn(dealHostContracts, name.replace(/\.js$/, ""))) return name.replace(/\.js$/, "");
     if (!name.startsWith("./") && !name.startsWith("../")) {
@@ -478,6 +481,24 @@ globalThis.dealLoad = function(factories, entryId, appModule = null) {
     // The host-owned Session facts of compiled admission, answered synchronously from host
     // configuration: no provider call, no isolate round trip and no snapshot can establish them.
     if (id === 'embedding/session' || id === 'embedding/session.js') return dealSession;
+    // The per-Experience store is a host module: every call is one host request, so the host decides
+    // which Experience's records it reads and the controller keeps system persistence elsewhere.
+    if (id === 'host/storage' || id === 'host/storage.js') {
+      if (!Object.hasOwn(cache, 'host/storage')) {
+        function refuse(code, message) { return load('deal/runtime.js').errorValue(code, message); }
+        function send(name, args) {
+          return dealCapabilities.request('host/storage', name, args).catch(error => {
+            throw load('deal/runtime.js').errorValue(error && error.code || 'STORAGE', error && error.message || 'Storage unavailable');
+          });
+        }
+        cache['host/storage'] = {exports: Object.freeze({
+          load: key => { if (typeof key !== 'string') throw refuse('INVALID_ARGUMENT', 'Storage key must be text'); return send('load', [key]); },
+          save: (key, value) => { if (typeof key !== 'string' || typeof value !== 'string') throw refuse('INVALID_ARGUMENT', 'Storage key and value must be text'); return send('save', [key, value]); },
+          remove: key => { if (typeof key !== 'string') throw refuse('INVALID_ARGUMENT', 'Storage key must be text'); return send('remove', [key]); }
+        })};
+      }
+      return cache['host/storage'].exports;
+    }
     function encode(type, value) {
       if (type.kind === 'array') return value.map(item => encode(type.element, item));
       if (type.kind === 'record') {

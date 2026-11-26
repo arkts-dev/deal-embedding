@@ -13,6 +13,12 @@ import * as construction from "./construction";
 import * as bindings from "./bindings";
 import * as writing from "./custom-writing";
 import * as assets from "./generation-guidance.generated";
+// The edit route compiles into this production bundle: an Experience generated here is structurally
+// edited and refined by the same compiled policy that generated it, from the record and assembler
+// inputs the generation result issues. No edit lane re-implements the assembly or the commit.
+import * as editing from "./editing";
+import * as revisions from "./source-revisions";
+import * as composer from "./composer";
 
 export class GenerationInput { intent: string; context: embedding.GenerationContext; capabilities: embedding.CapabilityContract[]; target: string; clockIntervalMs: number; clockToleranceMs: number; }
 // The classification, its reason and the construction outcome are retained with the request trace
@@ -67,3 +73,18 @@ export async function generate(request: GenerationInput): Promise<GenerationResu
   return {candidateId:written.candidateId,attempts:written.attempts,diagnostics:written.diagnostics,origin:"generated",classification:trace,classificationReason:reason};
 }
 export function main(): void { return; }
+
+// --- the production structural-edit and live-refinement operations ---------------------------------
+
+// One issued record, one selector decision and the catalogue fragment the selector issued for the
+// selected kind. The route edits the record, rebuilds the pair through the assembler and commits it.
+export async function structuralEdit(issued: editing.Issued, request: string, addition: string, confidence: number): Promise<editing.Edited> {
+  return await editing.structuralEdit(issued,request,addition,confidence);
+}
+// One replacement pair with its issued assembly metadata over the state the running Session holds.
+export async function refine(issued: editing.Issued, deal: string, dealui: string, metadata: string, before: string, after: string, record: string): Promise<editing.Edited> {
+  let rebuilt: revisions.Source = {deal:deal,dealui:dealui};
+  return await editing.refine(issued,rebuilt,metadata,before,after,record);
+}
+// The resolved field schema of an assembled pair, in the form the refinement copy reads.
+export function editSchema(assembled: composer.Field[]): string { return editing.schema(assembled); }

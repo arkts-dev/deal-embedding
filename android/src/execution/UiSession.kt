@@ -24,6 +24,11 @@ internal class UiSession(private val context: Context, private val broker: Capab
     private var nextClockPump = 0L
     private val requestParents = mutableMapOf<Int, String>()
     private val requestStarts = mutableMapOf<Int, Long>()
+    /** The framework storage host for this Experience; the controller's saved record is not it. */
+    private val storage = ExperienceScopedStorage(context, config.storageName, owningExperience())
+    // A store scoped to anything but the owning Experience would hold records that forgetting the
+    // Experience never clears, so a Session without one fails closed instead of inventing a scope.
+    private fun owningExperience(): String { check(workspace.isNotEmpty()) { "A live Session store needs the owning Experience" }; return workspace }
     private fun evaluate(source: String): String = program.evaluate(source)
     /** The live Session facts compiled admission re-reads before a send and before a reply are host
      * configuration installed beside the mounted Session: the Session lifetime, the permission epoch of
@@ -89,6 +94,21 @@ internal class UiSession(private val context: Context, private val broker: Capab
         installSessionFacts()
         evaluate("setFrameVisibility($visible, ${android.os.SystemClock.elapsedRealtime()})")
     }
+    /** One storage request answered by the Experience-scoped host; a failure is a typed reply. */
+    private fun storageReply(request: JSONObject, started: Long): JSONObject {
+        val id = request.getInt("id")
+        val span = "storage:$id"
+        log.event("capability", "started", candidate, workspace, id.toString(), parentOperation = lastAction, target = "host/storage." + request.optString("function"), detail = request.toString(), span = span)
+        return try {
+            val value = storage.call(request.getString("function"), request.getJSONArray("args"))
+            log.event("capability", "completed", candidate, workspace, id.toString(), parentOperation = requestParents.remove(id) ?: "", durationMs = android.os.SystemClock.elapsedRealtime() - started, detail = value.toString(), span = span)
+            JSONObject().put("id", id).put("ok", true).put("value", value)
+        } catch (error: Throwable) {
+            requestParents.remove(id)
+            log.event("capability", "failed", candidate, workspace, id.toString(), (error as? ProtocolFailure)?.code ?: error.javaClass.simpleName, durationMs = android.os.SystemClock.elapsedRealtime() - started, span = span)
+            JSONObject().put("id", id).put("ok", false).put("error", JSONObject().put("code", (error as? ProtocolFailure)?.code ?: "STORAGE").put("message", error.message ?: "Storage unavailable"))
+        }
+    }
     fun advance(): JSONObject {
         // Driver progress is independent of renderer events and detachment; a delayed or coalesced
         // host callback still reports the monotone delta that really passed. Clock and frame drivers
@@ -107,9 +127,17 @@ internal class UiSession(private val context: Context, private val broker: Capab
         val probeRequests = JSONArray(evaluate(DealSessionBindings.probes))
         check(probeRequests.length() <= 3) { "Public probe batch too large: " + probeRequests.length() }
         for (i in 0 until probeRequests.length()) { probes.receive(probeRequests.getJSONObject(i)) }
+        val storageReplies = mutableListOf<JSONObject>()
         for (i in 0 until requests.length()) {
             val request = requests.getJSONObject(i)
             val id = request.getInt("id")
+            // The per-Experience store is a host mechanism, not a disclosed provider contract: it is
+            // answered here, traced on its own span and never routed through a capability session.
+            if (request.optString("module") == "host/storage") {
+                requestParents[id] = lastAction
+                storageReplies.add(storageReply(request, now))
+                continue
+            }
             requestStarts[id] = now
             requestParents[id] = lastAction
             log.event("capability", "started", candidate, workspace, id.toString(), parentOperation = lastAction, target = request.optString("module") + "." + request.optString("function"), detail = request.toString(), span = "${capabilities.identity}:$id")
@@ -123,10 +151,12 @@ internal class UiSession(private val context: Context, private val broker: Capab
             log.event("capability", if (reply.getBoolean("ok")) "completed" else "failed", candidate, workspace, id.toString(),
                 reply.optJSONObject("error")?.optString("code") ?: "", now - started, parentOperation = requestParents.remove(id) ?: "", detail = reply.toString(), span = "${capabilities.identity}:$id")
         }
-        if (replies.isNotEmpty()) {
+        // Completions keep their request order even when a host store call answered immediately.
+        val delivered = (replies + storageReplies).sortedBy { it.getInt("id") }
+        if (delivered.isNotEmpty()) {
             // A reply is admitted under the Session as it is now, never as it was when the call left.
             installSessionFacts()
-            log.stage("effect-delivery", candidate, workspace, replies.joinToString(",") { it.getInt("id").toString() }) { evaluate("dealCapabilities.deliver(${JSONArray(replies)})") }
+            log.stage("effect-delivery", candidate, workspace, delivered.joinToString(",") { it.getInt("id").toString() }) { evaluate("dealCapabilities.deliver(${JSONArray(delivered)})") }
         }
         val probeReplies = probes.drain()
         if (probeReplies.isNotEmpty()) {

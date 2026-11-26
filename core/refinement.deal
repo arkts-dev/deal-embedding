@@ -1,0 +1,98 @@
+import * as s from "./construction-schema";
+import * as revisions from "./source-revisions";
+import * as sourceCommit from "./source-commit";
+
+// State-preserving live refinement (spec v0.8 "Source edits"): the latest authoritative state of the
+// running Session is schema-copied into the replacement store by stable owner/field identity and
+// exact resolved type; a field the replacement does not declare disappears, a new field keeps its
+// initializer, and an incompatible retained field rejects the whole refinement instead of coercing.
+// The candidate view is then prepared with effects suppressed and committed atomically, so a failure
+// retains the old Session and its data.
+export class Field { owner: string; name: string; type: string; role: string; key: string; }
+// `fields` is the copied authoritative record's key set and `introduced` the authoritative fields the
+// replacement declares that the old record never held: those keep the initializer the issued fragment
+// declares, so the caller overlays `record` on the replacement's own initial state instead of
+// fabricating values for them.
+export class Copied { accepted: boolean; record: string; fields: string[]; introduced: string[]; diagnostics: string; }
+// `dispose` is the replacement decision: only an accepted refinement replaces the old store, whose
+// calls and completions are then invalidated. A refused refinement retains it. `checks` is the number
+// of candidate checks the route performed, which the caller counts as attempts.
+export class Refined { accepted: boolean; revision: revisions.Revision; candidateId: string; record: string; dispose: boolean; diagnostics: string; checks: number; }
+function identity(field: Field): string { return field.owner+"."+field.name; }
+// The issued schema is decoded before any copy decision, so a malformed declaration is a located
+// rejection rather than a silently dropped field.
+export function decode(values: Record<string, unknown>[]): Field[] {
+  let result: Field[] = [];
+  for (let value of values) {
+    s.closed(value,["owner","name","type","role","key"],[]);
+    result[result.length] = {owner:s.identifier(value.owner),name:s.identifier(value.name),type:s.nonblank(value.type),role:s.oneOf(value.role,["authoritative","derived","runtime"]),key:s.nonblank(value.key)};
+  }
+  return result;
+}
+function prior(before: Field[], field: Field): Field | null {
+  for (let candidate of before) { if (candidate.owner === field.owner && candidate.name === field.name) { return candidate; } }
+  return null;
+}
+function refusedCopy(diagnostics: string): Copied { return {accepted:false,record:"",fields:[],introduced:[],diagnostics:diagnostics}; }
+// The replacement store's authoritative record. Only authoritative fields are copied: a derived
+// value is recomputed by the replacement and a runtime resource starts from its initial value.
+// Every retained identity keeps its exact resolved type, and the record key follows the emitted
+// identity of the replacement, never the old spelling.
+export function copy(before: Field[], after: Field[], record: string): Copied {
+  // A malformed saved record is an incompatibility of the replacement, never an escape from the copy
+  // decision: every failure of this route is a located rejection the caller retains the old Session
+  // for.
+  let source: Record<string, unknown> = {};
+  try {
+    let parsed: unknown = JSON.parse(record);
+    // The saved record is a closed object of authoritative fields: null, a scalar or an array is the
+    // wrong shape, not an empty record, so it rejects instead of faulting on the first field read.
+    if (parsed === null || typeof parsed !== "object" || record.trim().startsWith("[")) { return refusedCopy("Malformed authoritative record: not a record"); }
+    source = parsed as Record<string, unknown>;
+  }
+  catch (unknownError) { let error: Error = unknownError as Error; return refusedCopy("Malformed authoritative record: "+error.message); }
+  let ids: string[] = []; let keys: string[] = []; let copied: string[] = []; let introduced: string[] = []; let result: Record<string, unknown> = {};
+  for (let field of after) {
+    if (field.role !== "authoritative") { continue; }
+    let name: string = identity(field);
+    if (s.contains(ids,name)) { return refusedCopy("Duplicate retained identity: "+name); }
+    ids[ids.length] = name;
+    // Two retained identities may not share one emitted record key: the replacement could hold only
+    // one of them and would silently lose the other.
+    if (s.contains(keys,field.key)) { return refusedCopy("Duplicate retained record key: "+field.key); }
+    keys[keys.length] = field.key;
+    let previous: Field | null = prior(before,field);
+    // A field the replacement introduces, or one whose role changed, keeps the initializer the issued
+    // fragment declares: a derived or runtime resource is never carried into authority.
+    if (previous === null) { introduced[introduced.length] = field.key; continue; }
+    let held: Field = previous as Field;
+    if (held.role !== "authoritative") { introduced[introduced.length] = field.key; continue; }
+    if (held.type !== field.type) { return refusedCopy("Incompatible retained field "+name+": "+held.type+" -> "+field.type); }
+    if (!Object.hasOwn(source,held.key)) { return refusedCopy("Missing retained state "+name); }
+    result[field.key] = source[held.key];
+    copied[copied.length] = field.key;
+  }
+  return {accepted:true,record:s.encode(result),fields:copied,introduced:introduced,diagnostics:""};
+}
+// A refusal the commit route reached after checking the replacement view carries that check: the
+// caller counts it as an attempt even though the old Session is retained.
+function refused(current: revisions.Revision, record: string, diagnostics: string, checks: number): Refined {
+  return {accepted:false,revision:current,candidateId:"",record:record,dispose:false,diagnostics:diagnostics,checks:checks};
+}
+// The refinement route: only when the record still matches the accepted canonical bytes, every
+// retained field is compatible, and the rebuilt candidate compiles and prepares its first tree
+// without an effect does the source, store and display replace together. The caller overlays
+// `record` on the replacement's initial state (introduced fields keep their compiled initializers),
+// then disposes the replaced store, whose calls and completions are invalidated; no external work is
+// replayed.
+export async function replace(current: revisions.Revision, issued: revisions.Revision, rebuilt: revisions.Source, metadata: string, before: Field[], after: Field[], record: string, projection: revisions.Source, canonical: revisions.Source): Promise<Refined> {
+  if (!sourceCommit.editable(projection,canonical)) { return refused(current,record,"Structural record invalidated by an incompatible text edit",0); }
+  let copied: Copied = copy(before,after,record);
+  if (!copied.accepted) { return refused(current,record,copied.diagnostics,0); }
+  // The candidate is checked with the copied authoritative record, so its first tree is validated
+  // from the state the user will actually see instead of from fresh initializers alone.
+  let committed: sourceCommit.Committed = await sourceCommit.commit(current,issued,rebuilt,metadata,projection,canonical,copied.record);
+  if (!committed.accepted) { return refused(current,record,committed.diagnostics,committed.checks); }
+  return {accepted:true,revision:committed.revision,candidateId:committed.candidateId,record:copied.record,dispose:true,diagnostics:"",checks:committed.checks};
+}
+export function main(): void { return; }

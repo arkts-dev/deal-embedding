@@ -1,0 +1,313 @@
+import * as screens from "./screen";
+import * as revisions from "./source-revisions";
+import * as sourceCommit from "./source-commit";
+import * as s from "./construction-schema";
+
+// Structural editing over the issued composition record (spec v0.8 "Structural editing"). The record
+// stores definitions and selections with resolved import and nominal identities, never
+// generation-store aliases; one structural operation changes the record, and the caller assembles
+// the changed composition into a source pair (this module does not reach the composer) which is
+// committed through the shared revision-bound edit route, so a rejected change retains the original
+// source and selection.
+export class Request { op: string; target: string; kind: string; }
+export class Outcome { accepted: boolean; composition: screens.Composition; reason: string; }
+// The selector's structural choices; the applicable new kind is the catalogue kind for add/replace.
+function operations(): string[] { return ["add","remove","replace","move-to-top","move-to-bottom"]; }
+export function decode(raw: string): Request {
+  let parsed: unknown = {};
+  try { parsed = JSON.parse(raw); }
+  catch (unknownError) { let error: Error = unknownError as Error; s.reject("Malformed structural request: "+error.message); }
+  if (parsed === null || typeof parsed !== "object") { s.reject("Malformed structural request: not a record"); }
+  let value: Record<string, unknown> = parsed as Record<string, unknown>;
+  s.closed(value,["op","target"],["kind"]);
+  let kind: string = "";
+  if (Object.hasOwn(value,"kind")) { kind = s.nonblank(value.kind); }
+  return {op:s.oneOf(value.op,operations()),target:s.identifier(value.target),kind:kind};
+}
+function refused(composition: screens.Composition, reason: string): Outcome { return {accepted:false,composition:composition,reason:reason}; }
+function find(screen: screens.Screen, id: string): screens.Instance | null {
+  for (let instance of screen.instances) { if (instance.id === id) { return instance; } }
+  return null;
+}
+function slot(screen: screens.Screen, need: string): screens.Slot | null {
+  for (let value of screen.slots) { if (value.need === need) { return value; } }
+  return null;
+}
+function position(screen: screens.Screen, id: string): screens.Position | null {
+  for (let value of screen.layout.positions) { if (value.id === id) { return value; } }
+  return null;
+}
+function catalogueCount(screen: screens.Screen): number {
+  // Parts, custom sections and notices are not catalogue instances: the six-instance bound counts
+  // only the reusable sections the catalogue issues.
+  let held: number = 0;
+  for (let instance of screen.instances) { if (instance.origin === "catalogue") { held = held+1; } }
+  return held;
+}
+function occupancy(screen: screens.Screen, id: string, except: string): number {
+  let held: number = 0;
+  for (let instance of screen.instances) { if (instance.id !== except && Object.hasOwn(instance,"position") && (instance.position as string) === id) { held = held+1; } }
+  return held;
+}
+function duplicate(screen: screens.Screen, kind: string, except: string): boolean {
+  for (let instance of screen.instances) { if (instance.origin === "catalogue" && instance.kind === kind && instance.id !== except) { return true; } }
+  return false;
+}
+// A published port a remaining reader still resolves is a still-read publisher: replacing or removing
+// it would leave the reader connected to a fragment the composition no longer holds.
+function readPort(screen: screens.Screen, connections: screens.Connection[], id: string): string {
+  for (let connection of connections) {
+    if (connection.readerInstance === id) { continue; }
+    if (connection.writerInstance === id) {
+      let writer: screens.Instance | null = find(screen,connection.writerInstance);
+      if (writer !== null) {
+        for (let port of writer.fragment.ports) { if (port.direction === "publish" && port.name === connection.writerPort) { return connection.readerInstance+"/"+connection.readerPort+" reads "+id+"/"+connection.writerPort; } }
+      }
+    }
+  }
+  return "";
+}
+// The first other exact-name and exact-type publisher in screen order, which is the catalogue
+// alignment rule without an explicit connection. The instance being replaced is excluded by the
+// caller, so a replacement never resolves a port against the fragment it replaces.
+function publisher(screen: screens.Screen, reader: string, port: screens.Port): screens.Instance | null {
+  for (let instance of screen.instances) {
+    if (instance.id === reader) { continue; }
+    for (let output of instance.fragment.ports) { if (output.direction === "publish" && output.name === port.name && output.type === port.type) { return instance; } }
+  }
+  return null;
+}
+function copyLayout(value: screens.Layout): screens.Layout {
+  let positions: screens.Position[] = [];
+  for (let position of value.positions) {
+    let kinds: string[] = []; for (let kind of position.allowedKinds) { kinds[kinds.length] = kind; }
+    positions[positions.length] = {id:position.id,allowedKinds:kinds,minimum:position.minimum,maximum:position.maximum};
+  }
+  return {kind:value.kind,positions:positions};
+}
+function copySlot(value: screens.Slot): screens.Slot {
+  let reads: string[] = []; for (let read of value.reads) { reads[reads.length] = read; }
+  let writes: string[] = []; for (let write of value.writes) { writes[writes.length] = write; }
+  let kinds: string[] = []; for (let kind of value.allowedKinds) { kinds[kinds.length] = kind; }
+  let entry: screens.Slot = {id:value.id,need:value.need,reads:reads,writes:writes,provider:value.provider,allowedKinds:kinds,valueType:value.valueType,status:value.status,instance:value.instance,reason:value.reason};
+  if (Object.hasOwn(value,"event")) { entry.event = value.event as string; }
+  if (Object.hasOwn(value,"trigger")) { entry.trigger = value.trigger as string; }
+  if (Object.hasOwn(value,"action")) { entry.action = value.action as string; }
+  return entry;
+}
+function copyConnection(value: screens.Connection): screens.Connection {
+  return {readerInstance:value.readerInstance,readerPort:value.readerPort,writerInstance:value.writerInstance,writerPort:value.writerPort};
+}
+function copyInstance(value: screens.Instance): screens.Instance {
+  let entry: screens.Instance = {id:value.id,kind:value.kind,origin:value.origin,parameters:value.parameters,fragment:value.fragment,bodies:value.bodies};
+  if (Object.hasOwn(value,"definition")) { entry.definition = value.definition as screens.Definition; }
+  if (Object.hasOwn(value,"drivers")) { entry.drivers = value.drivers as screens.Driver[]; }
+  if (Object.hasOwn(value,"position")) { entry.position = value.position as string; }
+  return entry;
+}
+// A replacement or addition carries exactly the position the record issued for it, so an addition's
+// own position never enters a stack layout.
+function positioned(value: screens.Instance, position: string): screens.Instance {
+  let entry: screens.Instance = copyInstance(value);
+  if (position !== "") { entry.position = position; } else { delete entry.position; }
+  return entry;
+}
+// The record is copied before a change is applied, so a rejected or failed edit retains the original
+// selection instead of a partially mutated one.
+function recordCopy(composition: screens.Composition): screens.Composition {
+  let slots: screens.Slot[] = []; for (let value of composition.screen.slots) { slots[slots.length] = copySlot(value); }
+  let instances: screens.Instance[] = []; for (let value of composition.screen.instances) { instances[instances.length] = copyInstance(value); }
+  let connections: screens.Connection[] = []; for (let value of composition.connections) { connections[connections.length] = copyConnection(value); }
+  let bindings: Record<string, unknown> = composition.bindings;
+  let actions: Record<string, unknown> = composition.actions;
+  let result: screens.Composition = {screen:{title:composition.screen.title,target:composition.screen.target,layout:copyLayout(composition.screen.layout),slots:slots,instances:instances},bindings:bindings,actions:actions,connections:connections};
+  if (Object.hasOwn(composition,"composites")) { result.composites = composition.composites as screens.Composite[]; }
+  return result;
+}
+// A filled slot keeps one implementation: a structural removal opens the needs that implementation
+// covers, with the located reason, and clears the kind the removed instance imposed. A structural
+// addition fills the open slots its fragment covers, declares its own kind and resolves every reader
+// port it carries against a remaining exact publisher, so the record it returns can be assembled.
+function detach(target: screens.Composition, id: string): void {
+  let retained: screens.Connection[] = [];
+  for (let connection of target.connections) { if (connection.readerInstance !== id) { retained[retained.length] = connection; } }
+  target.connections = retained;
+  for (let value of target.screen.slots) {
+    if (value.instance !== null && (value.instance as string) === id) { value.status = "open"; value.instance = null; value.reason = "Structural removal: "+id; value.allowedKinds = []; }
+  }
+}
+function attach(target: screens.Composition, addition: screens.Instance, inherited: string): string {
+  for (let port of addition.fragment.ports) {
+    if (port.direction !== "read" || port.optional) { continue; }
+    let writer: screens.Instance | null = publisher(target.screen,addition.id,port);
+    if (writer === null) { return "Addition has no publisher for its read port: "+addition.id+"/"+port.name; }
+    target.connections[target.connections.length] = {readerInstance:addition.id,readerPort:port.name,writerInstance:writer.id,writerPort:port.name};
+  }
+  let entry: screens.Instance = positioned(addition,inherited);
+  for (let value of target.screen.slots) { if (s.contains(addition.fragment.covers,value.need) && value.status !== "filled") {
+    value.status = "filled"; value.instance = entry.id; value.reason = "";
+    // A catalogue slot is filled by one kind: the issued kind of the instance that now fills it.
+    value.allowedKinds = [entry.kind];
+  } }
+  return "";
+}
+function additionReason(addition: screens.Instance | null, request: Request, target: screens.Screen, inherited: string): string {
+  if (addition === null) { return "Structural addition requires an issued fragment"; }
+  let issued: screens.Instance = addition as screens.Instance;
+  if (issued.origin !== "catalogue") { return "Not an issued catalogue instance: "+issued.id; }
+  if (issued.kind !== request.kind) { return "Issued fragment kind differs from the selected kind: "+issued.kind+" vs "+request.kind; }
+  // A replacement may carry the identity of the instance it replaces: that instance leaves the record
+  // in the same operation, so no other instance holds the identity. Any other identity the record
+  // already holds is the duplicate this refusal names.
+  if (issued.id !== inherited && find(target,issued.id) !== null) { return "Duplicate instance identity: "+issued.id; }
+  return "";
+}
+function reason(original: screens.Composition, request: Request, addition: screens.Instance | null): string {
+  let screen: screens.Screen = original.screen;
+  if (request.op === "add") {
+    let value: screens.Slot | null = slot(screen,request.target);
+    if (value === null) { return "Unissued structural target: "+request.target; }
+    if (value.status === "filled" && value.instance !== null) {
+      let filled: screens.Instance | null = find(screen,value.instance as string);
+      if (filled !== null && filled.origin === "part") { return "Composer-part target: "+request.target; }
+      return "Target need is already implemented: "+request.target;
+    }
+    // A declared position carries a kind list and a capacity; an addition without one cannot be
+    // placed in it, so only a stack layout admits a new fragment here.
+    if (screen.layout.kind !== "stack") { return "Structural additions require a stack layout"; }
+    if (!s.contains(screens.catalogueKinds(),request.kind)) { return "Not a catalogue kind: "+request.kind; }
+    if (duplicate(screen,request.kind,"")) { return "Duplicate catalogue kind: "+request.kind; }
+    if (catalogueCount(screen) >= 6) { return "Catalogue instance bound reached: six catalogue instances"; }
+    // The addition implements the selected need and covers only needs the record issues: a fragment
+    // chosen for another need, or one that covers a need this record never issued, is not an
+    // addition this record can hold.
+    if (addition !== null) {
+      let issued: screens.Instance = addition as screens.Instance;
+      if (!s.contains(issued.fragment.covers,request.target)) { return "Addition does not implement the target need: "+request.target; }
+      for (let need of issued.fragment.covers) { if (slot(screen,need) === null) { return "Addition covers an unissued need: "+need; } }
+    }
+    return "";
+  }
+  let instance: screens.Instance | null = find(screen,request.target);
+  if (instance === null) { return "Unissued structural target: "+request.target; }
+  let held: screens.Instance = instance as screens.Instance;
+  if (held.origin === "part") { return "Composer-part target: "+request.target; }
+  if (request.op === "move-to-top" || request.op === "move-to-bottom") {
+    if (screen.layout.kind !== "stack") { return "Moves require a stack layout"; }
+    return "";
+  }
+  if (request.op === "remove") {
+    // A fragment is an instance the composition implements a need with: the notices a construction
+    // appends for uncovered needs are advisory records, never fragments, so a record of one fragment
+    // plus notices still rejects the removal of its last fragment and admits removing a notice.
+    if (held.origin !== "notice") {
+      let fragments: number = 0;
+      for (let instance of screen.instances) { if (instance.origin !== "notice") { fragments = fragments+1; } }
+      if (fragments <= 1) { return "Last-fragment removal: "+request.target; }
+    }
+    let read: string = readPort(screen,original.connections,request.target);
+    if (read !== "") { return "Still-read publisher: "+read; }
+    // A declared position with a minimum keeps its capacity: removing below it would silently
+    // degrade the whole layout to a stack.
+    if (Object.hasOwn(held,"position")) {
+      let declared: screens.Position | null = position(screen,held.position as string);
+      if (declared !== null && occupancy(screen,declared.id,request.target) < declared.minimum) { return "Removal breaks the declared layout position: "+declared.id; }
+    }
+    return "";
+  }
+  // replace
+  if (!s.contains(screens.catalogueKinds(),request.kind)) { return "Not a catalogue kind: "+request.kind; }
+  let read: string = readPort(screen,original.connections,request.target);
+  if (read !== "") { return "Still-read publisher: "+read; }
+  if (duplicate(screen,request.kind,request.target)) { return "Duplicate catalogue kind: "+request.kind; }
+  // A replacement implements the behavior it replaces: a fragment covering none of the replaced
+  // needs would leave those needs open under a different kind.
+  let inherited: boolean = false;
+  let candidate: screens.Instance | null = addition;
+  if (candidate !== null) { for (let need of held.fragment.covers) { if (s.contains((candidate as screens.Instance).fragment.covers,need)) { inherited = true; } } }
+  if (candidate !== null && (candidate as screens.Instance).fragment.covers.length > 0 && !inherited) { return "Replacement implements none of the replaced needs: "+request.target; }
+  // A replaced instance keeps its declared position only when that position admits the new kind and
+  // has room, so a replacement never silently degrades the layout to a stack.
+  if (Object.hasOwn(held,"position")) {
+    let declared: screens.Position | null = position(screen,held.position as string);
+    if (declared === null) { return "Unknown layout position: "+(held.position as string); }
+    if (!s.contains(declared.allowedKinds,request.kind)) { return "Replacement kind is not allowed in the replaced position: "+request.kind; }
+  }
+  return "";
+}
+// Apply one structural operation to a copy of the issued record. The addition is the fragment the
+// catalogue issued for the selected kind, so no policy here invents a fragment or a parameter.
+export function apply(composition: screens.Composition, request: Request, addition: screens.Instance | null): Outcome {
+  // The operation set is checked here too: a hand-built request never falls through to another
+  // operation's branch.
+  if (!s.contains(operations(),request.op)) { return refused(composition,"Unknown structural operation: "+request.op); }
+  let rejected: string = reason(composition,request,addition);
+  if (rejected !== "") { return refused(composition,rejected); }
+  if (request.op === "add" || request.op === "replace") {
+    let inherited: string = "";
+    if (request.op === "replace") { inherited = request.target; }
+    let invalid: string = additionReason(addition,request,composition.screen,inherited);
+    if (invalid !== "") { return refused(composition,invalid); }
+  }
+  let target: screens.Composition = recordCopy(composition);
+  if (request.op === "add") {
+    let issued: screens.Instance = addition as screens.Instance;
+    let failure: string = attach(target,issued,"");
+    if (failure !== "") { return refused(composition,failure); }
+    target.screen.instances[target.screen.instances.length] = positioned(issued,"");
+    return {accepted:true,composition:target,reason:""};
+  }
+  let index: number = 0;
+  let at: number = -1;
+  for (let instance of target.screen.instances) { if (instance.id === request.target) { at = index; } index = index+1; }
+  if (request.op === "remove") {
+    detach(target,request.target);
+    let retained: screens.Instance[] = [];
+    for (let instance of target.screen.instances) { if (instance.id !== request.target) { retained[retained.length] = instance; } }
+    target.screen.instances = retained;
+    return {accepted:true,composition:target,reason:""};
+  }
+  if (request.op === "replace") {
+    let issued: screens.Instance = addition as screens.Instance;
+    let original: screens.Instance = target.screen.instances[at];
+    let inherited: string = "";
+    if (Object.hasOwn(original,"position")) { inherited = original.position as string; }
+    detach(target,request.target);
+    // The replaced fragment leaves the record before the replacement resolves its reader ports, so
+    // no connection can name the instance the replacement removed.
+    let retained: screens.Instance[] = [];
+    for (let instance of target.screen.instances) { if (instance.id !== request.target) { retained[retained.length] = instance; } }
+    target.screen.instances = retained;
+    let failure: string = attach(target,issued,inherited);
+    if (failure !== "") { return refused(composition,failure); }
+    let placed: screens.Instance[] = [];
+    let index2: number = 0;
+    while (index2 < target.screen.instances.length) {
+      if (index2 === at) { placed[placed.length] = positioned(issued,inherited); }
+      placed[placed.length] = target.screen.instances[index2];
+      index2 = index2+1;
+    }
+    if (at >= target.screen.instances.length) { placed[placed.length] = positioned(issued,inherited); }
+    target.screen.instances = placed;
+    return {accepted:true,composition:target,reason:""};
+  }
+  // A move changes only the order the root view invokes, within the one stack layout.
+  let ordered: screens.Instance[] = [];
+  for (let instance of target.screen.instances) { if (instance.id !== request.target) { ordered[ordered.length] = instance; } }
+  let moved: screens.Instance = target.screen.instances[at];
+  if (request.op === "move-to-top") {
+    let result: screens.Instance[] = [moved]; for (let instance of ordered) { result[result.length] = instance; }
+    target.screen.instances = result;
+  } else {
+    ordered[ordered.length] = moved; target.screen.instances = ordered;
+  }
+  return {accepted:true,composition:target,reason:""};
+}
+// A structural change is committed only as a checked, revision-bound rebuild: the caller assembles
+// the new pair from `Outcome.composition` first, and this route applies it to the accepted revision,
+// compiles and prepares it, and retains the original source and diagnostics on any failure. The
+// checked candidate identity is returned so the caller mounts the artifact that passed the check.
+export async function commit(current: revisions.Revision, issued: revisions.Revision, rebuilt: revisions.Source, metadata: string, projection: revisions.Source, canonical: revisions.Source): Promise<sourceCommit.Committed> {
+  return await sourceCommit.commit(current,issued,rebuilt,metadata,projection,canonical,"");
+}
+export function main(): void { return; }

@@ -181,38 +181,7 @@ function screen(raw: WireScreen, frozenTarget: string, needIds: string[]): Scree
   let target: string = s.oneOf(raw.target,["screen","chat","card"]); if (target !== frozenTarget) { s.reject("Screen target promotion"); }
   let result: Screen = {title:s.nonblank(raw.title),target:target,layout:layout(raw.layout),slots:[],instances:[]};
   let slotIds: string[] = []; let instanceIds: string[] = []; let catalogue: string[] = [];
-  for (let value of raw.instances) {
-    let id: string = s.identifier(value.id); s.unique(instanceIds,id);
-    let entry: Instance = {id:id,kind:s.nonblank(value.kind),origin:s.oneOf(value.origin,["part","catalogue","custom","notice"]),parameters:value.parameters as Record<string, unknown>,fragment:fragment(value.fragment,id),bodies:decoded.stringRecord(value.bodies)};
-    if (Object.hasOwn(value,"position")) { entry.position = s.identifier(value.position); }
-    if (entry.origin === "catalogue") { s.oneOf(entry.kind,catalogueKinds()); s.unique(catalogue,entry.kind); }
-    let holes: string[] = [];
-    for (let hole of entry.fragment.holes) {
-      if (typeof hole.id !== "string") { s.reject("Catalogue hole id must be text"); }
-      s.unique(holes,s.identifier(hole.id));
-      if (Object.hasOwn(hole,"signature")) {
-        if (typeof hole.signature !== "string") { s.reject("Catalogue hole signature must be text: "+s.text(hole.id)); }
-        s.closed(hole,["id","signature","purpose","body","writer","requires"],[]);
-        s.nonblank(hole.signature); s.nonblank(hole.purpose); s.text(hole.requires); s.oneOf(hole.writer,["fill","controller"]);
-        if (typeof hole.body !== "string") { s.reject("Catalogue hole body must be text: "+s.text(hole.id)); }
-        let declaredOver: string = overBound(s.text(hole.id),s.text(hole.body)); if (declaredOver !== "") { s.reject(declaredOver); }
-      }
-    }
-    for (let holeId of Object.keys(entry.bodies)) {
-      if (!s.contains(holes,holeId)) { s.reject("Unissued body: "+holeId); }
-      if (typeof entry.bodies[holeId] !== "string") { s.reject("Catalogue hole body must be text: "+holeId); }
-      let issuedOver: string = overBound(holeId,s.text(entry.bodies[holeId])); if (issuedOver !== "") { s.reject(issuedOver); }
-      for (let hole of entry.fragment.holes) { if (s.text(hole.id) === holeId && Object.hasOwn(hole,"writer") && s.text(hole.writer) !== "fill") { s.reject("Controller-writer hole body: "+holeId); } }
-    }
-    // An issued catalogue or part instance carries the definition it was built from; a composition
-    // without one cannot prove that its fragment implements the issued declaration.
-    if (Object.hasOwn(value,"definition")) { entry.definition = definition(value.definition as WireDefinition); }
-    else if (entry.origin === "catalogue" || entry.origin === "part") { s.reject("Missing issued definition: "+entry.id); }
-    let declaredConflict: string = conflict(entry);
-    if (declaredConflict !== "") { s.reject(declaredConflict); }
-    for (let cover of entry.fragment.covers) { if (!s.contains(needIds,cover)) { s.reject("Unissued fragment coverage"); } }
-    result.instances[result.instances.length] = entry;
-  }
+  for (let value of raw.instances) { result.instances[result.instances.length] = instance(value,needIds,catalogue,instanceIds); }
   for (let value of raw.slots) {
     let entry: Slot = {id:s.identifier(value.id),need:s.identifier(value.need),reads:value.reads,writes:value.writes,provider:value.provider,allowedKinds:value.allowedKinds,valueType:"",status:s.oneOf(value.status,["open","filled","missing","unchecked"]),instance:null,reason:value.reason};
     if (!s.contains(needIds,entry.need)) { s.reject("Unissued slot need"); }
@@ -233,6 +202,99 @@ function screen(raw: WireScreen, frozenTarget: string, needIds: string[]): Scree
   }
   for (let need of needIds) { let preserved: boolean = false; for (let slot of result.slots) { if (slot.need === need) { preserved = true; } } if (!preserved) { s.reject("Lost need: "+need); } }
   return result;
+}
+// One issued instance record: the one decoder a serialized composition and a selector-issued
+// catalogue fragment both pass through, so nothing enters the record as a raw table.
+function instance(value: WireInstance, needIds: string[], catalogue: string[], instanceIds: string[]): Instance {
+  let id: string = s.identifier(value.id); s.unique(instanceIds,id);
+  let entry: Instance = {id:id,kind:s.nonblank(value.kind),origin:s.oneOf(value.origin,["part","catalogue","custom","notice"]),parameters:value.parameters as Record<string, unknown>,fragment:fragment(value.fragment,id),bodies:decoded.stringRecord(value.bodies)};
+  if (Object.hasOwn(value,"position")) { entry.position = s.identifier(value.position); }
+  if (entry.origin === "catalogue") { s.oneOf(entry.kind,catalogueKinds()); s.unique(catalogue,entry.kind); }
+  let holes: string[] = [];
+  for (let hole of entry.fragment.holes) {
+    if (typeof hole.id !== "string") { s.reject("Catalogue hole id must be text"); }
+    s.unique(holes,s.identifier(hole.id));
+    if (Object.hasOwn(hole,"signature")) {
+      if (typeof hole.signature !== "string") { s.reject("Catalogue hole signature must be text: "+s.text(hole.id)); }
+      s.closed(hole,["id","signature","purpose","body","writer","requires"],[]);
+      s.nonblank(hole.signature); s.nonblank(hole.purpose); s.text(hole.requires); s.oneOf(hole.writer,["fill","controller"]);
+      if (typeof hole.body !== "string") { s.reject("Catalogue hole body must be text: "+s.text(hole.id)); }
+      let declaredOver: string = overBound(s.text(hole.id),s.text(hole.body)); if (declaredOver !== "") { s.reject(declaredOver); }
+    }
+  }
+  for (let holeId of Object.keys(entry.bodies)) {
+    if (!s.contains(holes,holeId)) { s.reject("Unissued body: "+holeId); }
+    if (typeof entry.bodies[holeId] !== "string") { s.reject("Catalogue hole body must be text: "+holeId); }
+    let issuedOver: string = overBound(holeId,s.text(entry.bodies[holeId])); if (issuedOver !== "") { s.reject(issuedOver); }
+    for (let hole of entry.fragment.holes) { if (s.text(hole.id) === holeId && Object.hasOwn(hole,"writer") && s.text(hole.writer) !== "fill") { s.reject("Controller-writer hole body: "+holeId); } }
+  }
+  // An issued catalogue or part instance carries the definition it was built from; a composition
+  // without one cannot prove that its fragment implements the issued declaration.
+  if (Object.hasOwn(value,"definition")) { entry.definition = definition(value.definition as WireDefinition); }
+  else if (entry.origin === "catalogue" || entry.origin === "part") { s.reject("Missing issued definition: "+entry.id); }
+  let declaredConflict: string = conflict(entry);
+  if (declaredConflict !== "") { s.reject(declaredConflict); }
+  for (let cover of entry.fragment.covers) { if (!s.contains(needIds,cover)) { s.reject("Unissued fragment coverage"); } }
+  return entry;
+}
+// The fragment a selection issued for one structural addition: decoded by the same instance decoder,
+// so an addition is one validated issued record and never a raw table.
+export function decodeInstance(raw: string, needIds: string[]): Instance {
+  const value: WireInstance = JSON.parse(raw);
+  return instance(value,needIds,[],[]);
+}
+// The serialized form of an issued record: the exact wire shape decode() accepts, so a record that
+// was issued by construction can be carried beside its accepted pair and read back by the one decoder.
+function wireFragment(value: Fragment): WireFragment {
+  let fields: Field[] = []; for (let field of value.fields) { fields[fields.length] = {name:field.name,type:field.type,role:field.role,dependencies:field.dependencies,initial:field.initial,owner:field.owner}; }
+  let updates: Handler[] = []; for (let handler of value.updates) { updates[updates.length] = {action:handler.action,function:handler.function}; }
+  let effects: Handler[] = []; for (let handler of value.effects) { effects[effects.length] = {action:handler.action,function:handler.function}; }
+  let ports: WirePort[] = [];
+  for (let port of value.ports) {
+    let entry: WirePort = {name:port.name,type:port.type,direction:port.direction,getter:port.getter};
+    if (Object.hasOwn(port,"optional")) { entry.optional = port.optional; }
+    if (Object.hasOwn(port,"fallback")) { entry.fallback = port.fallback as string; }
+    ports[ports.length] = entry;
+  }
+  return {declarations:value.declarations,fields:fields,updates:updates,effects:effects,helpers:value.helpers,view:value.view,options:value.options,content:value.content,ports:ports,holes:value.holes,covers:value.covers,owns:value.owns};
+}
+function wireDefinition(value: Definition): WireDefinition {
+  let fields: WireDefinitionField[] = []; for (let field of value.fields) { fields[fields.length] = {name:field.name,type:field.type,role:field.role,initial:field.initial}; }
+  let ports: WireDefinitionPort[] = []; for (let port of value.ports) { ports[ports.length] = {name:port.name,type:port.type,direction:port.direction}; }
+  let actions: string[] = []; for (let action of value.actions) { actions[actions.length] = action; }
+  let holes: WireDefinitionHole[] = []; for (let hole of value.holes) { holes[holes.length] = {id:hole.id,signature:hole.signature}; }
+  return {fields:fields,ports:ports,actions:actions,holes:holes};
+}
+function wireInstance(value: Instance): WireInstance {
+  // Hole bodies leave the issued record as a wire dictionary of their own: the field is an unknown
+  // record on the wire, so the string record is copied into one instead of retagged.
+  let bodies: Record<string, unknown> = {};
+  for (let key of Object.keys(value.bodies)) { bodies[key] = value.bodies[key]; }
+  let entry: WireInstance = {id:value.id,kind:value.kind,origin:value.origin,parameters:value.parameters,fragment:wireFragment(value.fragment),bodies:bodies};
+  if (Object.hasOwn(value,"position")) { entry.position = value.position as string; }
+  if (Object.hasOwn(value,"definition")) { entry.definition = wireDefinition(value.definition as Definition); }
+  return entry;
+}
+export function encode(composition: Composition): string {
+  let instances: WireInstance[] = []; for (let entry of composition.screen.instances) { instances[instances.length] = wireInstance(entry); }
+  let slots: WireSlot[] = [];
+  for (let slot of composition.screen.slots) {
+    let entry: WireSlot = {id:slot.id,need:slot.need,reads:slot.reads,writes:slot.writes,provider:slot.provider,allowedKinds:slot.allowedKinds,valueType:slot.valueType,status:slot.status,instance:slot.instance,reason:slot.reason};
+    if (Object.hasOwn(slot,"event")) { entry.event = slot.event as string; }
+    if (Object.hasOwn(slot,"trigger")) { entry.trigger = slot.trigger as string; }
+    if (Object.hasOwn(slot,"action")) { entry.action = slot.action as string; }
+    slots[slots.length] = entry;
+  }
+  let layoutValue: WireLayout = {kind:composition.screen.layout.kind};
+  if (composition.screen.layout.kind !== "stack") {
+    let positions: Position[] = [];
+    for (let position of composition.screen.layout.positions) { positions[positions.length] = {id:position.id,allowedKinds:position.allowedKinds,minimum:position.minimum,maximum:position.maximum}; }
+    layoutValue.positions = positions;
+  }
+  let screenValue: WireScreen = {title:composition.screen.title,target:composition.screen.target,layout:layoutValue,slots:slots,instances:instances};
+  let value: WireComposition = {screen:screenValue,bindings:composition.bindings,actions:composition.actions,connections:composition.connections};
+  if (Object.hasOwn(composition,"composites")) { value.composites = composition.composites as Composite[]; }
+  return s.encode(value);
 }
 function findInstance(screen: Screen, id: string): Instance { for (let entry of screen.instances) { if (entry.id === id) { return entry; } } s.reject("Unissued instance: "+id); throw {name:"CONSTRUCTION_SCHEMA",message:"Unissued instance"}; }
 function findPort(instance: Instance, name: string, direction: string): Port { for (let port of instance.fragment.ports) { if (port.name === name && port.direction === direction) { return port; } } s.reject("Unissued port: "+name); throw {name:"CONSTRUCTION_SCHEMA",message:"Unissued port"}; }
