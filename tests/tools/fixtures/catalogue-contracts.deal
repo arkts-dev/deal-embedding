@@ -524,9 +524,21 @@ export async function registryRefusals(): Promise<number> {
   let guardedEntry: catalogue.Configured = {need:"event",definition:definition("calendar_event"),parameters:await accepts("calendar_event","{\"eventTitle\":\"Show\",\"day\":4,\"minute\":570,\"durationMinutes\":90,\"calendarBinding\":\"cal_3\"}"),accepted:true,reason:""};
   let guardedEvent: screens.Instance = await catalogue.instantiate(guardedEntry,guarded);
   let readiness: boolean = guardedEvent.fragment.helpers.includes("|| !(state.f_parts_minute_ready)");
-  let refusal: boolean = guardedEvent.fragment.helpers.includes("sequence: -1, ok: false, code: \"NOT_ADMITTED\"");
+  // A refused attempt answers with the emitted refusal constructor of its own record: it names the attempt
+  // it was started for (never the live one) and the issued revision the admission captured.
+  let refusal: boolean = guardedEvent.fragment.helpers.includes("refused_event(action.id, -1, -1, 0, \"NOT_ADMITTED\", \"Not admitted\")");
+  let refusalCtor: boolean = guardedEvent.fragment.helpers.includes("export function refused_event(id: string, sequence: number, revision: number, at: number, code: string, message: string): CompletedEvent");
   insist(readiness,"a dispatch admitted an unready argument");
-  insist(refusal,"a refused attempt claimed the live attempt identity");
+  insist(refusal && refusalCtor,"a refused attempt claimed the live attempt identity");
+  // The emitted admission is the compiled send and reply policy of core/execution.deal, and it reads the
+  // issued operation the section dispatches rather than a private copy of it.
+  let admission: boolean = guardedEvent.fragment.helpers.includes("session.granted(\"host/calendar\")") && guardedEvent.fragment.helpers.includes("session.classification(\"host/calendar\",\"propose\")") && guardedEvent.fragment.helpers.includes("session.confirmation(\"host/calendar\",\"propose\"") && guardedEvent.fragment.helpers.includes("let revision:number = state.revision_cal_3;") && guardedEvent.fragment.helpers.includes("let sequence:number = state.sequence_cal_3;") && guardedEvent.fragment.helpers.includes("invocationCurrent(state,\"cal_3\",sequence,phase,revision)") && guardedEvent.fragment.helpers.includes("state.expires_cal_3");
+  insist(admission,"the emitted admission did not read the issued operation and the Session facts");
+  // Composition owns the invocation record: the start admission and the reply settlement name the issued
+  // operation and the action that starts and answers it, so nothing but a committed change of that record
+  // decides the attempt.
+  let dispatched: boolean = guardedEvent.dispatches !== undefined && (guardedEvent.dispatches as screens.Dispatch[]).length === 2 && (guardedEvent.dispatches as screens.Dispatch[])[0].operation === "cal_3" && (guardedEvent.dispatches as screens.Dispatch[])[0].action === "AddEvent" && (guardedEvent.dispatches as screens.Dispatch[])[0].phase === "AddEvent" && (guardedEvent.dispatches as screens.Dispatch[])[1].action === "CompletedEvent" && (guardedEvent.dispatches as screens.Dispatch[])[1].outcome === "event_outcome";
+  insist(dispatched,"the section did not declare the issued operation it dispatches");
   count = count+1;
   // An intent panel dispatches the issued descriptors themselves: each descriptor's label, its seeded draft
   // edited through the composition-owned nominal update, and one tap per descriptor whose effect calls

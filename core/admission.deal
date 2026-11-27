@@ -36,24 +36,46 @@ function storeUse(fact: Record<string, unknown>, aliases: string[]): string {
   // captured function value; the fact producer also analyses closure bodies, so a store call inside a
   // callback is attributed to the function that owns it. Reads and writes are inspected because
   // capturing the module and deleting through it are store uses too.
-  let paths: string[] = [];
-  for (let name of ["calls","reads","writes"]) { if (Object.hasOwn(fact,name)) { for (let path of decoded.strings(fact[name])) { paths[paths.length] = path; } } }
-  for (let path of paths) {
+  for (let path of references(fact)) {
     for (let alias of aliases) { if (path === alias || path.startsWith(alias+".") || path.startsWith(alias+"[")) { return path; } }
   }
   return "";
 }
-function calls(fact: Record<string, unknown>): string[] {
+export function calls(fact: Record<string, unknown>): string[] {
   let result: string[] = [];
   if (!Object.hasOwn(fact,"calls")) { return result; }
   for (let call of decoded.strings(fact.calls)) { if (!s.contains(result,call)) { result[result.length] = call; } }
   return result;
 }
-// A store use is permitted only from an effect position: a registered effect function, or a function
-// that only an effect position reaches. The rule is a real position check, not a whitelist: a function
-// that executes as a reducer, or that enters a store-using chain from a reducer position, is refused
-// even when an effect calls it too, so a reducer can never write the store through a helper.
-function reached(facts: Record<string, unknown>, roots: string[]): string[] {
+// Every path one function mentions, whatever it does with it: a direct member call is a call path, while
+// the same member captured into a local and invoked through it is only a read. Assembly asks this for the
+// frozen function a written effect names, because a provider call reached through a value the analysis
+// cannot name is a use the call closure cannot link to an issued operation and must be refused there
+// instead of emitted unadmitted. The store position rule above asks it too: capturing a mechanism is a use
+// of that mechanism.
+export function references(fact: Record<string, unknown>): string[] {
+  let result: string[] = [];
+  for (let name of ["calls","reads","writes"]) {
+    if (!Object.hasOwn(fact,name)) { continue; }
+    for (let path of decoded.strings(fact[name])) { if (!s.contains(result,path)) { result[result.length] = path; } }
+  }
+  return result;
+}
+// The callees one function performs through a local the fact producer could not resolve to a function
+// value. A captured function value names its target, so its call is a call path the closure follows; a
+// local the analysis cannot name could be the frozen call a written effect performs, so assembly refuses
+// that effect instead of emitting a wrapper no issued operation decides.
+export function unresolved(fact: Record<string, unknown>): string[] {
+  let result: string[] = [];
+  if (!Object.hasOwn(fact,"unresolved")) { return result; }
+  for (let callee of decoded.strings(fact.unresolved)) { if (!s.contains(result,callee)) { result[result.length] = callee; } }
+  return result;
+}
+// The call closure of one function over compiler-parsed facts. Assembly asks this mechanism for the
+// provider call a written effect reaches, so a call performed by a helper is linked exactly as a call the
+// effect performs itself; the store position rule below asks it for the functions an effect or a reducer
+// reaches.
+export function reached(facts: Record<string, unknown>, roots: string[]): string[] {
   let result: string[] = []; let pending: string[] = [];
   for (let name of roots) { if (!s.contains(result,name)) { result[result.length] = name; pending[pending.length] = name; } }
   let index: number = 0;
@@ -67,6 +89,10 @@ function reached(facts: Record<string, unknown>, roots: string[]): string[] {
   }
   return result;
 }
+// A store use is permitted only from an effect position: a registered effect function, or a function
+// that only an effect position reaches. The rule is a real position check, not a whitelist: a function
+// that executes as a reducer, or that enters a store-using chain from a reducer position, is refused
+// even when an effect calls it too, so a reducer can never write the store through a helper.
 function enters(facts: Record<string, unknown>, name: string, users: string[]): string {
   let graph: string[] = calls(facts[name] as Record<string, unknown>); let cursor: number = 0; let seen: string[] = [];
   while (cursor < graph.length) {

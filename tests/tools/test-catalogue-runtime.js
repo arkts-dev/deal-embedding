@@ -8,7 +8,7 @@ const stage=path.resolve(process.argv[2]),base=path.join(stage,'js'),classpath=p
 const transport=require('./fixtures/syntax-transport.js')(classpath);
 const group=process.argv[4]||'all';
 const localGroups=['timers','reading','quick','points','ideas','drafts','day'];
-assert(['all','contracts','local','aggregate','lists','issued-bodies','calendar','descriptor','live','probe',...localGroups].includes(group),'unknown catalogue group');
+assert(['all','contracts','local','aggregate','lists','issued-bodies','calendar','descriptor','custom','live','probe',...localGroups].includes(group),'unknown catalogue group');
 // The expected local epoch-day of the frozen host timezone, computed here from the adapter the
 // packaged isolate reads, so a daily projection is compared with the day the specification defines
 // rather than with whatever the emitted code produced.
@@ -102,6 +102,21 @@ function open(mode,source,capabilities){
   // a dispatch reaches a module the sandbox does not know and fails rather than reaching anything else.
   runtime.capabilities=capabilities===undefined?[]:capabilities;
   vm.runInContext('configureDealCapabilities(capabilities)',runtime);
+  // The host's own statement about the disclosed functions: the grant, the permission epoch, the Session
+  // lifetime, the read or mutating class of each function and the admission instant. Compiled admission
+  // reads these facts before a call and again before a reply, so the harness publishes them exactly as
+  // `CapabilityRegistry.authority` does instead of leaving every provider effect ungranted.
+  function facts(options){
+    const epochs={},classification={},expiry={},granted=[];
+    for(const contract of runtime.capabilities){ epochs[contract.module]=1; granted.push(contract.module);
+      // The host rule, exactly as the capability registry publishes it: the class is disclosed beside the
+      // frozen contract, never inside the public record, and a function that states no class is mutating,
+      // so an unstated class never advertises a read the boundary would refuse to write.
+      for(const fn of contract.functions){ classification[contract.module+'/'+fn.name]=fn.classification==='read'?'read':'mutating'; } }
+    return Object.assign({lifetime:'session-1',epochs,granted,classification,confirmation:{},origin:'generated',requestAuthorizes:false,requestTarget:'',clockTrusted:true,now:1000000,expiry},options||{});
+  }
+  function configure(options){ const value=facts(options); vm.runInContext('configureDealSession('+JSON.stringify(value)+')',runtime); return value; }
+  configure();
   // The host configures the probe bounds once; the probe binding enforces those numbers.
   vm.runInContext('globalThis.dealProbeLimits={bytes:65536,depth:32,characters:6000,paths:3,timeoutMs:5000}',runtime);
   for(const file of ['checkpoint.js','session.js']) vm.runInContext(fs.readFileSync(path.join(process.env.DEAL_UI_ROOT||'dependencies/deal-ui','runtime-js',file),'utf8'),runtime);
@@ -263,7 +278,7 @@ function open(mode,source,capabilities){
     clockPump(monotone,wall===undefined?monotone:wall,true);
     return control;
   }
-  return {raw:()=>{const env=JSON.parse(vm.runInContext('dealUi.checkpoint()',runtime));return JSON.stringify({keys:Object.keys(env),digest:env.schemaDigest,current:vm.runInContext('entry.bridgeSchemaDigest.$f()',runtime),hasValue:Object.hasOwn(env,'value')});},checkpointed:()=>vm.runInContext('dealUi.checkpoint()',runtime),fault:()=>JSON.parse(vm.runInContext('dealUi.snapshot()',runtime)).fault,state,restore,persistedKeys,tree,slot,slotBy,slotsBy,hasText,charts,display,calls,probed,pump,press,pressAt,probe:value=>Object.assign(probe,value),clock:now=>vm.runInContext('globalThis.__now = '+JSON.stringify(now)+'; Date.now = () => globalThis.__now;',runtime),failNext:value=>{runtime.failNext=value===true;},dispatch:(handle,payload)=>{runtime.handle=handle;runtime.payload=payload===undefined?null:payload;return vm.runInContext('dealUi.dispatch(handle,payload)',runtime);},drivers,driver:need=>drivers.find(item=>item.need===need),clockPump,pressClock,persisted,setFrameVisibility:(visible,monotone)=>vm.runInContext('setFrameVisibility('+(visible===true)+(monotone===undefined?'':','+monotone)+')',runtime),reopen:persisted=>vm.runInContext('mount('+JSON.stringify(persisted===undefined?null:persisted)+')',runtime),files,manifest:JSON.parse(fs.readFileSync(path.join(emitted,'admission.json'),'utf8')),composition:source.metadata||{}};
+  return {raw:()=>{const env=JSON.parse(vm.runInContext('dealUi.checkpoint()',runtime));return JSON.stringify({keys:Object.keys(env),digest:env.schemaDigest,current:vm.runInContext('entry.bridgeSchemaDigest.$f()',runtime),hasValue:Object.hasOwn(env,'value')});},checkpointed:()=>vm.runInContext('dealUi.checkpoint()',runtime),fault:()=>JSON.parse(vm.runInContext('dealUi.snapshot()',runtime)).fault,state,restore,persistedKeys,tree,slot,slotBy,slotsBy,hasText,charts,display,calls,probed,pump,press,pressAt,configure,probe:value=>Object.assign(probe,value),clock:now=>vm.runInContext('globalThis.__now = '+JSON.stringify(now)+'; Date.now = () => globalThis.__now;',runtime),failNext:value=>{runtime.failNext=value===true;},dispatch:(handle,payload)=>{runtime.handle=handle;runtime.payload=payload===undefined?null:payload;return vm.runInContext('dealUi.dispatch(handle,payload)',runtime);},drivers,driver:need=>drivers.find(item=>item.need===need),clockPump,pressClock,persisted,setFrameVisibility:(visible,monotone)=>vm.runInContext('setFrameVisibility('+(visible===true)+(monotone===undefined?'':','+monotone)+')',runtime),reopen:persisted=>vm.runInContext('mount('+JSON.stringify(persisted===undefined?null:persisted)+')',runtime),files,manifest:JSON.parse(fs.readFileSync(path.join(emitted,'admission.json'),'utf8')),composition:source.metadata||{}};
 }
 function must(handle,message){assert.ok(Number.isInteger(handle),message);return handle;}
 // ---- the public-probe transport policy ---------------------------------------------------------
@@ -1066,8 +1081,10 @@ for(const localGroup of localGroups) {
 if(group==='all'||group==='calendar') {
   const wire=kind=>({kind,fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0});
   const app=open('calendar',wired,[
-    {module:'host/calendar',description:'',version:1,functions:[{name:'create',description:'Create the selected event',parameters:[],result:wire('null')}]},
-    {module:'host/navigation',description:'',version:1,functions:[{name:'open',description:'Open directions to the selected stop',parameters:[],result:wire('null')}]}
+    // Both functions state their class: the host publishes read only for a function that says so, so a
+    // contract that leaves the class empty is mutating and would need a confirmation for every tap.
+    {module:'host/calendar',description:'',version:1,functions:[{name:'create',description:'Create the selected event',parameters:[],result:wire('null'),classification:'read'}]},
+    {module:'host/navigation',description:'',version:1,functions:[{name:'open',description:'Open directions to the selected stop',parameters:[],result:wire('null'),classification:'read'}]}
   ]),s=()=>app.state();
   // Nothing is scheduled, taken, added or navigated before an explicit tap: the sections start idle and
   // publish the observed counts of the records they actually hold.
@@ -1181,14 +1198,62 @@ if(group==='all'||group==='calendar') {
   sent=await app.pump();
   assert.deepEqual(sent,['host/calendar.create([])'],'the retry after a failure dispatched the issued operation');
   assert.strictEqual(s().f_section_trip_trip_outcome,'success','an explicit retry recovers the success result');
+  // The host classification decides mutation authority on this same main lane, not only on the descriptor
+  // panel: the same issued calendar call without a confirmation dispatches nothing, the approved argument
+  // snapshot dispatches once, and a host denial is final.
+  app.configure({classification:{'host/calendar/create':'mutating','host/navigation/open':'read'}});
+  app.press('Button','Add event');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'an unconfirmed calendar mutation dispatched');
+  assert.strictEqual(s().f_section_event_event_code,'DENIED','an unconfirmed mutation was not refused with DENIED');
+  assert.strictEqual(s().f_section_event_event_pending,false,'a refused mutation left the attempt in flight');
+  assert.strictEqual(s().f_section_event_event_outcome,'none','a refused mutation published a business result');
+  app.configure({classification:{'host/calendar/create':'mutating','host/navigation/open':'read'},confirmation:{'host/calendar/create#[]':'approved'}});
+  app.press('Button','Add event');
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/calendar.create([])'],'the approved calendar argument snapshot did not dispatch');
+  assert.strictEqual(s().f_section_event_event_outcome,'success','the approved calendar call did not publish its result');
+  app.configure({classification:{'host/calendar/create':'mutating','host/navigation/open':'read'},confirmation:{'host/calendar/create#[]':'stale'}});
+  app.press('Button','Add event');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'a stale confirmation dispatched a mutation');
+  assert.strictEqual(s().f_section_event_event_code,'DENIED','a stale confirmation was not refused with DENIED');
+  app.configure({classification:{'host/calendar/create':'mutating','host/navigation/open':'read'},confirmation:{'host/calendar/create#[]':'denied'}});
+  app.press('Button','Add event');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'a host-denied calendar mutation dispatched');
+  // A granted module whose function the host publishes no class for is refused before it reads: the
+  // emitted admission treats an undisclosed classification as an invalid call, never as a read.
+  app.configure({classification:{}});
+  app.press('Button','Add event');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'an undisclosed function dispatched');
+  assert.strictEqual(s().f_section_event_event_code,'INVALID_ARGUMENT','an undisclosed function was not refused with INVALID_ARGUMENT');
+  assert.strictEqual(s().f_section_event_event_pending,false,'an undisclosed function left the attempt in flight');
+  app.configure();
+  // Two sections of one provider screen dispatch the same issued operation: a tap on the second lane while
+  // that operation is in flight commits no private attempt of its own, so its control stays eligible and
+  // dispatches once the call in flight has settled instead of being permanently dead.
+  app.press('Button','Add event');
+  app.pressAt('Button','accessibilityLabel','Fourth',1);
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/calendar.create([])'],'the overlapping tap dispatched a second call on one issued operation');
+  assert.strictEqual(s().f_section_remind_schedule_pending,false,'the refused overlapping tap committed a private pending attempt');
+  assert.strictEqual(s().f_section_event_event_outcome,'success','the admitted call lost the result of an overlapping tap');
+  app.pressAt('Button','accessibilityLabel','Fourth',1);
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/calendar.create([])'],'the refused lane stayed permanently ineligible after one overlapping tap');
+  assert.strictEqual(s().f_section_remind_schedule_pending,false,'the admitted overlapping retry left its attempt in flight');
   console.log('catalogue calendar passed');
 }
 // ---- the descriptor panel and the live figure: the issued descriptor workflow and the public probe ----
 if(group==='all'||group==='descriptor') {
   const source=JSON.parse(await step('descriptor'));
+  // Both descriptors state their class: the host publishes read only for a function that says so, and the
+  // mutation cases below re-publish the classes they exercise.
   const app=open('descriptor',source,[{module:'host/notes',description:'',version:1,functions:[
-    {name:'send',description:'Send the drafted note',parameters:[{name:'text',type:{kind:'string',fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0}}],result:{kind:'string',fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0}},
-    {name:'ping',description:'Read the desk status',parameters:[],result:{kind:'number',fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0}}
+    {name:'send',description:'Send the drafted note',parameters:[{name:'text',type:{kind:'string',fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0}}],result:{kind:'string',fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0},classification:'read'},
+    {name:'ping',description:'Read the desk status',parameters:[],result:{kind:'number',fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0},classification:'read'}
   ]}]),s=()=>app.state();
   // The panel renders the issued descriptors in actionIds order with their stable identities, and the
   // seeded draft is the composition field its binding reads, not a copy beside it.
@@ -1251,7 +1316,260 @@ if(group==='all'||group==='descriptor') {
   sent=await app.pump();
   assert.deepEqual(sent,['host/notes.send(["Buy milk"])'],'an explicit retry dispatches again');
   assert.strictEqual(s().f_section_panel_tap_status_send_note_display,'Sent','the retry recovers the result');
+  // The emitted admission is the compiled send and reply policy of core/execution.deal, and it reads the
+  // issued operation rather than a private copy of it: the section dispatches `note_op`, so the composed
+  // revision and expiry prerequisite of that operation decide both admissions.
+  for(const marker of ['session.granted(','session.classification(','session.confirmation(','revision_note_op','expired_note_op','session.clockTrusted()']){
+    assert.ok(source.deal.includes(marker),'the emitted pair carries no compiled admission marker: '+marker);
+  }
+  // An ungranted module dispatches nothing: the effect refuses before the call leaves and the panel
+  // retires its own attempt with the located refusal code.
+  app.configure({granted:[]});
+  app.press('Button','Send note');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'an ungranted module dispatched a provider call');
+  assert.strictEqual(s().f_section_panel_tap_code_send_note,'DENIED','an ungranted send was not refused with DENIED');
+  assert.strictEqual(s().f_section_panel_tap_outcome_send_note,'none','a refused send published a business result');
+  assert.strictEqual(s().f_section_panel_tap_pending_send_note,false,'a refused send left the attempt in flight');
+  // A host confirmation binds the target and the validated argument snapshot it approved: a mutating
+  // call without one dispatches nothing, the approved snapshot dispatches once, and a denial is final.
+  const draft=await app.pump();
+  app.configure({classification:{'host/notes/send':'mutating','host/notes/ping':'read'}});
+  app.press('Button','Send note');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'a mutating call without a host confirmation dispatched: '+String(draft));
+  assert.strictEqual(s().f_section_panel_tap_code_send_note,'DENIED','an unconfirmed mutation was not refused with DENIED');
+  app.configure({classification:{'host/notes/send':'mutating','host/notes/ping':'read'},confirmation:{'host/notes/send#["Buy milk"]':'approved'}});
+  app.press('Button','Send note');
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.send(["Buy milk"])'],'the approved argument snapshot did not dispatch');
+  assert.strictEqual(s().f_section_panel_tap_status_send_note_display,'Sent','the approved call did not publish its result');
+  app.configure({classification:{'host/notes/send':'mutating','host/notes/ping':'read'},confirmation:{'host/notes/send#["Buy milk"]':'denied'}});
+  app.press('Button','Send note');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'a host-denied mutation dispatched');
+  app.configure();
+  // The invocation window decides the reply, not only the send: a window that elapsed while the call was
+  // in flight refuses the result and changes no business value.
+  app.configure({expiry:{'host/notes/send':{relativeMs:0}}});
+  app.press('Button','Send note');
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.send(["Buy milk"])'],'a zero relative window refused the send instead of the reply');
+  assert.strictEqual(s().f_section_panel_tap_code_send_note,'EXPIRED','a reply past its window was not refused with EXPIRED');
+  assert.strictEqual(s().f_section_panel_tap_result_send_note,'','an expired reply published a business result');
+  assert.strictEqual(s().f_section_panel_tap_pending_send_note,false,'an expired reply left the attempt in flight');
+  // An instant that has already passed authorizes no dispatch at all.
+  app.configure({expiry:{'host/notes/send':{absolute:1}}});
+  app.press('Button','Send note');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'a passed window dispatched anyway');
+  assert.strictEqual(s().f_section_panel_tap_code_send_note,'EXPIRED','a passed window was not refused with EXPIRED');
+  app.configure();
+  // A grant, an epoch or a Session lifetime that moved while the call was in flight decides the reply.
+  app.press('Button','Send note');
+  app.configure({epochs:{'host/notes':2}});
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.send(["Buy milk"])'],'the revoked reply dispatched instead of answering its call');
+  assert.strictEqual(s().f_section_panel_tap_code_send_note,'REVOKED','a reply under a moved epoch was not refused with REVOKED');
+  assert.strictEqual(s().f_section_panel_tap_result_send_note,'','a reply under a moved epoch published a business result');
+  app.configure();
+  app.press('Button','Send note');
+  app.configure({lifetime:'session-2'});
+  sent=await app.pump();
+  assert.strictEqual(s().f_section_panel_tap_code_send_note,'REVOKED','a reply under a replaced Session lifetime was not refused');
+  app.configure();
+  // A relative window captured in another Session period admits nothing: a suspend and a resume each
+  // start a new period, so the reply of the call in flight is EXPIRED and publishes no business result
+  // even though the same window in its own period publishes.
+  app.configure({expiry:{'host/notes/send':{relativeMs:5000}},period:1});
+  app.press('Button','Send note');
+  app.configure({expiry:{'host/notes/send':{relativeMs:5000}},period:2});
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.send(["Buy milk"])'],'the period change refused the send instead of the reply');
+  assert.strictEqual(s().f_section_panel_tap_code_send_note,'EXPIRED','a reply from another Session period was not refused with EXPIRED');
+  assert.strictEqual(s().f_section_panel_tap_result_send_note,'','a reply from another Session period published a business result');
+  assert.strictEqual(s().f_section_panel_tap_pending_send_note,false,'a reply from another Session period left the attempt in flight');
+  app.configure();
+  // Downstream invalidation: a committed edit of the argument the issued operation reads advances that
+  // operation's revision, so the invocation admitted before the edit is no longer the current one and its
+  // reply publishes no business result. The reply retires only its own attempt, so an explicit retry is
+  // admitted under the live revision.
+  app.press('Button','Send note');
+  app.dispatch(must(app.slotBy('TextField','label','Note','onChange'),'the panel binds the descriptor draft'),'Changed');
+  sent=await app.pump();
+  assert.strictEqual(s().draft_note_draft,'Changed','the committed edit dispatched during the call did not commit: '+JSON.stringify(sent));
+  assert.strictEqual(s().f_section_panel_tap_outcome_send_note,'unknown','an obsolete reply published an outcome outside the declared vocabulary');
+  assert.strictEqual(s().f_section_panel_tap_code_send_note,'STALE','the obsolete reply did not name its classification');
+  assert.strictEqual(s().f_section_panel_tap_result_send_note,'','an obsolete reply published a business result');
+  assert.strictEqual(s().f_section_panel_tap_status_send_note_display,'','an obsolete reply changed the descriptor status');
+  assert.strictEqual(s().f_section_panel_tap_pending_send_note,false,'an obsolete reply left the attempt in flight');
+  app.press('Button','Send note');
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.send(["Changed"])'],'the retry after an obsolete reply did not dispatch the live argument');
+  assert.strictEqual(s().f_section_panel_tap_status_send_note_display,'Sent','the retry after an obsolete reply did not publish');
   console.log('catalogue descriptor passed');
+}
+// ---- a written (custom) section's own provider effect ------------------------------------------------
+// A written fragment performs the frozen call itself, so composition links that effect to the issued
+// operation the call belongs to, admits it through the same emitted policy a catalogue exchange runs, and
+// reaches the writer's reducer only while the invocation is current. The link is decided over the effect's
+// call closure, so an effect whose own helper performs the call is admitted too, and that helper may reach
+// the call through a local that captured the function performing it. Two sections that name their effect
+// action alike keep their own composed admission.
+if(group==='all'||group==='custom') {
+  const source=JSON.parse(await step('custom'));
+  const wire=kind=>({kind,fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0});
+  const app=open('custom',source,[{module:'host/notes',description:'',version:1,functions:[
+    {name:'send',description:'Send the drafted note',parameters:[{name:'text',type:{kind:'string',fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0}}],result:{kind:'string',fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0},classification:'read'},
+    {name:'archive',description:'Archive the drafted note',parameters:[],result:wire('number'),classification:'read'}
+  ]}]),s=()=>app.state();
+  // The emitted pair carries the issued operation link and the composed admission, never a pass-through
+  // wrapper: the effect and the writer's publish gate are the policy of core/execution.deal. Both
+  // instances dispatch through that policy, the effect that reaches the provider through its own helper is
+  // linked like one that calls it directly, the helper that calls the function a captured local names is
+  // linked through that captured target, and the generated admission identity belongs to the instance that
+  // declared the action.
+  for(const marker of ['invocationCurrent(state,"note_op"','invocationCurrent(state,"archive_op"','session.granted(','session.classification(','session.confirmation(','session.period()','livePeriod === period','export class f_note_Admission_Start {','export class f_note2_Admission_Start {']){
+    assert.ok(source.deal.includes(marker),'the written effect carries no composed admission marker: '+marker);
+  }
+  assert.ok(!source.deal.includes('export class Admission_Start {'),'the generated admission class is not instance-qualified');
+  assert.ok(!source.deal.includes('effect_f_note_Start(state: AppState, action: f_note_Start): Promise<f_note_Done>'),'the written effect is a pass-through wrapper');
+  // An operation with no parameters asks the host about the empty JSON array it publishes for that call,
+  // so a host approval of the zero-argument snapshot can admit it.
+  assert.ok(source.deal.includes('session.confirmation("host/notes","archive",(JSON.stringify([]) as string))'),'the written effect asks for a zero-argument snapshot no host publishes');
+  // A frozen function captured into a local and called through that local is the same call the direct
+  // spelling performs: the captured target enters the effect's closure, so composition admits the effect
+  // through its issued operation instead of emitting a wrapper no admission decides.
+  const captured=JSON.parse(await step('capturedProvider'));
+  assert.ok(captured.deal.includes('export class f_note_Admission_Start {'),'a captured frozen function was not admitted through the composed record');
+  assert.ok(captured.deal.includes('invocationCurrent(state,"note_op"'),'a captured frozen function carries no invocation prerequisite');
+  assert.ok(!captured.deal.includes('return await f_note_send(state, action);'),'a captured frozen function was emitted as a pass-through wrapper');
+  // The admitted pair compiles and runs: the captured call dispatches the one issued operation through the
+  // same composed admission and publishes its result at the writer's reducer.
+  const capturedApp=open('captured',captured,[{module:'host/notes',description:'',version:1,functions:[
+    {name:'send',description:'Send the drafted note',parameters:[{name:'text',type:{kind:'string',fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0}}],result:{kind:'string',fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0},classification:'read'}
+  ]}]);
+  capturedApp.press('Button','Send');
+  const capturedSent=await capturedApp.pump();
+  assert.deepEqual(capturedSent,['host/notes.send(["Hello"])'],'the captured frozen function dispatched nothing: '+JSON.stringify(capturedSent));
+  assert.strictEqual(capturedApp.state().f_note_sent,'ok','the admitted captured call published no result');
+  assert.strictEqual(capturedApp.state().f_note_pending,false,'the admitted captured call left its attempt in flight');
+  // A helper kept in a record field and called through that field is the same call the direct spelling
+  // performs: the fact producer names the function value each field of the record holds, so a call through
+  // the field enters the effect's closure and composition admits the effect through its issued operation
+  // instead of emitting a wrapper no admission decides. The admitted pair compiles and drives, and a
+  // committed draft edit while its call is in flight publishes STALE instead of the obsolete result.
+  const record=JSON.parse(await step('recordFieldProvider'));
+  assert.ok(record.deal.includes('export class f_note_Admission_Start {'),'a helper reached through a record field was not admitted through the composed record');
+  assert.ok(record.deal.includes('invocationCurrent(state,"note_op"'),'a helper reached through a record field carries no invocation prerequisite');
+  assert.ok(!record.deal.includes('return await f_note_send(state, action);'),'a helper reached through a record field was emitted as a pass-through wrapper');
+  const recordApp=open('record-field',record,[{module:'host/notes',description:'',version:1,functions:[
+    {name:'send',description:'Send the drafted note',parameters:[{name:'text',type:wire('string')}],result:wire('string'),classification:'read'}
+  ]}]),recordState=()=>recordApp.state();
+  recordApp.press('Button','Send');
+  const recordSent=await recordApp.pump();
+  assert.deepEqual(recordSent,['host/notes.send(["Hello"])'],'the record-field helper dispatched nothing: '+JSON.stringify(recordSent));
+  assert.strictEqual(recordState().f_note_sent,'ok','the admitted record-field call published no result');
+  assert.strictEqual(recordState().f_note_pending,false,'the admitted record-field call left its attempt in flight');
+  recordApp.press('Button','Send');
+  recordApp.dispatch(must(recordApp.slotBy('TextField','label','Draft','onChange'),'the record-field section binds its draft'),'Changed');
+  const recordStale=await recordApp.pump();
+  assert.strictEqual(recordState().f_note_sent,'STALE','an obsolete record-field result was published after a committed edit: '+JSON.stringify({sent:recordState().f_note_sent,revision:recordState().revision_note_op,status:recordState().status_note_op}));
+  assert.strictEqual(recordState().f_note_pending,false,'an obsolete record-field result left the attempt in flight');
+  assert.deepEqual(recordStale,['host/notes.send(["Hello"])'],'the record-field call in flight did not dispatch its own argument: '+JSON.stringify(recordStale));
+  // A call through a value the analysis cannot name could be the frozen call the effect performs, so the
+  // link decides nothing for it: composition refuses that effect, located by instance, action and callee,
+  // both for a callback parameter and for an element of a container the analysis can only spell.
+  const unnamed=await step('unnamedCallee');
+  assert.ok(String(unnamed).includes('note.send steps')&&String(unnamed).includes('reached through send'),'a written effect performed an unnamed element call with no admission deciding it: '+unnamed);
+  // A member call through a record whose function field no initializer named could be the frozen call the
+  // effect performs, so the same located refusal names the record field and the helper that called it.
+  assert.ok(String(unnamed).includes('note.send holder.run')&&String(unnamed).includes('reached through callHolder'),'a written effect called a record field no analysis resolves: '+unnamed);
+  app.dispatch(must(app.slotBy('TextField','label','Draft','onChange'),'the written section binds its draft'),'Buy milk');
+  // One explicit tap dispatches exactly the issued operation with the composed argument source, for the
+  // effect that reaches the frozen call through a helper of its own fragment.
+  app.press('Button','Send');
+  let sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.send(["Buy milk"])'],'the written effect dispatched the issued operation: '+JSON.stringify(sent));
+  assert.strictEqual(s().f_note_sent,'ok','the current invocation did not reach the writer\'s reducer');
+  assert.strictEqual(s().f_note_pending,false,'the reply left the writer\'s attempt in flight');
+  // A duplicate tap of the same action dispatches nothing while the call it duplicates is in flight, and
+  // that call still publishes its own result.
+  app.press('Button','Send');
+  app.press('Button','Send');
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.send(["Buy milk"])'],'a duplicate pending tap dispatched a second call');
+  assert.strictEqual(s().f_note_sent,'ok','the admitted call lost its own reply to a duplicate tap');
+  // An ungranted module dispatches nothing: the composed admission refuses before the call leaves and the
+  // writer retires its own attempt with the located classification.
+  app.configure({granted:[]});
+  app.press('Button','Send');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'an ungranted written effect dispatched a provider call');
+  assert.strictEqual(s().f_note_sent,'DENIED','an ungranted written call was not refused with DENIED');
+  assert.strictEqual(s().f_note_pending,false,'a refused written call left the attempt in flight');
+  app.configure();
+  // A written effect's mutation runs the same authority: without a host confirmation it dispatches
+  // nothing, the approved argument snapshot dispatches once, and a host denial is final.
+  app.configure({classification:{'host/notes/send':'mutating','host/notes/archive':'read'}});
+  app.press('Button','Send');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'an unconfirmed written mutation dispatched');
+  assert.strictEqual(s().f_note_sent,'DENIED','an unconfirmed written mutation was not refused with DENIED');
+  assert.strictEqual(s().f_note_pending,false,'a refused written mutation left the attempt in flight');
+  app.configure({classification:{'host/notes/send':'mutating','host/notes/archive':'read'},confirmation:{'host/notes/send#["Buy milk"]':'approved'}});
+  app.press('Button','Send');
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.send(["Buy milk"])'],'the approved written argument snapshot did not dispatch');
+  assert.strictEqual(s().f_note_sent,'ok','the approved written call did not publish its result');
+  app.configure({classification:{'host/notes/send':'mutating','host/notes/archive':'read'},confirmation:{'host/notes/send#["Buy milk"]':'denied'}});
+  app.press('Button','Send');
+  sent=await app.pump();
+  assert.deepEqual(sent,[],'a host-denied written mutation dispatched');
+  app.configure();
+  // A relative window captured in another Session period admits nothing: the reply of the call in flight
+  // is EXPIRED and publishes no business result, exactly as the catalogue exchange refuses it.
+  app.configure({expiry:{'host/notes/send':{relativeMs:5000}},period:1});
+  app.press('Button','Send');
+  app.configure({expiry:{'host/notes/send':{relativeMs:5000}},period:2});
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.send(["Buy milk"])'],'the period change refused the written send instead of the reply');
+  assert.strictEqual(s().f_note_sent,'EXPIRED','a written reply from another Session period was published');
+  assert.strictEqual(s().f_note_pending,false,'a written reply from another Session period left the attempt in flight');
+  app.configure();
+  // The second written section is admitted through its own issued operation and its own composed record:
+  // one reply never writes the other section's result, and each control keeps working after its reply.
+  app.press('Button','Archive');
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.archive([])'],'the second written effect dispatched its own issued operation: '+JSON.stringify(sent));
+  assert.strictEqual(s().f_note2_sent,'archived','the second invocation did not reach its writer\'s reducer: '+JSON.stringify({sent:s().f_note2_sent,pending:s().f_note2_pending,status:s().status_archive_op,sequence:s().sequence_archive_op,phase:s().phase_archive_op,dispatched:sent}));
+  assert.strictEqual(s().f_note2_pending,false,'the second reply left its writer\'s attempt in flight');
+  assert.strictEqual(s().f_note_sent,'EXPIRED','one section\'s reply wrote another section\'s result');
+  app.press('Button','Archive');
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.archive([])'],'the second section\'s control stopped dispatching after one reply');
+  // The same section is admitted as a zero-argument mutation: the host approves the empty argument
+  // snapshot it publishes for that call, so the approved snapshot dispatches exactly once, while no other
+  // spelling of the snapshot would.
+  app.configure({classification:{'host/notes/send':'read','host/notes/archive':'mutating'},confirmation:{'host/notes/archive#[]':'approved'}});
+  app.press('Button','Archive');
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.archive([])'],'the host approval of the zero-argument snapshot did not dispatch once: '+JSON.stringify({sent:sent,sent_value:s().f_note2_sent,status:s().status_archive_op}));
+  assert.strictEqual(s().f_note2_sent,'archived','the approved zero-argument call published no result');
+  app.configure();
+  // Downstream invalidation: a committed edit of the operation\'s dependency set makes the admitted
+  // invocation obsolete, so its result publishes nothing and only its own attempt is retired; the explicit
+  // retry dispatches the live argument.
+  app.press('Button','Send');
+  app.dispatch(must(app.slotBy('TextField','label','Draft','onChange'),'the written section binds its draft again'),'Changed');
+  sent=await app.pump();
+  assert.strictEqual(s().f_note_sent,'STALE','an obsolete written result was published after a committed edit: '+JSON.stringify({sent:s().f_note_sent,revision:s().revision_note_op,status:s().status_note_op}));
+  assert.strictEqual(s().f_note_pending,false,'an obsolete written result left the attempt in flight');
+  app.press('Button','Send');
+  sent=await app.pump();
+  assert.deepEqual(sent,['host/notes.send(["Changed"])'],'the retry after an obsolete result did not dispatch the live argument');
+  assert.strictEqual(s().f_note_sent,'ok','the retry after an obsolete result did not publish');
+  console.log('catalogue custom passed');
 }
 if(group==='all'||group==='live') {
   const source=JSON.parse(await step('live'));

@@ -73,78 +73,80 @@ assert.strictEqual(composite.sequence,5,'the later composite arm did not see the
 assert.strictEqual(composite.flag,true,'the last composite arm did not commit');
 assert.strictEqual(composite.double,10,'the composite recomputed once from the final candidate');
 assert.strictEqual(composite.ready,true,'the composite did not commit a validated candidate');
-// The emitted operation carries its expiry prerequisite as compiled policy beside its status, sequence
-// and phase: an operation past its recorded instant is not current, an unexpired one is, an undecidable
-// reading expires one that has a deadline, and admission records the deadline of the invocation it
-// admits so an explicit retry is not refused forever by the deadline it replaces.
+// The emitted operation carries its invocation record as compiled policy: admission writes the issued
+// status, the captured sequence and phase and the recorded deadline with its cleared prerequisite, the
+// live expiry reading retires an operation past that deadline, settlement records only the invocation it
+// answers, and a restored pending invocation is captured work that restores stale.
 const expiry=vm.runInContext(`(()=>{const app=dealLoad(dealFactories,'experience.js').entry;
- const record=app.bridgePersistedState.$f(app.initialState.$f());
- record.set('status_write','pending'); record.set('sequence_write',7); record.set('phase_write','send'); record.set('expires_write',1000); record.set('expired_write',false);
- const live=app.bridgeRestoredState.$f(record);
- const sequence=live.sequence_write, phase=live.phase_write, revision=live.revision_write;
- const unexpired=app.expireOperations.$f(live,999);
- const past=app.expireOperations.$f(live,1000);
- const undecidable=app.expireOperations.$f(live,0/0);
+ const initial=app.initialState.$f();
+ const admitted=app.admitOperation.$f(initial,initial,'write',7,'send',1000,1000);
+ const sequence=admitted.sequence_write, phase=admitted.phase_write, revision=admitted.revision_write;
+ const unexpired=app.expireOperations.$f(admitted,999);
+ const past=app.expireOperations.$f(admitted,1000);
+ const undecidable=app.expireOperations.$f(admitted,0/0);
  const later=app.expireOperations.$f(past,500);
- // Admission captures the correlation of the invocation it admits and records that invocation's
- // deadline, so the deadline of the expired invocation is replaced while its own correlation stays dead.
- const admittedRecord=app.bridgePersistedState.$f(past);
- admittedRecord.set('sequence_write',8);
- const admitted=app.bridgeRestoredState.$f(admittedRecord);
- const retried=app.recordExpiry.$f(admitted,'write',5000,5000);
- const readmitted=app.recordExpiry.$f(app.recordExpiry.$f(past,'write',0,0),'write',0,0);
- const undecidableRecord=app.recordExpiry.$f(past,'write',0/0,0);
- const expiredDeadline=app.recordExpiry.$f(past,'write',500,1000);
- const negativeDeadline=app.recordExpiry.$f(past,'write',-1,0);
- const reissued=app.recordExpiry.$f(past,'other',5000,5000);
+ const duplicate=app.admitOperation.$f(admitted,admitted,'write',8,'send',2000,2000);
+ const candidate=app.update_f_a_Change.$f(initial,app.f_a_Change$new({value:9},'t',1,1));
+ const refusedCandidate=app.admitOperation.$f(admitted,candidate,'write',8,'send',2000,2000);
+ const undecidableAdmission=app.admitOperation.$f(initial,initial,'write',1,'send',0/0,0);
+ const negativeDeadline=app.admitOperation.$f(initial,initial,'write',1,'send',-1,1);
+ const zeroSequence=app.admitOperation.$f(initial,initial,'write',0,'send',0,0);
+ const unissuedAdmission=app.admitOperation.$f(initial,initial,'other',1,'send',5000,5000);
+ const settled=app.settleOperation.$f(past,'write',7,'error',1000);
+ const settledOther=app.settleOperation.$f(past,'write',6,'ready',1000);
+ const settledUnissued=app.settleOperation.$f(past,'other',7,'ready',1000);
+ const settledInvalid=app.settleOperation.$f(admitted,'write',7,'pending',1000);
+ const restored=app.bridgeRestoredState.$f(app.bridgePersistedState.$f(admitted));
+ const restoredSettled=app.bridgeRestoredState.$f(app.bridgePersistedState.$f(settled));
  const restoredExpired=app.bridgeRestoredState.$f(app.bridgePersistedState.$f(past));
- const plainRecord=app.bridgePersistedState.$f(app.initialState.$f());
- plainRecord.set('status_write','pending'); plainRecord.set('sequence_write',7); plainRecord.set('phase_write','send');
- const plain=app.bridgeRestoredState.$f(plainRecord);
- return {current:app.invocationCurrent.$f(live,'write',sequence,phase,revision),
-  unexpired:app.invocationCurrent.$f(unexpired,'write',sequence,phase,revision),unexpiredFlag:unexpired.expired_write,
-  past:app.invocationCurrent.$f(past,'write',sequence,phase,revision),pastFlag:past.expired_write,
+ return {admittedStatus:admitted.status_write,admittedSequence:sequence,admittedPhase:phase,admittedExpires:admitted.expires_write,admittedFlag:admitted.expired_write,admittedHook:app.invocationCurrent.$f(admitted,'write',sequence,phase,revision),
+  unexpiredFlag:unexpired.expired_write,unexpiredHook:app.invocationCurrent.$f(unexpired,'write',sequence,phase,revision),
+  pastFlag:past.expired_write,pastHook:app.invocationCurrent.$f(past,'write',sequence,phase,revision),
   undecidableFlag:undecidable.expired_write,retrusted:app.invocationCurrent.$f(later,'write',sequence,phase,revision),
-  noDeadline:app.expireOperations.$f(plain,1e15).expired_write,noDeadlineUndecidable:app.expireOperations.$f(plain,0/0).expired_write,
-  plainHook:app.invocationCurrent.$f(plain,'write',sequence,phase,revision),
-  retriedExpires:retried.expires_write,retriedFlag:retried.expired_write,
-  retriedHook:app.invocationCurrent.$f(retried,'write',8,phase,revision),oldCorrelation:app.invocationCurrent.$f(retried,'write',sequence,phase,revision),
-  readmittedExpires:readmitted.expires_write,readmittedFlag:readmitted.expired_write,
-  undecidableRecordExpires:undecidableRecord.expires_write,undecidableRecordFlag:undecidableRecord.expired_write,
-  expiredDeadlineExpires:expiredDeadline.expires_write,expiredDeadlineFlag:expiredDeadline.expired_write,
-  negativeDeadlineExpires:negativeDeadline.expires_write,negativeDeadlineFlag:negativeDeadline.expired_write,
+  duplicateSequence:duplicate.sequence_write,duplicatePhase:duplicate.phase_write,duplicateExpires:duplicate.expires_write,
+  initialValue:initial.f_a_value,candidateValue:candidate.f_a_value,refusedCandidateValue:refusedCandidate.f_a_value,refusedCandidateStatus:refusedCandidate.status_write,
+  undecidableAdmissionSequence:undecidableAdmission.sequence_write,negativeDeadlineSequence:negativeDeadline.sequence_write,
+  zeroSequence:zeroSequence.sequence_write,unissuedAdmissionSequence:unissuedAdmission.sequence_write,
+  settledStatus:settled.status_write,settledOtherStatus:settledOther.status_write,settledUnissuedStatus:settledUnissued.status_write,settledInvalidStatus:settledInvalid.status_write,
+  restoredStatus:restored.status_write,restoredHook:app.invocationCurrent.$f(restored,'write',sequence,phase,revision),
+  restoredSettledStatus:restoredSettled.status_write,
   restoredExpiredFlag:restoredExpired.expired_write,restoredExpiredHook:app.invocationCurrent.$f(restoredExpired,'write',sequence,phase,revision),
-  reissuedExpires:reissued.expires_write,reissuedFlag:reissued.expired_write,
-  unissued:app.invocationCurrent.$f(live,'other',sequence,phase,revision),
-  wrongRevision:app.invocationCurrent.$f(live,'write',sequence,phase,revision+1)};})()`,context);
-assert.strictEqual(expiry.current,true,'a pending unexpired operation with its correlation is not current');
+  noDeadline:app.expireOperations.$f(initial,1e15).expired_write,noDeadlineUndecidable:app.expireOperations.$f(initial,0/0).expired_write,
+  unissuedHook:app.invocationCurrent.$f(admitted,'other',sequence,phase,revision),
+  wrongRevision:app.invocationCurrent.$f(admitted,'write',sequence,phase,revision+1)};})()`,context);
+assert.strictEqual(expiry.admittedStatus,'pending','admission did not write the issued operation status');
+assert.strictEqual(expiry.admittedSequence,7,'admission did not record the attempt sequence');
+assert.strictEqual(expiry.admittedPhase,'send','admission did not record the attempt phase');
+assert.strictEqual(expiry.admittedExpires,1000,'admission did not record the invocation deadline');
+assert.strictEqual(expiry.admittedFlag,false,'admission kept an expired prerequisite it replaced');
+assert.strictEqual(expiry.admittedHook,true,'an admitted unexpired operation with its correlation is not current');
 assert.strictEqual(expiry.unexpiredFlag,false,'a reading before the recorded expiry expired the operation');
-assert.strictEqual(expiry.unexpired,true,'a reading before the recorded expiry lost currentness');
+assert.strictEqual(expiry.unexpiredHook,true,'a reading before the recorded expiry lost currentness');
 assert.strictEqual(expiry.pastFlag,true,'a reading past the recorded expiry did not expire the operation');
-assert.strictEqual(expiry.past,false,'an operation past its expiry is still current');
+assert.strictEqual(expiry.pastHook,false,'an operation past its expiry is still current');
 assert.strictEqual(expiry.undecidableFlag,true,'an undecidable reading did not expire an operation that has a deadline');
 assert.strictEqual(expiry.retrusted,false,'an expired operation was re-trusted by a later matched reading');
 assert.strictEqual(expiry.noDeadline,false,'a reading past every deadline expired an operation that records none');
 assert.strictEqual(expiry.noDeadlineUndecidable,false,'an undecidable reading expired an operation with no recorded deadline');
-assert.strictEqual(expiry.plainHook,true,'an operation with no recorded deadline is not current');
-// Admission records the deadline of the invocation it admits: the retry gets its own instant and a
-// cleared prerequisite, a 0 instant means no expiry, an instant the admission reading already passed is
-// refused as the compiled operation model refuses it, an unrecordable instant records nothing, and an
-// unissued operation identity changes no state.
-assert.strictEqual(expiry.retriedExpires,5000,'an admitted retry recorded no expiry instant');
-assert.strictEqual(expiry.retriedFlag,false,'an admitted retry kept the expiry of the invocation it replaces');
-assert.strictEqual(expiry.retriedHook,true,'an admitted retry with a fresh deadline is not current');
-assert.strictEqual(expiry.oldCorrelation,false,'the expired correlation became current again under the retry');
-assert.strictEqual(expiry.readmittedExpires,0,'a recorded no-expiry instant did not clear the deadline');
-assert.strictEqual(expiry.readmittedFlag,false,'a recorded no-expiry instant kept the prerequisite set');
-assert.strictEqual(expiry.undecidableRecordExpires,1000,'an unrecordable expiry instant overwrote the recorded deadline');
-assert.strictEqual(expiry.undecidableRecordFlag,true,'an unrecordable expiry instant cleared the expired prerequisite');
-assert.strictEqual(expiry.expiredDeadlineExpires,1000,'a deadline before its admission reading was recorded');
-assert.strictEqual(expiry.expiredDeadlineFlag,true,'a deadline before its admission reading cleared the prerequisite');
-assert.strictEqual(expiry.negativeDeadlineExpires,1000,'a negative deadline was recorded');
-assert.strictEqual(expiry.restoredExpiredFlag,true,'a saved expired prerequisite did not restore');
+assert.strictEqual(expiry.duplicateSequence,7,'a duplicate tap advanced the invocation sequence');
+assert.strictEqual(expiry.duplicatePhase,'send','a duplicate tap replaced the recorded phase');
+assert.strictEqual(expiry.duplicateExpires,1000,'a duplicate tap replaced the recorded deadline');
+assert.strictEqual(expiry.refusedCandidateStatus,'pending','a refused admission rewrote the operation record');
+assert.strictEqual(expiry.candidateValue,9,'the owner reducer did not decide the candidate the admission commits');
+assert.strictEqual(expiry.refusedCandidateValue,expiry.initialValue,'a refused admission committed the owner attempt it did not admit');
+assert.strictEqual(expiry.undecidableAdmissionSequence,0,'an unrecordable admission instant recorded an invocation');
+assert.strictEqual(expiry.negativeDeadlineSequence,0,'a negative deadline recorded an invocation');
+assert.strictEqual(expiry.zeroSequence,0,'a zero attempt sequence recorded an invocation');
+assert.strictEqual(expiry.unissuedAdmissionSequence,0,'an unissued operation identity recorded an invocation');
+assert.strictEqual(expiry.settledStatus,'error','settlement did not record the classified status');
+assert.strictEqual(expiry.settledOtherStatus,'pending','a reply for another sequence settled the invocation');
+assert.strictEqual(expiry.settledUnissuedStatus,'pending','a reply for an unissued operation settled an invocation');
+assert.strictEqual(expiry.settledInvalidStatus,'pending','an undeclared status settled the invocation');
+assert.strictEqual(expiry.restoredStatus,'stale','a restored pending invocation did not restore stale');
+assert.strictEqual(expiry.restoredHook,false,'a restored pending invocation authorized a reply');
+assert.strictEqual(expiry.restoredSettledStatus,'error','a settled operation did not restore its classification');
+assert.strictEqual(expiry.restoredExpiredFlag,true,'a saved expired operation restored without its prerequisite');
 assert.strictEqual(expiry.restoredExpiredHook,false,'a saved expired operation restored current');
-assert.strictEqual(expiry.reissuedExpires,1000,'an unissued operation identity recorded a deadline');
-assert.strictEqual(expiry.unissued,false,'the hook admitted an unissued operation identity');
+assert.strictEqual(expiry.unissuedHook,false,'the hook admitted an unissued operation identity');
 assert.strictEqual(expiry.wrongRevision,false,'the hook admitted a non-current revision');
 console.log('assembly: labelled chat root, authoritative selection, emitted operation revision, expiry prerequisite and downstream-only invalidation passed');

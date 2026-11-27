@@ -825,10 +825,17 @@ export async function assemblyCases(): Promise<string> {
   insist(strings.contains(source,"state.expired_write === false"),"Hook ignores the issued expiry prerequisite");
   insist(strings.contains(source,"export function expireOperations(state: AppState, at: number): AppState"),"Expiry transition missing");
   insist(strings.contains(source,"if (!expired_write && state.expires_write !== 0 && (!Number.isFinite(at) || at >= state.expires_write)) { expired_write = true; }"),"Expiry transition does not derive the prerequisite from the recorded instant");
-  // Admission records the deadline of the invocation it admits through its own emitted transition, so
-  // a retry can be current again while the correlation of the expired invocation stays stale.
-  insist(strings.contains(source,"export function recordExpiry(state: AppState, operationId: string, expiresAt: number, admittedAt: number): AppState") && strings.contains(source,"expires_write: expiresAt"),"Admission-recording expiry transition missing");
-  insist(strings.contains(source,"expiresAt < admittedAt"),"Admission accepts a deadline its own reading already passed");
+  // Admission writes the invocation record of the operation it admits through its own emitted transition:
+  // the issued status, the captured sequence and phase and the recorded deadline, so a retry can be
+  // current again while the correlation of the expired invocation stays stale. The candidate the owner
+  // decided about commits with that record, so an attempt the record does not admit leaves the
+  // pre-reducer state and its private attempt unwritten. Settlement records the classified status of the
+  // invocation that answers it and nothing of any other.
+  insist(strings.contains(source,"export function admitOperation(state: AppState, candidate: AppState, operationId: string, sequence: number, phase: string, expiresAt: number, admittedAt: number): AppState") && strings.contains(source,"status_write: \"pending\"") && strings.contains(source,"sequence_write: sequence") && strings.contains(source,"phase_write: phase") && strings.contains(source,"expires_write: expiresAt"),"Admission-recording transition missing or incomplete");
+  insist(strings.contains(source,"if (operationId === \"write\" && state.status_write !== \"pending\") { return recompute({") && strings.contains(source,"f_a_value: candidate.f_a_value") && strings.contains(source,"return state;") ,"Admission does not commit the owner candidate with the record it admits, or does not return the pre-reducer state");
+  insist(strings.contains(source,"export function settleOperation(state: AppState, operationId: string, sequence: number, status: string, at: number): AppState") && strings.contains(source,"status_write: status"),"Reply settlement transition missing");
+  insist(strings.contains(source,"live.status_write === \"pending\" && live.sequence_write === sequence"),"Settlement does not answer only the invocation it belongs to");
+  insist(strings.contains(source,"candidate.status_write === \"pending\"") ,"Restore does not retire a pending invocation to stale");
   insist(result.metadata.operations[0].expires === "expires_write" && result.metadata.operations[0].expired === "expired_write","Operation metadata lost its expiry prerequisites");
   insist(strings.contains(source,"export function bump(next: AppState, previous: AppState): AppState"),"Revision bump missing");
   insist(strings.contains(source,"next.f_a_value !== previous.f_a_value"),"Bump does not count the issued dependency");

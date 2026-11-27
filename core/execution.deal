@@ -494,6 +494,202 @@ export function emittedInvocation(part: EmittedPart): string {
   return refused+"\n"+effect+"\n"+reducer;
 }
 
+// One model-authored provider effect of a catalogue section or a written fragment: the issued operation
+// it dispatches, the frozen module and function of the call, and the record fields that carry its attempt.
+// The emitted admission below is this module's send and reply policy in generated source, so a
+// model-authored call is decided by the same contract a part's call is. The emitted form differs from
+// emittedInvocation only in what it can know about its own attempt: the argument snapshot is the
+// fragment's, while the currentness of the invocation is the composed operation's own record — the emitted
+// hook and the composed expiry transition, never a parallel copy of either.
+export class EmittedExchange {
+  id: string; operation: string; moduleName: string; functionName: string; phase: string;
+  pending: string; sequence: string; ready: string; arguments: string;
+}
+// Two substitution points make one refusal shape serve both callers of the policy below: a catalogue
+// section refuses with its declared completion class, and a composed wrapper refuses with the admission
+// record it wraps a written effect in. Nothing else about the checks differs.
+function refuse(template: string, code: string, message: string): string {
+  let parts: string[] = template.split("$code");
+  let rest: string[] = (parts[1] as string).split("$message");
+  return (parts[0] as string)+code+(rest[0] as string)+message+(rest[1] as string);
+}
+// The refusal constructor a catalogue exchange emits beside its admission. It answers the attempt the
+// effect was started for, so a refusal changes no bookkeeping of an invocation already in flight, and it
+// carries the invocation's own phase beside the sequence, the captured revision and the reply instant the
+// reducer revalidates expiry with.
+export function emittedRefusal(id: string, completion: string, text: boolean, phase: string): string {
+  s.identifier(id); s.nonblank(completion); s.nonblank(phase);
+  if (text !== true && text !== false) { s.reject("Refusal text flag"); }
+  let tail: string = text ? ", text: \"\"" : "";
+  return "export function refused_"+id+"(id: string, sequence: number, revision: number, at: number, code: string, message: string): "+completion+" { return {id: id, sequence: sequence, revision: revision, phase: "+literals.quote(phase)+", at: at, ok: false, outcome: \"none\", code: code, message: message"+tail+"}; }";
+}
+// The invocation facts of the attempt: the issued operation's own status, sequence, phase and revision
+// beside its recorded deadline. The emitted admission reads them and the composed hook decides, so a
+// committed edit of the operation's dependency set or an operation the Session retired is reported by the
+// record every other lane reads.
+function attemptFacts(part: EmittedExchange): string {
+  let operation: string = part.operation;
+  return "  let sequence:number = state.sequence_"+operation+";\n"
+    +"  let phase:string = "+literals.quote(part.phase)+";\n"
+    +"  let revision:number = state.revision_"+operation+";\n"
+    +"  let now:number = session.now();\n";
+}
+// The Session facts are read through the host-owned module and are never inferred from source: the grant,
+// the permission epoch, the Session lifetime, the host's classification of this exact function, the
+// confirmation bound to this target and argument snapshot, the frozen-request determination, the trust the
+// host places in its own clock, the clock period this invocation is admitted in and the host-configured
+// window. The period is the Session's own suspend/resume identity, so the reply compares it instead of
+// trusting a relative window a later period can no longer decide.
+function sessionFacts(part: EmittedExchange): string {
+  let moduleName: string = literals.quote(part.moduleName); let functionName: string = literals.quote(part.functionName);
+  return "  let epoch:number = session.epoch("+moduleName+");\n"
+    +"  let lifetime:string = session.lifetime();\n"
+    +"  let granted:boolean = session.granted("+moduleName+");\n"
+    +"  let classification:string = session.classification("+moduleName+","+functionName+");\n"
+    +"  let confirmation:string = session.confirmation("+moduleName+","+functionName+",("+part.arguments+" as string));\n"
+    +"  let origin:string = session.origin();\n"
+    +"  let requestAuthorizes:boolean = session.requestAuthorizes();\n"
+    +"  let requestTarget:string = session.requestTarget();\n"
+    +"  let trusted:boolean = session.clockTrusted();\n"
+    +"  let period:number = session.period();\n"
+    +"  let relative:number = session.relativeMs("+moduleName+","+functionName+");\n"
+    +"  let absolute:number = session.absolute("+moduleName+","+functionName+");\n";
+}
+// The identity and authority checks run in the order of admittedIdentity: an unknown Session lifetime is
+// REVOKED, a module the host does not grant is DENIED, an unclassified or undisclosed function never
+// reads, a host-confirmed denial is final, the frozen request's determination binds one exact operation
+// and target, and anything else needs an approval that names this target and the argument snapshot it
+// approved. The readiness of the validated arguments is part of the same admission, so an unavailable
+// source is never dispatched as its placeholder.
+function authorityChecks(part: EmittedExchange, template: string): string {
+  let target: string = literals.quote(part.moduleName+"/"+part.functionName);
+  return "  if(lifetime === \"\"){"+refuse(template,"\"REVOKED\"","\"Session lifetime is unknown\"")+"}\n"
+    +"  if(!granted){"+refuse(template,"\"DENIED\"","\"Module is not granted\"")+"}\n"
+    +"  if(!(epoch >= 0) || now < 1){"+refuse(template,"\"INVALID_ARGUMENT\"","\"Unissued admission facts\"")+"}\n"
+    +"  if(classification === \"\"){"+refuse(template,"\"INVALID_ARGUMENT\"","\"Undisclosed function\"")+"}\n"
+    +"  if(classification === \"mutating\"){\n"
+    +"    if(confirmation === \"denied\"){"+refuse(template,"\"DENIED\"","\"Host denied the mutation\"")+"}\n"
+    +"    if(!(origin === \"generated\" && requestAuthorizes && requestTarget === "+target+")){\n"
+    +"      if(confirmation === \"stale\"){"+refuse(template,"\"DENIED\"","\"Confirmation no longer correlates\"")+"}\n"
+    +"      if(confirmation !== \"approved\"){"+refuse(template,"\"DENIED\"","\"Mutation requires host confirmation\"")+"}\n"
+    +"    }\n"
+    +"  }\n"
+    +"  if(!("+part.ready+")){"+refuse(template,"\"INVALID_ARGUMENT\"","\"Invalid arguments\"")+"}\n";
+}
+// A relative window needs a decidable clock to be admitted at all; an absolute instant is used as given,
+// and a window that has already passed authorizes no dispatch. The expiry prerequisite is the issued
+// operation's own recorded deadline, and the currentness hook decides the rest of the invocation: a
+// pending operation, this sequence, this phase, the live revision of its dependency set, ready and
+// unexpired prerequisites.
+function currentnessChecks(part: EmittedExchange, template: string): string {
+  let operation: string = part.operation;
+  return "  let windowed:boolean = relative >= 0 || absolute >= 0;\n"
+    +"  let expiresAt:number = -1;\n"
+    +"  if(relative >= 0){ if(!trusted){"+refuse(template,"\"EXPIRED\"","\"Time is not decidable\"")+"} expiresAt = now+relative; }\n"
+    +"  else if(absolute >= 0){ expiresAt = absolute; }\n"
+    +"  if(windowed && expiresAt < now){"+refuse(template,"\"EXPIRED\"","\"Invocation window already passed\"")+"}\n"
+    +"  if(state.expires_"+operation+" !== 0 && state.expires_"+operation+" < now){"+refuse(template,"\"EXPIRED\"","\"Operation window has passed\"")+"}\n"
+    +"  if(!invocationCurrent(state,"+literals.quote(operation)+",sequence,phase,revision)){"+refuse(template,"\"NOT_ADMITTED\"","\"Invocation is not current\"")+"}\n";
+}
+// The catalogue exchange's refusals answer its own declared completion, so the attempt they retire is the
+// one the effect was started for.
+function exchangeRefusal(part: EmittedExchange): string { return "return refused_"+part.id+"(action.id, sequence, revision, now, $code, $message);"; }
+// The declared completion of an exchange carries the attempt identity, the captured revision and the reply
+// instant the reducer revalidates expiry with. The epoch, Session lifetime and admission instant stay in
+// the effect's own scope: permission and lifetime tokens never enter a declared action, a field or saved state.
+export function emittedSend(part: EmittedExchange): string {
+  s.identifier(part.id); s.identifier(part.operation); s.nonblank(part.moduleName); s.identifier(part.functionName);
+  s.nonblank(part.phase); s.identifier(part.pending); s.identifier(part.sequence); s.nonblank(part.ready); s.nonblank(part.arguments);
+  return sessionFacts(part)+attemptFacts(part)+authorityChecks(part,exchangeRefusal(part))+currentnessChecks(part,exchangeRefusal(part));
+}
+// The reply admission: the Session facts and the invocation window are re-read after the call, so a grant
+// withdrawn, an epoch or lifetime that moved, a clock period that changed, a window that passed or a host
+// clock the host stops trusting while the call was in flight refuses the result. A Session suspend and a
+// resume each start a new period, so a relative window captured under another one is undecidable and
+// admits nothing; an absolute instant is an instant and a pause does not reopen it. The completion's own
+// revision and phase are compared by the emitted attempt and publish gates below, against the live store
+// and the composed hook.
+export function emittedReply(part: EmittedExchange, template: string): string {
+  s.identifier(part.id); s.identifier(part.operation); s.nonblank(part.moduleName); s.identifier(part.functionName);
+  let moduleName: string = literals.quote(part.moduleName);
+  return "  let liveEpoch:number = session.epoch("+moduleName+");\n"
+    +"  let liveLifetime:string = session.lifetime();\n"
+    +"  let liveGranted:boolean = session.granted("+moduleName+");\n"
+    +"  let liveNow:number = session.now();\n"
+    +"  let liveTrusted:boolean = session.clockTrusted();\n"
+    +"  let livePeriod:number = session.period();\n"
+    +"  if(!(liveGranted && liveEpoch === epoch && liveLifetime === lifetime)){"+refuse(template,"\"REVOKED\"","\"Invocation no longer authorized\"")+"}\n"
+    +"  let sameWindow:boolean = relative < 0 || livePeriod === period;\n"
+    +"  let unexpired:boolean = !windowed || (liveNow >= now && liveNow < expiresAt && liveTrusted && sameWindow);\n"
+    +"  if(!unexpired){"+refuse(template,"\"EXPIRED\"","\"Invocation expired\"")+"}\n";
+}
+export function exchangeReply(part: EmittedExchange): string { return emittedReply(part,exchangeRefusal(part)); }
+// The emitted attempt correlation: a completion answers only the invocation it was issued for. The guard
+// precedes the reply classification, so a duplicate or older completion changes no bookkeeping of the
+// attempt in flight.
+export function emittedAttempt(part: EmittedExchange): string {
+  s.identifier(part.id); s.identifier(part.operation); s.identifier(part.pending); s.identifier(part.sequence); s.nonblank(part.phase);
+  let operation: string = part.operation;
+  return "  if(!state."+part.pending+" || state.status_"+operation+" !== \"pending\" || action.sequence !== state.sequence_"+operation+" || action.phase !== "+literals.quote(part.phase)+"){return state;}\n";
+}
+// The emitted publish gate of the same operation, evaluated by the reducer against the live store: a
+// completion publishes the result it carries only while the composed hook still affirms its invocation and
+// the live expiry reading has not retired it. An obsolete completion publishes no business result; the
+// caller's own bookkeeping retires only its own attempt.
+export function emittedCurrent(part: EmittedExchange, retire: string): string {
+  s.identifier(part.id); s.identifier(part.operation); s.identifier(part.pending); s.identifier(part.sequence); s.nonblank(part.phase); s.nonblank(retire);
+  let operation: string = part.operation;
+  return "  if(!invocationCurrent(expireOperations(state, action.at),"+literals.quote(operation)+",action.sequence,"+literals.quote(part.phase)+",action.revision)){\n"
+    +"    return {"+retire+"};\n"
+    +"  }\n";
+}
+// One written fragment's provider effect around the operation it dispatches. A written fragment cannot
+// construct a refused completion of its own, so composition declares the completion of that effect: the
+// admission record below carries the attempt correlation the emit read, and the writer's own completion
+// action travels inside it and reaches the writer's reducer only while the invocation is current.
+export class EmittedEffect {
+  id: string; operation: string; moduleName: string; functionName: string; phase: string;
+  ready: string; arguments: string; attempt: string; action: string; completion: string; inner: string; refused: string; stale: string; reducer: string;
+}
+// The effect completion class composition declares for a linked written effect.
+export function effectCompletion(part: EmittedEffect): string {
+  s.identifier(part.id); s.nonblank(part.completion); s.identifier(part.action); s.identifier(part.attempt); s.identifier(part.reducer);
+  return "export class "+part.completion+" { accepted: boolean; code: string; message: string; sequence: number; phase: string; revision: number; at: number; inner: "+part.inner+" | null; }\n";
+}
+function effectRefusal(part: EmittedEffect): string { return "return {accepted: false, code: $code, message: $message, sequence: sequence, phase: phase, revision: revision, at: now, inner: null};"; }
+// The written effect's send admission: the same Session facts, identity, authority, window and currentness
+// checks a catalogue exchange runs, then the identity of the admitted attempt, so a duplicate tap of that
+// action dispatches nothing while the call it duplicated is still in flight.
+export function emittedEffectSend(part: EmittedEffect): string {
+  s.identifier(part.id); s.identifier(part.operation); s.nonblank(part.moduleName); s.identifier(part.functionName);
+  s.nonblank(part.phase); s.identifier(part.attempt); s.identifier(part.action); s.nonblank(part.arguments);
+  let exchange: EmittedExchange = {id:part.id,operation:part.operation,moduleName:part.moduleName,functionName:part.functionName,phase:part.phase,pending:part.attempt,sequence:part.attempt,ready:"true",arguments:part.arguments};
+  return sessionFacts(exchange)+attemptFacts(exchange)+authorityChecks(exchange,effectRefusal(part))+currentnessChecks(exchange,effectRefusal(part))
+    +"  if((state."+part.attempt+" as "+part.action+") !== action){"+refuse(effectRefusal(part),"\"NOT_ADMITTED\"","\"Not admitted\"")+"}\n";
+}
+// The written effect's reply admission: the Session facts are re-read after the call, and the admission
+// record carries the correlation the reducer publishes under.
+export function emittedEffectReply(part: EmittedEffect): string {
+  s.identifier(part.id); s.identifier(part.operation); s.nonblank(part.moduleName); s.identifier(part.functionName);
+  let exchange: EmittedExchange = {id:part.id,operation:part.operation,moduleName:part.moduleName,functionName:part.functionName,phase:part.phase,pending:part.attempt,sequence:part.attempt,ready:"true",arguments:part.arguments};
+  return emittedReply(exchange,effectRefusal(part));
+}
+// The publish gate and settle of a written effect: only a current invocation reaches the writer's own
+// reducer; a refused or obsolete one reaches it with the refusal flag set, so the writer retires its own
+// attempt without publishing a business result.
+export function emittedEffectCurrent(part: EmittedEffect): string {
+  s.identifier(part.id); s.identifier(part.operation); s.nonblank(part.phase); s.nonblank(part.completion); s.identifier(part.inner); s.nonblank(part.refused); s.nonblank(part.stale); s.identifier(part.reducer);
+  let operation: string = literals.quote(part.operation); let refused: string = part.refused; let stale: string = part.stale; let inner: string = "(action.inner as "+part.inner+")";
+  return "  let live: AppState = expireOperations(state, action.at);\n"
+    // A refusal of a dispatch that was never admitted changes nothing: the attempt it names is not the one
+    // the operation record holds, so it retires neither that record nor the attempt in flight.
+    +"  if(!action.accepted && action.code === \"NOT_ADMITTED\") { return state; }\n"
+    +"  if(!action.accepted || action.inner === null) { let retired: AppState = "+part.reducer+"(settleOperation(live, "+operation+", action.sequence, \"stale\", action.at), "+refused+"); return bump(recompute(retired), state); }\n"
+    +"  if(!invocationCurrent(live,"+operation+",action.sequence,"+literals.quote(part.phase)+",action.revision)) { let obsolete: AppState = "+part.reducer+"(settleOperation(live, "+operation+", action.sequence, \"stale\", action.at), "+stale+"); return bump(recompute(obsolete), state); }\n"
+    +"  let published: AppState = "+part.reducer+"(settleOperation(live, "+operation+", action.sequence, \"ready\", action.at), "+inner+");\n"
+    +"  return bump(recompute(published), state);\n";
+}
+
 // Send admission: one decision per external call, on the serialized lane, in contract order. The
 // authority decision of the call's own class comes first, so an ungranted, revoked, undisclosed,
 // unclassified or unauthorized call never reaches the invocation window or the provider. An admitted

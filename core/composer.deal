@@ -9,6 +9,8 @@ import * as syntax from "embedding/fragment-syntax";
 import * as policy from "./computation-policy";
 import * as ownership from "./ownership";
 import * as bindings from "./bindings";
+import * as execution from "./execution";
+import * as admission from "./admission";
 
 // Internal resolved assembly input. Generated strings never issue type or owner identities.
 // `dependencies` is the semantic dependency set of a derived resource: the authoritative resources
@@ -242,6 +244,12 @@ function readyExpression(source: bindings.Source): string {
   return "state."+source.ready;
 }
 function addUnique(values: string[], value: string): void { if (!s.contains(values,value)) { values[values.length] = value; } }
+// The predicate that selects one attempt of an action that answers several operations: an action field the
+// record names, compared with the issued value, or the attempt every action of that record is.
+function selection(record: screens.Dispatch): string {
+  if (record.select === "") { return "true"; }
+  return "action."+s.identifier(record.select)+" === "+literals.quote(record.value);
+}
 function issuedField(fields: Field[], name: string): boolean { for (let entry of fields) { if (entry.name === name) { return true; } } return false; }
 // A slot's `reads` is the need read subset that resolves to an issued plan or composition source
 // identifier, so a read this candidate never issued is not carried as a route admission would check.
@@ -252,7 +260,7 @@ function issuedReads(reads: string[], sources: string[], needs: string[]): strin
 }
 export async function assembleWith(composition: screens.Composition, computations: Computation[], registry: bindings.Registry, chatRoot: ChatRoot | null): Promise<Result> {
   let imports: Import[] = [{module:"std/time",alias:"embeddingClock"}];
-  let prepared: Prepared[] = []; let allFields: Field[] = []; let namesByInstance: Record<string, unknown> = {}; let fieldsByInstance: Record<string, unknown> = {}; let typesByInstance: Record<string, unknown> = {}; let factsByInstance: Record<string, unknown> = {}; let modulesByInstance: Record<string, unknown> = {}; let completionsByInstance: Record<string, unknown> = {}; let exportedByInstance: Record<string, unknown> = {};
+  let prepared: Prepared[] = []; let allFields: Field[] = []; let namesByInstance: Record<string, unknown> = {}; let fieldsByInstance: Record<string, unknown> = {}; let typesByInstance: Record<string, unknown> = {}; let factsByInstance: Record<string, unknown> = {}; let modulesByInstance: Record<string, unknown> = {}; let dispatchesByInstance: Record<string, unknown> = {}; let completionsByInstance: Record<string, unknown> = {}; let exportedByInstance: Record<string, unknown> = {};
   // A descriptor's seeded draft is composition state that the panel naming that descriptor edits, so its
   // visible name and type join exactly that panel's resource map before any fragment is qualified. The
   // draft is emitted once below and stays writable only through the composition-owned nominal update.
@@ -311,7 +319,7 @@ export async function assembleWith(composition: screens.Composition, computation
     for (let completion of completions) { if (!s.contains(exported,completion)) { s.reject("Undeclared effect completion: "+instance.id+"."+completion); } }
     let names: Record<string, string> = {}; let fieldNames: Record<string, string> = {}; let types: Record<string, string> = {};
     for (let category of ["classes","functions","views"]) {
-      for (let declaration of decoded.records(raw[category])) { let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent" || name === "expireOperations" || name === "recordExpiry" || name === "bump" || name === "bridgePersistedState" || name === "bridgeRestoredState") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
+      for (let declaration of decoded.records(raw[category])) { let name: string = s.identifier(declaration.name); if (name === "AppState" || name === "initialState" || name === "recompute" || name === "invocationCurrent" || name === "expireOperations" || name === "admitOperation" || name === "settleOperation" || name === "bump" || name === "bridgePersistedState" || name === "bridgeRestoredState") { s.reject("Composer-owned declaration"); } if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
     }
     for (let hole of instance.fragment.holes) { let name: string = s.identifier(hole.id); if (Object.hasOwn(names,name)) { s.reject("Duplicate fragment declaration"); } names[name] = qualified(instance.id,name); }
     let aliases: Record<string, string> = {};
@@ -332,6 +340,75 @@ export async function assembleWith(composition: screens.Composition, computation
       let bound: string = qualified(instance.id,alias); names[alias] = bound; addImport(imports,module,bound);
     }
     await storageConfined(instance,aliases,ownershipFacts[instance.id] as Record<string, unknown>);
+    // A written fragment carries no issued dispatch metadata of its own: the provider calls its effects
+    // perform are parsed facts, so assembly links each effect to the one issued operation the frozen
+    // contract call it performs belongs to. A call no issued operation backs, or one two operations back,
+    // is refused instead of being admitted against a guess.
+    let issued: screens.Dispatch[] = [];
+    if (Object.hasOwn(instance,"dispatches")) { for (let record of instance.dispatches as screens.Dispatch[]) { issued[issued.length] = record; } }
+    else if (instance.origin === "custom") {
+      let facts: Record<string, unknown> = ownershipFacts[instance.id] as Record<string, unknown>;
+      // The provider call an effect performs is decided over the effect's transitive call closure, never
+      // over its own direct calls alone: a model-authored effect that reaches the frozen call through a
+      // helper of the same fragment, or through a local that captured that helper or the frozen member
+      // itself, is linked, admitted and invalidated exactly as one that calls the provider itself. The
+      // parsed facts name the target of a captured function value, so such a call is a call path here.
+      // `admission.reached` is the same closure the store position rule uses.
+      for (let effect of instance.fragment.effects) {
+        let links: string[] = [];
+        for (let reached of admission.reached(facts,[effect.function])) {
+          if (!Object.hasOwn(facts,reached)) { continue; }
+          let fact: Record<string, unknown> = facts[reached] as Record<string, unknown>;
+          // A call through a local the fact producer could not resolve names no target: it might be the
+          // frozen call this effect performs, so the effect is refused with its instance, action and
+          // callee instead of being emitted as a pass-through wrapper no operation decides.
+          for (let callee of admission.unresolved(fact)) { s.reject("Written effect calls a function value no analysis resolves: "+instance.id+"."+effect.function+" "+callee+" reached through "+reached); }
+          // A direct call is a call path, but a frozen member a reachable function mentions without any
+          // call through the value that names it is only a reference, so the closure would link nothing and
+          // the effect would be emitted as a pass-through wrapper performing the provider call with no
+          // admission deciding it. Every path a reachable function mentions is inspected, reads and writes
+          // included, and a frozen contract a written effect names without calling is refused with its
+          // instance, action and member instead of being admitted against a guess.
+          for (let reference of admission.references(fact)) {
+            if (s.contains(admission.calls(fact),reference)) { continue; }
+            let parts: string[] = reference.split(".");
+            if (!Object.hasOwn(aliases,parts[0] as string)) { continue; }
+            let named: string = aliases[parts[0] as string] as string;
+            let disclosed: boolean = false;
+            for (let candidate of registry.contracts) { if (candidate.module === named) { disclosed = true; } }
+            if (!disclosed) { continue; }
+            s.reject("Written effect reaches a frozen function through a value instead of calling it: "+instance.id+"."+effect.function+" "+reference+" reached through "+reached);
+          }
+          for (let call of admission.calls(fact)) {
+            let parts: string[] = call.split(".");
+            // Every call path that names a function value is either a declaration or import member of this
+            // fragment, which the link below decides, or the target a captured local or record field holds,
+            // which the fact producer has already resolved into this path; a member that could hold a
+            // function value is reported as unresolved above and refused there. What remains here is a
+            // builtin method of an array, string, number or boolean - a container or scalar, never a
+            // function value - or a path of another arity, so it names no provider call to link.
+            if (parts.length !== 2 || !Object.hasOwn(aliases,parts[0] as string)) { continue; }
+            let module: string = aliases[parts[0] as string] as string;
+            // Only a disclosed frozen contract is a provider call this admission decides: an effect-bound
+            // mechanism (host storage) keeps its own boundary validation and carries no issued operation.
+            let frozen: boolean = false;
+            for (let candidate of registry.contracts) { if (candidate.module === module) { frozen = true; } }
+            if (!frozen) { continue; }
+            let backed: string[] = [];
+            for (let binding of registry.bindings) { if (binding.module === module && binding.function === parts[1]) { backed[backed.length] = binding.id; } }
+            // A frozen call no issued operation backs, or one two operations back, has no admitted route:
+            // the effect is refused instead of being emitted as a wrapper no operation decides.
+            if (backed.length === 0) { s.reject("Written effect calls a function no issued operation binds: "+instance.id+"."+effect.function+" "+call+" reached through "+reached); }
+            if (backed.length > 1) { s.reject("Written effect call is backed by more than one issued operation: "+instance.id+"."+effect.function+" "+call+" reached through "+reached); }
+            let operation: string = backed[0] as string;
+            if (!s.contains(links,operation)) { links[links.length] = operation; }
+          }
+        }
+        if (links.length > 1) { s.reject("Written effect dispatches more than one issued operation: "+instance.id+"."+effect.function); }
+        if (links.length === 1) { issued[issued.length] = {action:effect.action,operation:links[0] as string,phase:effect.action,select:"",value:"",attempt:"",outcome:"",instant:""}; }
+      }
+    }
+    dispatchesByInstance[instance.id] = issued;
     let views: Record<string, unknown>[] = decoded.records(raw.views);
     // A fragment declares one exported view. Whether that view is a fragment-declared root is reported
     // by the qualification mechanism and decided by the compiled ownership policy below.
@@ -380,6 +457,34 @@ export async function assembleWith(composition: screens.Composition, computation
       if (Object.hasOwn(fieldNames,entry.name)) { s.reject("Fragment field reuses a descriptor draft identity: "+instance.id+"."+entry.name); }
       if (!s.contains(namedDescriptors,entry.descriptor)) { continue; }
       fieldNames[entry.name] = entry.name; types[entry.name] = entry.type;
+    }
+    // An issued operation one instance dispatches is composed state, not a private copy: the record its
+    // admission writes and reads (`status`, `sequence`, `phase`), the revision its edit invalidation
+    // advances and the expiry prerequisite `expireOperations` retires join that instance's resource map
+    // read-only. Its effects therefore admit through the composed currentness hook and refuse an expired
+    // operation, and its reducers answer only under that revision, while the write stays
+    // composition-owned (`admitOperation`, `settleOperation` and `bump` write it; no fragment may).
+    // One composed attempt field per written effect composition admits: it holds the exact action the
+    // operation record admitted, so a duplicate tap of that action dispatches nothing while its call is in
+    // flight. Composition owns the field; no fragment may write it.
+    for (let record of issued) {
+      if (record.attempt !== "" || record.outcome.trim() !== "") { continue; }
+      let attemptName: string = "attempt_"+instance.id+"_"+s.identifier(record.action);
+      s.unique(storageNames,attemptName);
+      let attempt: Field = {instance:instance.id,local:attemptName,name:attemptName,type:qualified(instance.id,record.action)+" | null",role:"runtime",initial:"null"};
+      allFields[allFields.length] = attempt;
+    }
+    for (let record of issued) {
+        s.identifier(record.operation);
+        let handled: boolean = false;
+        for (let handler of instance.fragment.updates) { if (handler.action === record.action) { handled = true; } }
+        if (!handled) { s.reject("Dispatch record names an action this instance does not answer: "+instance.id+"."+record.action); }
+        for (let suffix of ["revision","status","sequence","phase","expires","expired"]) {
+          let name: string = suffix+"_"+record.operation;
+          if (Object.hasOwn(fieldNames,name)) { if ((fieldNames[name] as string) === name) { continue; } s.reject("Fragment field reuses an issued operation resource: "+instance.id+"."+name); }
+          let type: string = "number"; if (suffix === "status" || suffix === "phase") { type = "string"; } else if (suffix === "expired") { type = "boolean"; }
+          fieldNames[name] = name; types[name] = type;
+        }
     }
     // Declared ownership grants no permission, so every claimed local is writable for qualification;
     // the ownership map decides derived and foreign writes from parsed facts.
@@ -707,8 +812,13 @@ export async function assembleWith(composition: screens.Composition, computation
   if (dayUsed) { addImport(imports,"embedding/day","embeddingDay"); }
   // A queued trigger route records the host's window for the target its invocation calls, so a composition
   // that issues one reads the live Session facts the host installs beside the mounted Session; a
-  // composition with no such route keeps the minimal checked import surface.
+  // composition with no such route keeps the minimal checked import surface. A start admission reads the
+  // same facts for the call it admits, so the composed pair imports that host-owned module once under its
+  // own alias the moment any instance dispatches an issued operation or issues a trigger route.
   if (routeIds.length > 0) { addImport(imports,"embedding/session","composerSession"); }
+  for (let instanceId of Object.keys(dispatchesByInstance)) {
+    for (let record of dispatchesByInstance[instanceId] as screens.Dispatch[]) { addImport(imports,"embedding/session","session"); }
+  }
   let declarations: string = importSource(imports)+operationTypes+"export class AppState {\n";
   for (let item of allFields) { let type: string = item.type; if (item.role === "derived") { type = "("+type+" | null)"; } declarations = declarations+"  "+item.name+": "+type+";\n"; if (item.role === "derived") { declarations = declarations+"  "+item.name+"_ready: boolean;\n  "+item.name+"_reason: string;\n"; if (displayable(item.type)) { declarations = declarations+"  "+item.name+"_display: "+item.type+";\n"; } } }
   declarations = declarations+"}\n";
@@ -749,6 +859,17 @@ export async function assembleWith(composition: screens.Composition, computation
   let actions: string[] = []; let effects: string[] = [];
   for (let item of prepared) {
     declarations = declarations+item.declarations+item.helpers;
+    // A written effect composition admits is wrapped by the composed record: its own completion reducer is
+    // reached through that record, so it is not an independent UI update route of its own.
+    let wrappedCompletions: string[] = [];
+    let completionsOfItem: string[] = decoded.strings(completionsByInstance[item.id]);
+    let effectOffset: number = 0;
+    for (let effect of item.effects) {
+      let linked: boolean = false;
+      for (let record of dispatchesByInstance[item.id] as screens.Dispatch[]) { if (record.action === effect.action && record.outcome.trim() === "" && record.attempt === "") { linked = true; } }
+      if (linked && effectOffset < completionsOfItem.length) { wrappedCompletions[wrappedCompletions.length] = completionsOfItem[effectOffset] as string; }
+      effectOffset = effectOffset+1;
+    }
     // One placed fragment is the composition root itself: its own view is the root node source, so no
     // pass-through Main is emitted (a view body must produce exactly one root node, not another view).
     if (prepared.length === 1 && carriers === "") { viewSource = viewSource+"// @ui-root\n"; }
@@ -759,8 +880,62 @@ export async function assembleWith(composition: screens.Composition, computation
       // view action, so it carries no UI update marker; every other owner reducer is a UI update.
       let capture: boolean = false;
       for (let operation of operations) { if (operation.trigger === "row_tap" && update.action === "CaptureRow_"+operation.id && operation.rowKey === qualified(item.id,"rowKey_"+operation.id)) { capture = true; } }
-      let marker: string = "// @ui-update\n"; if (capture) { marker = ""; }
-      declarations = declarations+marker+"export function update_"+action+"(state: AppState, action: "+action+"): AppState {\n  let updated: AppState = recompute("+qualified(item.id,update.function)+"(state, action));\n  return bump(updated, state);\n}\n";
+      let marker: string = "// @ui-update\n"; if (capture || s.contains(wrappedCompletions,update.action)) { marker = ""; }
+      // The invoked reducer is the owner's; the operation record this action admits or settles into is
+      // composition-owned, so only composer-emitted code writes it.
+      let starts: screens.Dispatch[] = []; let settles: screens.Dispatch[] = [];
+      for (let record of dispatchesByInstance[item.id] as screens.Dispatch[]) { if (record.action !== update.action) { continue; } if (record.outcome.trim() === "") { starts[starts.length] = record; } else { settles[settles.length] = record; } }
+      if (starts.length > 0 && settles.length > 0) { s.reject("Action starts and answers a provider attempt: "+item.id+"."+update.action); }
+      let reducer: string = qualified(item.id,update.function);
+      let body: string = "";
+      if (starts.length > 0) {
+        // The admission of one explicit attempt: the owner reducer decides the tap, and only a tap it
+        // accepted records the invocation in the issued operation, with the window the Session's own
+        // facts give that call. The owner's own decision about that tap is the candidate the composed
+        // admission commits, so a refused or duplicate tap returns the pre-reducer state: neither the
+        // operation record nor a private attempt of a lane whose operation is already in flight is written.
+        body = "  let updated: AppState = recompute("+reducer+"(state, action));\n  let next: AppState = bump(updated, state);\n  let admittedAt: number = session.now();\n";
+        let index: number = 0;
+        for (let record of starts) {
+          let operation: OperationRecord | null = null;
+          for (let candidate of operations) { if (candidate.id === record.operation) { operation = candidate; } }
+          if (operation === null) { s.reject("Dispatch record names an unissued operation: "+record.operation); }
+          let call: OperationRecord = operation as OperationRecord;
+          let suffix: string = String(index);
+          body = body+"  let relative"+suffix+": number = session.relativeMs("+literals.quote(call.module)+","+literals.quote(call.function)+");\n"
+            +"  let absolute"+suffix+": number = session.absolute("+literals.quote(call.module)+","+literals.quote(call.function)+");\n"
+            +"  let expiresAt"+suffix+": number = relative"+suffix+" >= 0 ? admittedAt+relative"+suffix+" : (absolute"+suffix+" >= 0 ? absolute"+suffix+" : 0);\n";
+          if (record.attempt === "") {
+            // A written effect carries no attempt field of its own: composition records the action it
+            // admitted beside the issued sequence, so a duplicate tap of that same action dispatches
+            // nothing while the call it duplicated is still in flight.
+            let attemptField: string = "attempt_"+item.id+"_"+s.identifier(record.action);
+            let changes: Record<string, string> = {}; changes[attemptField] = "action";
+            body = body+"  if ("+selection(record)+") { let stamped: AppState = "+copyExpression(allFields,changes,"next")+"; return admitOperation(state, stamped, "+literals.quote(record.operation)+", state.sequence_"+record.operation+"+1, "+literals.quote(record.phase)+", expiresAt"+suffix+", admittedAt); }\n";
+          } else {
+            body = body+"  let attempt"+suffix+": number = next."+qualified(item.id,record.attempt)+";\n"
+              +"  if ("+selection(record)+" && attempt"+suffix+" !== state."+qualified(item.id,record.attempt)+") { return admitOperation(state, next, "+literals.quote(record.operation)+", attempt"+suffix+", "+literals.quote(record.phase)+", expiresAt"+suffix+", admittedAt); }\n";
+          }
+          index = index+1;
+        }
+        body = body+"  return state;\n";
+      } else if (settles.length > 0) {
+        // The settlement of the reply: the live expiry reading is revalidated before the owner reducer
+        // answers, and only the sequence that answers this invocation changes the operation's status, so
+        // an obsolete completion publishes no business result and retires no other attempt.
+        let instant: string = "action."+s.identifier((settles[0] as screens.Dispatch).instant);
+        body = "  let live: AppState = expireOperations(state, "+instant+");\n  let updated: AppState = recompute("+reducer+"(live, action));\n  let next: AppState = bump(updated, live);\n";
+        for (let record of settles) {
+          let sequence: string = "action."+s.identifier(record.attempt);
+          let settled: string = "next."+qualified(item.id,record.outcome);
+          let status: string = settled+" === \"failure\" ? \"error\" : ("+settled+" === \"success\" ? \"ready\" : \"stale\")";
+          body = body+"  if ("+selection(record)+") { return settleOperation(next, "+literals.quote(record.operation)+", "+sequence+", "+status+", "+instant+"); }\n";
+        }
+        body = body+"  return next;\n";
+      } else {
+        body = "  let updated: AppState = recompute("+reducer+"(state, action));\n  return bump(updated, state);\n";
+      }
+      declarations = declarations+marker+"export function update_"+action+"(state: AppState, action: "+action+"): AppState {\n"+body+"}\n";
     }
     for (let effect of item.effects) {
       let action: string = qualified(item.id,effect.action); s.unique(effects,action);
@@ -770,7 +945,76 @@ export async function assembleWith(composition: screens.Composition, computation
       let result: string = "";
       for (let fn of decoded.records(facts.functions)) { if ((fn.name as string) === qualified(item.id,effect.function)) { if (!(fn.async as boolean)) { s.reject("Effect must be asynchronous"); } result = fn.result as string; } }
       if (result === "") { s.reject("Unissued effect function"); }
-      declarations = declarations+"// @ui-effect\nexport async function effect_"+action+"(state: AppState, action: "+action+"): Promise<"+result+"> {\n  return await "+qualified(item.id,effect.function)+"(state, action);\n}\n";
+      // A written effect that dispatches an issued operation is wrapped by composition itself: the emitted
+      // admission of core/execution.deal runs around the fragment's own effect, and only a current
+      // invocation reaches the writer's reducer with the result it produced.
+      let linked: screens.Dispatch[] = [];
+      for (let record of dispatchesByInstance[item.id] as screens.Dispatch[]) { if (record.action === effect.action && record.outcome.trim() === "" && record.attempt === "") { linked[linked.length] = record; } }
+      if (linked.length > 1) { s.reject("Effect dispatches more than one issued operation: "+item.id+"."+effect.action); }
+      if (linked.length === 0) {
+        declarations = declarations+"// @ui-effect\nexport async function effect_"+action+"(state: AppState, action: "+action+"): Promise<"+result+"> {\n  return await "+qualified(item.id,effect.function)+"(state, action);\n}\n";
+      } else {
+        let record: screens.Dispatch = linked[0];
+        let call: OperationRecord | null = null;
+        for (let candidate of operations) { if (candidate.id === record.operation) { call = candidate; } }
+        if (call === null) { s.reject("Dispatch record names an unissued operation: "+record.operation); }
+        // The written completion of the effect is the writer's own action class: composition declares the
+        // admission record and reaches that class, so the class must be able to carry a refused dispatch.
+        let parsed: Record<string, unknown> = JSON.parse(await syntax.describe(s.encode({classes:item.declarations,fields:"",functions:"",view:composition.screen.instances[0].fragment.view})));
+        let completionName: string = ""; let completionLocal: string = "";
+        for (let declared of decoded.records(parsed.classes)) { if (s.identifier(declared.name) === result) { completionName = s.identifier(declared.name); } }
+        if (completionName === "") { s.reject("Effect completion is not a declared action class: "+item.id+"."+effect.action); }
+        completionLocal = completionName.substring(qualified(item.id,"").length);
+        let accepts: boolean = false;
+        for (let declared of decoded.records(parsed.classes)) { if (s.identifier(declared.name) !== completionName) { continue; }
+          for (let entry of decoded.records(declared.fields)) {
+            let fieldName: string = s.text(entry.name); let optional: boolean = (entry.optional as boolean);
+            if (fieldName === "accepted") { if (s.text(entry.type) !== "boolean") { s.reject("Effect completion accepted flag must be boolean: "+item.id+"."+completionName); } accepts = true; continue; }
+            if (!optional) { s.reject("Effect completion field must be optional so a refused dispatch can be declared: "+item.id+"."+completionLocal+"."+fieldName); }
+          }
+        }
+        if (!accepts) { s.reject("Effect completion declares no accepted flag: "+item.id+"."+completionName); }
+        let reducer: string = "";
+        for (let handler of item.updates) { if (handler.action === completionLocal) { reducer = qualified(item.id,handler.function); } }
+        if (reducer === "") { s.reject("Effect completion has no owner reducer: "+item.id+"."+completionName); }
+        // The confirmation snapshot is the issued binding's own argument sources, in frozen parameter
+        // order: the host approval binds exactly the values the operation would call with. It is always the
+        // JSON array of those values, so an operation with no parameters asks about the snapshot the host
+        // publishes for it (`#[]`) instead of a spelling no host writer produces.
+        let snapshot: string = ""; let separator: string = "";
+        let operation: OperationRecord = call as OperationRecord;
+        for (let binding of registry.bindings) { if (binding.id !== operation.id) { continue; }
+          for (let parameter of binding.parameterOrder) {
+            let selected: bindings.Source = bindings.source(registry,binding.arguments[parameter] as string);
+            let emitted: string = "";
+            for (let entry of allFields) { if (entry.local === selected.getter || entry.name === selected.getter) { if (emitted !== "" && emitted !== entry.name) { s.reject("Ambiguous written effect argument source: "+item.id+"."+parameter); } emitted = entry.name; } }
+            if (emitted === "") { s.reject("Written effect argument source is not composed state: "+item.id+" "+parameter); }
+            snapshot = snapshot+separator+"state."+emitted; separator = ", ";
+          }
+        }
+        snapshot = "JSON.stringify(["+snapshot+"])";
+        // The admission record and its update are instance-qualified like every other generated name: two
+        // written sections whose effects are named alike emit distinct classes into the one module.
+        let name: string = qualified(item.id,"Admission_"+s.identifier(effect.action));
+        // The writer's own completion action carries the refused classification when it declares those
+        // fields, so a refused dispatch is reported through the writer's own vocabulary.
+        let refused: string = "{accepted: false"; let stale: string = "{accepted: false"; let mapped: string[] = [];
+        for (let declared of decoded.records(parsed.classes)) { if (s.identifier(declared.name) !== completionName) { continue; }
+          for (let entry of decoded.records(declared.fields)) { mapped[mapped.length] = s.text(entry.name); } }
+        if (s.contains(mapped,"code")) { refused = refused+", code: action.code"; stale = stale+", code: "+s.encode("STALE"); }
+        if (s.contains(mapped,"message")) { refused = refused+", message: action.message"; stale = stale+", message: "+s.encode("Invocation no longer current"); }
+        refused = refused+"}"; stale = stale+"}";
+        let part: execution.EmittedEffect = {id:item.id+"_"+s.identifier(effect.action),operation:operation.id,moduleName:operation.module,functionName:operation.function,phase:record.phase,ready:"true",arguments:snapshot,attempt:"attempt_"+item.id+"_"+s.identifier(record.action),action:action,completion:name,inner:result,refused:refused,stale:stale,reducer:reducer};
+        declarations = declarations+execution.effectCompletion(part)
+          +"// @ui-effect\nexport async function effect_"+action+"(state: AppState, action: "+action+"): Promise<"+name+"> {\n"
+          +execution.emittedEffectSend(part)
+          +"  let inner: "+result+" = await "+qualified(item.id,effect.function)+"(state, action);\n"
+          +execution.emittedEffectReply(part)
+          +"  return {accepted: true, code: \"\", message: \"\", sequence: sequence, phase: phase, revision: revision, at: liveNow, inner: inner};\n}\n"
+          +"// @ui-update\nexport function update_"+name+"(state: AppState, action: "+name+"): AppState {\n"
+          +execution.emittedEffectCurrent(part)
+          +"}\n";
+      }
     }
   }
   // Composite actions are synchronous transactions, not asynchronous effect chains: one
@@ -819,6 +1063,44 @@ export async function assembleWith(composition: screens.Composition, computation
       recordExpiry = recordExpiry+"  if (operationId === "+literals.quote(operation.id)+") { return recompute("+copyExpression(allFields,changes,"state")+"); }\n";
     }
     recordExpiry = recordExpiry+"  return state;\n}\n";
+  }
+  // Admission writes the invocation record of the operation it admits through this transition: the
+  // issued status, the captured sequence and phase, and the recorded deadline with its cleared expiry
+  // prerequisite belong to the same decision, so an explicit retry is not refused forever by the deadline
+  // of the invocation it replaces. A pending operation is never re-admitted: a duplicate tap preserves its
+  // sequence, phase and eligibility instead of starting a second invocation. A window that has already
+  // passed is recorded as it is, so the emitted send refuses that attempt with the classification the
+  // caller reports instead of the tap disappearing without one. The candidate is the owner's own decision
+  // about the tap; it commits with the record this transition writes, and an attempt the record does not
+  // admit returns the pre-reducer state, so a lane whose operation is already in flight keeps its control
+  // eligible instead of recording a private attempt no emitted reducer would ever retire.
+  let admitSource: string = "export function admitOperation(state: AppState, candidate: AppState, operationId: string, sequence: number, phase: string, expiresAt: number, admittedAt: number): AppState {\n";
+  if (operations.length === 0) { admitSource = admitSource+"  return state;\n}\n"; }
+  else {
+    admitSource = admitSource+"  if (!Number.isFinite(sequence) || sequence < 1 || phase === \"\" || !Number.isFinite(admittedAt) || admittedAt < 1) { return state; }\n";
+    admitSource = admitSource+"  if (expiresAt !== 0 && (!Number.isFinite(expiresAt) || expiresAt < 0)) { return state; }\n";
+    for (let operation of operations) {
+      let status: string = "status_"+operation.id;
+      let changes: Record<string, string> = {}; changes[status] = "\"pending\""; changes["sequence_"+operation.id] = "sequence"; changes["phase_"+operation.id] = "phase"; changes[operation.expires] = "expiresAt"; changes[operation.expired] = "false";
+      admitSource = admitSource+"  if (operationId === "+literals.quote(operation.id)+" && state."+status+" !== \"pending\") { return recompute("+copyExpression(allFields,changes,"candidate")+"); }\n";
+    }
+    admitSource = admitSource+"  return state;\n}\n";
+  }
+  // The reply settlement: the live expiry reading is revalidated for every operation before the answer
+  // is recorded, and only the invocation the answer belongs to changes that operation's status. A reply
+  // that answers an older or a newer sequence leaves the current record untouched, so an obsolete
+  // completion changes no bookkeeping of the invocation in flight.
+  let settleSource: string = "export function settleOperation(state: AppState, operationId: string, sequence: number, status: string, at: number): AppState {\n";
+  if (operations.length === 0) { settleSource = settleSource+"  return state;\n}\n"; }
+  else {
+    settleSource = settleSource+"  if (status !== \"ready\" && status !== \"error\" && status !== \"stale\") { return state; }\n";
+    settleSource = settleSource+"  let live: AppState = expireOperations(state, at);\n";
+    for (let operation of operations) {
+      let status: string = "status_"+operation.id;
+      let changes: Record<string, string> = {}; changes[status] = "status";
+      settleSource = settleSource+"  if (operationId === "+literals.quote(operation.id)+" && live."+status+" === \"pending\" && live.sequence_"+operation.id+" === sequence) { return recompute("+copyExpression(allFields,changes,"live")+"); }\n";
+    }
+    settleSource = settleSource+"  return live;\n}\n";
   }
   // A revision counts edits to that operation's own dependency set. An edit that leaves a
   // dependency unchanged (an equivalent draft spelling, self-pending bookkeeping, an unrelated row)
@@ -932,7 +1214,7 @@ export async function assembleWith(composition: screens.Composition, computation
   recompute = recompute+"  return state;\n}\n";
   let initial: Record<string, string> = {};
   for (let item of allFields) { initial[item.name] = item.initial; if (item.role === "derived") { initial[item.name+"_ready"] = "false"; initial[item.name+"_reason"] = "\"Not ready\""; if (displayable(item.type)) { initial[item.name+"_display"] = placeholder(item.type); } } }
-  declarations = declarations+recompute+initialStateSource(allFields,initial)+hook+expirySource+recordExpiry+bumpSource+operationSource+"export function main(): void { return; }\n";
+  declarations = declarations+recompute+initialStateSource(allFields,initial)+hook+expirySource+recordExpiry+admitSource+settleSource+bumpSource+operationSource+"export function main(): void { return; }\n";
   // The compiled app module owns the persisted authoritative projection: only authoritative fields are
   // written, restore allocates the typed state and rebuilds derived fields with the same recompute
   // before any view exists. A saved record with an unsupported or missing field is refused atomically.
@@ -958,8 +1240,17 @@ export async function assembleWith(composition: screens.Composition, computation
     }
   }
   let rejection: string = "    throw {name:\"PERSISTENCE_SCHEMA\",message:\"No issued authoritative field\"};\n"; if (unsupported !== "") { rejection = "    if ("+unsupported+") { throw {name:\"PERSISTENCE_SCHEMA\",message:\"Unsupported persisted field: \"+key}; }\n"; }
+  // A restored pending invocation is captured work: no effect of it survives the reopen, so the
+  // operation is stale before any view or recomputation reads it and its record never authorizes a
+  // reply that can no longer arrive.
+  let restoredOperations: string = "";
+  for (let operation of operations) {
+    let status: string = "status_"+operation.id;
+    let stale: Record<string, string> = {}; stale[status] = "\"stale\"";
+    restoredOperations = restoredOperations+"  if (candidate."+status+" === \"pending\") { candidate = "+copyExpression(allFields,stale,"candidate")+"; }\n";
+  }
   declarations = declarations+"export function bridgePersistedState(state: AppState): Record<string, unknown> {\n  let result: Record<string, unknown> = {};\n"+projection+"  return result;\n}\n";
-  declarations = declarations+"export function bridgeRestoredState(source: Record<string, unknown>): AppState {\n  for (let key of Object.keys(source)) {\n"+rejection+"  }\n"+required+"  let candidate: AppState = "+copyExpression(allFields,restored,"")+";\n  return recompute(candidate);\n}\n";
+  declarations = declarations+"export function bridgeRestoredState(source: Record<string, unknown>): AppState {\n  for (let key of Object.keys(source)) {\n"+rejection+"  }\n"+required+"  let candidate: AppState = "+copyExpression(allFields,restored,"")+";\n"+restoredOperations+"  return recompute(candidate);\n}\n";
   // Publication and readiness per slot output. An unfilled slot never substitutes a placeholder:
   // its getter throws and its readiness is false.
   let publications: string[] = [];

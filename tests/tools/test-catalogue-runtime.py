@@ -10,7 +10,7 @@ import argparse
 import json
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--group', choices=['all','contracts','local','aggregate','lists','issued-bodies','timers','reading','quick','points','ideas','drafts','day','calendar','descriptor','live','probe'], default='all')
+parser.add_argument('--group', choices=['all','contracts','local','aggregate','lists','issued-bodies','timers','reading','quick','points','ideas','drafts','day','calendar','descriptor','custom','live','probe'], default='all')
 args = parser.parse_args()
 import os
 import pathlib

@@ -162,6 +162,9 @@ export async function assemble(response: string, input: Input): Promise<Assemble
       // A retained part keeps its issued private driver metadata: the driver belongs to the emitted
       // fragment, not to the model-authored gap instance.
       if (Object.hasOwn(prior,"drivers")) { retained.drivers = prior.drivers as screens.Driver[]; }
+      // A retained provider-bearing instance keeps the issued operations its effects dispatch, so its
+      // compiled admission still reads the composed revision and expiry prerequisite of those operations.
+      if (Object.hasOwn(prior,"dispatches")) { retained.dispatches = prior.dispatches as screens.Dispatch[]; }
       if (Object.hasOwn(prior,"position")) { retained.position = prior.position as string; }
       instances[instances.length] = retained;
     }

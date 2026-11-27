@@ -8,8 +8,19 @@ import java.util.*;
 public final class FragmentAnalysis {
     private final Set<String> reads=new LinkedHashSet<>(),writes=new LinkedHashSet<>(),calls=new LinkedHashSet<>(),supplies=new LinkedHashSet<>(),borrowedWrites=new LinkedHashSet<>(),intrinsics=new LinkedHashSet<>();
     private final Set<String> unverifiedCalls=new HashSet<>(),capturedBindings=new HashSet<>();
+    /** Callees one function performs through a local this analysis could not resolve to a function value.
+     *  A captured value the analysis names is a call path; this list is what assembly has to refuse. */
+    private final Set<String> unresolved=new LinkedHashSet<>();
     /** Locals that borrow a state value, mapped to the borrowed state path. Scoped like the locals. */
     private Map<String,String> aliases=new LinkedHashMap<>();
+    /** Locals that hold a function value, mapped to every call target the value can name: a declared
+     *  function of this fragment or a member path such as an imported contract function. The set holds
+     *  `UNNAMED` when one path assigns a value this analysis cannot name, and is empty for a function
+     *  expression whose body this summary already records. Scoped and joined like the borrow aliases, so a
+     *  call through a value either names its target or is reported as unresolved. */
+    private Map<String,Set<String>> handed=new LinkedHashMap<>();
+    /** The member of a target set that names no call target, so the call through that value is unresolved. */
+    private static final String UNNAMED="?";
     /** Fresh outer containers: literals or checked nonmutating array copies it still holds. */
     private Set<String> fresh=new LinkedHashSet<>();
     /** Names this function declared with a declaration statement, never a parameter. */
@@ -22,6 +33,14 @@ public final class FragmentAnalysis {
     private static final class Facts{
         private final Map<String,String> aliases;private final Set<String> fresh;
         private Facts(Map<String,String> aliases,Set<String> fresh){this.aliases=aliases;this.fresh=fresh;}
+    }
+    /** The bindings one point in a block holds: what a name borrows and which call target a function
+     *  value names. Allocation freshness keeps its own snapshot, because a name the block replaced is not
+     *  fresh afterwards even though the block's entry snapshot still holds it. */
+    private static final class Bindings{
+        private final Map<String,String> aliases;private final Map<String,Set<String>> handed;
+        private Bindings(Map<String,String> aliases,Map<String,Set<String>> handed){
+            this.aliases=aliases;this.handed=handed;}
     }
     private static final class Frame{
         /** What a name can hold when a statement leaves this block before its last statement runs. */
@@ -97,7 +116,7 @@ public final class FragmentAnalysis {
         analysis.expression(((ReturnStatement)function.body().statements().getFirst()).expr().orElseThrow(),new HashSet<>(Set.of("state")));
         return analysis.facts();
     }
-    private Map<String,Object> facts(){intrinsics.removeAll(unverifiedCalls);return Map.of("reads",new ArrayList<>(reads),"writes",new ArrayList<>(writes),"calls",new ArrayList<>(calls),"supplies",new ArrayList<>(supplies),"indirect",indirect,"borrowedWrites",new ArrayList<>(borrowedWrites),"intrinsics",new ArrayList<>(intrinsics));}
+    private Map<String,Object> facts(){intrinsics.removeAll(unverifiedCalls);return Map.of("reads",new ArrayList<>(reads),"writes",new ArrayList<>(writes),"calls",new ArrayList<>(calls),"supplies",new ArrayList<>(supplies),"indirect",indirect,"borrowedWrites",new ArrayList<>(borrowedWrites),"intrinsics",new ArrayList<>(intrinsics),"unresolved",new ArrayList<>(unresolved));}
     private String path(ExpressionNode node){
         if(node instanceof IdentifierExpr i)return stateParameters.contains(i.name())?"state":i.name();
         if(node instanceof MemberAccessExpr m){String base=path(m.object());return base==null?null:base+"."+m.field();}
@@ -125,10 +144,71 @@ public final class FragmentAnalysis {
     }
     private String elementPath(IndexExpr index){String base=path(index.array());return base==null?null:base+"[]";}
     /** Forget every allocation and borrow fact about a name: a rebinding, a loop variable and a catch
-     *  variable each replace what the name meant, so no container proof and no borrow survives them. */
+     *  variable each replace what the name meant, so no container proof and no borrow survives them, and
+     *  no record field the name carried keeps the function value it held. */
     private void forget(String name){
         aliases.remove(name);
         fresh.remove(name);
+        forgetPath(name);
+    }
+    /** Forget the function value a path names, and the fields below it: a target set belongs to the value
+     *  that path presently holds. */
+    private void forgetPath(String path){
+        for(String key:new ArrayList<>(handed.keySet())){if(key.equals(path)||key.startsWith(path+"."))handed.remove(key);}
+    }
+    /** Every call target a function value names, or null when the initializer holds no function value.
+     *  Another local keeps whatever targets its own binding names, so a captured helper chained through a
+     *  second local still resolves and a conditional rebinding between declared helpers names both. A value
+     *  read from the state parameter or through an element is `UNNAMED`, never a guessed target: the call
+     *  through it is what assembly has to refuse. An inline function expression names no target because its
+     *  body is already part of this summary. */
+    private Set<String> functionValues(ExpressionNode node,Set<String> scope){
+        if(node instanceof AssertionExpr a)return functionValues(a.value(),scope);
+        if(node instanceof OptionalGuardExpr g)return functionValues(g.value(),scope);
+        if(node instanceof FunctionExpr f)return new LinkedHashSet<>();
+        if(node instanceof IdentifierExpr i)return named(i.name(),scope);
+        if(node instanceof MemberAccessExpr m)return member(m,scope);
+        return null;
+    }
+    /** The targets a local holds, or `UNNAMED` when the summary has no binding for it; a name this
+     *  function does not declare is a declaration of the fragment itself. */
+    private Set<String> named(String name,Set<String> scope){
+        if(!scope.contains(name))return new LinkedHashSet<>(Set.of(name));
+        Set<String> held=handed.get(name);
+        return held!=null?new LinkedHashSet<>(held):new LinkedHashSet<>(Set.of(UNNAMED));
+    }
+    /** The targets a member access names: a record field this function filled, an imported member, or
+     *  `UNNAMED` for a member of a local or of the state parameter, which the summary cannot name. */
+    private Set<String> member(MemberAccessExpr m,Set<String> scope){
+        String name=path(m);
+        if(name==null||root(name).equals("state"))return new LinkedHashSet<>(Set.of(UNNAMED));
+        Set<String> held=handed.get(name);
+        if(held!=null)return new LinkedHashSet<>(held);
+        if(scope.contains(root(name)))return new LinkedHashSet<>(Set.of(UNNAMED));
+        return new LinkedHashSet<>(Set.of(name));
+    }
+    /** Record every call target a binding names: the local itself, and the record fields of an object
+     *  literal it holds at every depth. A declared helper or an imported frozen member stored in a record
+     *  field is called through that field, so the field names its target exactly as the local does and a
+     *  call through it enters the effect's closure. A field the summary cannot name - one assigned a value
+     *  with no single target, or filled under a computed key - keeps `UNNAMED`, so assembly refuses that
+     *  call instead of emitting a wrapper no issued operation decides. */
+    private void capture(String path,ExpressionNode value,Set<String> scope){
+        forgetPath(path);
+        if(value instanceof AssertionExpr a){capture(path,a.value(),scope);return;}
+        if(value instanceof OptionalGuardExpr g){capture(path,g.value(),scope);return;}
+        Set<String> targets=functionValues(value,scope);
+        if(targets!=null){handed.put(path,targets);return;}
+        if(value instanceof ObjectLiteralExpr literal){
+            boolean computed=false;
+            for(var property:literal.properties()){
+                // A key the analysis cannot spell could fill any field this record does not name.
+                String field=property.staticName();
+                if(field==null){computed=true;continue;}
+                capture(path+"."+field,property.value(),scope);
+            }
+            if(computed)handed.put(path,new LinkedHashSet<>(Set.of(UNNAMED)));
+        }
     }
     /** Analyse one block body. A block that runs to its last statement keeps the facts that statement
      *  established, but any statement that can leave it early - a `break` or `continue`, a `throw`, a
@@ -137,7 +217,7 @@ public final class FragmentAnalysis {
      *  facts at each of those early exits, so a name they disagree about keeps an ambiguous borrow and
      *  loses any allocation proof. */
     private void block(Block block,Set<String> scope,boolean loopBody,boolean tryBody){
-        Map<String,String> saved=snapshot();Set<String> allocated=new LinkedHashSet<>(fresh);
+        Bindings saved=snapshot();Set<String> allocated=new LinkedHashSet<>(fresh);
         Frame frame=new Frame();frame.loopBody=loopBody;frame.tryBody=tryBody;frames.push(frame);
         Set<String> local=new HashSet<>(scope);
         for(var statement:block.statements()){frame.begin(aliases,fresh);statement(statement,local);}
@@ -235,17 +315,27 @@ public final class FragmentAnalysis {
         if(root.equals("state")||!aliases.containsKey(root))return null;
         return aliases.get(root)+base.substring(root.length())+(element?"[]":"");
     }
-    private Map<String,String> snapshot(){return new LinkedHashMap<>(aliases);}
+    private Bindings snapshot(){return new Bindings(new LinkedHashMap<>(aliases),new LinkedHashMap<>(handed));}
     /** Restoring a block keeps a binding that an inner statement reassigned ambiguous after the block:
      *  the branch that ran is not known statically, so a later write through it is still a borrow.
      *  An allocation made inside the block is not known to have happened either, so only a container
      *  that was already fresh before the block stays fresh. */
-    private void restore(Map<String,String> saved,Set<String> scope){
+    private void restore(Bindings saved,Set<String> scope){
         for(String key:new ArrayList<>(aliases.keySet())){
-            if(saved.containsKey(key)){String before=saved.get(key);String after=aliases.get(key);if(after==null||!after.equals(before))saved.put(key,"?");}
-            else if(scope.contains(key))saved.put(key,"?");
+            if(saved.aliases.containsKey(key)){String before=saved.aliases.get(key);String after=aliases.get(key);if(after==null||!after.equals(before))saved.aliases.put(key,"?");}
+            else if(scope.contains(key))saved.aliases.put(key,"?");
         }
-        aliases.clear();aliases.putAll(saved);
+        // A function value the block can rebind names every target both sides name: the branch that ran is
+        // not known statically, so a call through it names the union of its targets. A name the block can
+        // assign to a value the analysis cannot name keeps no single target, exactly like a borrow the block
+        // can replace keeps no state path.
+        for(String key:new ArrayList<>(handed.keySet())){
+            Set<String> after=handed.get(key);
+            if(saved.handed.containsKey(key)){Set<String> before=saved.handed.get(key);if(!before.equals(after)){Set<String> both=new LinkedHashSet<>(before);both.addAll(after);saved.handed.put(key,both);}}
+            else if(scope.contains(key)){Set<String> both=new LinkedHashSet<>(after);both.add(UNNAMED);saved.handed.put(key,both);}
+        }
+        aliases.clear();aliases.putAll(saved.aliases);
+        handed.clear();handed.putAll(saved.handed);
     }
     /** The leftmost declared path a write target reaches through members, elements and assertions. */
     private String leftmost(ExpressionNode node){
@@ -280,7 +370,9 @@ public final class FragmentAnalysis {
             }
         }
         String path=path(target);
-        if(path!=null){if(borrowedPath(path)!=null)borrowedWrites.add(path);else writes.add(path);}
+        // A member of a local is a field this function overwrites or deletes, so the function value it held
+        // no longer names a target; the assignment that follows records whatever the field now holds.
+        if(path!=null){if(locals.contains(root(path)))forgetPath(path);if(borrowedPath(path)!=null)borrowedWrites.add(path);else writes.add(path);}
         else if(target instanceof IndexExpr i){
             String base=leftmost(i.array());String full=base==null?"*":base+"[]";
             // An element write mutates the array it borrows: through an alias it is a borrowed write, and
@@ -307,6 +399,11 @@ public final class FragmentAnalysis {
                 declared.add(v.name());
                 if(borrow!=null)aliases.put(v.name(),borrow);
                 else if(allocated(v.initializer())){fresh.add(v.name());}
+                // A local initialized from a function value names that target: a capture of a declared
+                // helper, of an imported contract member, or of a record field holding either is the
+                // captured function the local then calls, not an anonymous value the summary has to guess
+                // about.
+                capture(v.name(),v.initializer(),scope);
                 if(v.typeAnnotation().isPresent() && v.typeAnnotation().get() instanceof NamedType n && n.name().equals("AppState"))indirect=true;
                 scope.add(v.name());
             }
@@ -316,8 +413,8 @@ public final class FragmentAnalysis {
             case DeleteStatement d->write(d.target(),scope);
             case IfStatement i->{expression(i.condition(),scope);statement(i.thenBlock(),scope);i.elseBranch().ifPresent(e->{if(e instanceof Either.Left<IfStatement,Block> l)statement(l.value(),scope);else if(e instanceof Either.Right<IfStatement,Block> r)statement(r.value(),scope);});}
             case WhileStatement w->{expression(w.condition(),scope);loop(w.body(),scope);}
-            case ForOfStatement f->{expression(f.iterable(),scope);Map<String,String> saved=snapshot();Set<String> allocated=new LinkedHashSet<>(fresh);String source=borrowTarget(f.iterable());forget(f.varName());if(source!=null)aliases.put(f.varName(),source.endsWith("[]")?source:source+"[]");Set<String> local=new HashSet<>(scope);local.add(f.varName());loop(f.body(),local);restore(saved,scope);fresh.retainAll(allocated);}
-            case TryStatement t->{block(t.tryBlock(),scope,false,true);Map<String,String> saved=snapshot();Set<String> allocated=new LinkedHashSet<>(fresh);forget(t.catchVar());Set<String> local=new HashSet<>(scope);local.add(t.catchVar());statement(t.catchBlock(),local);restore(saved,scope);fresh.retainAll(allocated);}
+            case ForOfStatement f->{expression(f.iterable(),scope);Bindings saved=snapshot();Set<String> allocated=new LinkedHashSet<>(fresh);String source=borrowTarget(f.iterable());forget(f.varName());if(source!=null)aliases.put(f.varName(),source.endsWith("[]")?source:source+"[]");Set<String> local=new HashSet<>(scope);local.add(f.varName());loop(f.body(),local);restore(saved,scope);fresh.retainAll(allocated);}
+            case TryStatement t->{block(t.tryBlock(),scope,false,true);Bindings saved=snapshot();Set<String> allocated=new LinkedHashSet<>(fresh);forget(t.catchVar());Set<String> local=new HashSet<>(scope);local.add(t.catchVar());statement(t.catchBlock(),local);restore(saved,scope);fresh.retainAll(allocated);}
             case BreakStatement b->leaveLoop();
             case ContinueStatement c->leaveLoop();
             default->indirect=true;
@@ -334,6 +431,27 @@ public final class FragmentAnalysis {
             if(value instanceof MemberAccessExpr m && m.field().equals(name) && path(m.object())!=null && path(m.object()).equals("state"))continue;
             supplies.add("state."+name);
         }
+    }
+    /** The compiler's type of the value a callee member is read from, with the assertions and guards
+     *  around it removed: an assertion states the type the caller wants, not the member the value is read
+     *  from. A callee that is no member access at all names no receiver. */
+    private Type receiverType(ExpressionNode node){
+        while(true){
+            if(node instanceof AssertionExpr a)node=a.value();
+            else if(node instanceof OptionalGuardExpr g)node=g.value();
+            else if(node instanceof OptionalChainExpr c)node=c.expression();
+            else break;
+        }
+        if(!(node instanceof MemberAccessExpr member))return null;
+        Type receiver=types.get(member.object());
+        return receiver instanceof Type.Nullable nullable?nullable.inner():receiver;
+    }
+    /** A member of a builtin container or scalar is one of the language's own methods, so a call through
+     *  it is an ordinary member call. A member of a table, of a declared class or of a value the checker
+     *  could not type is a data field, which may hold a function value. */
+    private static boolean method(Type receiver){
+        return receiver instanceof Type.Array||receiver==Type.String.INSTANCE
+            ||receiver==Type.Number.INSTANCE||receiver==Type.Boolean.INSTANCE;
     }
     private boolean intrinsic(CallExpr call,Set<String> scope){
         if(!(call.callee() instanceof MemberAccessExpr member))return false;
@@ -367,8 +485,32 @@ public final class FragmentAnalysis {
             case IndexExpr i->{expression(i.array(),scope);expression(i.index(),scope);leaveTry();}
             case CallExpr c->{
                 String name=path(c.callee());boolean builtin=intrinsic(c,scope);
-                if(name==null || c.callee() instanceof IdentifierExpr i && scope.contains(i.name()))indirect=true;
+                // A call through a captured function value is a call of the function that value names: the
+                // local's binding decides the target, so a helper or a contract member reached through a
+                // value enters this summary exactly as a direct call does. A callee this analysis cannot
+                // name - a local it has no binding for, an element of a container, an inline value - is
+                // reported as unresolved instead of being silently dropped, so assembly can refuse the
+                // effect that would otherwise perform its provider call with no admission deciding it.
+                Set<String> targets=null;boolean through=false;
+                if(c.callee() instanceof IdentifierExpr callee&&scope.contains(callee.name())){
+                    through=true;targets=handed.get(callee.name());
+                    if(targets==null||targets.contains(UNNAMED))unresolved.add(callee.name());
+                }
+                else if(name!=null&&!root(name).equals("state")&&scope.contains(root(name))){
+                    // A member called through a local reaches the value a record field holds. A field this
+                    // summary named is the function it holds, so the call enters this summary as a call of
+                    // that target; a member that is no builtin method is a data field of a declared class or
+                    // of a value the checker could not type, which may hold a function value - the frozen
+                    // call included - so the callee is unresolved and assembly refuses the effect instead of
+                    // emitting a wrapper no issued operation decides.
+                    Set<String> held=handed.get(name);
+                    if(held!=null){through=true;targets=held;if(held.contains(UNNAMED))unresolved.add(name);}
+                    else if(!method(receiverType(c.callee()))){through=true;unresolved.add(name);}
+                }
+                else if(name==null){String spelling=leftmost(c.callee());unresolved.add(spelling==null?"*":spelling);}
+                if(through || name==null)indirect=true;
                 else {if(borrowedPath(name)!=null||root(name).equals("state"))borrowedWrites.add("call:"+name);calls.add(name);if(builtin)intrinsics.add(name);else unverifiedCalls.add(name);}
+                if(targets!=null){for(String value:targets){if(!value.equals(UNNAMED))calls.add(value);}}
                 if(builtin&&c.callee() instanceof MemberAccessExpr member&&member.field().equals("toSorted")){
                     expression(member.object(),scope);
                     for(var argument:c.args())comparator(argument,scope);
@@ -376,7 +518,7 @@ public final class FragmentAnalysis {
                 leaveTry();
             }
             case AwaitExpression a->{indirect=true;expression(a.callee(),scope);leaveTry();}
-            case AssignmentExpr a->{if(a.target() instanceof IdentifierExpr i && scope.contains(i.name())){if(capturedBindings.contains(i.name()))indirect=true;expression(a.value(),scope);String borrow=borrowTarget(a.value());forget(i.name());declared.add(i.name());if(borrow!=null)aliases.put(i.name(),borrow);else if(allocated(a.value())){fresh.add(i.name());}}else {write(a.target(),scope);expression(a.value(),scope);}}
+            case AssignmentExpr a->{if(a.target() instanceof IdentifierExpr i && scope.contains(i.name())){if(capturedBindings.contains(i.name()))indirect=true;expression(a.value(),scope);String borrow=borrowTarget(a.value());forget(i.name());declared.add(i.name());if(borrow!=null)aliases.put(i.name(),borrow);else if(allocated(a.value())){fresh.add(i.name());}capture(i.name(),a.value(),scope);}else {write(a.target(),scope);expression(a.value(),scope);String target=path(a.target());if(target!=null&&scope.contains(root(target)))capture(target,a.value(),scope);}}
             case BinaryExpr b->{expression(b.left(),scope);expression(b.right(),scope);}
             case ConditionalExpr c->{expression(c.condition(),scope);expression(c.consequent(),scope);expression(c.alternate(),scope);}
             case OptionalChainExpr c->expression(c.expression(),scope);

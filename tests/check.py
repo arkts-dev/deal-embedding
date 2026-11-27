@@ -16,7 +16,7 @@ import lane_bounds
 
 STAGES = ['java_base','mechanisms','kotlin','generation','discovery','assistance_policy','logging','protocol','assistance','package_aar']
 PAIRS = ['absent','chat','card','boolean','written','assembly','operation','context-operation','entries','entries-empty','entries-aggregate','row-tap','presentation','numeric-text','foreign','descriptor','trigger','clock','clock-input','numeric']
-GROUPS = ['contracts','timers','reading','quick','points','ideas','drafts','day','calendar','descriptor','live','probe','aggregate','lists','issued-bodies']
+GROUPS = ['contracts','timers','reading','quick','points','ideas','drafts','day','calendar','descriptor','custom','live','probe','aggregate','lists','issued-bodies']
 # For the construction, catalogue and composer harnesses a lane bound is the sum of the stages the
 # harness declares for itself, derived from that declaration (`tests/tools/lane_bounds.py`, which those
 # harnesses also pass to their own calls) rather than from a literal beside it: the dependency check, the

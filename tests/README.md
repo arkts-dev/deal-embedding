@@ -27,6 +27,48 @@ reply is published. A refusal dispatches nothing and changes no business result.
 host Session facts at every serialized transition that can send and again before a reply is delivered,
 and `CapabilityRegistry` publishes the host-configured provider deadline as the window of each disclosed
 function, so a grant, epoch, lifetime or window that moved while the call was in flight decides the reply.
+`python3 tests/tools/test-catalogue-runtime.py` proves the same admission for a model-authored effect: each
+catalogue section is assembled through the production composer and compiled by the production compiler, and
+every provider exchange (`calendar_event`, itinerary navigation and scheduling, reminders, dose
+reconciliation, the descriptor panel) runs the emitted send and reply blocks of `core/execution.deal`
+against the issued operation the Bind stage issued for it. The section declares each provider attempt it
+dispatches (`screens.Instance.dispatches`), so assembly writes that operation's own record — status,
+sequence, phase and the recorded expiry prerequisite — on the start its guard accepted, joins the record to
+the instance's resource map and advances the revision on exactly the downstream edits of its dependency
+set. A written (custom) fragment's effect is linked the same way: assembly decides the link over the
+effect's transitive call closure, so a frozen contract call the effect reaches through a helper of its own
+fragment is linked and wrapped in the same admission as a call the effect performs itself, and the
+composed admission record of that wrapper is named after the instance that declared the action, so two
+written sections whose effect actions are named alike emit distinct records and still compile. The facts
+name the target a captured function value holds — a local initialized from a declared helper or from an
+imported frozen member, and a record field holding either — so a call through that local or field is a
+call path of the closure too, and a frozen member captured into a local and awaited is admitted instead of
+being refused; every path a reachable function mentions is inspected, reads and writes included, so a
+frozen function an effect names without calling it through the naming local is refused with its instance,
+action and member, and a call through a value no analysis can name — a callback parameter, an element of a
+container, or a member of a table, of a declared class or of a value the checker could not type, which may
+hold a function value — is refused with its instance, action and callee instead of being emitted as a
+wrapper no issued operation admits. The confirmation snapshot a written effect asks about is the JSON
+array of the binding's argument sources at every arity, so a zero-argument operation asks about the `#[]`
+snapshot the host publishes for that call. The item
+asserts that an ungranted module, a function the
+host publishes no classification for, an unconfirmed, stale or denied mutation and a passed absolute window
+dispatch nothing, that a duplicate pending tap dispatches nothing while the call already in flight still
+publishes, that a zero relative window refuses the reply rather than the send, that a grant, epoch or
+Session lifetime that moved during the call publishes no result, and that a committed edit of the
+operation's dependencies makes the admitted invocation obsolete while an explicit retry dispatches the live
+argument. It also asserts that a tap on a second lane that dispatches the same issued operation while it
+is in flight commits no private attempt of that lane — the calendar group taps a reminder row during an
+`Add event` call and then schedules that row once the call settled — and that a relative window captured in
+another Session clock period publishes nothing on either route. Its calendar group states each function's
+class beside the frozen contract it supplies, as the host discloses it, so a tap is admitted on its grant,
+and re-publishes the calendar call as mutating to drive the confirmation, stale-approval,
+denial and undisclosed-classification refusals on the same main lane; the custom group drives the grant,
+confirmation, denial, Session-period and downstream-invalidation decisions for two written sections' own
+provider calls, the zero-argument snapshot the host approves as `#[]`, the admission of a captured frozen
+member, of a helper reached through a captured function value and of a helper kept in a record field and
+called through it, and the refusals of an effect that calls through a value no analysis can name — a
+callback parameter, an element of a container and a record field no initializer named.
 `python3 tests/tools/test-capability-boundary.py` also proves the host dispatch boundary: a provider
 publishes its per-function read or mutating class beside the version-1 contract it discloses, never as a
 field of the public record, the registry derives the class of every accepted function - locally registered
@@ -188,12 +230,12 @@ compiler call is bounded at 120 s because three lanes now share the host where o
 lane names itself in every `composer stage` line it prints; a failing lane is reported by name and fails
 the run after the lanes already started are reaped.
 Catalogue runtime groups are `timers`, `reading`, `quick`, `points`, `ideas`, `drafts`, `day`,
-`calendar`, `descriptor`, `live`, `probe`, `aggregate`, `lists`, `issued-bodies` and `contracts`; `local` runs
-every local group, and the default runs all of them. `descriptor` drives the issued descriptor panel, `live`
-the public-probe live figure (including its search-mode polling interval) and `probe` the shipped probe
-binding's destination, media-type, encoding, depth, character and path policy. Local groups compile
-separately to avoid a single quadratic-sized combined fixture; no
-assertions are dropped. Syntax calls share one JVM transport, never cached assertion results. The
+`calendar`, `descriptor`, `custom`, `live`, `probe`, `aggregate`, `lists`, `issued-bodies` and `contracts`;
+`local` runs every local group, and the default runs all of them. `descriptor` drives the issued descriptor
+panel, `custom` the written fragment's own provider effect, `live` the public-probe live figure (including its
+search-mode polling interval) and `probe` the shipped probe binding's destination, media-type, encoding,
+depth, character and path policy. Local groups compile separately to avoid a single quadratic-sized combined
+fixture; no assertions are dropped. Syntax calls share one JVM transport, never cached assertion results. The
 `calendar` group is the disclosed-operation lane: it compiles the composition that carries the calendar
 event, the per-row reminder scheduling, the dose calendar reconciliation and both itinerary integrations,
 configures the frozen contracts on the host sandbox, and drives each control through the packaged session

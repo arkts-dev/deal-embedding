@@ -82,7 +82,7 @@ SEAMS = [
      'new': 'const val nativeTimers = 4',
      'command': ['bash', 'tests/tools/test-renderer-rules.sh']},
     # AC-06's "attempts": the packaged generation entry charges one attempt per candidate check. The
-    # anchored statement is `custom-writing.deal:378 attempts = attempts+1`, the increment the
+    # anchored statement is `custom-writing.deal:381 attempts = attempts+1`, the increment the
     # counted-check mode executes (the ordinary whole-generation loop; the whole-Surface loop's own
     # increment is a different source line and is not what this mode runs). That bundle is compiled from
     # the whole generation module graph, so its statement numbers are a global counter over every module
@@ -94,7 +94,7 @@ SEAMS = [
     # unrelated assertion. The command names that one mode: the unbounded matrix of the packaged entry
     # would otherwise let the control's own bound, not the broken rule, decide the outcome.
     {'id': 'attempts', 'family': 'checking-admission', 'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'after': 'custom-writing.deal:378:',
+     'after': 'custom-writing.deal:381:',
      'match': r'\$s\d+ = \(\$rt\.numOf\(\$[sg]\d+\) \+ \$rt\.numOf\(\$[sg]\d+\)\);',
      'mutate': (' + ', ' * '),
      'expect': 'candidate checks are counted as attempts',
@@ -140,7 +140,7 @@ SEAMS = [
     # The statement is anchored by the compiler's own attribution, like the fresh-draft control above.
     {'id': 'chat-edited-shape', 'family': 'chat-construction',
      'path': 'build/embedding-consumer/assets/generation/custom-writing.js',
-     'after': 'generation/src/custom-writing.deal:361:13',
+     'after': 'generation/src/custom-writing.deal:364:13',
      'match': r'\$s\d+ = \(\$s\d+ !== \$s\d+\);',
      'mutate': (' !== ', ' === '),
      'expect': 'a chat header reached the accepted source',

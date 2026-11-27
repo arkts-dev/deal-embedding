@@ -102,6 +102,10 @@ function copyInstance(value: screens.Instance): screens.Instance {
   let entry: screens.Instance = {id:value.id,kind:value.kind,origin:value.origin,parameters:value.parameters,fragment:value.fragment,bodies:value.bodies};
   if (Object.hasOwn(value,"definition")) { entry.definition = value.definition as screens.Definition; }
   if (Object.hasOwn(value,"drivers")) { entry.drivers = value.drivers as screens.Driver[]; }
+  // The issued operation each provider attempt of a provider-bearing instance is admitted against is
+  // carried metadata: an edit that dropped it would leave the emitted admission reading a resource
+  // assembly no longer exposes.
+  if (Object.hasOwn(value,"dispatches")) { entry.dispatches = value.dispatches as screens.Dispatch[]; }
   if (Object.hasOwn(value,"position")) { entry.position = value.position as string; }
   return entry;
 }

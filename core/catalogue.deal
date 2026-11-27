@@ -5,6 +5,7 @@ import * as inference from "./inference";
 import * as identity from "embedding/construction-identity";
 import * as syntax from "embedding/fragment-syntax";
 import * as bindings from "./bindings";
+import * as execution from "./execution";
 import * as composer from "./composer";
 import * as parts from "./parts";
 import * as s from "./construction-schema";
@@ -873,7 +874,7 @@ function resolve(registry: bindings.Registry, name: string): void {
 // One disclosed operation a section may dispatch, resolved from issued metadata: a kind names a binding
 // (or the descriptor that wraps one), so the module, function, parameter order and argument sources are
 // the ones the Bind stage issued from the frozen contract. A model string never becomes a provider call.
-class Issue { module: string; function: string; sources: string[]; types: string[]; ready: string[]; }
+class Issue { id: string; module: string; function: string; sources: string[]; types: string[]; ready: string[]; }
 function issuedOperation(registry: bindings.Registry, name: string, depth: number): Issue {
   if (depth > 4) { s.reject("Unresolved catalogue registry reference: "+name); }
   for (let descriptor of registry.actions) { if (descriptor.id === name) { return issuedOperation(registry,descriptor.binding,depth+1); } }
@@ -883,17 +884,23 @@ function issuedOperation(registry: bindings.Registry, name: string, depth: numbe
       let source: bindings.Source = bindings.source(registry,binding.arguments[parameter] as string);
       sources[sources.length] = source.getter; types[types.length] = source.type; ready[ready.length] = source.ready;
     }
-    return {module:binding.module,function:binding.function,sources:sources,types:types,ready:ready};
+    // The issued operation identity travels with the call: the attempt this section dispatches is that
+    // operation's, so its own revision and expiry prerequisite decide admission beside the Session facts.
+    return {id:binding.id,module:binding.module,function:binding.function,sources:sources,types:types,ready:ready};
   } }
   s.reject("Unresolved catalogue registry reference: "+name);
   throw {name:"CONSTRUCTION_SCHEMA",message:"Unresolved catalogue registry reference"};
+}
+function addDispatch(values: screens.Dispatch[], value: screens.Dispatch): void {
+  for (let prior of values) { if (prior.action === value.action && prior.select === value.select && prior.value === value.value) { s.reject("Duplicate dispatch record: "+value.action+" "+value.operation); } }
+  values[values.length] = value;
 }
 // One dispatched operation as a section fragment. The start reducer admits one explicit attempt and
 // records its row identity, the asynchronous effect calls the disclosed operation with the issued
 // argument sources, and the completion reducer records the classified reply. A completion is admitted
 // only for the attempt that started it, so a late or duplicated reply never rewrites a newer one, and no
 // reducer writes an external system.
-class Exchange { declarations: string; fields: screens.Field[]; updates: screens.Handler[]; effects: screens.Handler[]; helpers: string; }
+class Exchange { operation: string; dispatches: screens.Dispatch[]; declarations: string; fields: screens.Field[]; updates: screens.Handler[]; effects: screens.Handler[]; helpers: string; }
 // A created row's key is a stable local identity that neither a configured row nor an earlier created
 // row already holds: supplied row ids are plan identifiers, so a fixed "<prefix><sequence>" spelling
 // could repeat one of them and two rows sharing a key would make a keyed control ambiguous.
@@ -909,7 +916,11 @@ function exchange(id: string, prefix: string, start: string, completion: string,
 // one reading here: the completion then writes the recorded key and the captured day from that reading.
 function exchangeWith(id: string, prefix: string, start: string, completion: string, issued: Issue, success: string, setup: string): Exchange {
   let alias: string = "provider_"+prefix;
-  let result: Exchange = {declarations:"import * as "+alias+" from "+s.encode(issued.module)+"; export class "+start+" { sequence: number; id: string; } export class "+completion+" { sequence: number; ok: boolean; code: string; outcome: string; message: string; } ",fields:[],updates:[],effects:[],helpers:""};
+  // The completion carries the originating correlation of the invocation it answers (the attempt
+  // identity, the phase, the issued revision the attempt captured and the reply instant), so the
+  // completion reducer decides the reply against the live store instead of trusting a value the effect
+  // produced earlier.
+  let result: Exchange = {operation:issued.id,dispatches:[],declarations:"import * as "+alias+" from "+s.encode(issued.module)+"; import * as session from \"embedding/session\"; export class "+start+" { sequence: number; id: string; } export class "+completion+" { id: string; sequence: number; revision: number; phase: string; at: number; ok: boolean; code: string; outcome: string; message: string; } ",fields:[],updates:[],effects:[],helpers:""};
   result.fields[result.fields.length] = authoredField(id,prefix+"_sequence","number","0");
   // The admitted action and its pending marker are one live attempt, never authoritative business state:
   // the compiled checkpoint is written only while no effect is in flight, and a restored section starts
@@ -924,17 +935,45 @@ function exchangeWith(id: string, prefix: string, start: string, completion: str
   result.updates[result.updates.length] = handler(completion,"complete_"+prefix);
   result.effects[result.effects.length] = {action:start,function:"run_"+prefix};
   // Readiness of a derived argument is part of the admission guard, so an unavailable source is never
-  // dispatched as its placeholder; an ordinary source is ready by construction.
-  let guard: string = ""; let call: string = ""; let separator: string = "";
+  // dispatched as its placeholder; an ordinary source is ready by construction. The same guard decides
+  // the emitted admission and the start reducer, so the two can never disagree.
+  let guard: string = ""; let ready: string = ""; let call: string = ""; let snapshot: string = ""; let separator: string = "";
   let index: number = 0;
   while (index < issued.sources.length) {
-    if (issued.ready[index] !== "true" && issued.ready[index] !== "") { guard = guard+" || !(state."+issued.ready[index]+")"; }
-    call = call+separator+"(state."+issued.sources[index]+" as "+issued.types[index]+")"; separator = ", ";
+    if (issued.ready[index] !== "true" && issued.ready[index] !== "") { guard = guard+" || !(state."+issued.ready[index]+")"; ready = ready === "" ? "(state."+issued.ready[index]+")" : ready+" && (state."+issued.ready[index]+")"; }
+    call = call+separator+"(state."+issued.sources[index]+" as "+issued.types[index]+")";
+    snapshot = snapshot+separator+"state."+issued.sources[index];
+    separator = ", ";
     index = index+1;
   }
+  if (ready === "") { ready = "true"; }
+  // One emitted part per dispatched operation: the issued identity, the frozen target, the attempt fields
+  // this exchange declares and the argument snapshot the host confirmation binds.
+  let part: execution.EmittedExchange = {id:prefix,operation:issued.id,moduleName:issued.module,functionName:issued.function,phase:start,pending:prefix+"_pending",sequence:prefix+"_sequence",ready:ready,arguments:"JSON.stringify(["+snapshot+"])"};
+  result.helpers = result.helpers+execution.emittedRefusal(prefix,completion,false,start);
   result.helpers = result.helpers+"export function start_"+prefix+"(state: AppState, action: "+start+"): AppState { if (action.sequence !== state."+prefix+"_sequence || state."+prefix+"_pending || state."+prefix+"_sequence >= 9007199254740991"+guard+") { return state; } return {"+prefix+"_sequence: state."+prefix+"_sequence+1, "+prefix+"_action: action, "+prefix+"_target: action.id, "+prefix+"_pending: true, "+prefix+"_code: \"\", "+prefix+"_outcome: \"none\", "+prefix+"_message: \"\"}; }";
-  result.helpers = result.helpers+"export async function run_"+prefix+"(state: AppState, action: "+start+"): Promise<"+completion+"> { if (!state."+prefix+"_pending || state."+prefix+"_action === null || (state."+prefix+"_action as "+start+") !== action || state."+prefix+"_sequence !== action.sequence+1) { return {sequence: -1, ok: false, code: \"NOT_ADMITTED\", outcome: \"none\", message: \"Not admitted\"}; } try { await "+alias+"."+issued.function+"("+call+"); return {sequence: state."+prefix+"_sequence, ok: true, code: \"\", outcome: \"success\", message: \"\"}; } catch (unknownError) { let error: Error = unknownError as Error; return {sequence: state."+prefix+"_sequence, ok: false, code: error.name, outcome: \"failure\", message: error.message}; } }";
-  result.helpers = result.helpers+"export function complete_"+prefix+"(state: AppState, action: "+completion+"): AppState { if (!state."+prefix+"_pending || action.sequence !== state."+prefix+"_sequence) { return state; } if (!action.ok) { return {"+prefix+"_pending: false, "+prefix+"_action: null, "+prefix+"_code: action.code, "+prefix+"_outcome: action.outcome, "+prefix+"_message: action.message}; } "+setup+" return {"+prefix+"_pending: false, "+prefix+"_action: null, "+prefix+"_code: action.code, "+prefix+"_outcome: action.outcome, "+prefix+"_message: action.message"+success+"}; }";
+  // The call is the emitted send and reply policy of core/execution.deal: the Session facts, the host
+  // classification and confirmation, the issued operation's recorded window and its currentness hook admit
+  // it before it leaves, and the same facts are re-read after it returns. The reply's own correlation is
+  // decided by the completion reducer against the live store.
+  result.helpers = result.helpers+"export async function run_"+prefix+"(state: AppState, action: "+start+"): Promise<"+completion+"> {\n"
+    +"  if (state.status_"+issued.id+" !== \"pending\" || state.sequence_"+issued.id+" !== action.sequence+1 || state.phase_"+issued.id+" !== "+s.encode(start)+" || state."+prefix+"_action === null || (state."+prefix+"_action as "+start+") !== action) { return refused_"+prefix+"(action.id, -1, -1, 0, \"NOT_ADMITTED\", \"Not admitted\"); }\n"
+    +execution.emittedSend(part)
+    +"  let ok: boolean = true; let code: string = \"\"; let outcome: string = \"success\"; let message: string = \"\";\n"
+    +"  try { await "+alias+"."+issued.function+"("+call+"); }\n"
+    +"  catch (unknownError) { let error: Error = unknownError as Error; ok = false; outcome = \"failure\"; code = error.name; message = error.message; }\n"
+    +execution.exchangeReply(part)
+    +"  return {id: action.id, sequence: sequence, revision: revision, phase: phase, at: liveNow, ok: ok, code: code, outcome: outcome, message: message};\n}";
+  let retire: string = prefix+"_pending: false, "+prefix+"_action: null, "+prefix+"_code: \"STALE\", "+prefix+"_outcome: \"unknown\", "+prefix+"_message: \"Invocation no longer current\"";
+  result.helpers = result.helpers+"export function complete_"+prefix+"(state: AppState, action: "+completion+"): AppState {\n"
+    +execution.emittedAttempt(part)
+    +"  if (!action.ok) { return {"+prefix+"_pending: false, "+prefix+"_action: null, "+prefix+"_code: action.code, "+prefix+"_outcome: action.outcome, "+prefix+"_message: action.message}; } "+setup
+    +execution.emittedCurrent(part,retire)
+    +"  return {"+prefix+"_pending: false, "+prefix+"_action: null, "+prefix+"_code: action.code, "+prefix+"_outcome: action.outcome, "+prefix+"_message: action.message"+success+"}; }";
+  // Composition owns the operation record: the start record admits this attempt in the issued operation and
+  // the completion record settles it, so the emitted admission above reads one authoritative record.
+  result.dispatches[0] = {action:start,operation:issued.id,phase:start,select:"",value:"",attempt:prefix+"_sequence",outcome:"",instant:""};
+  result.dispatches[1] = {action:completion,operation:issued.id,phase:start,select:"",value:"",attempt:"sequence",outcome:prefix+"_outcome",instant:"at"};
   return result;
 }
 // The level filter offers each declared idea level once, in first-seen order.
@@ -954,6 +993,12 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
   // The private clock machinery is emitted once per instance that carries a clock, and the driver
   // metadata is carried on the instance so the composer issues it as compiler metadata.
   let clockEmitted: boolean = false; let drivers: screens.Driver[] = [];
+  // The issued operations this section dispatches: assembly exposes each one's composed revision and expiry
+  // prerequisite to this instance and keeps advancing them, so the emitted admission reads the issued
+  // operation instead of a private copy of it.
+  // The issued operation each provider attempt of this section is admitted against, with the action that
+  // starts it, the phase it records and the expressions composition admits and settles it with.
+  let dispatched: screens.Dispatch[] = [];
   let body: string = ""; let title: string = s.text(parameters.title); if (title !== "") { body = body+"ui.Text(text: "+await literal(title,"string")+")"; }
   let subtitle: string = s.text(parameters.subtitle); if (subtitle !== "") { body = body+"ui.Text(text: "+await literal(subtitle,"string")+")"; }
   if (kind === "note" || kind === "filter_box") {
@@ -1247,6 +1292,7 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     // classified reply. The section invents no event and no reducer writes a calendar.
     let issued: Issue = issuedOperation(registry,s.text(parameters.calendarBinding),0);
     let event: Exchange = exchange(id,"event","AddEvent","CompletedEvent",issued,"");
+    for (let record of event.dispatches) { addDispatch(dispatched,record); }
     declarations = declarations+event.declarations;
     for (let entry of event.fields) { fields[fields.length] = entry; }
     for (let entry of event.updates) { updates[updates.length] = entry; }
@@ -1281,6 +1327,7 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
       declarations = declarations+"export class ItineraryStop { key: string; label: string; }";
       fields[fields.length] = authoredField(id,"stop_rows","ItineraryStop[]",stopRows);
       let navigation: Exchange = exchange(id,"navigate","Navigate","Navigated",issuedOperation(registry,navigationName,0),"");
+      for (let record of navigation.dispatches) { addDispatch(dispatched,record); }
       declarations = declarations+navigation.declarations;
       for (let entry of navigation.fields) { fields[fields.length] = entry; }
       for (let entry of navigation.updates) { updates[updates.length] = entry; }
@@ -1289,6 +1336,7 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     }
     if (scheduling) {
       let trip: Exchange = exchange(id,"trip","ScheduleTrip","ScheduledTrip",issuedOperation(registry,tripName,0),"");
+      for (let record of trip.dispatches) { addDispatch(dispatched,record); }
       declarations = declarations+trip.declarations;
       for (let entry of trip.fields) { fields[fields.length] = entry; }
       for (let entry of trip.updates) { updates[updates.length] = entry; }
@@ -1637,6 +1685,7 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     fields[fields.length] = authoredField(id,"scheduled_keys","string[]","[]");
     if (scheduled) {
       let schedule: Exchange = exchange(id,"schedule","ScheduleReminder","ScheduledReminder",issuedOperation(registry,scheduleName,0),", scheduled_keys: scheduleKeys(state, state.schedule_target)");
+      for (let record of schedule.dispatches) { addDispatch(dispatched,record); }
       declarations = declarations+schedule.declarations;
       for (let entry of schedule.fields) { fields[fields.length] = entry; }
       for (let entry of schedule.updates) { updates[updates.length] = entry; }
@@ -1701,6 +1750,7 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     fields[fields.length] = dayField(id);
     if (reconciled) {
       let take: Exchange = exchangeWith(id,"take","TakeDose","TookDose",issuedOperation(registry,calendarName,0),", taken_keys: takenKeys(state, state.take_target, takeDay), today: takeDay","let takeDay: number = embeddingDay.localDay();");
+      for (let record of take.dispatches) { addDispatch(dispatched,record); }
       declarations = declarations+take.declarations;
       for (let entry of take.fields) { fields[fields.length] = entry; }
       for (let entry of take.updates) { updates[updates.length] = entry; }
@@ -1753,12 +1803,12 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
       for (let candidate of registry.actions) { if (candidate.id === wanted) { named[named.length] = candidate; resolved = true; } }
       if (!resolved) { s.reject("Unresolved catalogue registry reference: "+wanted); }
     }
-    declarations = declarations+"export class TapDescriptor { id: string; sequence: number; } export class DescriptorReply { id: string; sequence: number; ok: boolean; outcome: string; code: string; message: string; text: string; }";
+    declarations = declarations+"export class TapDescriptor { id: string; sequence: number; } export class DescriptorReply { id: string; sequence: number; revision: number; phase: string; at: number; ok: boolean; outcome: string; code: string; message: string; text: string; }";
     // A reply is displayed as its own text literally, as validated JSON for any other JSON value and as
     // nothing for an undefined result; a failure is shown separately by the descriptor's own status.
     helpers = helpers+"export function replyText(value: unknown): string { if (typeof value === \"string\") { return value; } let encoded: string | undefined = JSON.stringify(value); if (encoded === undefined) { return \"\"; } return encoded; }";
     helpers = helpers+"export function replyStatus(pending: boolean, outcome: string, message: string, text: string): string { if (pending) { return \"Working\"; } if (outcome === \"failure\") { return message; } if (outcome === \"success\") { return text; } return \"\"; }";
-    let imports: string = ""; let dispatch: string = ""; let calls: string = ""; let recorded: string = ""; let controls: string = "";
+    let imports: string = "import * as session from \"embedding/session\"; "; let dispatch: string = ""; let calls: string = ""; let recorded: string = ""; let controls: string = "";
     let aliasesByModule: Record<string, unknown> = {}; let moduleCount: number = 0;
     let index: number = 0;
     while (index < named.length) {
@@ -1767,6 +1817,8 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
       // never be spelled as another descriptor's: labels, keys and fields all come from that identity.
       let key: string = s.identifier(descriptor.id);
       let issued: Issue = issuedOperation(registry,descriptor.binding,0);
+      addDispatch(dispatched,{action:"TapDescriptor",operation:issued.id,phase:key,select:"id",value:descriptor.id,attempt:"tap_attempt_"+key,outcome:"",instant:""});
+      addDispatch(dispatched,{action:"DescriptorReply",operation:issued.id,phase:key,select:"id",value:descriptor.id,attempt:"sequence",outcome:"tap_outcome_"+key,instant:"at"});
       // One module alias per issued module, shared by the descriptors that reach it: two descriptors of the
       // same frozen contract import it once, while two contracts stay distinct imports.
       let alias: string = "";
@@ -1775,13 +1827,22 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
       // The issued argument sources, in frozen contract order: the descriptor's own draft is the
       // composition's field, so the panel edits exactly the value the call reads. An unready source blocks
       // the attempt with the same guard the exchange uses instead of dispatching its placeholder.
-      let guard: string = ""; let call: string = ""; let separator: string = "";
+      let guard: string = ""; let ready: string = ""; let call: string = ""; let snapshot: string = ""; let separator: string = "";
       let source: number = 0;
       while (source < issued.sources.length) {
-        if (issued.ready[source] !== "true" && issued.ready[source] !== "") { guard = guard+" || !(state."+issued.ready[source]+")"; }
-        call = call+separator+"(state."+issued.sources[source]+" as "+issued.types[source]+")"; separator = ", ";
+        if (issued.ready[source] !== "true" && issued.ready[source] !== "") { guard = guard+" || !(state."+issued.ready[source]+")"; ready = ready === "" ? "(state."+issued.ready[source]+")" : ready+" && (state."+issued.ready[source]+")"; }
+        call = call+separator+"(state."+issued.sources[source]+" as "+issued.types[source]+")";
+        snapshot = snapshot+separator+"state."+issued.sources[source];
+        separator = ", ";
         source = source+1;
       }
+      if (ready === "") { ready = "true"; }
+      // The tap is the issued operation's own invocation: the start records the attempt in that operation's
+      // record, and the emitted admission decides it from the Session facts, the recorded window and the
+      // currentness hook before anything is dispatched. The descriptor identity is the invocation phase, so
+      // two descriptors that reach one operation still name their own attempt.
+      let part: execution.EmittedExchange = {id:key,operation:issued.id,moduleName:issued.module,functionName:issued.function,phase:key,pending:"tap_pending_"+key,sequence:"tap_attempt_"+key,ready:ready,arguments:"JSON.stringify(["+snapshot+"])"};
+      helpers = helpers+execution.emittedRefusal(key,"DescriptorReply",true,key);
       fields[fields.length] = authoredField(id,"tap_attempt_"+key,"number","0");
       // The pending marker is a live attempt like the exchange's: a restored panel starts idle, so the
       // descriptor's explicit tap retries instead of waiting for an effect that no longer exists.
@@ -1794,8 +1855,9 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
       // One explicit attempt per descriptor: a tap on a pending descriptor is ignored, a tap on another
       // descriptor is admitted, and the attempt identity the control carries decides which reply lands.
       dispatch = dispatch+"if (action.id === "+await literal(descriptor.id,"string")+") { if (action.sequence !== state.tap_attempt_"+key+" || state.tap_pending_"+key+" || state.tap_attempt_"+key+" >= 9007199254740991"+guard+") { return state; } return {tap_attempt_"+key+": state.tap_attempt_"+key+"+1, tap_pending_"+key+": true, tap_outcome_"+key+": \"none\", tap_code_"+key+": \"\", tap_message_"+key+": \"\", tap_result_"+key+": \"\"}; } ";
-      calls = calls+"if (action.id === "+await literal(descriptor.id,"string")+") { if (!state.tap_pending_"+key+" || state.tap_attempt_"+key+" !== action.sequence+1) { return {id: action.id, sequence: -1, ok: false, outcome: \"none\", code: \"NOT_ADMITTED\", message: \"Not admitted\", text: \"\"}; } try { let value: unknown = await "+alias+"."+issued.function+"("+call+"); return {id: action.id, sequence: state.tap_attempt_"+key+", ok: true, outcome: \"success\", code: \"\", message: \"\", text: replyText(value)}; } catch (unknownError) { let error: Error = unknownError as Error; return {id: action.id, sequence: state.tap_attempt_"+key+", ok: false, outcome: \"failure\", code: error.name, message: error.message, text: \"\"}; } } ";
-      recorded = recorded+"if (action.id === "+await literal(descriptor.id,"string")+") { if (!state.tap_pending_"+key+" || action.sequence !== state.tap_attempt_"+key+") { return state; } return {tap_pending_"+key+": false, tap_outcome_"+key+": action.outcome, tap_code_"+key+": action.code, tap_message_"+key+": action.message, tap_result_"+key+": action.text}; } ";
+      calls = calls+"if (action.id === "+await literal(descriptor.id,"string")+") { if (state.status_"+issued.id+" !== \"pending\" || state.sequence_"+issued.id+" !== action.sequence+1 || state.phase_"+issued.id+" !== "+s.encode(key)+") { return refused_"+key+"(action.id, -1, -1, 0, \"NOT_ADMITTED\", \"Not admitted\"); } "+execution.emittedSend(part)+" let ok: boolean = true; let outcome: string = \"success\"; let code: string = \"\"; let message: string = \"\"; let text: string = \"\"; try { let value: unknown = await "+alias+"."+issued.function+"("+call+"); text = replyText(value); } catch (unknownError) { let error: Error = unknownError as Error; ok = false; outcome = \"failure\"; code = error.name; message = error.message; } "+execution.exchangeReply(part)+" return {id: action.id, sequence: sequence, revision: revision, phase: phase, at: liveNow, ok: ok, outcome: outcome, code: code, message: message, text: text}; } ";
+      let retire: string = "tap_pending_"+key+": false, tap_outcome_"+key+": \"unknown\", tap_code_"+key+": \"STALE\", tap_message_"+key+": \"Invocation no longer current\"";
+      recorded = recorded+"if (action.id === "+await literal(descriptor.id,"string")+") { "+execution.emittedAttempt(part)+" if (!action.ok) { return {tap_pending_"+key+": false, tap_outcome_"+key+": action.outcome, tap_code_"+key+": action.code, tap_message_"+key+": action.message, tap_result_"+key+": action.text}; } "+execution.emittedCurrent(part,retire)+" return {tap_pending_"+key+": false, tap_outcome_"+key+": action.outcome, tap_code_"+key+": action.code, tap_message_"+key+": action.message, tap_result_"+key+": action.text}; } ";
       controls = controls+"ui.Text(text: "+await literal(descriptor.label,"string")+")";
       if (Object.hasOwn(descriptor,"input")) { let draft: bindings.Draft = descriptor.input as bindings.Draft;
         // The descriptor's seeded draft is composition state: the panel edits it through the issued nominal
@@ -1806,7 +1868,7 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     }
     declarations = declarations+imports;
     helpers = helpers+"export function tapDescriptor(state: AppState, action: TapDescriptor): AppState { "+dispatch+"return state; }";
-    helpers = helpers+"export async function runDescriptor(state: AppState, action: TapDescriptor): Promise<DescriptorReply> { "+calls+"return {id: action.id, sequence: -1, ok: false, outcome: \"none\", code: \"NOT_ADMITTED\", message: \"Not admitted\", text: \"\"}; }";
+    helpers = helpers+"export async function runDescriptor(state: AppState, action: TapDescriptor): Promise<DescriptorReply> { "+calls+"return {id: action.id, sequence: -1, revision: -1, phase: \"\", at: 0, ok: false, outcome: \"none\", code: \"NOT_ADMITTED\", message: \"Not admitted\", text: \"\"}; }";
     helpers = helpers+"export function completeDescriptor(state: AppState, action: DescriptorReply): AppState { "+recorded+"return state; }";
     updates[updates.length] = handler("TapDescriptor","tapDescriptor"); updates[updates.length] = handler("DescriptorReply","completeDescriptor");
     effects[effects.length] = {action:"TapDescriptor",function:"runDescriptor"};
@@ -1901,7 +1963,7 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     s.reject("Unsupported catalogue kind: "+kind);
   }
   let view: string = "import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View {ui.Column(){"+body+"}}";
-  let instance: screens.Instance = {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:effects,helpers:helpers,view:view,options:[],content:[],ports:ports,holes:holes,covers:[entry.need],owns:[id]},bodies:{}};
+  let instance: screens.Instance = {id:id,kind:kind,origin:"catalogue",parameters:parameters,fragment:{declarations:declarations,fields:fields,updates:updates,effects:effects,helpers:helpers,view:view,options:[],content:[],ports:ports,holes:holes,covers:[entry.need],owns:[id]},bodies:{},dispatches:dispatched};
   // The private clock drivers are instance metadata, exactly as a part instance carries them: the
   // Session binding resolves their issued ticker identities from the rendered tree and never scans
   // generated source for a driver.

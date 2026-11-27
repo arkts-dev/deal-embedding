@@ -321,6 +321,137 @@ export async function descriptor(): Promise<string> {
   let assembled: composer.Result = await composer.assembleWith(composition,computations,issued,null);
   return s.encode({deal:assembled.source.deal,dealui:assembled.source.dealui,metadata:assembled.metadata});
 }
+// Two written (custom) sections that perform provider calls of their own. The first calls its own helper
+// through a local that captured it, and that helper calls the one performing the frozen call, so the
+// issued link is decided over the effect's call closure and over the target the captured local names. The
+// second names its effect action the same way, so each composed admission identity is per instance. The
+// draft the first sends is the issued binding's argument source, its effect dispatches the issued
+// operation the frozen contract call belongs to, and its own completion action can express a refused
+// dispatch, so composition can admit the attempt through the emitted policy of core/execution.deal and
+// reach the writer's reducer only while the invocation is current.
+export async function custom(): Promise<string> {
+  let text: embedding.WireType = {kind:"string",fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0};
+  let registry: bindings.Registry = bindings.create([contract("host/notes",[
+    {name:"send",description:"Send the drafted note",parameters:[{name:"text",type:text}],result:text},
+    {name:"archive",description:"Archive the drafted note",parameters:[],result:wireType("number")}
+  ])]);
+  bindings.reserve(registry,{id:"note_draft",type:"string",getter:"f_note_draft",ready:"true",dependencies:[],owner:"note",payloadOwner:"",schema:text});
+  let arguments0: Record<string, unknown> = {}; arguments0.text = "note_draft";
+  let noArguments: Record<string, unknown> = {};
+  let operations: Record<string, unknown> = {}; operations.note_op = {module:"host/notes",function:"send",arguments:arguments0};
+  operations.archive_op = {module:"host/notes",function:"archive",arguments:noArguments};
+  let rejected: string[] = await bindings.issueComposition(registry,operations,{},"","");
+  if (rejected.length !== 0) { throw {name:"TEST_FAILED",message:"Written binding rejected: "+rejected.join(", ")}; }
+  // The written effect calls its own helper through a local that captured it, and that helper calls the
+  // helper performing the provider call: the frozen call is reached by a captured target rather than by a
+  // direct call path of the effect, so only the effect's transitive call closure over that target can link
+  // it to the issued operation. The captured helper takes the drafted value, never the borrowed state.
+  let declarations: string = "import * as host_notes from \"host/notes\"; export class Start { sequence: number; } export class Done { accepted: boolean; text?: string; code?: string; } export class Draft { value: string; }";
+  let helpers: string = "export function start(state: AppState, action: Start): AppState { if (state.pending) { return state; } return {pending: true, sent: \"\", draft: state.draft}; }\nexport async function dispatchNote(draft: string): Promise<string> { return await host_notes.send(draft); }\nexport async function sendNote(draft: string): Promise<string> { return await dispatchNote(draft); }\nexport async function send(state: AppState, action: Start): Promise<Done> { if (!state.pending) { return {accepted: false, code: \"NOT_ADMITTED\"}; } let work = sendNote; let value: string = await work(state.draft); return {accepted: true, text: value}; }\nexport function done(state: AppState, action: Done): AppState { if (action.accepted) { return {pending: false, sent: \"ok\"}; } return {pending: false, sent: action.code ?? \"refused\"}; }\nexport function edit(state: AppState, action: Draft): AppState { return {draft: action.value}; }";
+  let fragment: screens.Fragment = {declarations:declarations,fields:[{name:"draft",type:"string",role:"authoritative",dependencies:[],initial:"\"Hello\"",owner:"note"},{name:"sent",type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:"note"},{name:"pending",type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:"note"}],updates:[{action:"Start",function:"start"},{action:"Done",function:"done"},{action:"Draft",function:"edit"}],effects:[{action:"Start",function:"send"}],helpers:helpers,view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Button(text: \"Send\", value: 0, onClick: action app.Start {sequence: payload}) ui.TextField(label: \"Draft\", value: state.draft, onChange: action app.Draft {value: payload}) ui.Text(text: state.sent) } }",options:[],content:[],ports:[],holes:[],covers:[],owns:["note"]};
+  let instance: screens.Instance = {id:"note",kind:"custom",origin:"custom",parameters:{},fragment:fragment,bodies:{}};
+  // A second written section names its own effect action the same way: the composed admission record of
+  // one instance can never be another instance's, and the same action name is not a generated clash.
+  let archiveDeclarations: string = "import * as host_notes from \"host/notes\"; export class Start { sequence: number; } export class Done { accepted: boolean; code?: string; }";
+  let archiveHelpers: string = "export function start(state: AppState, action: Start): AppState { if (state.pending) { return state; } return {pending: true, sent: \"\"}; }\nexport async function archive(state: AppState, action: Start): Promise<Done> { if (!state.pending) { return {accepted: false, code: \"NOT_ADMITTED\"}; } await host_notes.archive(); return {accepted: true}; }\nexport function done(state: AppState, action: Done): AppState { if (action.accepted) { return {pending: false, sent: \"archived\"}; } return {pending: false, sent: action.code ?? \"refused\"}; }";
+  let archiveFragment: screens.Fragment = {declarations:archiveDeclarations,fields:[{name:"sent",type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:"note2"},{name:"pending",type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:"note2"}],updates:[{action:"Start",function:"start"},{action:"Done",function:"done"}],effects:[{action:"Start",function:"archive"}],helpers:archiveHelpers,view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Button(text: \"Archive\", value: 0, onClick: action app.Start {sequence: payload}) ui.Text(text: state.sent) } }",options:[],content:[],ports:[],holes:[],covers:[],owns:["note2"]};
+  let second: screens.Instance = {id:"note2",kind:"custom",origin:"custom",parameters:{},fragment:archiveFragment,bodies:{}};
+  let composition: screens.Composition = {screen:{title:"Written",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[instance,second]},bindings:{},actions:{},connections:[]};
+  let assembled: composer.Result = await composer.assembleWith(composition,[],registry,null);
+  return s.encode({deal:assembled.source.deal,dealui:assembled.source.dealui,metadata:assembled.metadata});
+}
+// A written effect that captures a frozen contract function into a local and calls that value performs the
+// frozen call through the local: the fact producer names the target the captured value holds, so the call
+// enters the effect's closure exactly as a direct call does and composition links it to the issued
+// operation the same way. The emitted pair therefore carries the composed admission around the writer's
+// own effect instead of the pass-through wrapper that would perform the provider call unadmitted.
+export async function capturedProvider(): Promise<string> {
+  let text: embedding.WireType = {kind:"string",fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0};
+  let registry: bindings.Registry = bindings.create([contract("host/notes",[
+    {name:"send",description:"Send the drafted note",parameters:[{name:"text",type:text}],result:text}
+  ])]);
+  bindings.reserve(registry,{id:"note_draft",type:"string",getter:"f_note_draft",ready:"true",dependencies:[],owner:"note",payloadOwner:"",schema:text});
+  let arguments0: Record<string, unknown> = {}; arguments0.text = "note_draft";
+  let operations: Record<string, unknown> = {}; operations.note_op = {module:"host/notes",function:"send",arguments:arguments0};
+  let rejected: string[] = await bindings.issueComposition(registry,operations,{},"","");
+  if (rejected.length !== 0) { throw {name:"TEST_FAILED",message:"Captured-value binding rejected: "+rejected.join(", ")}; }
+  // The effect captures the frozen function into a local and awaits that value, so the provider call it
+  // performs is the captured function's own call.
+  let declarations: string = "import * as host_notes from \"host/notes\"; export class Start { sequence: number; } export class Done { accepted: boolean; text?: string; code?: string; }";
+  let helpers: string = "export function start(state: AppState, action: Start): AppState { if (state.pending) { return state; } return {pending: true, sent: \"\"}; }\nexport async function send(state: AppState, action: Start): Promise<Done> { if (!state.pending) { return {accepted: false, code: \"NOT_ADMITTED\"}; } let call = host_notes.send; let value: string = await call(state.draft); return {accepted: true, text: value}; }\nexport function done(state: AppState, action: Done): AppState { if (action.accepted) { return {pending: false, sent: \"ok\"}; } return {pending: false, sent: action.code ?? \"refused\"}; }";
+  let fragment: screens.Fragment = {declarations:declarations,fields:[{name:"draft",type:"string",role:"authoritative",dependencies:[],initial:"\"Hello\"",owner:"note"},{name:"sent",type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:"note"},{name:"pending",type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:"note"}],updates:[{action:"Start",function:"start"},{action:"Done",function:"done"}],effects:[{action:"Start",function:"send"}],helpers:helpers,view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Button(text: \"Send\", value: 0, onClick: action app.Start {sequence: payload}) ui.Text(text: state.sent) } }",options:[],content:[],ports:[],holes:[],covers:[],owns:["note"]};
+  let instance: screens.Instance = {id:"note",kind:"custom",origin:"custom",parameters:{},fragment:fragment,bodies:{}};
+  let composition: screens.Composition = {screen:{title:"Captured",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[instance]},bindings:{},actions:{},connections:[]};
+  let assembled: composer.Result = await composer.assembleWith(composition,[],registry,null);
+  return s.encode({deal:assembled.source.deal,dealui:assembled.source.dealui,metadata:assembled.metadata});
+}
+// A written effect that stores its helper in a record field and calls it through that field: the fact
+// producer names the function value each field of the record holds, so a call through the field enters the
+// effect's closure exactly as a call through the local that holds the helper does, and composition links it
+// to the issued operation the same way. The emitted pair therefore carries the composed admission around
+// the writer's own effect, and a committed edit of its draft in flight publishes no obsolete result.
+export async function recordFieldProvider(): Promise<string> {
+  let text: embedding.WireType = {kind:"string",fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0};
+  let registry: bindings.Registry = bindings.create([contract("host/notes",[
+    {name:"send",description:"Send the drafted note",parameters:[{name:"text",type:text}],result:text}
+  ])]);
+  bindings.reserve(registry,{id:"note_draft",type:"string",getter:"f_note_draft",ready:"true",dependencies:[],owner:"note",payloadOwner:"",schema:text});
+  let arguments0: Record<string, unknown> = {}; arguments0.text = "note_draft";
+  let operations: Record<string, unknown> = {}; operations.note_op = {module:"host/notes",function:"send",arguments:arguments0};
+  let rejected: string[] = await bindings.issueComposition(registry,operations,{},"","");
+  if (rejected.length !== 0) { throw {name:"TEST_FAILED",message:"Record-field binding rejected: "+rejected.join(", ")}; }
+  // The effect keeps the helper that performs the provider call in a record field, reads that field into a
+  // local and awaits the local: neither the field nor the local is a direct call path of the effect.
+  let declarations: string = "import * as host_notes from \"host/notes\"; export class Start { sequence: number; } export class Done { accepted: boolean; text?: string; code?: string; } export class Draft { value: string; }";
+  let helpers: string = "export function start(state: AppState, action: Start): AppState { if (state.pending) { return state; } return {pending: true, sent: \"\", draft: state.draft}; }\nexport async function sendNote(draft: string): Promise<string> { return await host_notes.send(draft); }\nexport async function send(state: AppState, action: Start): Promise<Done> { if (!state.pending) { return {accepted: false, code: \"NOT_ADMITTED\"}; } let holder: Record<string, unknown> = {run: sendNote}; let call: (value: string) => Promise<string> = holder.run as (value: string) => Promise<string>; let value: string = await call(state.draft); return {accepted: true, text: value}; }\nexport function done(state: AppState, action: Done): AppState { if (action.accepted) { return {pending: false, sent: \"ok\"}; } return {pending: false, sent: action.code ?? \"refused\"}; }\nexport function edit(state: AppState, action: Draft): AppState { return {draft: action.value}; }";
+  let fragment: screens.Fragment = {declarations:declarations,fields:[{name:"draft",type:"string",role:"authoritative",dependencies:[],initial:"\"Hello\"",owner:"note"},{name:"sent",type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:"note"},{name:"pending",type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:"note"}],updates:[{action:"Start",function:"start"},{action:"Done",function:"done"},{action:"Draft",function:"edit"}],effects:[{action:"Start",function:"send"}],helpers:helpers,view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Button(text: \"Send\", value: 0, onClick: action app.Start {sequence: payload}) ui.TextField(label: \"Draft\", value: state.draft, onChange: action app.Draft {value: payload}) ui.Text(text: state.sent) } }",options:[],content:[],ports:[],holes:[],covers:[],owns:["note"]};
+  let instance: screens.Instance = {id:"note",kind:"custom",origin:"custom",parameters:{},fragment:fragment,bodies:{}};
+  let composition: screens.Composition = {screen:{title:"Record field",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[instance]},bindings:{},actions:{},connections:[]};
+  let assembled: composer.Result = await composer.assembleWith(composition,[],registry,null);
+  return s.encode({deal:assembled.source.deal,dealui:assembled.source.dealui,metadata:assembled.metadata});
+}
+// A written effect whose closure performs a call through a value the analysis cannot name: the callback a
+// helper receives, an element of a container and a record field no initializer named are such callees, so
+// no target is known for them. Composition refuses that effect, located by instance, action and callee,
+// instead of emitting a pass-through wrapper a provider call could hide in.
+export async function unnamedCallee(): Promise<string> {
+  let text: embedding.WireType = {kind:"string",fields:[],element:null,maximum:8192,minimumNumber:0,maximumNumber:0};
+  let registry: bindings.Registry = bindings.create([contract("host/notes",[
+    {name:"send",description:"Send the drafted note",parameters:[{name:"text",type:text}],result:text}
+  ])]);
+  bindings.reserve(registry,{id:"note_draft",type:"string",getter:"f_note_draft",ready:"true",dependencies:[],owner:"note",payloadOwner:"",schema:text});
+  let arguments0: Record<string, unknown> = {}; arguments0.text = "note_draft";
+  let operations: Record<string, unknown> = {}; operations.note_op = {module:"host/notes",function:"send",arguments:arguments0};
+  let rejected: string[] = await bindings.issueComposition(registry,operations,{},"","");
+  if (rejected.length !== 0) { throw {name:"TEST_FAILED",message:"Unnamed-callee binding rejected: "+rejected.join(", ")}; }
+  // The helper calls the function its parameter holds, which no analysis can name; the effect reaches that
+  // helper, so the effect could perform any call, the frozen one included, with no admission deciding it.
+  let declarations: string = "import * as host_notes from \"host/notes\"; export class Start { sequence: number; } export class Done { accepted: boolean; text?: string; code?: string; }";
+  let helpers: string = "export function start(state: AppState, action: Start): AppState { if (state.pending) { return state; } return {pending: true, sent: \"\"}; }\nexport async function applyCall(state: AppState, fn: (state: AppState, value: string) => Promise<string>, value: string): Promise<string> { return await fn(state, value); }\nexport async function sendDirect(state: AppState, value: string): Promise<string> { return await host_notes.send(value); }\nexport async function send(state: AppState, action: Start): Promise<Done> { if (!state.pending) { return {accepted: false, code: \"NOT_ADMITTED\"}; } let value: string = await applyCall(state, sendDirect, state.draft); return {accepted: true, text: value}; }\nexport function done(state: AppState, action: Done): AppState { if (action.accepted) { return {pending: false, sent: \"ok\"}; } return {pending: false, sent: action.code ?? \"refused\"}; }";
+  let fragment: screens.Fragment = {declarations:declarations,fields:[{name:"draft",type:"string",role:"authoritative",dependencies:[],initial:"\"Hello\"",owner:"note"},{name:"sent",type:"string",role:"authoritative",dependencies:[],initial:"\"\"",owner:"note"},{name:"pending",type:"boolean",role:"runtime",dependencies:[],initial:"false",owner:"note"}],updates:[{action:"Start",function:"start"},{action:"Done",function:"done"}],effects:[{action:"Start",function:"send"}],helpers:helpers,view:"import * as app from \"./experience\"; import * as ui from \"./platform.dealui-pack\"; export view Panel(state: app.AppState): View { ui.Column() { ui.Button(text: \"Send\", value: 0, onClick: action app.Start {sequence: payload}) ui.Text(text: state.sent) } }",options:[],content:[],ports:[],holes:[],covers:[],owns:["note"]};
+  let instance: screens.Instance = {id:"note",kind:"custom",origin:"custom",parameters:{},fragment:fragment,bodies:{}};
+  let composition: screens.Composition = {screen:{title:"Unnamed",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[instance]},bindings:{},actions:{},connections:[]};
+  let refused: boolean = false; let reason: string = "";
+  try { await composer.assembleWith(composition,[],registry,null); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } reason = error.message; refused = reason.includes("no analysis resolves") && reason.includes("note.send fn") && reason.includes("reached through applyCall"); }
+  if (!refused) { throw {name:"TEST_FAILED",message:"A written effect performed an unnamed call with no admission deciding it: "+reason}; }
+  // A callee that is not even a name - an element of a container - is equally unnamed: the analysis can
+  // spell the container but not the function it holds, so the same refusal names it.
+  fragment.helpers = "export function start(state: AppState, action: Start): AppState { if (state.pending) { return state; } return {pending: true, sent: \"\"}; }\nexport async function sendNote(draft: string): Promise<string> { return await host_notes.send(draft); }\nexport async function send(state: AppState, action: Start): Promise<Done> { if (!state.pending) { return {accepted: false, code: \"NOT_ADMITTED\"}; } let steps = [sendNote]; let value: string = await steps[0](state.draft); return {accepted: true, text: value}; }\nexport function done(state: AppState, action: Done): AppState { if (action.accepted) { return {pending: false, sent: \"ok\"}; } return {pending: false, sent: action.code ?? \"refused\"}; }";
+  reason = ""; refused = false;
+  try { await composer.assembleWith(composition,[],registry,null); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } reason = error.message; refused = reason.includes("no analysis resolves") && reason.includes("note.send steps") && reason.includes("reached through send"); }
+  if (!refused) { throw {name:"TEST_FAILED",message:"A written effect performed an unnamed element call with no admission deciding it: "+reason}; }
+  let element: string = reason;
+  // A member call through a record whose function field no initializer named is equally unnamed: the analysis
+  // can spell the field but not the value it holds, so the same refusal names it.
+  fragment.helpers = "export function start(state: AppState, action: Start): AppState { if (state.pending) { return state; } return {pending: true, sent: \"\"}; }\nexport async function sendNote(draft: string): Promise<string> { return await host_notes.send(draft); }\nexport async function send(state: AppState, action: Start): Promise<Done> { if (!state.pending) { return {accepted: false, code: \"NOT_ADMITTED\"}; } let holder: Record<string, unknown> = {run: sendNote}; return await callHolder(holder, state.draft); }\nexport async function callHolder(holder: Record<string, unknown>, value: string): Promise<Done> { let text: string = await holder.run(value) as string; return {accepted: true, text: text}; }\nexport function done(state: AppState, action: Done): AppState { if (action.accepted) { return {pending: false, sent: \"ok\"}; } return {pending: false, sent: action.code ?? \"refused\"}; }";
+  reason = ""; refused = false;
+  try { await composer.assembleWith(composition,[],registry,null); }
+  catch (unknownError) { let error: Error = unknownError as Error; if (error.name !== "CONSTRUCTION_SCHEMA") { throw error; } reason = error.message; refused = reason.includes("no analysis resolves") && reason.includes("note.send holder.run") && reason.includes("reached through callHolder"); }
+  if (!refused) { throw {name:"TEST_FAILED",message:"A written effect called a record field no analysis resolves with no admission deciding it: "+reason}; }
+  return element+" || "+reason;
+}
 // The live figure: one panel publishes its five ports and reads them through the public-probe mechanism.
 export async function live(): Promise<string> {
   let composition: screens.Composition = {screen:{title:"Catalogue",target:"screen",layout:{kind:"stack",positions:[]},slots:[],instances:[]},bindings:{},actions:{},connections:[]};

@@ -29,7 +29,15 @@ export class Driver { need: string; sample: string; tick: string; start: string;
 // field compiled admission reads. It is assembly metadata, never emitted source and never
 // model-supplied.
 export class Activation { carrier: string; action: string; field: string; }
-export class Instance { id: string; kind: string; origin: string; parameters: Record<string, unknown>; fragment: Fragment; bodies: Record<string, string>; position?: string; definition?: Definition; drivers?: Driver[]; readings?: string[]; activations?: Activation[]; }
+// One provider attempt a provider-bearing instance dispatches: the issued operation whose own record is the
+// invocation record, the owner action that starts or answers the attempt, the phase admission records for
+// it, and the owner fields composition writes it from and settles it with. `select`/`value` name the action
+// field that picks this attempt when one action answers several operations; `attempt` is the instance field
+// holding the attempt sequence at a start and the action field carrying it at a completion; `outcome` names
+// the instance field a completion settles with; `instant` names the action field carrying the reply instant.
+// These are issued identities, never model strings, and only composer-emitted code evaluates them.
+export class Dispatch { action: string; operation: string; phase: string; select: string; value: string; attempt: string; outcome: string; instant: string; }
+export class Instance { id: string; kind: string; origin: string; parameters: Record<string, unknown>; fragment: Fragment; bodies: Record<string, string>; position?: string; definition?: Definition; drivers?: Driver[]; readings?: string[]; activations?: Activation[]; dispatches?: Dispatch[]; }
 export class Screen { title: string; target: string; layout: Layout; slots: Slot[]; instances: Instance[]; }
 export class ActionBinding { module: string; function: string; arguments: Record<string, string>; }
 export class DescriptorInput { sourceId: string; label: string; initial: string; }
@@ -45,7 +53,7 @@ class WireFragment { declarations:string; fields:Field[]; updates:Handler[]; eff
 // The private clock driver and reading carrier an issued instance may carry are compiler metadata:
 // they are optional on a supplied composition and are re-derived by admission for a fresh candidate.
 class WireDriver { need:string; sample:string; tick:string; start:string; pause:string; reset:string; resume:string; request:string; running:string; restore:string; epoch:string; trust:string; intervalMs:number; }
-class WireInstance { id:string; kind:string; origin:string; parameters:Record<string, unknown>; fragment:WireFragment; bodies:Record<string, unknown>; position?:string; definition?:WireDefinition; drivers?:WireDriver[]; readings?:string[]; }
+class WireInstance { id:string; kind:string; origin:string; parameters:Record<string, unknown>; fragment:WireFragment; bodies:Record<string, unknown>; position?:string; definition?:WireDefinition; drivers?:WireDriver[]; readings?:string[]; dispatches?:Dispatch[]; }
 class WireSlot { id:string; need:string; reads:string[]; writes:string[]; event?:string; trigger?:string; action?:string; provider:boolean; allowedKinds:string[]; valueType?:string; status:string; instance:string|null; reason:string; }
 class WireScreen { title:string; target:string; layout:WireLayout; slots:WireSlot[]; instances:WireInstance[]; }
 class WireDefinitionField { name:string; type:string; role:string; initial:string; }
@@ -211,6 +219,25 @@ function screen(raw: WireScreen, frozenTarget: string, needIds: string[]): Scree
   for (let need of needIds) { let preserved: boolean = false; for (let slot of result.slots) { if (slot.need === need) { preserved = true; } } if (!preserved) { s.reject("Lost need: "+need); } }
   return result;
 }
+function dispatches(values: Dispatch[]): Dispatch[] {
+  let result: Dispatch[] = []; let seen: string[] = [];
+  for (let value of values) {
+    let action: string = s.identifier(value.action); let operation: string = s.identifier(value.operation);
+    let phase: string = s.nonblank(value.phase);
+    let select: string = s.text(value.select); if (select.trim() !== "") { s.identifier(select); }
+    let chosen: string = s.text(value.value); let attempt: string = s.identifier(value.attempt);
+    let outcome: string = s.text(value.outcome); if (outcome.trim() !== "") { s.identifier(outcome); }
+    let instant: string = s.text(value.instant); if (instant.trim() !== "") { s.identifier(instant); }
+    // One record per action and selected attempt: a second record for the same owner action would admit
+    // one attempt against two operations without the action selecting between them.
+    s.unique(seen,action+"#"+select+"#"+chosen);
+    if ((select.trim() === "") !== (chosen === "")) { s.reject("Dispatch record must name both its selecting action field and its value: "+action); }
+    if (outcome.trim() === "") { if (instant.trim() !== "") { s.reject("A start dispatch record carries no reply instant: "+action); } }
+    else if (instant.trim() === "") { s.reject("A completion dispatch record without its reply instant: "+action); }
+    result[result.length] = {action:action,operation:operation,phase:phase,select:select,value:chosen,attempt:attempt,outcome:outcome,instant:instant};
+  }
+  return result;
+}
 // One issued instance record: the one decoder a serialized composition and a selector-issued
 // catalogue fragment both pass through, so nothing enters the record as a raw table.
 function instance(value: WireInstance, needIds: string[], catalogue: string[], instanceIds: string[]): Instance {
@@ -250,6 +277,10 @@ function instance(value: WireInstance, needIds: string[], catalogue: string[], i
     entry.drivers = drivers;
   }
   if (Object.hasOwn(value,"readings")) { entry.readings = s.stringArray(value.readings as string[]); }
+  // The issued operations a provider-bearing instance dispatches are carried metadata: a renamed,
+  // duplicated or dropped one would leave its attempts admitted against a record composition never
+  // exposes. One record per owner action, and only the start or completion kind its expressions declare.
+  if (Object.hasOwn(value,"dispatches")) { entry.dispatches = dispatches(value.dispatches as Dispatch[]); }
   let declaredConflict: string = conflict(entry);
   if (declaredConflict !== "") { s.reject(declaredConflict); }
   for (let cover of entry.fragment.covers) { if (!s.contains(needIds,cover)) { s.reject("Unissued fragment coverage"); } }
@@ -300,6 +331,10 @@ function wireInstance(value: Instance): WireInstance {
     entry.drivers = drivers;
   }
   if (Object.hasOwn(value,"readings")) { entry.readings = value.readings as string[]; }
+  // A linked operation survives the round trip: the record a structural edit carries must keep the issued
+  // operations its attempts are admitted against, or the emitted admission would read resources assembly
+  // never exposed.
+  if (Object.hasOwn(value,"dispatches")) { entry.dispatches = value.dispatches as Dispatch[]; }
   return entry;
 }
 export function encode(composition: Composition): string {
