@@ -114,7 +114,6 @@ class ResourceBoundsTest(unittest.TestCase):
 
 class ProductionCallSiteTest(unittest.TestCase):
     """The adapter must not decide a deadline the host configures."""
-
     def read(self, relative):
         # Source is asserted with all whitespace removed, so a reformat can neither fake nor hide a call.
         return ''.join((root / relative).read_text().split())
@@ -175,6 +174,40 @@ class ProductionCallSiteTest(unittest.TestCase):
             install = session.rfind('installSessionFacts()', 0, index)
             self.assertGreaterEqual(install, 0, f'the Session facts are never installed before {entry}')
             self.assertGreater(install, definition, f'the Session facts are not installed before {entry}')
+    def test_every_sandbox_isolate_takes_the_configured_block(self):
+        # A sandbox constructed without the block silently keeps the library defaults, so a host bound
+        # on evaluation, heap, input or transfer would not reach that isolate at all.
+        unconfigured = []
+        for path in sorted((root / 'android/src').rglob('*.kt')):
+            source = path.read_text()
+            for match in re.finditer(r'(?<![A-Za-z])SandboxProgram\(([^()]*)\)', source):
+                arguments = [argument.strip() for argument in match.group(1).split(',')]
+                # The class declaration spells its own parameter list; only constructions are call sites.
+                if len(arguments) < 3 and ':' not in match.group(1):
+                    unconfigured.append(f'{path.relative_to(root).as_posix()}: {match.group(0)}')
+        self.assertEqual(unconfigured, [], 'these sandbox isolates keep the library defaults instead of the host block')
+
+    def test_the_four_host_sandbox_boundaries_take_their_configured_block(self):
+        # The suggestion surface, both compiled-policy bridges and the logger isolate used to construct
+        # their sandbox with no block, so the host could not bound them.
+        suggestions = self.read('android/src/rendering/SuggestionSurface.kt')
+        self.assertTrue('privatevallimits:ExecutionLimits' in suggestions,
+                        'the suggestion surface must accept the host block')
+        self.assertTrue('SandboxProgram(engine,256*1024,limits)' in suggestions, 'the suggestion surface isolate must take the host block')
+        self.assertTrue('SuggestionSurface(context.applicationContext,suggestion.title,open,dismiss,failed,limits)' in suggestions,
+                        'the suggestion card must pass the bounds its host surface carries')
+        self.assertTrue('DiscoveryPolicy(context,api.resourceLimits)' in self.read('android/src/discovery/Discovery.kt'),
+                        'the discovery policy isolate must take the protocol bounds')
+        self.assertTrue('AssistancePolicy(context,resourceLimits)' in self.read('android/src/discovery/AssistanceController.kt'),
+                        'the assistance policy isolate must take the protocol bounds')
+        logger = self.read('android/src/bindings/EmbeddingLog.kt')
+        self.assertTrue('SandboxProgram(active,512*1024,limits)' in logger, 'the logger isolate must take the host block')
+        self.assertNotIn('SandboxProgram(engine!!,512*1024)', logger, 'the logger isolate must not fall back to the library defaults')
+        # The embedding owns the block and hands it to every logger it creates, so the logger isolate of
+        # a host that configured bounds is the one built from them.
+        embedding = self.read('android/src/Embedding.kt')
+        self.assertTrue('EmbeddingLog(this.context,executionLimits)' in embedding, 'the embedding must configure the logger it issues per request')
+        self.assertTrue('EmbeddingLog.traced(context,trace,executionLimits)' in embedding, 'the embedding must configure the trace logger')
 
     def test_the_block_has_one_owner_and_stays_host_configuration(self):
         config = self.read('android/src/EmbeddingConfig.kt')

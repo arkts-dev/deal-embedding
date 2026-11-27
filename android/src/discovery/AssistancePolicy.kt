@@ -30,9 +30,9 @@ internal class AssistanceDecision internal constructor(value: JSONObject) {
  * Synchronous bridge to the compiled Open/Dismiss lifecycle. It carries no decision of its own:
  * approved facts, enablement, dismissal and saved links enter, one classified decision leaves.
  */
-internal class AssistancePolicy(context: Context) : AutoCloseable {
+internal class AssistancePolicy(context: Context, private val limits: ExecutionLimits = ExecutionLimits()) : AutoCloseable {
     private val engine = SandboxEngine.acquire(context)
-    private val program = SandboxProgram(engine, 256 * 1024)
+    private val program = SandboxProgram(engine, 256 * 1024, limits)
     init {
         try {
             program.evaluate(SandboxBundle.build(context, emptyList(), "",

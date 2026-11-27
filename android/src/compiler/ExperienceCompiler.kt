@@ -5,7 +5,7 @@ import org.json.*
 import java.io.File
 
 /** Checks and lowers source against host-supplied declarations and the renderer pack. */
-internal class ExperienceCompiler(private val context: Context, private val config: RuntimeConfig, private val log: EmbeddingLog = EmbeddingLog(context)) {
+internal class ExperienceCompiler(private val context: Context, private val config: RuntimeConfig, private val log: EmbeddingLog = EmbeddingLog(context, config.execution)) {
     private val storage = ExperienceStorage(context, config.storageName)
     fun compile(dealSource: String, uiSource: String, target: String?, composition: String, fresh: Boolean): File {
         // The frozen target is carried, never chosen: an absent or out-of-set value rejects before a manifest exists.

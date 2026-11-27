@@ -71,6 +71,15 @@ export async function rejects(): Promise<null> {
 export async function construct(): Promise<string> {
   let instance: screens.Instance = fragment("calculation","3");
   cleanView(instance);
+  // The saved record of this pair carries every value kind the persistence contract encodes: an authored
+  // string, a typed array with its issued element descriptor, an absent nullable value and an absent
+  // undefined member, beside the numeric, boolean, nominal, alias and absent-optional values the graph
+  // fields already carry. They are declared before the nested containers, so a record that replaces one
+  // of those with an absence still numbers its remaining nodes without a gap.
+  instance.fragment.fields[instance.fragment.fields.length] = {name:"label",type:"string",role:"authoritative",dependencies:[],initial:"\"counter\"",owner:instance.id};
+  instance.fragment.fields[instance.fragment.fields.length] = {name:"steps",type:"number[]",role:"authoritative",dependencies:[],initial:"[]",owner:instance.id};
+  instance.fragment.fields[instance.fragment.fields.length] = {name:"spare",type:"Entry | null",role:"authoritative",dependencies:[],initial:"null",owner:instance.id};
+  instance.fragment.fields[instance.fragment.fields.length] = {name:"blank",type:"number | undefined",role:"authoritative",dependencies:[],initial:"undefined",owner:instance.id};
   instance.fragment.fields[instance.fragment.fields.length] = {name:"samples",type:"(number | null)[]",role:"authoritative",dependencies:[],initial:"[1, null, 3]",owner:instance.id};
   instance.fragment.fields[instance.fragment.fields.length] = {name:"matrix",type:"((number | null)[] | null)[] | null",role:"authoritative",dependencies:[],initial:"[[1, null], null, []]",owner:instance.id};
   instance.fragment.fields[instance.fragment.fields.length] = {name:"triple",type:"number",role:"derived",dependencies:["double"],initial:"null",owner:instance.id};

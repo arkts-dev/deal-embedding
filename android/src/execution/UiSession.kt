@@ -8,7 +8,7 @@ import java.io.File
 
 /** One live isolate and compiler-owned store, advanced by embedding. */
 internal class UiSession(private val context: Context, private val broker: CapabilityHost, private val engine: JavaScriptSandbox, private val config: RuntimeConfig,
-    private val log: EmbeddingLog = EmbeddingLog(context), private val candidate: String = "", private val workspace: String = "", private val origin: String = "supplied") : AutoCloseable {
+    private val log: EmbeddingLog = EmbeddingLog(context, config.execution), private val candidate: String = "", private val workspace: String = "", private val origin: String = "supplied") : AutoCloseable {
     internal fun logTrace(): String = log.run
     private val program = SandboxProgram(engine, 256 * 1024, config.execution)
     private var capabilitySession: dev.deal.embedding.capabilities.CapabilitySession? = null

@@ -30,7 +30,7 @@ internal fun catalogRevision(config: RuntimeConfig): String = MessageDigest.getI
 
 /** Transport/compiler mechanisms for the sole compiled DEAL generation entry. No retries or composition policy. */
 internal class ExperienceGenerator(private val context: Context, private val config: RuntimeConfig, private val engine: JavaScriptSandbox, private val capabilityHost: dev.deal.embedding.capabilities.CapabilityHost) {
-    fun generate(intent: String, disclosedContext: String, model: ModelClient, cancellation: GenerationCancellation, progress: (String) -> Unit, log: EmbeddingLog = EmbeddingLog(context), contextId: String = UUID.randomUUID().toString(), contextSchema: JSONObject = WireType("record").json()): CheckedCandidate {
+    fun generate(intent: String, disclosedContext: String, model: ModelClient, cancellation: GenerationCancellation, progress: (String) -> Unit, log: EmbeddingLog = EmbeddingLog(context, config.execution), contextId: String = UUID.randomUUID().toString(), contextSchema: JSONObject = WireType("record").json()): CheckedCandidate {
         require(intent.isNotBlank())
         val revision=catalogRevision(config)
         val checked=CandidateChecks(context,config,engine,log)

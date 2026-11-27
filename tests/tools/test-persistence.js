@@ -68,7 +68,7 @@ function fieldSlot(tree){let slot;nodes(tree,node=>{const p=props(node);if(node.
 
 function rejects(run,pattern,message){let thrown=null;try{run();}catch(error){thrown=error;}assert.ok(thrown!==null,message||'expected rejection');if(pattern!==undefined)assert.ok(pattern.test((thrown&&thrown.message)||(thrown&&thrown.code)||String(thrown)),'unexpected rejection: '+((thrown&&thrown.message)||String(thrown)));}
 
-const AUTHORITATIVE=['f_calculation_value','f_calculation_flag','f_calculation_sequence','f_calculation_display','f_calculation_head','f_calculation_mirror','f_calculation_leaf','f_calculation_samples','f_calculation_matrix'];
+const AUTHORITATIVE=['f_calculation_value','f_calculation_flag','f_calculation_sequence','f_calculation_display','f_calculation_head','f_calculation_mirror','f_calculation_leaf','f_calculation_label','f_calculation_steps','f_calculation_spare','f_calculation_blank','f_calculation_samples','f_calculation_matrix'];
 function entries(envelope){assert.equal(envelope.value[0],'record','the projection root is the issued record, not the live class');assert.equal(envelope.value[2],'record');return new Map(envelope.value[3]);}
 function wireNodes(root){const found=new Map();(function visit(node){if(!Array.isArray(node))return;const tag=node[0];
   if(tag==='class'||tag==='record'){found.set(node[1],node);for(const pair of node[3])visit(pair[1]);}
@@ -110,6 +110,16 @@ const mirrorNode=graph.get(mirrorRef[1]);
 assert.equal(mirrorNode[2],head[2]);
 assert.deepEqual(mirrorNode[3].find(pair=>pair[0]==='next'),['next',['ref',head[1]]],'the saved graph keeps its cycle');
 assert.ok(!fields.get('f_calculation_leaf')[3].some(pair=>pair[0]==='next'),'optional absence stays absent');
+// The same record carries every other value kind the persistence contract encodes: an authored string,
+// a typed array with its issued element descriptor and an absent nullable value.
+assert.deepEqual(fields.get('f_calculation_label'),['string','counter'],'an authored string is not in the record');
+const steps=fields.get('f_calculation_steps');
+assert.equal(steps[0],'array','a typed array lost its array tag');
+assert.equal(typeof steps[2],'string','a typed array lost its issued element descriptor');
+assert.deepEqual(steps[3],[],'the stored array keeps its elements');
+assert.deepEqual(fields.get('f_calculation_spare'),['null'],'an absent nullable value lost the null tag');
+// A declared `number | undefined` field is a value that is absent, not a field the record may drop.
+assert.deepEqual(fields.get('f_calculation_blank'),['undefined'],'a declared undefined value lost its own tag');
 
 // Cold restore: no live Session, no effect, no capability request, no inference.
 const restored=open(envelope);
@@ -118,11 +128,12 @@ assert.equal(snapshot(restored).version,1,'restore publishes one initial tree an
 assert.equal(vm.runInContext('dealCapabilities.take()',restored),'[]','restore issues no external work');
 assert.equal(numberText(tree(restored)),8,'the derived value is recomputed, not replayed');
 readState(restored);
-const identity=JSON.parse(vm.runInContext('JSON.stringify({alias:__state.f_calculation_head.next===__state.f_calculation_mirror,cycle:__state.f_calculation_mirror.next===__state.f_calculation_head,nodes:[__state.f_calculation_head.value,__state.f_calculation_mirror.value,__state.f_calculation_leaf.value],absent:__state.f_calculation_leaf!==null&&!Object.hasOwn(__state.f_calculation_leaf,"next"),value:__state.f_calculation_value,flag:__state.f_calculation_flag,sequence:__state.f_calculation_sequence,triple:__state.f_calculation_triple})',restored));
-assert.deepEqual(identity,{alias:true,cycle:true,nodes:[7,8,9],absent:true,value:4,flag:false,sequence:0,triple:24},'authoritative identity, aliases, cycles, absence and recomputation survive');
+const identity=JSON.parse(vm.runInContext('JSON.stringify({alias:__state.f_calculation_head.next===__state.f_calculation_mirror,cycle:__state.f_calculation_mirror.next===__state.f_calculation_head,nodes:[__state.f_calculation_head.value,__state.f_calculation_mirror.value,__state.f_calculation_leaf.value],absent:__state.f_calculation_leaf!==null&&!Object.hasOwn(__state.f_calculation_leaf,"next"),value:__state.f_calculation_value,flag:__state.f_calculation_flag,sequence:__state.f_calculation_sequence,triple:__state.f_calculation_triple,label:__state.f_calculation_label,steps:Array.isArray(__state.f_calculation_steps)?__state.f_calculation_steps.length:"not-array",spare:__state.f_calculation_spare})',restored));
+assert.deepEqual(identity,{alias:true,cycle:true,nodes:[7,8,9],absent:true,value:4,flag:false,sequence:0,triple:24,label:'counter',steps:0,spare:null},'authoritative identity, aliases, cycles, absence, a typed array and recomputation survive');
 
 assert.equal(vm.runInContext('JSON.stringify(__state.f_calculation_samples)',restored),'[1,null,3]','nullable numeric elements survive cold restore');
 assert.equal(vm.runInContext('JSON.stringify(__state.f_calculation_matrix)',restored),'[[1,null],null,[]]','nested nullable arrays retain each null layer');
+assert.equal(vm.runInContext('JSON.stringify({own:Object.hasOwn(__state,"f_calculation_blank"),type:typeof __state.f_calculation_blank})',restored),'{"own":true,"type":"undefined"}','a saved undefined value was not restored as an undefined field');
 assert.equal(vm.runInContext('__state.f_calculation_leaf.labels.get("__proto__")',restored),'safe');
 assert.equal(vm.runInContext('__state.f_calculation_leaf.labels.get("text")',restored),'\ud800');
 assert.equal(vm.runInContext('__runtime.checkType("record[string]",__state.f_calculation_leaf.labels)===__state.f_calculation_leaf.labels',restored),true);
@@ -205,6 +216,48 @@ assert.ok(mistypedRecord.diagnostics.includes('PERSISTENCE_SCHEMA: copied state 
 const copiedRows=copiedLane({f_parts_rows_spend:[{key:'copied',text:'Copied row',value:5}]},path.resolve(base,'../../../entries/composed-executable/js'));
 assert.equal(copiedRows.ok,true,'the checking isolate refused a copied authoritative list of records: '+copiedRows.diagnostics);
 assert.ok(copiedRows.tree.includes('Copied row'),'the copied authoritative list did not reach the first rendered tree');
+// The remaining encoded tags restore as the values they encode: a saved nonfinite number or signed zero
+// reaches the compiled restore as that same binary64 value through the shipped codec, and the derived
+// results of a nonfinite value become unavailable with their reason instead of a fabricated number.
+function restoredState(saved){
+  const context=vm.createContext({sources,rendererContract:rendererContract(target)});
+  for(const file of ['android/assets/embedding/bindings/sandbox.js',path.join(dealUi,'runtime-js/checkpoint.js'),path.join(dealUi,'runtime-js/session.js'),'android/assets/embedding/bindings/ui-session.js'])
+    vm.runInContext(fs.readFileSync(file,'utf8'),context);
+  context.__saved=saved;
+  vm.runInContext('const factories=Object.fromEntries(Object.entries(sources).map(([id,source])=>[id,new Function(\'require\',\'module\',\'exports\',\'process\',\'console\',source)]));',context);
+  return name=>vm.runInContext(`(()=>{const loaded=dealLoad(factories,'experience_entry.js','experience.js');
+    const codec=createDealUiCheckpoint(loaded.rt,loaded.checkpointSchema,loaded.entry.bridgeSchemaDigest.$f());
+    const state=loaded.app.bridgeRestoredState.$f(codec.decode(dealPersisted(JSON.stringify(__saved)),'record'));
+    return state.${name};})()`,context);
+}
+function tagged(tag){const record=JSON.parse(saved);const fields=new Map(record.value[3]);fields.set('f_calculation_value',[tag]);record.value[3]=[...fields];return record;}
+for(const [tag,expected,ready] of [['nan',NaN,false],['positiveInfinity',Infinity,false],['negativeInfinity',-Infinity,false],['negativeZero',-0,true]]){
+  const state=restoredState(tagged(tag));
+  assert.ok(Object.is(state('f_calculation_value'),expected),'the saved '+tag+' value was not restored as its own value');
+  assert.equal(state('f_calculation_double_ready'),ready,'a derived value of a saved '+tag+' number reported the wrong readiness');
+  if(ready){
+    assert.ok(Object.is(state('f_calculation_double'),-0),'a derived value of a saved negative zero lost its sign');
+    const mounted=open(tagged(tag));readState(mounted);
+    assert.ok(Object.is(vm.runInContext('__state.f_calculation_value',mounted),-0),'a mounted negative zero lost its sign');
+    assert.ok(Object.is(vm.runInContext('__state.f_calculation_double',mounted),-0),'a derived value of a mounted negative zero lost its sign');
+  }else{
+    assert.equal(state('f_calculation_double'),null,'a nonfinite derived result must be unavailable, never a number');
+    assert.equal(state('f_calculation_triple_ready'),false,'a dependent value of a saved '+tag+' number was ready');
+    // The restored value reaches a finite-only prop here, so the precommit check refuses to mount it and
+    // the retained record stays usable: rejection is never a substitute for the decoded value.
+    rejects(()=>open(tagged(tag)),/PROP_FAULT/,'a saved '+tag+' value reached a finite-only prop');
+    assert.equal(numberText(tree(open(envelope))),8,'the retained record still mounts after a nonfinite restore');
+  }
+}
+// `undefined` is an encoded tag with no DEAL value: spelling it for a declared field is a wrong tag, and
+// either the decode or the compiled restore rejects it while the retained bytes stay usable.
+{
+  let refusal=null;
+  try{restoredState(tagged('undefined'))('f_calculation_label');}catch(error){refusal=error;}
+  assert.ok(refusal!==null,'a saved undefined was accepted as a declared string');
+  assert.equal(refusal.code,'E8001','a wrong tag must be a typed refusal, never a coercion');
+  assert.equal(numberText(tree(open(envelope))),8,'the retained record still mounts after a wrong tag');
+}
 
 // The host passes saved bytes as a quoted literal; malformed bytes are a typed incompatibility.
 assert.equal(numberText(tree(openBytes(saved))),8,'the host byte path restores the same record');

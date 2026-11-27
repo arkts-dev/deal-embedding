@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit
 
 /** Android discovery by protocol action, never by provider package/method name. Call off main. */
 internal class CapabilityDiscovery(private val context: Context, private val trusted: (Int) -> Boolean, private val limits: ExecutionLimits) : AutoCloseable {
-    private val log = dev.deal.embedding.EmbeddingLog(context)
+    private val log = dev.deal.embedding.EmbeddingLog(context, limits)
     data class Endpoint(val component: ComponentName, val uid: Int, val contract: CapabilityContract, val remote: ICapabilityService)
     private val connections = mutableMapOf<ComponentName, ServiceConnection>()
     private val endpoints = mutableMapOf<ComponentName, Endpoint>()

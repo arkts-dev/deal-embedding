@@ -15,9 +15,9 @@ internal class HandoffPlan internal constructor(value: JSONObject) {
 }
 
 /** Synchronous bridge to pure compiled framework policy; no provider or generation authority. */
-internal class DiscoveryPolicy(context: Context) : AutoCloseable {
+internal class DiscoveryPolicy(context: Context, private val limits: ExecutionLimits = ExecutionLimits()) : AutoCloseable {
     private val engine = SandboxEngine.acquire(context)
-    private val program = SandboxProgram(engine, 256 * 1024)
+    private val program = SandboxProgram(engine, 256 * 1024, limits)
     init {
         try {
             program.evaluate(SandboxBundle.build(context, emptyList(), "",

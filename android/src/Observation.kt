@@ -2,27 +2,22 @@ package dev.deal.embedding
 import android.content.Context
 import org.json.JSONObject
 import java.io.File
-import java.util.UUID
 
 /** Bounded snapshot paging: appends cannot disrupt a page continuation. */
 internal class Observation(private val context:Context) {
-    private data class Page(val trace:String,val events:List<JSONObject>,val index:Int)
-    private val cursors=linkedMapOf<String,Page>()
-    private val directory get()=File(context.filesDir,"embedding-log")
+    private val store=ObservationStore(File(context.filesDir,"embedding-log"))
     @Synchronized fun events(trace:String,cursor:String,limit:Int):EventPage {
         require(limit in 1..200 && trace.length<=80 && cursor.length<=80)
         return try {
-            val page=if(cursor.isEmpty())Page(trace,listOf("previous.jsonl","events.jsonl").flatMap{File(directory,it).takeIf{it.isFile}?.readLines().orEmpty()}.map{JSONObject(it)}.filter{trace.isEmpty()||it.optString("trace")==trace},0) else (cursors.remove(cursor) ?: error("Expired observation cursor")).also{require(it.trace==trace)}
-            val selected=page.events.drop(page.index).take(limit)
-            val next=if(page.index+selected.size<page.events.size)UUID.randomUUID().toString().also{while(cursors.size>=16)cursors.remove(cursors.keys.first());cursors[it]=page.copy(index=page.index+selected.size)}else ""
-            EventPage(selected.map{event->JSONObject(event.toString()).put("experience",event.optString("workspace").ifEmpty{event.optString("candidate")}).put("session",event.optString("session")).put("sha256",event.optString("sha256"))},next,health().incomplete)
-        }catch(e:java.io.IOException){EventPage(emptyList(),"",true)}catch(e:org.json.JSONException){EventPage(emptyList(),"",true)}
+            // The store decides paging, selection and continuation lifetime; this adapter owns only the
+            // stored event format and the host-facing field names. Reading the format is not optional: a
+            // line this reader cannot parse is recording loss, so the store reports that page incomplete
+            // instead of selecting nothing from it and handing the host a complete page that omits it.
+            val page=store.events(trace,cursor,limit){line->JSONObject(line).optString("trace")}
+            EventPage(page.lines.map{line->JSONObject(line).let{event->event.put("experience",event.optString("workspace").ifEmpty{event.optString("candidate")}).put("session",event.optString("session")).put("sha256",event.optString("sha256"))}},page.cursor,health().incomplete||page.incomplete)
+        }catch(e:org.json.JSONException){EventPage(emptyList(),"",true)}
     }
-    fun artifact(id:String):Artifact {
-        require(id.matches(Regex("[a-f0-9-]{36}")))
-        val file=File(directory,"$id.json");if(!file.isFile)return Artifact("unavailable","")
-        return try{val truncated=File(directory,"$id.truncated").isFile;Artifact(if(truncated)"truncated" else "captured",file.readText())}catch(e:Exception){Artifact("unavailable","")}
-    }
-    fun health():ObservationHealth = try{val file=File(directory,"health.json");if(!file.isFile)ObservationHealth(false,false,"",0)else JSONObject(file.readText()).let{ObservationHealth(it.optBoolean("incomplete"),it.optBoolean("active"),it.optString("code"),it.optInt("lost"))}}catch(e:Exception){ObservationHealth(true,true,"LOGGER_READ",0)}
-    @Synchronized fun clear(){cursors.clear()}
+    fun artifact(id:String):Artifact = store.artifact(id).let{Artifact(it.status,it.text)}
+    fun health():ObservationHealth = store.health().let{ObservationHealth(it.incomplete,it.active,it.code,it.lost)}
+    @Synchronized fun clear(){store.clear()}
 }

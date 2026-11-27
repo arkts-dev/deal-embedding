@@ -118,7 +118,7 @@
       "requirement": "events enforces the configured 1-200 limit domain, hands an issued continuation cursor and a supplied trace identity to the observation store, and reports the store incomplete flag; the recorded health snapshot and an artifact status with its text cross the compiled consumer.",
       "status": "covered",
       "test": "node tests/tools/test-protocol.js",
-      "evidence": "The limit domain, the continuation cursor, the trace identity, the health snapshot and the classified artifact status cross the compiled consumer; selecting by trace, appending and clearing the retained store, the stored artifact hash and the lost-event accounting are device concerns recorded by the observation-store row.",
+      "evidence": "The limit domain, the continuation cursor, the trace identity, the health snapshot and the classified artifact status cross the compiled consumer; selecting by trace, appending and clearing the retained store, the stored artifact hash, the lost-event accounting and the page reported for a retained line the store cannot read are recorded by the deterministic observation-store row, which names the file sink as its one remaining device obligation.",
       "asserts": [
         "health reports the recorded observation snapshot",
         "an unavailable artifact keeps its status and empty text",
@@ -130,8 +130,31 @@
       "family": "host-protocol",
       "owner": "host-protocol-discovery-observation",
       "requirement": "The retained observation store selects events by trace (an empty trace selects all), appends without invalidating an issued continuation, keeps at most 16 single-use continuations and invalidates them on clear, reports the sha256 of the stored artifact bytes, a truncated artifact as truncated, and recording loss or an unusable logger as incomplete health.",
-      "status": "partial",
-      "blocker": "Trace selection, continuation lifetime, the hash, the truncation marker and health loss are written by android/src/Observation.kt and android/src/bindings/EmbeddingLog.kt, both of which require an android.content.Context (and a JavaScriptSandbox engine for the logger sink); no deterministic vector can construct either without an installed device, so this item is proven only by the opting-in device lane."
+      "status": "covered",
+      "test": "python3 tests/tools/test-observation-store.py",
+      "sources": [
+        "android/src/ObservationStore.kt",
+        "tests/tools/fixtures/ObservationStoreTest.kt"
+      ],
+      "evidence": "The retained store owns paging, continuation lifetime, artifact bytes with their digest and truncation marker, and the health record the logger writes in production source that needs only a directory: android/src/Observation.kt and android/src/bindings/EmbeddingLog.kt now supply the stored event format, the sandbox and the record they write, and decide no store policy of their own. The compiled production store with its fixture proves an empty trace selects every retained event and a trace only its own, a continuation reads the snapshot it was issued for after an append, a redeemed continuation and another trace's continuation are refused, the page limit domain is 1-200, the store's declared continuation bound is the spec's literal sixteen, sixteen continuations are kept and the seventeenth reclaims the oldest rather than growing the set, clear invalidates what was issued and keeps the events, an absent artifact is unavailable with empty text while a stored one reports its exact bytes and the truncation marker, the store reclaims the oldest artifacts to stay inside its bound and records the SHA-256 of the bytes it wrote, a fault reports loss with its classification while recovery closes the operation without erasing it, and the recorded health snapshot maps incomplete/active/code/lost while a record the store cannot read reports the logger incomplete and active as LOGGER_READ instead of a healthy zero. A retained line the caller's reader cannot parse reports the page incomplete with no events instead of a complete page that omits it, for the select-all query as well as a trace-filtered one, while a line that merely carries no trace is not loss. The one remaining device obligation is the sink that writes those files under a live JavaScriptSandbox.",
+      "asserts": [
+        "ObservationStore.digest(\"abc\".toByteArray()) == \"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"",
+        "check(second.lines == listOf(line(\"t1\", 3)))",
+        "rejects(\"a continuation of another trace\") { retained.events(\"t1\", scoped.cursor, 1, ::traceOf) }",
+        "check(ObservationStore.MAX_CURSORS == 16)",
+        "check(unreadable.lines.isEmpty() && unreadable.incomplete)",
+        "check(selectAll.lines.isEmpty() && selectAll.incomplete)",
+        "check(bounded.issued() == 16)",
+        "bounded.events(\"\", issued.first(), 1, ::traceOf)",
+        "rejects(\"a continuation after clear\") { cleared.events(\"t1\", outstanding, 1, ::traceOf) }",
+        "rejects(\"an unissued artifact identity\") { artifacts.artifact(\"../../etc/passwd\") }",
+        "check(!File(artifactDirectory, \"$oldest.json\").exists())",
+        "check(boundedStore.artifact(newest).status == \"truncated\")",
+        "check(!recovered.active && recovered.incomplete && recovered.lost == 4)",
+        "!absentHealth.incomplete && !absentHealth.active && absentHealth.code.isEmpty()",
+        "RetainedHealth(incomplete = true, active = true, code = \"QUEUE_LIMIT\", lost = 4)",
+        "RetainedHealth(incomplete = true, active = true, code = \"LOGGER_READ\", lost = 0)"
+      ]
     },
     {
       "id": "discovery-answer",
@@ -1416,11 +1439,13 @@
         "tests/tools/fixtures/ResourceBoundsTest.kt"
       ],
       "seam": "resource-bounds",
-      "evidence": "The production ExecutionLimits is compiled with its fixture on a JDK: the defaults are exactly the previous 5000 ms deadline, a host-supplied provider or discovery bound moves the admitted terminal instant, and a zero or negative provider, discovery, evaluation, heap, input or transfer bound rejects. The adapter call sites need Android, so they are asserted from production source: the provider call takes limits.providerDeadline(now), the disclosure refresh takes limits.discoveryDeadline(SystemClock.elapsedRealtime()) and its wait consumes that deadline, the embedding threads config.execution into both adapters so neither can fall back to its own block, no 5000 ms numeral survives in either adapter outside a comment, and the block has one declaration. A sandbox constructed with the block takes its bounds, because SandboxProgram reads every one of them from it. The four sandbox call sites that still construct a sandbox without the block are recorded in the provider-invocation blocker, so this row claims only that the host can configure the contained paths named here.",
+      "evidence": "The production ExecutionLimits is compiled with its fixture on a JDK: the defaults are exactly the previous 5000 ms deadline, a host-supplied provider or discovery bound moves the admitted terminal instant, and a zero or negative provider, discovery, evaluation, heap, input or transfer bound rejects. The adapter call sites need Android, so they are asserted from production source: the provider call takes limits.providerDeadline(now), the disclosure refresh takes limits.discoveryDeadline(SystemClock.elapsedRealtime()) and its wait consumes that deadline, the embedding threads config.execution into both adapters so neither can fall back to its own block, no 5000 ms numeral survives in either adapter outside a comment, and the block has one declaration. A sandbox constructed with the block takes its bounds, because SandboxProgram reads every one of them from it, and every production construction passes a block: the suggestion surface, the discovery and assistance policy bridges and the logger isolate take the host's block instead of the library defaults, the card hands its surface the bounds its host protocol carries, and the embedding hands its configured block to the loggers it issues. A construction that passes no block is refused by the same item.",
       "asserts": [
         "a provider call must take its terminal instant from the configured bound",
         "the provider deadline must not be an adapter literal",
         "an unconfigured host must keep the 5000 ms provider and discovery deadline",
+        "these sandbox isolates keep the library defaults instead of the host block",
+        "the suggestion surface isolate must take the host block",
         "the bounds must be declared once, in ExecutionLimits.kt"
       ]
     },
@@ -1430,7 +1455,7 @@
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "A provider call validates its positional arguments and its reply against the disclosed contract, enforces the host-configured deadline, invalidates bindings on a contract change and returns the provider error code unchanged.",
       "status": "partial",
-      "blocker": "Argument and reply validation, deadline enforcement and binding invalidation run in android/src/capabilities/CapabilityRegistry.kt over an Android binder and a live grant epoch; the deterministic lane proves the contract boundary (disclosure-bounds) and the configured block (resource-bounds) only. Remaining AC-11 obligations: the capability request and reply buffers still carry adapter literals (128 KiB buffered, 16 KiB per message) rather than a host-configured transport bound; on-device inference awaits still take adapter literals (android/src/discovery/NanoDiscovery.kt) and two host waits are unbounded (ApplicationProtocol.kt:53, ProtocolController.kt:131); four sandbox call sites take no host configuration and keep the block's defaults - android/src/rendering/SuggestionSurface.kt:16, android/src/discovery/DiscoveryPolicy.kt:20, android/src/discovery/AssistancePolicy.kt:35 and android/src/bindings/EmbeddingLog.kt:110 - so a host bound on evaluation, heap, input or transfer does not reach them; storage performs no wait, so it has no bound to configure; and native exhaustion of an evaluation, heap or provider bound is classified as an execution failure by android/src/ExperienceRuntime.kt only, with no deterministic or device item observing it."
+      "blocker": "Argument and reply validation, deadline enforcement and binding invalidation run in android/src/capabilities/CapabilityRegistry.kt over an Android binder and a live grant epoch; the deterministic lane proves the contract boundary (disclosure-bounds) and the configured block (resource-bounds) only. Remaining AC-11 obligations: the capability request and reply buffers still carry adapter literals (128 KiB buffered, 16 KiB per message) rather than a host-configured transport bound; on-device inference awaits still take adapter literals (android/src/discovery/NanoDiscovery.kt) and two host waits are unbounded (ApplicationProtocol.kt:53, ProtocolController.kt:131); storage performs no wait, so it has no bound to configure; and native exhaustion of an evaluation, heap or provider bound is classified as an execution failure by android/src/ExperienceRuntime.kt only, with no deterministic or device item observing it. The four sandbox call sites that used to keep the library defaults now take the host block, and the resource-bounds row proves it from production source and from the compiled block."
     },
     {
       "id": "persistence-codec",
@@ -1450,9 +1475,22 @@
       "family": "persistence-graph",
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "The persistence envelope encodes and restores the full spec tag set: number, string, boolean, null, undefined, array with its element descriptor, record, class, ref, nan, positiveInfinity, negativeInfinity and negativeZero.",
-      "status": "partial",
+      "status": "covered",
       "test": "node tests/tools/test-persistence.js build/v08-cutover/composer-pairs/numeric/composed-executable/js",
-      "blocker": "The record named here carries number, boolean, class and ref values only; the provider-bearing record of the sibling persistence item adds string (core/scalar-read.deal:84-85, tests/tools/test-persistence-provider.js). No restored production record therefore carries null, undefined, array, nan, positiveInfinity, negativeInfinity or negativeZero. The pinned codec implements every tag (dependencies/deal-ui/runtime-js/checkpoint.js:22-31,38); the missing proof is an emitted field of each kind, owned by the execution persistence producer. The subject is the numeric screen-target pair the composer lane emits earlier in the same run, not the shared build/v08-cutover/composed-executable copy that later lanes delete and rewrite."
+      "evidence": "The composed pair this lane restores issues an authoritative field of every value kind the record can carry: a number, a boolean, an authored string, an empty typed array with its issued element descriptor, an array of nullable numbers, a nested container whose outer value is nullable, an absent nullable value, an absent number | undefined field and a disclosed Record holding a lone surrogate, beside the nominal graph, its alias, its cycle and its absent optional. A saved value is asserted in the record as its own encoded tag and again after restore as the value that tag denotes, so a record that drops or coerces one of them fails instead of agreeing with itself. A saved nonfinite number or signed zero reaches the compiled restore as that same binary64 value, the derived results of a nonfinite value become unavailable with their reason instead of a fabricated number, and a record spelling the encoded undefined tag for a field whose declaration does not admit it is refused with E8001 while the retained bytes stay usable. The subject is the numeric screen-target pair the composer lane emits earlier in the same run, not the shared build/v08-cutover/composed-executable copy that later lanes delete and rewrite.",
+      "asserts": [
+        "assert.deepEqual(fields.get('f_calculation_label'),['string','counter'],'an authored string is not in the record')",
+        "assert.equal(typeof steps[2],'string','a typed array lost its issued element descriptor')",
+        "assert.deepEqual(fields.get('f_calculation_spare'),['null'],'an absent nullable value lost the null tag')",
+        "assert.deepEqual(fields.get('f_calculation_blank'),['undefined'],'a declared undefined value lost its own tag')",
+        "assert.equal(vm.runInContext('JSON.stringify(__state.f_calculation_samples)',restored),'[1,null,3]','nullable numeric elements survive cold restore')",
+        "JSON.stringify({own:Object.hasOwn(__state,\"f_calculation_blank\"),type:typeof __state.f_calculation_blank})",
+        "assert.equal(vm.runInContext('__state.f_calculation_matrix',nullRestored),null,'outer nullability survives independently')",
+        "assert.ok(Object.is(state('f_calculation_value'),expected),'the saved '+tag+' value was not restored as its own value')",
+        "assert.equal(state('f_calculation_double'),null,'a nonfinite derived result must be unavailable, never a number')",
+        "assert.equal(refusal.code,'E8001','a wrong tag must be a typed refusal, never a coercion')",
+        "label:'counter',steps:0,spare:null"
+      ]
     },
     {
       "id": "persistence-restore",
@@ -1461,7 +1499,7 @@
       "requirement": "Cold restore: authoritative values restored before mount, derived values recomputed, pending work stale, activation and accepted cleared, no inference and no replay.",
       "status": "partial",
       "test": "node tests/tools/test-persistence-provider.js",
-      "blocker": "Authoritative operation results and derived recomputation are proven, but restored pending work as stale, cleared activation markers and interrupted-work sanitisation have no deterministic vector; the journey rows carry the live/device obligation."
+      "blocker": "Authoritative operation results, derived recomputation, no replay and interrupted-work sanitisation are proven: an in-flight effect refuses a checkpoint, so no captured work reaches the record, and a cold mount issues no call. What remains is the part-owned half. The emitted scalar-read operation keeps `pending`, `outcome`, `status`, `sequence` and `argument` as authoritative fields, so a saved record whose `pending` flag is true restores as pending instead of stale: the composer's issued restore copies authoritative resources verbatim and no part issues a restore hook for them (the clock part is the only part that does). The emitted pair carries no activation or accepted marker at all, so clearing them has no subject yet: the authorized initial read's activation-needed flag and the per-invocation accepted record are not emitted by the composer. Both are execution persistence producer work, not a test omission."
     },
     {
       "id": "read-authority",

@@ -39,13 +39,14 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     /** The Experience origin is a Session fact compiled admission reads; it is never inferred from source. */
     private fun originName(origin: WorkspaceOrigin): String = when (origin) { WorkspaceOrigin.AI_SOURCE -> "generated"; WorkspaceOrigin.CATALOGUE -> "catalogue"; WorkspaceOrigin.SAVED_SOURCE -> "supplied" }
     /** Provenance is trusted host metadata, never an assertion from application source. */
-    fun check(source: ExperienceSource, origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE, attempts: Int = 0): CheckedCandidate = guarded(live = false) {        val log = EmbeddingLog(context)
+    fun check(source: ExperienceSource, origin: WorkspaceOrigin = WorkspaceOrigin.SAVED_SOURCE, attempts: Int = 0): CheckedCandidate = guarded(live = false) {
+        val log = EmbeddingLog(context, config.execution)
         val identity = UUID.randomUUID().toString()
         log.event("route", "saved", candidate = identity)
         CheckedCandidate(context,source, log.operation("check", candidate = identity) { child -> CandidateChecks(context,config,sandbox(),child).use { it.check(source) } }, catalogRevision(config), attempts, log, identity, origin)
     }
     fun savedWorkspaces(): List<SavedWorkspace> = storage.savedWorkspaces()
-    fun forgetWorkspace(id: String) { closeWorkspace(id); storage.forgetWorkspace(id); ExperienceScopedStorage.forget(context, config.storageName, id); EmbeddingLog(context).event("storage", "deleted", workspace = id) }
+    fun forgetWorkspace(id: String) { closeWorkspace(id); storage.forgetWorkspace(id); ExperienceScopedStorage.forget(context, config.storageName, id); EmbeddingLog(context, config.execution).event("storage", "deleted", workspace = id) }
     private val prepared = mutableMapOf<String,PreparedWorkspace>()
     internal fun prepareWorkspace(id:String,title:String,candidate:CheckedCandidate,session:String):PreparedWorkspace = guarded(live = false) {
         check(!candidate.consumed && candidate.revision == catalogRevision(config)) { "Capability catalog changed; regenerate" }
@@ -103,7 +104,7 @@ internal class ExperienceRuntime(private val context: Context, private val capab
     }
     fun closeWorkspace(id: String) {
         val live = workspaces.remove(id) ?: return
-        EmbeddingLog(context).event("session", "closed", workspace = id)
+        EmbeddingLog(context, config.execution).event("session", "closed", workspace = id)
         var failure:Throwable?=null
         try{checkpoint(live)}catch(error:Throwable){failure=error}
         retainedStates.remove(id)

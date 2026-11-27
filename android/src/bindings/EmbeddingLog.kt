@@ -10,10 +10,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** Trusted observation only. Admission and persistence failures never replace application outcomes. */
-class EmbeddingLog private constructor(private val context: Context, val run: String, private val defaultParent: String) {
+class EmbeddingLog private constructor(private val context: Context, val run: String, private val defaultParent: String, private val execution: ExecutionLimits = ExecutionLimits()) {
     constructor(context: Context) : this(context.applicationContext, UUID.randomUUID().toString(), "")
-    private fun child(parent: String) = EmbeddingLog(context, run, parent).also{it.boundExperience=boundExperience;it.boundSession=boundSession}
-    internal fun bind(workspace: String,session:String) = EmbeddingLog(context,run,defaultParent).also { it.boundExperience=workspace;it.boundSession=session }
+    constructor(context: Context, execution: ExecutionLimits) : this(context.applicationContext, UUID.randomUUID().toString(), "", execution)
+    private fun child(parent: String) = EmbeddingLog(context, run, parent, execution).also{it.boundExperience=boundExperience;it.boundSession=boundSession}
+    internal fun bind(workspace: String,session:String) = EmbeddingLog(context,run,defaultParent,execution).also { it.boundExperience=workspace;it.boundSession=session }
     internal val experienceIdentity: String get() = boundExperience
     private var boundExperience=""
     private var boundSession=""
@@ -22,7 +23,7 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
         try {
             sink(context).submit(JSONObject().put("trace", run).put("span", span).put("parent", parentOperation.ifEmpty { defaultParent })
                 .put("stage", stage).put("outcome", outcome).put("candidate", candidate).put("workspace", workspace.ifEmpty{boundExperience}).put("operation", operation).put("session",boundSession)
-                .put("code", code).put("durationMs", durationMs.coerceIn(0, Int.MAX_VALUE.toLong())).put("version", version).put("target", target), detail, capturesContent)
+                .put("code", code).put("durationMs", durationMs.coerceIn(0, Int.MAX_VALUE.toLong())).put("version", version).put("target", target), detail, capturesContent, execution)
         } catch (error: Exception) { emergency(context, error) }
     }
     internal fun <T> stage(name: String, candidate: String = "", workspace: String = "", operation: String = "", target: String = "", detail: String? = null, block: () -> T): T = operation(name, candidate, workspace, operation, target, detail) { block() }
@@ -38,6 +39,7 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
     }
     companion object {
         internal fun traced(context:Context,trace:String)=EmbeddingLog(context.applicationContext,trace,"")
+        internal fun traced(context:Context,trace:String,execution:ExecutionLimits)=EmbeddingLog(context.applicationContext,trace,"",execution)
         @Volatile private var instance: Sink? = null
         private fun sink(context: Context): Sink = instance ?: synchronized(this) { instance ?: Sink(context.applicationContext).also { instance = it } }
         fun capture(context: Context, enabled: Boolean) { check(context.getSharedPreferences("embedding-logging", 0).edit().putBoolean("content", enabled).commit()) }
@@ -54,24 +56,26 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
         private var queued = 0; private var dropped = 0
         @Volatile private var queueLimit = 256
         private var engine: JavaScriptSandbox? = null; private var program: SandboxProgram? = null
+        private var programLimits: ExecutionLimits? = null
         private var sequence = 0
         private val directory = directory(context).apply { mkdirs() }
-        private var health = runCatching { JSONObject(File(directory, "health.json").readText()) }.getOrNull()
+        // The artifact store and the loss record are the deterministic retained store; this sink owns
+        // only the sandbox that shapes a record and the queue in front of it.
+        private val store = ObservationStore(directory)
+        private var loss = store.health()
         private var emergencyReported = false
-        fun resetHealth() { health = null; emergencyReported = false }
-        private fun fault(code: String, count: Int) {
-            health = JSONObject().put("incomplete", true).put("active", true).put("code", code).put("time", System.currentTimeMillis().toString())
-                .put("lost", (health?.optInt("lost") ?: 0) + count)
-            runCatching { File(directory, "health.json").writeText(health.toString()) }
+        fun resetHealth() { loss = RetainedHealth(); emergencyReported = false }
+        private fun record(value: RetainedHealth, extra: String, now: Long) {
+            loss = value
+            val snapshot = JSONObject().put("incomplete", value.incomplete).put("active", value.active).put("code", value.code).put("lost", value.lost).put(extra, now.toString())
+            runCatching { File(directory, "health.json").writeText(snapshot.toString()) }
         }
+        private fun fault(code: String, count: Int) { record(loss.fault(code, count), "time", System.currentTimeMillis()) }
         private fun recovered() {
             emergencyReported = false
-            if (health != null && health!!.optBoolean("active", true)) {
-                health!!.put("active", false).put("recoveredAt", System.currentTimeMillis().toString())
-                runCatching { File(directory, "health.json").writeText(health.toString()) }
-            }
+            if (loss.active) { record(loss.recovered(), "recoveredAt", System.currentTimeMillis()) }
         }
-        @Synchronized fun submit(value: JSONObject, detail: String?, capture: Boolean) {
+        @Synchronized fun submit(value: JSONObject, detail: String?, capture: Boolean, limits: ExecutionLimits) {
             if (queued >= queueLimit) { dropped++; return }
             // Timestamp production/admission, not asynchronous persistence.
             value.put("time",System.currentTimeMillis().toString()).put("elapsed",SystemClock.elapsedRealtime().toString())
@@ -88,9 +92,9 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
                         write(JSONObject().put("trace", "logger").put("span", UUID.randomUUID().toString()).put("parent", "")
                             .put("stage", "logger").put("outcome", "dropped").put("code", "QUEUE_LIMIT").put("bytes", lost)
                             .put("candidate", "").put("workspace", "").put("session", "").put("operation", "")
-                            .put("target", "").put("durationMs", 0).put("version", -1), null, false, false)
+                            .put("target", "").put("durationMs", 0).put("version", -1), null, false, false, limits)
                     }
-                    write(value, retained, capture, truncated)
+                    write(value, retained, capture, truncated, limits)
                     recovered()
                 } catch (error: Exception) {
                     fault("LOGGER_FAILED", 1)
@@ -104,10 +108,14 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
                 } finally { synchronized(this) { queued-- } }
             } } catch (error: Exception) { queued--; throw error }
         }
-        private fun write(value: JSONObject, bytes: ByteArray?, capture: Boolean, truncated: Boolean) {
-            if (program == null) {
-                engine = SandboxEngine.acquire(context)
-                program = SandboxProgram(engine!!, 512 * 1024)
+        private fun write(value: JSONObject, bytes: ByteArray?, capture: Boolean, truncated: Boolean, limits: ExecutionLimits) {
+            if (program == null || programLimits != limits) {
+                // A host that changes its configured block gets an isolate built from the new block; the
+                // connected sandbox engine is reused and only the isolate is replaced.
+                runCatching { program?.close() }
+                val active = engine ?: SandboxEngine.acquire(context).also { engine = it }
+                program = SandboxProgram(active, 512 * 1024, limits)
+                programLimits = limits
                 program!!.evaluate(SandboxBundle.build(context, listOf("logging-session.js"), "configureDealCapabilities([]);", "initializeLogger(factories)", assetRoot = "logging"))
             }
             value.put("sequence", ++sequence).put("capture", capture)
@@ -118,15 +126,10 @@ class EmbeddingLog private constructor(private val context: Context, val run: St
             if (artifact.isNotEmpty()) {
                 val stored = bytes!!
                 check(stored.size <= normalized.getInt("contentLimit"))
-                // Snapshot metadata once: File.lastModified inside a sort comparator caused
-                // O(n log n) filesystem calls per captured event on retained artifact stores.
-                val files = directory.listFiles()?.filter { it.extension == "json" && it.name != "health.json" }
-                    ?.map { Triple(it, it.lastModified(), it.length()) }?.sortedBy { it.second }.orEmpty()
-                var used = files.sumOf { it.third }
-                for ((file, _, length) in files) { if (used + stored.size <= normalized.getInt("artifactStoreLimit")) break; used -= length; check(file.delete());File(directory,"${file.nameWithoutExtension}.truncated").delete() }
-                File(directory, "$artifact.json").writeBytes(stored)
-                if(truncated)File(directory,"$artifact.truncated").writeText("")
-                normalized.put("sha256", java.security.MessageDigest.getInstance("SHA-256").digest(stored).joinToString("") { "%02x".format(it) })
+                // The retained store reclaims the oldest artifacts until this capture fits, so a codec
+                // bound and the store bound can never disagree about what was written.
+                store.store(stored, artifact, truncated, normalized.getInt("artifactStoreLimit"))
+                normalized.put("sha256", ObservationStore.digest(stored))
                 if (truncated) normalized.put("content", "truncated")
             }
             val eventStoreLimit = normalized.getInt("eventStoreLimit")

@@ -79,26 +79,29 @@ stage() {
         --input tests/tools/build-cutover-test.sh --input "$JDK_RELEASE" "$@" -- bash -c "$name"
 }
 JDK_RELEASE="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}/release"
+# One preparation bound per stage, each above twice the coldest cost this host measured with the gate's
+# own work beside it: a bound the cost reaches does not report a packaging failure, it kills the stage and
+# fails the gate with an unnamed timeout. Measured on 2026-11-26 at load average 15-28 on eight cores, in
+# the very run whose earlier literal bounds were nearly reached (seconds, measured / former bound / now):
+#   resources 24.7 / 30 / 90    test_kotlin 220.2 / 240 / 480
+#   dex       41.4 / 45 / 150   package_apk  29.8 /  30 / 90
+# A bound is preparation only: no assertion result is cached or reused by one.
 args=(); for res in "${RESOURCES[@]}"; do args+=(--input "$res"); done
-stage resources 60 --input "$ANDROID" --input "$TOOLS/aapt2" --input "$OUT/AndroidManifest.xml" \
+stage resources 90 --input "$ANDROID" --input "$TOOLS/aapt2" --input "$OUT/AndroidManifest.xml" \
     --input build/compose/resources.txt --input build/compose/packages.txt --input build/embedding-consumer/assets \
     "${args[@]}" --output "$OUT/resources.apk" --output "$OUT/rjava"
 args=(); for source in "${TEST_SOURCES[@]}" "${JARS[@]}"; do args+=(--input "$source"); done
 # The Kotlin bound covers a cold compile of the whole instrumentation source set with the Compose
-# compiler plugin; measured at 127 s on a cold stage on an idle host and 213 s on the loaded gate host,
-# so the declared bound is wider than the compile cost either way. The bound is preparation only: no
-# assertion result is cached or reused.
+# compiler plugin. The bound is preparation only: no assertion result is cached or reused.
 stage test_kotlin "${DEAL_TEST_COMPILE_SECONDS:-480}" --input "$CP_SOURCES" --input "$OUT/rjava" --input "$ANDROID" \
     --input "$KOTLIN_HOME/bin/kotlinc" --input "$KOTLIN_HOME/lib/kotlin-compiler.jar" \
     --input "$KOTLIN_HOME/lib/compose-compiler-plugin.jar" "${args[@]}" \
     --output "$OUT/classes" --output "$OUT/test.jar" --output "$OUT/sources.sha256"
 args=(); for j in "${JARS[@]}"; do args+=(--input "$j"); done
-# D8 dexes the whole instrumentation JAR against the packaged runtime classpath; measured at 44 s on
-# the loaded gate host and 8-22 s on an idle one, so the bound contains the loaded cost as well.
+# D8 dexes the whole instrumentation JAR against the packaged runtime classpath.
 stage dex 150 --input "$CP_SOURCES" --input "$OUT/test.jar" --input "$ANDROID" --input build/toolchain/r8.jar \
     --input build/toolchain/desugar.json "${args[@]}" --output "$OUT/dex"
-# Merge, zip, resource packaging, alignment and signing; measured at 24 s on the loaded gate host and
-# 4-14 s on an idle one, so the bound contains the loaded cost as well.
+# Merge, zip, resource packaging, alignment and signing of the staged artifacts.
 stage package_apk 90 --input "$CP_SOURCES" --input "$OUT/resources.apk" --input "$OUT/dex" \
     --input build/runtime-dex/host-stable --input build/embedding-dex --input "$KEYSTORE" \
     --input "$TOOLS/zipalign" --input "$TOOLS/apksigner" --input "$TOOLS/lib/apksigner.jar" \

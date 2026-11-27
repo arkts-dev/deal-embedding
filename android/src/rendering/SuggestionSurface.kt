@@ -11,9 +11,10 @@ import java.util.concurrent.Executors
 
 /** Fixed trusted UI, not a generated experience. Its two bindings carry no generic API authority. */
 internal class SuggestionSurface(context: Context, title: String, private val open: () -> Unit,
-                                 private val dismiss: () -> Unit, private val failed: (Throwable) -> Unit) : AutoCloseable {
+                                 private val dismiss: () -> Unit, private val failed: (Throwable) -> Unit,
+                                 private val limits: ExecutionLimits = ExecutionLimits()) : AutoCloseable {
     private val engine = SandboxEngine.acquire(context)
-    private val program = SandboxProgram(engine, 256 * 1024)
+    private val program = SandboxProgram(engine, 256 * 1024, limits)
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var closed = false
@@ -72,7 +73,7 @@ internal class SuggestionSurface(context: Context, title: String, private val op
         val lock = Any(); var closed = false; var owner: SuggestionSurface? = null
         worker.execute {
             try {
-                val next = SuggestionSurface(context.applicationContext,suggestion.title,open,dismiss,failed)
+                val next = SuggestionSurface(context.applicationContext,suggestion.title,open,dismiss,failed,limits)
                 synchronized(lock) { if (closed) next.close() else { owner=next; main.post { synchronized(lock) { if (!closed) surface=next } } } }
             } catch (error: Throwable) { main.post { synchronized(lock) { if (!closed) failed(error) } } }
         }

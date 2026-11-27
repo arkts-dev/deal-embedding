@@ -47,10 +47,10 @@ CATALOGUE_GROUP = 420
 # failed instead of an unnamed suite timeout.
 CATALOGUE_SUITE = 1500
 CATALOGUE_BUNDLES = ('all', 'local')
-# The construction harness drives the Food and Equipment fixtures through the packaged session. It
-# measured 49-91 s of wall on the reference host and exceeded 180 s on a gate host running four gates
-# at once, so its own declaration keeps the same headroom as the lanes above.
-CONSTRUCTIVE_NODE = 360
+# The constructive calculation lane drives a complete Food allocation and a whole-basket Equipment
+# comparison over actual records: 145 s measured on this loaded gate host, and 180 s was the bound that
+# killed it there, so the declaration this harness reads contains better than three times that cost.
+CONSTRUCTIVE_NODE = 480
 
 # The composer's own lane: `--contracts-only` compiles the fixtures, runs three JVM assertion classes
 # and then one node group per composer group it drives.

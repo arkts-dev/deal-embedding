@@ -35,6 +35,7 @@ its own source file does move it, and that needs a re-pin.
 import argparse
 import hashlib
 from host_check import prepare, run as bounded_run
+import lane_bounds
 import json
 import os
 from pathlib import Path
@@ -46,12 +47,12 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 # A control's bound only has to outlive its owning test, including that test's own cold preparation: a
 # mutated `core/` source invalidates the owning harness's fixture compile, so the widest owning items are
-# the construction, interaction and catalogue contract lanes, each 690 s or wider once the fixture
-# compile and its node group carry the declared loaded-host bounds. `TIMEOUT` is the default control
-# bound, and a seam may name its own smaller bound; `--seconds` raises the ceiling for one run, so a
-# bound smaller than the owning test's own declared preparation would report an infrastructure timeout
-# instead of the broken rule. No bound is ever above the ceiling this run allows.
-TIMEOUT = 1500
+# the construction and catalogue contract lanes. That width is derived from the declaration those lanes
+# are built from rather than restated here, so a widened preparation or assertion bound cannot leave a
+# control reporting an infrastructure timeout instead of the broken rule. `TIMEOUT` is the default control
+# bound, and a seam may name its own smaller bound; `--seconds` raises the ceiling for one run. No bound is
+# ever above the ceiling this run allows.
+TIMEOUT = max(lane_bounds.construction_lane(), lane_bounds.catalogue_contract_lane())
 BACKUP = ROOT / 'build/verification/seam-backup'
 JOURNAL = BACKUP / 'journal.json'
 
@@ -505,6 +506,9 @@ def observe(seam):
 
 
 RUN_BOUND = TIMEOUT
+# A caller raises the ceiling for one run; the ceiling stays above the derived default so `--seconds`
+# can never lower a control below the owning lane it wraps.
+SECONDS_CEILING = 2 * TIMEOUT
 
 
 def main():
@@ -515,8 +519,8 @@ def main():
     parser.add_argument('--seam', action='append', choices=[s['id'] for s in SEAMS])
     parser.add_argument('--seconds', type=int, default=TIMEOUT)
     args = parser.parse_args()
-    if args.seconds < 1 or args.seconds > 1800:
-        parser.error('--seconds must be 1..1800')
+    if args.seconds < 1 or args.seconds > SECONDS_CEILING:
+        parser.error(f'--seconds must be 1..{SECONDS_CEILING}')
     RUN_BOUND = args.seconds
     selected = [s for s in SEAMS if not args.seam or s['id'] in args.seam]
     if args.list:

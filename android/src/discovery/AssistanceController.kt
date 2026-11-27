@@ -23,7 +23,7 @@ internal class AssistanceController(private val context: Context, private val fa
     // composition; a pause before any attempt has nothing to invalidate.
     @Volatile private var compiled: AssistancePolicy? = null
     private fun lifecycle(): AssistancePolicy = compiled ?: synchronized(this) {
-        compiled ?: AssistancePolicy(context).also { compiled = it }
+        compiled ?: AssistancePolicy(context, resourceLimits).also { compiled = it }
     }
     @Volatile private var foreground = false
     @Volatile private var epoch = 0L
@@ -140,7 +140,7 @@ internal class AssistanceController(private val context: Context, private val fa
         }
     }
     fun presentationFailure(error: Throwable) {
-        api?.let { protocol -> runCatching { EmbeddingLog.traced(context,trace).event("host","failed",target="Assistance",detail=android.util.Log.getStackTraceString(error)) } }
+        api?.let { protocol -> runCatching { EmbeddingLog.traced(context,trace,resourceLimits).event("host","failed",target="Assistance",detail=android.util.Log.getStackTraceString(error)) } }
         suggestion = null; busy = false; failed = true; status = "Help unavailable"
     }
     fun retry() {
@@ -220,7 +220,7 @@ internal class AssistanceController(private val context: Context, private val fa
                 // suggestion, while INVALID rejects this attempt's evidence.
                 val outcome = if (superseded || token.isEmpty()) null else runCatching { lifecycle().failed(token, code, captured.identity) }.getOrNull()?.outcome
                 // The located reason is evidence for Inspect, never user copy.
-                if (code == "STALE" || code == "INVALID") runCatching { EmbeddingLog.traced(context, trace).event("host", "rejected", target = "Assistance", code = code, detail = error.message ?: "") }
+                if (code == "STALE" || code == "INVALID") runCatching { EmbeddingLog.traced(context, trace, resourceLimits).event("host", "rejected", target = "Assistance", code = code, detail = error.message ?: "") }
                 if (token.isEmpty() && code == "STALE") runCatching { finder?.cancel() }
                 post(version) {
                     busy = false

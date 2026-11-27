@@ -73,7 +73,7 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
     /** Null selects local inference. Remote selection is explicit native bootstrap configuration. */
     internal constructor(context: Context, api: ApplicationProtocol, gateway: GenerationGatewayConfig? = null) : this(api,
         if (gateway == null) NanoDiscovery(context.applicationContext) else GatewayDiscovery(gateway), context.applicationContext, { api.refresh() })
-    private val policy = DiscoveryPolicy(context)
+    private val policy = DiscoveryPolicy(context, api.resourceLimits)
     private val worker = Executors.newSingleThreadExecutor()
     private var revision = 0L
     private var closed = false
@@ -92,7 +92,7 @@ class Discovery private constructor(private val api: ApplicationProtocol, privat
         val epoch = revision
         val result = CompletableFuture<DiscoverySuggestion?>()
         pending = result
-        val log = EmbeddingLog(context)
+        val log = EmbeddingLog(context, api.resourceLimits)
         val started = android.os.SystemClock.elapsedRealtime()
         log.event("opportunity", "started", target = inference.target, detail = input.contextJson())
         result.whenComplete { tip, error ->

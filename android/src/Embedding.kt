@@ -69,13 +69,13 @@ class Embedding internal constructor(private val context: Context, internal val 
     @Synchronized private fun storeContext(schema:WireType,json:String):GenerationContext = GenerationContext(id()).also{contexts[it.id]=schema to json}
     @Synchronized fun request(title:String,intent:String,context:GenerationContext):GenerationRequest {
         check(!stopped);require(title.isNotBlank()&&intent.isNotBlank());contextJson(context)
-        return GenerationRequest(id()).also{requests[it.id]=RequestState(title,intent,context,config.contracts.map{CapabilityContract.parse(it.json().toString())},GenerationCancellation(),EmbeddingLog(this.context))}
+        return GenerationRequest(id()).also{requests[it.id]=RequestState(title,intent,context,config.contracts.map{CapabilityContract.parse(it.json().toString())},GenerationCancellation(),EmbeddingLog(this.context,executionLimits))}
     }
     /** Controller-to-mechanism admission preserves the controller's frozen catalogue and trace. */
     @Synchronized internal fun protocolRequest(title:String,intent:String,schema:WireType,json:String,contracts:JSONArray,trace:String):GenerationRequest {
         val facts=storeContext(schema,json);val request=request(title,intent,facts)
         val state=requests.getValue(request.id)
-        requests[request.id]=state.copy(contracts=(0 until contracts.length()).map{CapabilityContract.parse(contracts.getJSONObject(it).toString())},log=EmbeddingLog.traced(context,trace))
+        requests[request.id]=state.copy(contracts=(0 until contracts.length()).map{CapabilityContract.parse(contracts.getJSONObject(it).toString())},log=EmbeddingLog.traced(context,trace,executionLimits))
         return request
     }
     fun generate(request:GenerationRequest):Experience {
@@ -144,7 +144,7 @@ class Embedding internal constructor(private val context: Context, internal val 
     @Synchronized fun liveSessions():List<Session> {sessions.entries.removeAll{runtime.workspace(it.value)==null};return sessions.keys.map{Session(it)}}    @Synchronized fun requestTrace(request:GenerationRequest)=(requests[request.id] ?: error("Invalid request")).log.run
     @Synchronized fun sessionTrace(session:Session):String {val e=experience(session);return runtime.workspace(e.id)!!.session.logTrace()}
     private val observation by lazy{Observation(context)}
-    internal fun controlFailure(operation:String,error:Throwable){EmbeddingLog(context).event("control","failed",operation=operation,code="CONTROL_FAILED")}
+    internal fun controlFailure(operation:String,error:Throwable){EmbeddingLog(context,executionLimits).event("control","failed",operation=operation,code="CONTROL_FAILED")}
     fun events(trace:String,cursor:String,limit:Int)=observation.events(trace,cursor,limit)
     fun artifact(id:String)=observation.artifact(id)
     fun health()=observation.health()

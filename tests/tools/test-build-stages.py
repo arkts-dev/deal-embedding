@@ -571,7 +571,8 @@ elif name=='jar':
         # A harness cannot keep a private literal beside the declaration: each bound it passes comes from
         # the module, so the lane derivation and the stage that stops first read the same number.
         for relative in ('tests/tools/test-catalogue.py','tests/tools/test-catalogue-runtime.py',
-                         'tests/tools/test-construction-contracts.py','tests/tools/test-composer.py',
+                         'tests/tools/test-construction-contracts.py','tests/tools/test-constructive-runtime.py',
+                         'tests/tools/test-composer.py',
                          'tests/tools/test-build-cache.py','tests/tools/test-build-stages.py'):
             source=(ROOT/relative).read_text()
             self.assertIn('import lane_bounds',source,f'{relative} does not read the declared lane bounds')

@@ -29,7 +29,7 @@ internal interface CapabilityHost {
 
 /** Discovery and grants are shared; each isolate owns an independent request/reply session. */
 internal class CapabilityRegistry(private val context: Context, private val discovery: CapabilityDiscovery, local: List<NativeCapabilities>, private val limits: ExecutionLimits) : CapabilityHost, AutoCloseable {
-    private val log = dev.deal.embedding.EmbeddingLog(context)
+    private val log = dev.deal.embedding.EmbeddingLog(context, limits)
     private data class Provider(val contract: CapabilityContract, val local: NativeCapabilities? = null, val endpoint: CapabilityDiscovery.Endpoint? = null) {
         /** The disclosed form: a local registration's per-function class travels with its contract, and a
          * discovered contract already carries the class its provider published. */

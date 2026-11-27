@@ -154,6 +154,9 @@ gate_sequence_policy() {
     # outcome are pinned from production source.
     python3 tests/tools/test-provider-failures.py
     python3 tests/tools/test-cursor.py
+    # The retained observation store: trace selection, page continuations and their bound, artifact
+    # digest and truncation, and recording loss, compiled from production source on a JDK.
+    python3 tests/tools/test-observation-store.py
     python3 tests/tools/test-journey-rules.py
     node tests/tools/test-discovery.js
     node tests/tools/test-discovery-handoff.js
