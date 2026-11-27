@@ -771,9 +771,9 @@ function assembleParts(plan: plans.Plan, definitions: Definitions, choices: sele
       computations[computations.length] = {instance:"parts",field:figure.need+"_text",value:"text_"+figure.need+"(state)",ready:"true",reason:"\"Result unavailable\"",dependencies:["f_parts_"+figure.need]};
       if (figure.shown) { view = view+"When(state."+figure.need+"_text_ready) {ui.Text(text: state."+figure.need+"_text_display)} When(!state."+figure.need+"_text_ready) {ui.Text(text: state."+figure.need+"_text_reason, style: \"muted\")}"; }
     } else if (figure.format === "time_of_day") {
-      if (figure.shown) { view = view+"When(state."+figure.need+"_ready) {ui.ClockText(minutes: state."+figure.need+"_display)} When(!state."+figure.need+"_ready) {ui.Text(text: state."+figure.need+"_reason, style: \"muted\")}"; }
+      if (figure.shown) { view = view+"ui.Text(text: "+literals.quote(figure.label)+") When(state."+figure.need+"_ready) {ui.ClockText(minutes: state."+figure.need+"_display)} When(!state."+figure.need+"_ready) {ui.Text(text: state."+figure.need+"_reason, style: \"muted\")}"; }
     } else {
-      if (figure.shown) { view = view+"When(state."+figure.need+"_ready) {ui.NumberText(value: state."+figure.need+"_display, suffix: "+literals.quote(figure.unit)+", decimals: "+String(figureDecimals)+")} When(!state."+figure.need+"_ready) {ui.Text(text: state."+figure.need+"_reason, style: \"muted\")}"; }
+      if (figure.shown) { view = view+"When(state."+figure.need+"_ready) {ui.NumberText(value: state."+figure.need+"_display, prefix: "+literals.quote(figure.label+": ")+", suffix: "+literals.quote(figure.unit)+", decimals: "+String(figureDecimals)+")} When(!state."+figure.need+"_ready) {ui.Text(text: state."+figure.need+"_reason, style: \"muted\")}"; }
     }
     covers[covers.length] = figure.need;
     if (!s.contains(partKinds,"figure")) { partKinds[partKinds.length] = "figure"; }

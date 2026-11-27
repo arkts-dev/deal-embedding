@@ -621,8 +621,8 @@ export async function presentationCases(): Promise<string> {
   await construction.issueBindings(composition,plan,built,registry,"","{}");
   let result: composer.Result = await composer.assembleWith(composition,built.computations,registry,null);
   let view: string = built.instance.fragment.view;
-  insist(strings.contains(view,"ui.NumberText(value: state.total_display, suffix: \"EUR\", decimals: 2)"),"a numeric figure binds no NumberText with its issued decimals: "+view);
-  insist(strings.contains(view,"ui.ClockText(minutes: state.wake_display)"),"a time_of_day figure binds no ClockText: "+view);
+  insist(strings.contains(view,"ui.NumberText(value: state.total_display, prefix: \"Total: \", suffix: \"EUR\", decimals: 2)"),"a numeric figure binds no NumberText with its issued decimals: "+view);
+  insist(strings.contains(view,"ui.Text(text: \"Wake\") When(state.wake_ready) {ui.ClockText(minutes: state.wake_display)"),"a time_of_day figure loses its label or typed ClockText: "+view);
   insist(strings.contains(view,"ui.NumberText(value: state.total_log_display, prefix: "+s.encode(label+" total: ")+", suffix: \"€\", decimals: 2)"),"the entries total binds no escaped prefix, unit or decimals: "+view);
   insist(strings.contains(result.source.deal,"fixedText_log("),"an entry number field applies no issued decimals to its row text");
   insist(strings.contains(result.source.dealui,s.encode(label+" total: ")),"the escaped label prefix reached the emitted view changed: "+result.source.dealui);
