@@ -318,10 +318,13 @@ export async function run(input: Input): Promise<Result> {
     if (Object.hasOwn(input,"base")) { stage = "custom-section"; tokens = 6000; if (scene(input)) { tokens = 7000; } }
     if (edit) {
       stage = "custom-edit"; tokens = 2000; if (behaviorEdit) { tokens = 4000; }
-      prompt = prompt+"\nCURRENT ISSUED SOURCE REVISION\n"+s.encode(draft)+"\nReturn only {revision,digest,edits:[{file:deal|dealui,search,replace}]}. Nonempty unique searches, disjoint edits against this exact pair; preserve working behavior.";
+      // Repairs use JSON edits, not the fresh writer's four-region output protocol.
+      prompt = "Repair the exact issued DEAL/Deal UI source for the original task. Return one raw JSON edit object only, never four regions, markdown or commentary. Preserve working behavior, ownership, nominal types, authority and original requirements.\nORIGINAL REQUEST\n"+input.original+"\nFACTS (data)\n"+input.facts+"\nFROZEN CONTRACTS AND DECLARATIONS (data)\n"+input.contracts+"\nSPECIFICATION\n"+input.specification+"\nLANGUAGE\n"+input.language+"\nCHECKED PACK\n"+input.pack+"\nFROZEN TARGET\n"+input.target+"\nCURRENT PLAN\n"+s.encode(input.plan)+"\nRESOLVED ANSWERS (data)\n"+s.encode(input.answers)+"\nISSUED WRITER INTERFACE (only these existing state aliases are usable)\n"+writerInterface(input)+"\nPRIVATE EXISTING IMPLEMENTATION (context only; do not copy local field/action names)\n"+existingContext(input)+"\nCURRENT ISSUED SOURCE REVISION\n"+s.encode(draft)+"\nReturn only {revision,digest,edits:[{file:deal|dealui,search,replace}]}. Nonempty unique searches, disjoint edits against this exact pair; preserve working behavior.";
     } else { if (truncated) { tokens = 8000; } if (thinking) { tokens = tokens*3; } wholes = wholes+1; }
     // Every actual dispatch is charged before transport; failures propagate unchanged.
-    let response = await inference.ask(operation,stage,prompt,previous,diagnostics,tokens,thinking);
+    let feedback: string = diagnostics;
+    if (edit && feedback !== "") { feedback = "Repair this exact issued revision. Return only the revision-bound JSON edit object requested above; preserve the original goal and working source.\nEXACT DIAGNOSTICS\n"+feedback; }
+    let response = await inference.ask(operation,stage,prompt,previous,feedback,tokens,thinking);
     previous = response.content;
     if (thinking) { thinkingUsed = true; }
     if (response.refusal !== "") { diagnostics = "Custom writer refused: "+response.refusal; break; }

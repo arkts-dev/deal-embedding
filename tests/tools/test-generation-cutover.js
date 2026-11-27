@@ -166,6 +166,11 @@ async function run(mode){
     assert.equal(snapshot.error,null);assert.equal(snapshot.result.candidateId,'checked-2');
     const edits=asks.filter(r=>r.stage==='custom-edit');assert.equal(edits.length,3);
     assert(edits.every(r=>r.maxTokens===2000));assert.equal(checks,2);
+    assert(edits.every(r=>r.input.startsWith('Repair the exact issued DEAL/Deal UI source')));
+    assert(edits.every(r=>!r.input.includes('Return exactly four regions')));
+    assert(edits.every(r=>r.input.includes('ORIGINAL REQUEST')&&r.diagnostics.includes('EXACT DIAGNOSTICS')));
+    assert(edits.every(r=>r.input.includes('\nCURRENT PLAN\n')&&r.input.includes('\nRESOLVED ANSWERS (data)\n')));
+    assert(edits.every(r=>r.input.includes('\nISSUED WRITER INTERFACE')&&r.input.includes('\nFROZEN TARGET\n')));
     const revisions=edits.map(r=>JSON.parse(r.input.split('\nCURRENT ISSUED SOURCE REVISION\n')[1].split('\nReturn only ')[0]));
     assert.deepEqual(revisions[0],revisions[1]);assert.deepEqual(revisions[1],revisions[2]);
     assert(edits[1].diagnostics.includes('EDIT REJECTED'));assert(edits[2].diagnostics.includes('Missing edit search'));
