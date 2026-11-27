@@ -122,6 +122,9 @@ def main():
     assert rows["NumberText.decimals"] == "finite" and rows["NumberText.minimumDigits"] == "finite"
     assert rows["Progress.value"] == "display-clamp" and rows["Transform.pose"] == "pose"
     assert rows["Sparkline.series"] == "finite"
+    # The ordered numeric range of the two numeric input widgets is issued by the table, so the renderer
+    # carries the same class the Session boundary reads instead of a second rule.
+    assert rows["Slider.maximum"] == "range" and rows["NumberField.maximum"] == "range"
     numeric = {f"{name}.{prop['name']}" for name, component in inventory["components"].items()
                for prop in component["props"] if prop["type"] in ("number", "number[]")}
     assert set(rows) == numeric, sorted(set(rows) ^ numeric)
@@ -245,7 +248,7 @@ def main():
     expect_rejected("PACK_PROP", "NumberText.decimals", *prepared(constraints=presentation_entry))
     # One rejection for every class: a class that contradicts the declared type (or is not the
     # inventory's required entry) rejects at the pack build; the shipped table accepts each class.
-    for constraint_class in ("nonnegative", "positive", "integral-index", "chart", "display-clamp", "pose"):
+    for constraint_class in ("nonnegative", "positive", "integral-index", "chart", "range", "display-clamp", "pose"):
         contradicted = table(lambda entries, c=constraint_class: entries.append({"prop": "Text.text", "class": c}))
         expect_rejected("PACK_PROP", "Text.text", *prepared(constraints=contradicted))
     finite_extra = table(lambda entries: entries.append({"prop": "Button.value", "class": "finite"}))

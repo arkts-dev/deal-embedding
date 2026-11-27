@@ -336,6 +336,17 @@ globalThis.validateRendererValues = (function () {
         if (!(number > (minimum === null ? 0 : minimum))) fault('maximum must exceed minimum');
         return;
       }
+      case 'range': {
+        // The declared numeric range of a numeric input: the upper bound is finite and is never below
+        // the node's own minimum. The renderer's painter hands the pair to Compose's Slider, which
+        // refuses a start above its endInclusive, so an inverted range is decided here, before state,
+        // tree, version or an effect can commit, instead of trapping the surface at paint time.
+        if (number === null || !Number.isFinite(number)) { fault(null); return; }
+        const minimum = numericValue(values, 'minimum');
+        if (minimum !== null && Number.isFinite(minimum) && number < minimum)
+          fault('maximum must not be below minimum');
+        return;
+      }
       case 'pose': {
         const entries = value.kind === 'json' && Array.isArray(value.value) ? value.value : null;
         if (entries === null) { fault(null); return; }

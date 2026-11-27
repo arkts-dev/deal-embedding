@@ -186,6 +186,16 @@ internal object IngressValidation {
                 val minimum = (values["minimum"] as? UiValue.Num)?.value ?: 0.0
                 return if (number > minimum) null else fault("maximum must exceed minimum")
             }
+            "range" -> {
+                // The declared numeric range of a numeric input: the upper bound is finite and is never
+                // below the node's own minimum. The Slider painter hands the pair to Compose's Slider,
+                // which refuses a start above its endInclusive, so the renderer refuses the tree here
+                // instead of composing a range that traps the surface.
+                if (number == null || !number.isFinite()) return fault()
+                val minimum = (values["minimum"] as? UiValue.Num)?.value
+                return if (minimum != null && minimum.isFinite() && number < minimum)
+                    fault("maximum must not be below minimum") else null
+            }
             "pose" -> {
                 val entries = ((value as? UiValue.Json)?.value as? JsonValue.Arr)?.items ?: return fault()
                 if (entries.size != 8) return fault("pose requires exactly eight entries")

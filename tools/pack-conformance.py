@@ -13,8 +13,8 @@ import pathlib
 import sys
 import tempfile
 
-CLASSES = ["finite", "nonnegative", "positive", "integral-index", "chart", "pose", "display-clamp"]
-SCALAR_CLASSES = {"finite", "nonnegative", "positive", "integral-index", "chart", "display-clamp"}
+CLASSES = ["finite", "nonnegative", "positive", "integral-index", "chart", "range", "pose", "display-clamp"]
+SCALAR_CLASSES = {"finite", "nonnegative", "positive", "integral-index", "chart", "range", "display-clamp"}
 
 
 class Rejection(Exception):

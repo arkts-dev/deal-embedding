@@ -2020,6 +2020,10 @@
       "prop": "MetricGroup.columns"
     },
     {
+      "class": "range",
+      "prop": "NumberField.maximum"
+    },
+    {
       "class": "integral-index",
       "prop": "NumberField.step"
     },
@@ -2054,6 +2058,10 @@
     {
       "class": "nonnegative",
       "prop": "Skeleton.width"
+    },
+    {
+      "class": "range",
+      "prop": "Slider.maximum"
     },
     {
       "class": "chart",

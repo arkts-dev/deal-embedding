@@ -100,7 +100,7 @@ fun main(args: Array<String>) {
     check(PropResolution.resolve("Button", listOf(UiProp("nope", UiValue.Text("x")))) is Resolution.Fault)
     check(PropResolution.resolve("Toggle", listOf(text("label", "On"), flag("checked", true))) is Resolution.Resolved)
 
-    // Seven prop-value classes: one acceptance and one rejection each at ingress.
+    // Eight prop-value classes: one acceptance and one rejection each at ingress.
     accepted(node("Button", listOf(text("text", "x"), number("value", 1.0))))
     rejected(node("Button", listOf(text("text", "x"), number("value", Double.NaN))), "PROP_FAULT", "Button", "value", "finite")
     rejected(surface(width = Double.NaN), "PROP_FAULT", "Surface", "width", "nonnegative")
@@ -127,6 +127,24 @@ fun main(args: Array<String>) {
         listOf(node("TableRow", listOf(structured("cells", """["1"]"""))))),
         "PROP_FAULT", "Table", "columns", "integral-index")
     rejected(node("NumberField", listOf(text("label", "n"), number("value", 1.0), number("minimum", 0.0), number("maximum", 9.0), number("step", 0.0))), "PROP_FAULT", "NumberField", "step", "integral-index")
+    // The issued numeric range of the two numeric input widgets: the upper bound is finite and is never
+    // below the node's own minimum. The Slider painter hands the pair to Compose's Slider, which refuses
+    // a start above its endInclusive, so the renderer refuses that tree instead of composing a trap.
+    fun slider(minimum: Double, maximum: Double, value: Double = 5.0) = node("Slider",
+        listOf(text("label", "Rating"), number("value", value), number("minimum", minimum),
+               number("maximum", maximum), action("onChange")))
+    accepted(slider(1.0, 10.0))
+    accepted(slider(10.0, 10.0))
+    accepted(slider(0.0, 10.0, value = 0.0))
+    rejected(slider(10.0, 0.0), "PROP_FAULT", "Slider", "maximum", "range")
+    rejected(slider(1.0, Double.NaN), "PROP_FAULT", "Slider", "maximum", "range")
+    rejected(slider(1.0, Double.POSITIVE_INFINITY), "PROP_FAULT", "Slider", "maximum", "range")
+    fun numberField(maximum: Double, minimum: Double = 0.0, value: Double = 5.0) =
+        node("NumberField", listOf(text("label", "n"), number("value", value), number("minimum", minimum),
+                                  number("maximum", maximum)))
+    accepted(numberField(10.0))
+    accepted(numberField(7.0, minimum = 7.0, value = 7.0))
+    rejected(numberField(6.0, minimum = 7.0), "PROP_FAULT", "NumberField", "maximum", "range")
     accepted(node("Select", listOf(structured("labels", "[]"), number("selected", -1.0))))
     rejected(node("Select", listOf(structured("labels", """["a"]"""), number("selected", 3.0))),
         "PROP_FAULT", "Select", "selected", "integral-index")
@@ -968,5 +986,5 @@ fun main(args: Array<String>) {
         "an unparseable projection must be a located ADMISSION_PACK: $corrupt"
     }
 
-    println("renderer rules: metadata, resolution, seven classes, presentation, style, payloads, graphics, card, dispatch, tabs panels, drafts, display vocabulary, container and chart modes, text-field feedback, draft conversion, motion, pose, stage ordering and path rotation passed")
+    println("renderer rules: metadata, resolution, eight classes, presentation, style, payloads, graphics, card, dispatch, tabs panels, drafts, display vocabulary, container and chart modes, text-field feedback, draft conversion, motion, pose, stage ordering and path rotation passed")
 }

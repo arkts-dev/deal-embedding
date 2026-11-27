@@ -201,6 +201,11 @@ assert.equal(snapshot.fault, '', 'a committed candidate keeps a fault: ' + snaps
 const fresh = lane('screen');
 assert.throws(() => fresh.mount(fresh.root([fresh.node('Progress', {label:'done', value:1, maximum:0})])),
               /PROP_FAULT: Progress\.maximum \[positive\]/, 'invalid initial tree published');
+// The reproduced defect: a Slider whose minimum is above its maximum used to mount, commit and reach
+// Compose unchanged, where the empty range traps the surface. The first tree is refused like any other.
+const freshSlider = lane('screen');
+assert.throws(() => freshSlider.mount(freshSlider.root([freshSlider.node('Slider', {label:'Rating', value:5, minimum:10, maximum:0, onChange:1})])),
+              /PROP_FAULT: Slider\.maximum \[range\]: maximum must not be below minimum/, 'an inverted slider range mounted');
 
 // A Session without its issued pack facts fails closed instead of committing unvalidated candidates.
 const unissued = lane(null);
@@ -320,6 +325,25 @@ fault = refused(screen, stable(screen), screen.root([field({}), screen.node('Num
 assert.match(fault, /PROP_FAULT: NumberText\.minimumDigits: presentation/, 'the padding rule is not named: ' + fault);
 refused(screen, stable(screen), screen.root([field({}), screen.node('NumberText', {value:1.5, minimumDigits:2.5})]), 'fractional padding digits');
 
+// The issued numeric range of the two numeric input widgets: the upper bound is finite and is never
+// below the node's own minimum. The painter hands the pair to Compose's Slider(valueRange = ...),
+// which refuses a start above its endInclusive, so an inverted range is refused here instead of
+// committing a tree that traps the surface at paint time.
+const slider = overrides => screen.node('Slider', Object.assign({label:'Rating', value:5, minimum:1, maximum:10, onChange:1}, overrides));
+committedLane(screen, screen.root([field({}), slider({})]), 'an ordered slider range');
+committedLane(screen, screen.root([field({}), slider({minimum:10, maximum:10})]), 'a single-point slider range');
+committedLane(screen, screen.root([field({}), slider({minimum:0, maximum:10, value:0})]), 'a slider value at its minimum');
+fault = refused(screen, stable(screen), screen.root([field({}), slider({minimum:10, maximum:0})]), 'inverted slider range');
+assert.match(fault, /PROP_FAULT: Slider\.maximum \[range\]: maximum must not be below minimum/, 'the inverted slider range is not located: ' + fault);
+fault = refused(screen, stable(screen), screen.root([field({}), slider({minimum:1, maximum:NaN})]), 'nonfinite slider maximum');
+assert.match(fault, /PROP_FAULT: Slider\.maximum \[range\]/, 'a nonfinite slider maximum is not refused by its class: ' + fault);
+const numberInput = overrides => screen.node('NumberField', Object.assign({label:'n', value:5, minimum:0, maximum:10, step:1}, overrides));
+committedLane(screen, screen.root([field({}), numberInput({})]), 'an ordered number-field range');
+committedLane(screen, screen.root([field({}), numberInput({minimum:7, maximum:7, value:7})]), 'a single-point number-field range');
+fault = refused(screen, stable(screen), screen.root([field({}), numberInput({minimum:7, maximum:6})]), 'inverted number-field range');
+assert.match(fault, /PROP_FAULT: NumberField\.maximum \[range\]: maximum must not be below minimum/, 'the inverted number-field range is not located: ' + fault);
+refused(screen, stable(screen), screen.root([field({}), numberInput({minimum:-Infinity, maximum:0})]), 'nonfinite number-field minimum');
+
 // The remaining component-scoped rules of the same table.
 fault = refused(screen, stable(screen), screen.root([screen.node('Tabs', {labels:['a'], selected:0}, [screen.node('Text', {text:'one'}), screen.node('Text', {text:'two'})])]), 'a label without its child');
 assert.match(fault, /PROP_FAULT: Tabs\.selected \[integral-index\]: one label per child/, 'the label-per-child rule is not named: ' + fault);
@@ -406,6 +430,12 @@ assert.equal(report.tree, '', 'a refused initial candidate published a tree');
 assert.equal(report.diagnostics, 'CHECK_PROP: Progress.maximum positive', report.diagnostics);
 report = checked.check(checked.root([checked.node('Transform', {pose:identity, durationMs:-1})]));
 assert.equal(report.diagnostics, 'CHECK_PROP: Transform.durationMs nonnegative', report.diagnostics);
+// The reproduced Slider range: the checker reports the same issued rule as a located diagnostic and
+// activates nothing, so bounded repair can route the writer's defect instead of the surface trapping.
+report = checked.check(checked.root([checked.node('Slider', {label:'Rating', value:5, minimum:10, maximum:0, onChange:1})]));
+assert.equal(report.ok, false, 'the checker activated an inverted slider range');
+assert.equal(report.tree, '', 'a refused slider candidate published a tree');
+assert.equal(report.diagnostics, 'CHECK_PROP: Slider.maximum range: maximum must not be below minimum', report.diagnostics);
 const checkedCard = lane('card');
 report = checkedCard.check(checkedCard.root([checkedCard.node('Surface', {width:10, height:10, shapes:shapes(61)})]));
 assert.equal(report.diagnostics, 'CHECK_CARD: Surface.shapes (60): shape limit per picture', report.diagnostics);
@@ -440,6 +470,19 @@ report = stepping.step('handler', 0, null);
 assert.equal(report.ok, false, 'a synthetic handler activated an invalid candidate');
 assert.equal(report.diagnostics, 'CHECK_PROP: Progress.maximum positive', report.diagnostics);
 assert.deepEqual(JSON.parse(report.tree), JSON.parse(JSON.stringify(accepted)), 'the checker adopted the degraded candidate tree');
+// The inverted Slider range is refused on the same synthetic transition path, so a generated view that
+// produces it through a handler or frame step reports the located rule instead of composing a trap.
+const invalidSliderStep = stepping.root([stepping.node('Surface', {width:10, height:10, shapes:shapes(1), onFrame:0, onPointer:2}),
+  stepping.node('Slider', {label:'Rating', value:5, minimum:10, maximum:0, onChange:1})]);
+stepping.next(invalidSliderStep);
+report = stepping.step('event', 0, 16);
+assert.equal(report.ok, false, 'a synthetic frame step activated an inverted slider range');
+assert.equal(report.diagnostics, 'CHECK_PROP: Slider.maximum range: maximum must not be below minimum', report.diagnostics);
+assert.deepEqual(JSON.parse(report.tree), JSON.parse(JSON.stringify(accepted)), 'the checker adopted the inverted slider tree');
+stepping.next(invalidSliderStep);
+report = stepping.step('handler', 0, null);
+assert.equal(report.ok, false, 'a synthetic handler activated an inverted slider range');
+assert.deepEqual(JSON.parse(report.tree), JSON.parse(JSON.stringify(accepted)), 'the checker adopted the inverted slider tree');
 
 // ------------------------------------------------- the mirrored spec mechanisms
 
@@ -503,6 +546,7 @@ for (const [what, admission, renderer] of [
   ['pose length', /entries\.length !== 8/, /entries\.size != 8/],
   ['pose opacity', /opacity < 0 \|\| opacity > 1/, /opacity\.value < 0 \|\| opacity\.value > 1/],
   ['select-empty index', /number !== -1/, /number == -1\.0/],
+  ['ordered range', /number < minimum/, /number < minimum/],
   ['display-clamp finiteness', /fault\('progress value must be finite'\)/, /fault\("progress value must be finite"\)/],
 ]) {
   assert.match(admissionSource, admission, 'the admission ' + what + ' rule drifted from the renderer');
