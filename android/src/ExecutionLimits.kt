@@ -1,5 +1,12 @@
 package dev.deal.embedding
 
+/**
+ * The pending calls and buffered replies one capability session holds on either leg of the transport.
+ * The buffered budget is this many messages at the configured [ExecutionLimits.capabilityBytes], so a
+ * lane that fills its slots drains before more work is admitted instead of dropping a result.
+ */
+internal const val CAPABILITY_SLOTS = 8
+
 /** Native containment and the host-configured deadlines of one embedding instance.
  *
  * Every bound is finite and positive and is validated from host configuration before any work
@@ -11,7 +18,11 @@ package dev.deal.embedding
  *
  * `failureCodeChars` and `failureMessageChars` bound what one provider failure may publish: its own typed
  * code and message travel through the local and Binder legs and are shortened to these widths, never
- * replaced by a substitute code or reason.
+ * replaced by a substitute code or reason. `capabilityBytes` is the capability transport bound of one
+ * message on this side of the Binder, and the buffered reply budget is [CAPABILITY_SLOTS] such messages.
+ *
+ * A provider application declares the same two bounds for its own leg (`ProviderTransport`): neither leg
+ * of the capability transport keeps an adapter literal where its host states a bound.
  *
  * Exhaustion is operational, never a source diagnostic that authorizes repair: a sandbox timeout
  * releases the sandbox and fails the operation, and a provider that passes its deadline fails with
@@ -40,6 +51,10 @@ data class ExecutionLimits(
      * rewritten, so a host that configures a narrower or a wider bound changes only their width. */
     val failureCodeChars: Int = 64,
     val failureMessageChars: Int = 200,
+    /** The capability transport bound of one message on this side of the Binder: the arguments of one
+     * request or the value of one reply, measured as the UTF-8 bytes of its JSON encoding. A message past
+     * it is refused, typed and located, before any work; nothing is truncated. */
+    val capabilityBytes: Int = 16 * 1024,
 ) {
     init {
         require(evaluationTimeoutMs > 0 && heapBytes > 0 && inputBytes > 0 && transferBytes > 0 &&
@@ -48,6 +63,7 @@ data class ExecutionLimits(
             "Probe bounds and deadlines must be positive"
         }
         require(failureCodeChars > 0 && failureMessageChars > 0) { "Failure bounds must be positive" }
+        require(capabilityBytes > 0) { "The capability transport bound must be positive" }
     }
 
     /** The terminal instant of one provider call admitted at [now]. The adapter never decides it. */

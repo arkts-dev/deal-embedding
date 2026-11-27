@@ -122,7 +122,10 @@ internal class CapabilityRegistry(private val context: Context, private val disc
         private val pending = mutableMapOf<Int, Pending>()
         private val replies = mutableListOf<JSONObject>()
         private var nextId = 1L
-        private val maximumBufferedBytes=128*1024
+        // The buffered budget is the host-configured transport bound of one message per slot: raising the
+        // bound admits a bigger legitimate reply and lowering it tightens the leg, and neither leg decides
+        // a width of its own.
+        private val maximumBufferedBytes=limits.capabilityBytes*CAPABILITY_SLOTS
         private fun bufferedBytes()=replies.sumOf{it.toString().toByteArray().size}+pending.values.sumOf{it.bytes}
         private var ended = false
         private fun live() { check(!closed && !ended) { "Capability session is closed" } }
@@ -162,9 +165,9 @@ internal class CapabilityRegistry(private val context: Context, private val disc
             live()
             val id = request.opt("id")
             require(id is Int && id.toLong() == nextId) { "Invalid capability request id: expected $nextId" }
-            check(pending.size+replies.size<8 && bufferedBytes()<=maximumBufferedBytes-16*1024){"Capability buffer full; drain replies before admitting more work"}
+            check(pending.size+replies.size<CAPABILITY_SLOTS && bufferedBytes()<=maximumBufferedBytes-limits.capabilityBytes){"Capability buffer full; drain replies before admitting more work"}
             nextId++
-            if(request.toString().toByteArray().size>16*1024){fail(id,"LIMIT","Capability request too large");return@synchronized}
+            if(request.toString().toByteArray().size>limits.capabilityBytes){fail(id,"LIMIT","Capability request exceeds the configured transport bound of "+limits.capabilityBytes+" bytes");return@synchronized}
             log.event("transport", "received", operation = "$identity:$id", target = request.optString("module") + "." + request.optString("function"), detail = request.toString(), span = "$identity:$id")
             val provider = providers[request.optString("module")]
             val function = provider?.contract?.functions?.singleOrNull { it.name == request.optString("function") }
@@ -177,7 +180,7 @@ internal class CapabilityRegistry(private val context: Context, private val disc
             // local or remote provider. A refused call dispatches nothing and publishes only its refusal.
             val refusal = calls.admit(provider.contract.module, function.name, args.toString(), allowed(provider.contract.module))
             if (refusal != null) { fail(id, refusal.code, refusal.reason); return@synchronized }
-            if (pending.size >= 8) { fail(id, "LIMIT", "Too many pending requests"); return@synchronized }
+            if (pending.size >= CAPABILITY_SLOTS) { fail(id, "LIMIT", "Too many pending requests"); return@synchronized }
             if (provider.local != null) {
                 val value = try { calls.invoke(provider.local,function,args,InvocationContext(log.experienceIdentity)) }
                     catch (error: Exception) { fail(id, ProviderFailure.answered(error, limits.failureBounds())); return@synchronized }
@@ -185,12 +188,12 @@ internal class CapabilityRegistry(private val context: Context, private val disc
                 // is a failure of the call it already ran, not of a call that never happened.
                 try { calls.check(provider.local,function,value) }
                     catch (_: Exception) { lost(id, "BAD_RESPONSE", "Host response failed validation", function, provider); return@synchronized }
-                if (JSONArray().put(value).toString().toByteArray().size > 16*1024) { lost(id, "BAD_RESPONSE", "Host response too large", function, provider); return@synchronized }
+                if (JSONArray().put(value).toString().toByteArray().size > limits.capabilityBytes) { lost(id, "BAD_RESPONSE", "Host response exceeds the configured transport bound", function, provider); return@synchronized }
                 success(id,value)
                 return@synchronized
             }
             val endpoint = provider.endpoint!!
-            val item = Pending(id, "$identity:$id", provider, function, limits.providerDeadline(now), epoch(provider.contract.module) ?: run{fail(id,"REVOKED","Capability access revoked");return@synchronized},16*1024)
+            val item = Pending(id, "$identity:$id", provider, function, limits.providerDeadline(now), epoch(provider.contract.module) ?: run{fail(id,"REVOKED","Capability access revoked");return@synchronized},limits.capabilityBytes)
             pending[id] = item
             val callback = object : ICapabilityResult.Stub() {
                 private fun authenticate() { require(Binder.getCallingUid() == endpoint.uid && context.packageManager.getPackagesForUid(endpoint.uid)?.contains(endpoint.component.packageName) == true) { "Unauthenticated provider callback" } }
@@ -198,8 +201,8 @@ internal class CapabilityRegistry(private val context: Context, private val disc
                     authenticate()
                     if (pending[id] !== item || key != item.key || ended || closed) { log.event("transport", "discarded", operation = item.key, code = "STALE_CALLBACK"); return@synchronized }
                     if (epoch(provider.contract.module)!=item.permission) { lost(id, "REVOKED", "Capability access revoked", function, provider); return@synchronized }
+                    if (valueJson.toByteArray().size > limits.capabilityBytes) { lost(id, "BAD_RESPONSE", "Provider response exceeds the configured transport bound", function, provider); return@synchronized }
                     try {
-                        require(valueJson.toByteArray().size <= 16 * 1024)
                         val values = JSONArray(valueJson); require(values.length() == 1)
                         val value = values.get(0); function.result.validate(value)
                         success(id, value)

@@ -141,9 +141,11 @@ internal class UiSession(private val context: Context, private val broker: Capab
         // without a renderer event, a published version or a host poll.
         driveSession(android.os.SystemClock.elapsedRealtime())
         val encoded = evaluate(DealSessionBindings.requests)
-        check(encoded.toByteArray().size <= 16 * 1024) { "Capability request batch too large" }
+        // The batch budget is the host-configured transport bound of one message per slot, exactly as the
+        // capability registry buffers it, so a host that widens or narrows its bound is not overruled here.
+        check(encoded.toByteArray().size <= config.execution.capabilityBytes * CAPABILITY_SLOTS) { "Capability request batch too large" }
         val requests = JSONArray(encoded)
-        check(requests.length() <= 8) { "Capability request batch too large: " + requests.length() + " pending" }
+        check(requests.length() <= CAPABILITY_SLOTS) { "Capability request batch too large: " + requests.length() + " pending" }
         val now = android.os.SystemClock.elapsedRealtime()
         val capabilities = checkNotNull(capabilitySession) { "UI session is not mounted" }
         // A public probe is admitted on this lane and answered on a later one, so a slow destination

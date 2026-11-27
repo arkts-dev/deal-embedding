@@ -153,6 +153,9 @@ gate_sequence_policy() {
     # compiled and executed, and the two Android-only call sites, the configured bound and the observed
     # outcome are pinned from production source.
     python3 tests/tools/test-provider-failures.py
+    # The capability transport: a provider handler on a bounded background lane, never on the provider
+    # application's UI thread, one typed terminal reply, and a host-configured message bound on both legs.
+    python3 tests/tools/test-provider-transport.py
     python3 tests/tools/test-cursor.py
     # The retained observation store: trace selection, page continuations and their bound, artifact
     # digest and truncation, and recording loss, compiled from production source on a JDK.

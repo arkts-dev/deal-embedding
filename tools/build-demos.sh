@@ -228,7 +228,7 @@ if [[ -z "$library_output_key" || ! -f "$library_stamp" || "$(<"$library_stamp")
             'dev/deal/embedding/Wire*' 'dev/deal/embedding/CapabilityContract*' \
             'dev/deal/embedding/CapabilityFunction*' 'dev/deal/embedding/Parameter*' \
             'dev/deal/embedding/capabilities/CapabilityService*' 'dev/deal/embedding/capabilities/NativeCapabilities*' \
-            'dev/deal/embedding/capabilities/ICapability*')
+            'dev/deal/embedding/capabilities/ProviderTransport*' 'dev/deal/embedding/capabilities/ICapability*')
         jar --create --file build/capability-api.jar -C build/capability-api .
         printf '%s\n' "$library_key" > "$library_stamp"
         python3 tools/build-cache.py build/embedding-library/deal-embedding.aar build/capability-api.jar build/embedding-consumer/classes.jar build/embedding-consumer/assets > "$library_output_stamp"

@@ -4,24 +4,23 @@ import dev.deal.embedding.*
 import android.app.Service
 import android.content.Intent
 import android.os.*
-import org.json.*
 
 /** Generic publication/invocation. Providers own handlers, caller policy and consent. */
 abstract class CapabilityService : Service() {
     protected abstract val capabilities: NativeCapabilities
     protected abstract fun authorize(uid: Int): Boolean
     protected abstract fun consent(): Boolean
-    private val handler = Handler(Looper.getMainLooper())
-    private data class Work(val uid: Int, val callback: ICapabilityResult, val death: IBinder.DeathRecipient, val runnable: Runnable)
-    private val pending = mutableMapOf<String, Work>()
+    /**
+     * The provider application's own leg of the capability transport. The provider is a host here, so it
+     * states the message bound and the lane width its handlers run on instead of inheriting an adapter
+     * literal; the consuming embedding states the bound on its side ([ExecutionLimits.capabilityBytes]).
+     */
+    protected open val transport: ProviderTransport get() = ProviderTransport()
+    /** Admission on the Binder thread, the handler on the bounded background lane, one typed reply. */
+    private val dispatch by lazy { ProviderDispatch(capabilities, { consent() }, transport) }
     /** Providers call this when their own consent state changes, regardless of its storage. */
-    @Synchronized protected fun consentChanged() {
-        if (!consent()) pending.keys.toList().forEach { id -> remove(id)?.let { failure(it.callback, id, ProviderFailure.refused("PROVIDER_REVOKED", "Provider access revoked", FailureBounds.TRANSPORT)) } }
-    }
+    protected fun consentChanged() { dispatch.revoke() }
     private fun caller(): Int = Binder.getCallingUid().also { if (!authorize(it)) throw SecurityException("Caller is not authorized by provider") }
-    private fun remove(id: String): Work? = pending.remove(id)?.also {
-        handler.removeCallbacks(it.runnable); try { it.callback.asBinder().unlinkToDeath(it.death, 0) } catch (_: Exception) {}
-    }
     /**
      * One typed failure of this provider, published inside the transport's declared width. The provider's own
      * code and message cross Binder unchanged, so the consumer never has to substitute a code or a reason; the
@@ -32,32 +31,28 @@ abstract class CapabilityService : Service() {
     private fun failure(callback: ICapabilityResult, id: String, failure: ProviderFailure) {
         try { callback.failure(id, failure.code, failure.message) } catch (_: RemoteException) {}
     }
+    /** One admitted call's reply, beside the waiting caller's lifetime: its death retires the call. */
+    private inner class BinderReply(private val id: String, private val callback: ICapabilityResult) : ProviderDispatch.Reply {
+        private val death = IBinder.DeathRecipient { dispatch.abandon(id) }
+        override fun admitted(id: String) {
+            try { callback.asBinder().linkToDeath(death, 0) } catch (_: Exception) { dispatch.abandon(id) }
+        }
+        override fun success(id: String, value: String) {
+            try { callback.success(id, value) } catch (_: RemoteException) {}
+        }
+        override fun failure(id: String, failure: ProviderFailure) { this@CapabilityService.failure(callback, id, failure) }
+        override fun retired(id: String) {
+            try { callback.asBinder().unlinkToDeath(death, 0) } catch (_: Exception) {}
+        }
+    }
     private val binder = object : ICapabilityService.Stub() {
         override fun describe(): String { caller(); return capabilities.disclosure() }
-        override fun invoke(id: String, name: String, arguments: String, callback: ICapabilityResult) = synchronized(this@CapabilityService) {
+        override fun invoke(id: String, name: String, arguments: String, callback: ICapabilityResult) {
             val uid = caller()
-            val sequence=id.substringAfter(':',"").toLongOrNull()
-            require(id.matches(Regex("[a-f0-9-]{36}:[1-9][0-9]{0,9}")) && sequence!=null && sequence<=Int.MAX_VALUE && arguments.toByteArray().size <= 16 * 1024)
-            if (!consent()) { failure(callback, id, ProviderFailure.refused("PROVIDER_DENIED", "Provider owner has not allowed access", FailureBounds.TRANSPORT)); return@synchronized }
-            require(pending.size < 8 && !pending.containsKey(id))
-            val args = JSONArray(arguments)
-            capabilities.contract.functions.single { it.name == name }.validateArguments(args)
-            val death = IBinder.DeathRecipient { synchronized(this@CapabilityService) { remove(id) } }
-            val runnable = Runnable { synchronized(this@CapabilityService) {
-                val item = remove(id) ?: return@synchronized
-                if (!consent()) failure(item.callback, id, ProviderFailure.refused("PROVIDER_REVOKED", "Provider access revoked", FailureBounds.TRANSPORT))
-                else try {
-                    val result = JSONArray().put(capabilities.invoke(name, args)).toString()
-                    require(result.toByteArray().size <= 16 * 1024)
-                    item.callback.success(id, result)
-                } catch (_: RemoteException) {} catch (error: Exception) { failure(item.callback, id, ProviderFailure.answered(error, FailureBounds.TRANSPORT)) }
-            } }
-            callback.asBinder().linkToDeath(death, 0)
-            pending[id] = Work(uid, callback, death, runnable)
-            handler.post(runnable)
+            dispatch.admit(uid, id, name, arguments, BinderReply(id, callback))
         }
-        override fun cancel(id: String) = synchronized(this@CapabilityService) { val uid = caller(); if (pending[id]?.uid == uid) remove(id); Unit }
+        override fun cancel(id: String) { dispatch.cancel(caller(), id) }
     }
     final override fun onBind(intent: Intent): IBinder = binder
-    override fun onDestroy() { synchronized(this) { pending.keys.toList().forEach { remove(it) } }; super.onDestroy() }
+    override fun onDestroy() { dispatch.close(); super.onDestroy() }
 }

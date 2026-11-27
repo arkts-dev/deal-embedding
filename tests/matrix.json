@@ -1473,12 +1473,36 @@
       ]
     },
     {
+      "id": "capability-transport",
+      "family": "provider-invocation",
+      "owner": "execution-provider-workflows-and-persistence",
+      "requirement": "A provider handler runs on a bounded background lane and never on the provider application's UI thread, so a blocking provider leaves that UI responsive and the consuming host's configured deadline still applies; one call admits one typed terminal reply, and cancellation and consent revocation retire it so a later result publishes nothing. The capability transport bound of one request and one reply is host configuration on both legs, and a message past it is a typed, located refusal before any work.",
+      "status": "covered",
+      "test": "python3 tests/tools/test-provider-transport.py",
+      "seam": "provider-lane",
+      "sources": [
+        "tests/tools/fixtures/ProviderTransportTest.kt"
+      ],
+      "evidence": "android/src/capabilities/ProviderDispatch.kt is the one provider invocation queue: admission on the Binder thread validates the call identity, refuses a message past ProviderTransport.messageBytes with the located LIMIT refusal and a denial of consent with PROVIDER_DENIED before any work exists, then queues the handler on ProviderLane. The lane is a fixed-width background executor, so a blocking handler holds a lane thread only: the admitting caller returns at once, another admitted call settles while it blocks, and the width the host declared is the width the handlers use. One terminal reply per call, a cancellation, a death and a revoked consent retire the call so a handler that answers later publishes nothing. The consuming host owns the terminal instant of a call: CapabilityRegistry retires a pending call at limits.providerDeadline(now) with its own TIMEOUT whatever the provider thread is doing, and neither ProviderDispatch, ProviderLane nor CapabilityService keeps a clock or a deadline that could extend it. The transport bound is host configuration on both legs: ExecutionLimits.capabilityBytes for the consuming side (the registry's per-message checks, the buffered budget of CAPABILITY_SLOTS messages and the Session's outbound batch) and ProviderTransport.messageBytes for the provider application, whose service takes both from its overridable transport declaration; neither leg keeps 16 KiB or 128 KiB as an adapter literal. The production queue, lane, block and provider failure unit are compiled with their fixture on a JDK and executed: acceptance at the configured bound, rejection one byte over it before the handler runs with a typed LIMIT refusal naming the bound, acceptance after the host raises the bound, the handler running on a deal-provider lane thread rather than the admitting thread, a blocking handler not blocking the caller and not starving the next call, a one-thread lane running one handler at a time, cancellation, death and revocation retiring a call and dropping a late result, a blocked provider at the configured deadline with the retired call's late reply discarded, and a closed service retiring its work and admitting nothing more. Because CapabilityService is an Android Service over Binder, its call sites are pinned from production source: admission on the Binder thread, the queue construction, the background executor, the typed refusals and the absence of any looper, handler, clock or deadline on the provider leg.",
+      "asserts": [
+        "a provider handler must never be posted to the application main looper",
+        "provider handlers run on a fixed-width background lane",
+        "the handler is queued on the lane instead of being invoked on the caller thread",
+        "a provider call is retired at the configured deadline whatever the provider thread is doing",
+        "the provider application declares its own transport bound and lane width",
+        "every capability message bound of the consuming leg is the configured one: ",
+        "a leg must not keep the transport bound as an adapter literal: ",
+        "an over-bound request is refused before the handler is reached",
+        "an over-bound request is a typed, located refusal that names the configured bound"
+      ]
+    },
+    {
       "id": "provider-invocation",
       "family": "provider-invocation",
       "owner": "execution-provider-workflows-and-persistence",
       "requirement": "A provider call validates its positional arguments and its reply against the disclosed contract, enforces the host-configured deadline, invalidates bindings on a contract change and returns the provider error code unchanged.",
       "status": "partial",
-      "blocker": "Argument and reply validation, deadline enforcement and binding invalidation run in android/src/capabilities/CapabilityRegistry.kt over an Android binder and a live grant epoch; the deterministic lane proves the contract boundary (disclosure-bounds) and the configured block (resource-bounds) only. Remaining AC-11 obligations: the capability request and reply buffers still carry adapter literals (128 KiB buffered, 16 KiB per message) rather than a host-configured transport bound; on-device inference awaits still take adapter literals (android/src/discovery/NanoDiscovery.kt) and two host waits are unbounded (ApplicationProtocol.kt:53, ProtocolController.kt:131); storage performs no wait, so it has no bound to configure; and native exhaustion of an evaluation, heap or provider bound is classified as an execution failure by android/src/ExperienceRuntime.kt only, with no deterministic or device item observing it. The four sandbox call sites that used to keep the library defaults now take the host block, and the resource-bounds row proves it from production source and from the compiled block."
+      "blocker": "Argument and reply validation, deadline enforcement and binding invalidation run in android/src/capabilities/CapabilityRegistry.kt over an Android binder and a live grant epoch; the deterministic lane proves the contract boundary (disclosure-bounds), the configured block (resource-bounds) and the transport itself (capability-transport) only. Remaining AC-11 obligations: on-device inference awaits still take adapter literals (android/src/discovery/NanoDiscovery.kt) and two host waits are unbounded (ApplicationProtocol.kt:53, ProtocolController.kt:131); storage performs no wait, so it has no bound to configure; and native exhaustion of an evaluation, heap or provider bound is classified as an execution failure by android/src/ExperienceRuntime.kt only, with no deterministic or device item observing it. The four sandbox call sites that used to keep the library defaults now take the host block, and the resource-bounds row proves it from production source and from the compiled block."
     },
     {
       "id": "persistence-codec",

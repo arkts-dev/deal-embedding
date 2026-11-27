@@ -6,9 +6,10 @@ A provider exception becomes a typed failure that keeps the provider's own `Erro
 outcome of the call; a refusal or a provider's own answer is definite, and only an external mutation whose
 transport failed after the call left the lane is unknown. The decision is one production unit,
 `android/src/capabilities/ProviderFailure.kt`, which both transport legs use: this item compiles and executes it
-with its fixture, then pins the two Android-only call sites - the provider process' Binder service and the
-consuming registry - from production source, including the configured bound, the custom codes, the long
-messages, the uncertain mutation, the correlation guard and the observation that keeps the outcome.
+with its fixture, then pins the Android-only call sites - the provider process' Binder service, the provider
+queue that runs its handlers off the UI thread and the consuming registry - from production source, including
+the configured bound, the custom codes, the long messages, the uncertain mutation, the correlation guard and
+the observation that keeps the outcome.
 
 It needs Kotlin (``KOTLIN_HOME``, default ``/snap/kotlin/current``), a JDK ``java`` and the shared
 checksum-pinned ``org.json`` jar.
@@ -33,6 +34,7 @@ SOURCES = [
     'tests/tools/fixtures/ProviderFailureTest.kt',
 ]
 SERVICE = 'android/src/capabilities/CapabilityService.kt'
+DISPATCH = 'android/src/capabilities/ProviderDispatch.kt'
 REGISTRY = 'android/src/capabilities/CapabilityRegistry.kt'
 SESSION = 'android/src/execution/UiSession.kt'
 LIMITS = 'android/src/ExecutionLimits.kt'
@@ -74,23 +76,28 @@ class ProviderFailureTest(unittest.TestCase):
 
     def test_the_service_preserves_a_provider_failure_across_binder(self):
         service = flat(SERVICE)
+        dispatch = flat(DISPATCH)
         # The provider's own typed failure is what crosses Binder: no generic code replaces a custom one and no
         # generic reason replaces the provider's message.
+        matched, description = expect(service, 'try { callback.failure(id, failure.code, failure.message) } catch (_: RemoteException) {}',
+                                     'the provider failure crosses Binder with its own code and message')
+        self.assertTrue(matched, description)
+        # The provider queue decides those failures on the lane the handler runs on, so the decision moved with
+        # the handler and the service above only publishes it.
         for expected, message in [
-            ('try { callback.failure(id, failure.code, failure.message) } catch (_: RemoteException) {}',
-             'the provider failure crosses Binder with its own code and message'),
-            ('failure(item.callback, id, ProviderFailure.answered(error, FailureBounds.TRANSPORT))',
+            ('ProviderFailure.answered(error, FailureBounds.TRANSPORT)',
              'a provider exception becomes the typed failure it raised'),
-            ('failure(callback, id, ProviderFailure.refused("PROVIDER_DENIED", "Provider owner has not allowed access", FailureBounds.TRANSPORT))',
+            ('ProviderFailure.refused("PROVIDER_DENIED", "Provider owner has not allowed access", FailureBounds.TRANSPORT)',
              'a consent denial stays its own classified refusal'),
             ('ProviderFailure.refused("PROVIDER_REVOKED", "Provider access revoked", FailureBounds.TRANSPORT)',
              'a revocation of work that never ran stays a definite refusal'),
         ]:
-            matched, description = expect(service, expected, message)
+            matched, description = expect(dispatch, expected, message)
             self.assertTrue(matched, description)
-        self.assertEqual(0, service.count('PROVIDER_ERROR'), 'a provider failure must never be rewritten to a generic code')
-        self.assertEqual(0, service.count('take(200)'), 'the transport must take its message width from the declared bound')
-        self.assertEqual(0, service.count('"Provider operation failed"'), 'a provider failure must never be rewritten to a generic reason')
+        for transport in (service, dispatch):
+            self.assertEqual(0, transport.count('PROVIDER_ERROR'), 'a provider failure must never be rewritten to a generic code')
+            self.assertEqual(0, transport.count('take(200)'), 'the transport must take its message width from the declared bound')
+            self.assertEqual(0, transport.count('"Provider operation failed"'), 'a provider failure must never be rewritten to a generic reason')
 
     def test_the_registry_publishes_the_typed_failure_and_its_outcome(self):
         registry = flat(REGISTRY)
@@ -159,7 +166,7 @@ class ProviderFailureTest(unittest.TestCase):
         declarations = [path.relative_to(root).as_posix() for path in (root / 'android/src').rglob('*.kt')
                         if 'class FailureBounds(' in path.read_text()]
         self.assertEqual(declarations, [FAILURE], 'the failure bound must be declared once')
-        for relative in (SERVICE, REGISTRY, FAILURE):
+        for relative in (SERVICE, DISPATCH, REGISTRY, FAILURE):
             self.assertEqual(0, flat(relative).count('take(200)'),
                              'no transport site may decide a failure width of its own: ' + relative)
 
