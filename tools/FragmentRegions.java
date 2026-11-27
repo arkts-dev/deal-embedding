@@ -85,8 +85,9 @@ public final class FragmentRegions {
     }
     public static Map<String,Object> describe(String classes, String fields, String functions, String view) {
         List<Object> declared = new ArrayList<>(), imports = new ArrayList<>(), callable = new ArrayList<>(), state = new ArrayList<>();
-        for (String region : List.of(classes,functions)) {
-            for (StatementNode statement : FragmentSyntax.parse(region).statements()) {
+        for (String region : List.of("classes","functions")) {
+            String source = region.equals("classes") ? classes : functions;
+            for (StatementNode statement : FragmentSyntax.parse(source,region+".fragment.deal").statements()) {
                 boolean exported = statement instanceof ExportDeclaration;
                 StatementNode node = exported ? ((ExportDeclaration)statement).declaration() : statement;
                 if (node instanceof ClassDeclaration c) {
@@ -97,8 +98,8 @@ public final class FragmentRegions {
                 else throw new IllegalArgumentException("Custom declaration region contains executable top-level syntax");
             }
         }
-        var lexed = new Lexer(fields,"fields.fragment").tokenize();
-        if (!lexed.diagnostics().isEmpty()) throw new IllegalArgumentException("Invalid field syntax");
+        var lexed = new Lexer(fields,"fields.fragment.deal").tokenize();
+        if (!lexed.diagnostics().isEmpty()) throw new IllegalArgumentException("Invalid field syntax: " + lexed.diagnostics());
         int depth = 0, start = 0;
         for (var token : lexed.tokens()) {
             switch (token.type()) {
@@ -110,7 +111,7 @@ public final class FragmentRegions {
             if (token.type() == TokenType.SEMICOLON && depth == 0) {
                 String field = slice(fields,start,token.endScalarOffset()); start = token.endScalarOffset();
                 String fieldSource="let " + field;
-                var parsed = FragmentSyntax.parse(fieldSource).statements();
+                var parsed = FragmentSyntax.parse(fieldSource,"fields.fragment.deal").statements();
                 if (parsed.size() != 1 || !(parsed.getFirst() instanceof VariableDeclaration v) || v.typeAnnotation().isEmpty()) throw new IllegalArgumentException("Expected name: Type = expression field");
                 state.add(Map.of("name",v.name(),"type",FragmentSyntax.type(v.typeAnnotation().get()),"initial",FragmentSyntax.expression(v.initializer(),fieldSource)));
             }

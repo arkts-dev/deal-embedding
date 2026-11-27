@@ -17,6 +17,19 @@ public final class FragmentRegionsTest {
             try { FragmentRegions.describe("",bad,"",view); } catch (IllegalArgumentException error) { rejected = true; }
             if (!rejected) throw new AssertionError("Invalid field admitted: " + bad);
         }
-        System.out.println("fragment regions: compiler-parsed fields, declarations, views and qualification passed");
+        // Region-local coordinates must identify the source the writer actually received, not an
+        // ambiguous fragment.deal shared by declarations and functions.
+        for (String region : List.of("classes","functions","fields")) {
+            try {
+                FragmentRegions.describe(region.equals("classes") ? "export class Bad { value: number = 0; }" : "",
+                    region.equals("fields") ? "value: number = @;" : "",
+                    region.equals("functions") ? "export function bad(): number { let value: number; return 0; }" : "",view);
+                throw new AssertionError("Malformed region admitted: "+region);
+            } catch (IllegalArgumentException error) {
+                if (!error.getMessage().contains(region+".fragment.deal:"))
+                    throw new AssertionError("Diagnostic lost region identity: "+error.getMessage());
+            }
+        }
+        System.out.println("fragment regions: compiler-parsed fields, declarations, views, diagnostic region identity and qualification passed");
     }
 }

@@ -7,12 +7,23 @@ import java.util.stream.Collectors;
 /** Structural instantiation of authored DEAL syntax. Bindings are compiler-parsed nodes, not text replacements. */
 public final class FragmentSyntax {
     private FragmentSyntax() {}
-    public static ProgramNode parse(String source) {
-        var lexed=new Lexer(source,"fragment.deal").tokenize();
-        var parsed=new Parser(lexed.tokens(),"fragment.deal").parse();
+    public static ProgramNode parse(String source) { return parse(source,"fragment.deal"); }
+    public static ProgramNode parse(String source, String file) {
+        var lexed=new Lexer(source,file).tokenize();
+        var parsed=new Parser(lexed.tokens(),file).parse();
         var diagnostics=new ArrayList<>(lexed.diagnostics());
         diagnostics.addAll(parsed.diagnostics());
-        if(!diagnostics.isEmpty())throw new IllegalArgumentException("Invalid fragment syntax: " + diagnostics);
+        if(!diagnostics.isEmpty()) {
+            StringBuilder evidence=new StringBuilder("Invalid fragment syntax: " + diagnostics);
+            var retained=new HashSet<deal.diagnostics.DiagnosticExcerpt>();
+            for (var diagnostic : diagnostics) {
+                var excerpt=deal.diagnostics.DiagnosticExcerpt.fromSource(file,source,diagnostic.range());
+                if (excerpt!=null && retained.add(excerpt)) evidence.append("\nSOURCE ").append(file).append(" UTF-16 [")
+                    .append(excerpt.startScalarOffset()).append(',').append(excerpt.endScalarOffset())
+                    .append(")\n").append(excerpt.text());
+            }
+            throw new IllegalArgumentException(evidence.toString());
+        }
         return parsed.program();
     }
     public static String function(String source,String function,Map<String,String> names,Map<String,String> expressions) {

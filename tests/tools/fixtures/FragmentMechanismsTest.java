@@ -11,7 +11,12 @@ public final class FragmentMechanismsTest {
             if(lexerDiagnostics.isEmpty())throw new AssertionError("Fixture has no lexer diagnostic");
             try { FragmentSyntax.parse(malformed);throw new AssertionError("Malformed input admitted"); }
             catch(IllegalArgumentException failure) {
-                for(var diagnostic:lexerDiagnostics)if(!failure.getMessage().contains(diagnostic.toString()))throw new AssertionError("Lexer evidence lost: "+failure.getMessage());
+                for(var diagnostic:lexerDiagnostics) {
+                    if(!failure.getMessage().contains(diagnostic.toString()))throw new AssertionError("Lexer evidence lost: "+failure.getMessage());
+                    var excerpt=deal.diagnostics.DiagnosticExcerpt.fromSource("fragment.deal",malformed,diagnostic.range());
+                    if(excerpt!=null && (!failure.getMessage().contains("SOURCE fragment.deal UTF-16 ["+excerpt.startScalarOffset()+","+excerpt.endScalarOffset()+")\n"+excerpt.text())))
+                        throw new AssertionError("Exact source excerpt lost: "+failure.getMessage());
+                }
             }
             String response=FragmentMechanisms.invoke("batch","{\"requests\":["+request("analyzeFunctions","{\"source\":"+quote(malformed)+"}")+"]}");
             if(response.contains("Invalid fragment syntax: []")||!response.contains("FRAGMENT_SYNTAX"))throw new AssertionError(response);
