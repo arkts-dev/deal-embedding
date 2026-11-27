@@ -8,6 +8,9 @@ import org.json.*
 /** Actual packaged construction/compiler/Session. Inference inputs are explicit fixtures. */
 class CutoverInstrumentation : Instrumentation() {
     private var scenarioInput:String?=null
+    private var scenarioDirectory="scenario-results"
+    private var installedProvidersOnly=false
+    private var scenarioGateway="http://127.0.0.1:8787/generate"
     private var replaySource=false
     private var providersOnly=false
     private var targetsOnly=false
@@ -17,10 +20,19 @@ class CutoverInstrumentation : Instrumentation() {
     private var constructionOnly=false
     private var constructionMode:String?=null
     private var storageOnly=false
-    override fun onCreate(arguments: Bundle?) { constructionMode=arguments?.getString("mode");constructionOnly=arguments?.getString("construction")=="true";storageOnly=arguments?.getString("storage")=="true";timerOnly=arguments?.getString("timer")=="true";targetsOnly=arguments?.getString("targets")=="true";providersOnly=arguments?.getString("providers")=="true";tabsOnly=arguments?.getString("tabs")=="true";scenarioInput=arguments?.getString("scenarios");replaySource=arguments?.getString("replay")=="true";imagesOnly=arguments?.getString("images")=="true";super.onCreate(arguments); start() }
+    override fun onCreate(arguments: Bundle?) { constructionMode=arguments?.getString("mode");constructionOnly=arguments?.getString("construction")=="true";storageOnly=arguments?.getString("storage")=="true";timerOnly=arguments?.getString("timer")=="true";targetsOnly=arguments?.getString("targets")=="true";providersOnly=arguments?.getString("providers")=="true";tabsOnly=arguments?.getString("tabs")=="true";scenarioInput=arguments?.getString("scenarios");scenarioDirectory=arguments?.getString("scenarioDirectory")?:scenarioDirectory;require(scenarioDirectory.matches(Regex("[a-z0-9-]+")));installedProvidersOnly=arguments?.getString("installedProviders")=="true";scenarioGateway=arguments?.getString("scenarioGateway")?:scenarioGateway;replaySource=arguments?.getString("replay")=="true";imagesOnly=arguments?.getString("images")=="true";super.onCreate(arguments); start() }
     override fun onStart() {
         val result=Bundle()
         try {
+            if(installedProvidersOnly) {
+                Embedding.open(targetContext,EmbeddingConfig("diagnostic-provider-preflight",GenerationGatewayConfig(scenarioGateway,"cerebras")),trustProvider={uid->listOf("dev.deal.apps.vehicle","dev.deal.apps.pizza","dev.deal.apps.rental").any{targetContext.packageManager.getApplicationInfo(it,0).uid==uid}}).use { api ->
+                    val modules=api.refresh().map{it.module}.toSet()
+                    result.putString("modules",JSONArray(modules.toList()).toString())
+                    check(modules.containsAll(setOf("host/trip","host/pizza","host/rental"))){"Required installed providers not discovered: $modules"}
+                }
+                result.putString("result","PASS: installed provider discovery through the authorized host; no inference or provider calls")
+                finish(-1,result);return
+            }
             if(timerOnly){result.putString("result",checkTimerPainter(this));finish(-1,result);return}
             if(targetsOnly){result.putString("result",checkTargetTransport(targetContext));finish(-1,result);return}
             if(imagesOnly){result.putString("result",checkImageRendering(this,targetContext));finish(-1,result);return}
@@ -116,6 +128,7 @@ class CutoverInstrumentation : Instrumentation() {
                     "selection-first","selection-second","alignment"->{val issued=questions(request.input);val answers=JSONArray();for(i in 0 until issued.length()){val q=issued.getJSONObject(i);val opts=q.getJSONArray("options");val options=(0 until opts.length()).map{opts.getJSONObject(it).getString("id")};answers.put(answer(q.getString("id"),when{(providerMode=="custom" || providerMode=="mutation") && "unavailable" in options->"unavailable";q.getString("id").startsWith("real_")->"read";q.getString("id").startsWith("formula_")->"formula";q.getString("id").startsWith("units_")->"preserved";q.getString("id").startsWith("argument_")->"bound";q.getString("id")=="read"->"scalar_0";q.getString("id")=="double"->"part_double";else->options.last()},options))};JSONObject().put("answers",answers).toString()}
                     "custom-whole"->if(providerMode=="mutation")"""<classes>import * as probe from "host/probe"; export class Load {sequence:number;} export class Loaded { value:string; }</classes><fields>value: string = "Unavailable";</fields><functions>export function start(state:AppState,action:Load):AppState {return {value:state.value};} export async function load(state:AppState,action:Load):Promise<Loaded> {let message:string="ADMITTED"; try { let changed:boolean=await probe.write(1); message=JSON.stringify(changed) as string; } catch(unknownError) { let error:Error = unknownError as Error; message=error.name; } return {value:message};} export function loaded(state:AppState,action:Loaded):AppState {return {value:action.value};}</functions><view>import * as app from "./experience";import * as ui from "./platform.dealui-pack";export view Panel(state:app.AppState):View {ui.Column(){ui.Button(text:"Load",value:0,onClick:action app.Load {sequence:payload}) ui.Text(text:state.value)}}</view>""" else """<classes>import * as probe from "host/probe"; export class Load {sequence:number;} export class Loaded { value:string; }</classes><fields>value: string = "Unavailable";</fields><functions>export function start(state:AppState,action:Load):AppState {return {value:state.value};} export async function load(state:AppState,action:Load):Promise<Loaded> {let value:number=await probe.read();return {value:JSON.stringify(value) as string};} export function loaded(state:AppState,action:Loaded):AppState {return {value:action.value};}</functions><view>import * as app from "./experience";import * as ui from "./platform.dealui-pack";export view Panel(state:app.AppState):View {ui.Column(){ui.Button(text:"Load",value:0,onClick:action app.Load {sequence:payload}) ui.Text(text:state.value)}}</view>"""
                     "coverage"->{val issued=questions(request.input);JSONObject().put("answers",JSONArray((0 until issued.length()).map {answer(issued.getJSONObject(it).getString("id"),"covered",listOf("covered","missing"))})).toString()}
+                    "lookup"->request.input.substringAfter("\nMISSING NEED\n").substringBefore("\n").let { need -> JSONObject().put("need",need).put("status","refused").put("refusal","No reusable fixture section").put("needs",JSONArray(listOf(need))).toString() }
                     else->error("Unexpected provider stage ${request.stage}: ${request.diagnostics}")
                 }
             })
@@ -260,13 +273,13 @@ export view Picture(state: app.AppState): View { ui.Surface(width:200,height:200
         val file=java.io.File(targetContext.filesDir,input)
         require(file.canonicalFile.parentFile==targetContext.filesDir.canonicalFile)
         val scenarios=JSONArray(file.readText());val reports=JSONArray()
-        val directory=java.io.File(targetContext.filesDir,"scenario-results").apply{mkdirs()}
+        val directory=java.io.File(targetContext.filesDir,scenarioDirectory).apply{mkdirs()}
         for(index in 0 until scenarios.length()) {
             val scenario=scenarios.getJSONObject(index);val name=scenario.getString("name");require(name.matches(Regex("[a-z]+")))
             val report=JSONObject().put("scenario",name);val start=android.os.SystemClock.elapsedRealtime()
             val checks=JSONArray();val failures=JSONArray();val limitations=JSONArray()
             try {
-                Embedding.open(targetContext,EmbeddingConfig("v08-scenario-"+name+"-"+java.util.UUID.randomUUID(),GenerationGatewayConfig("http://127.0.0.1:8787/generate","cerebras"),retainState=true),trustProvider={uid->listOf("dev.deal.apps.vehicle","dev.deal.apps.pizza","dev.deal.apps.rental").any{packageName->runCatching{targetContext.packageManager.getApplicationInfo(packageName,0).uid==uid}.getOrDefault(false)}}).use { api ->
+                Embedding.open(targetContext,EmbeddingConfig("v08-scenario-"+name+"-"+java.util.UUID.randomUUID(),GenerationGatewayConfig(scenarioGateway,"cerebras"),retainState=true),trustProvider={uid->listOf("dev.deal.apps.vehicle","dev.deal.apps.pizza","dev.deal.apps.rental").any{packageName->runCatching{targetContext.packageManager.getApplicationInfo(packageName,0).uid==uid}.getOrDefault(false)}}).use { api ->
                     api.capture(true)
                     val discovered=api.refresh();report.put("discoveredModules",JSONArray(discovered.map{it.module}))
                     if(name!="budget" && discovered.isEmpty()) {

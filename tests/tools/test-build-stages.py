@@ -119,8 +119,13 @@ elif name=='timeout':
             result=run(DEAL_TEST_KEYSTORE='other.keystore');self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             self.assertIn('package_apk: MISS',result.stdout);self.assertIn('dex: hit',result.stdout)
             (root/'tests/android/Test.kt').write_text('new fixture')
-            result=run(DEAL_TEST_KEYSTORE='other.keystore');self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            result=run(DEAL_TEST_KEYSTORE='other.keystore', DEAL_TEST_PACKAGE='dev.deal.diagnostic.tests', INSTRUMENTATION_TARGET='dev.deal.apps.organizer');self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             self.assertIn('test_kotlin: MISS',result.stdout)
+            manifest=(out/'AndroidManifest.xml').read_text()
+            self.assertIn('package="dev.deal.diagnostic.tests"',manifest)
+            self.assertIn('android:targetPackage="dev.deal.apps.organizer"',manifest)
+            self.assertIn('android:name="dev.deal.cutover.tests.CutoverInstrumentation"',manifest)
+            self.assertIn('android:name="dev.deal.cutover.tests.CutoverPreviewActivity"',manifest)
 
     def test_composer_groups_keep_each_original_fixture_call_once(self):
         import re
