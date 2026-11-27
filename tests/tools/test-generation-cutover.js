@@ -1013,7 +1013,11 @@ const requested=supplied.filter(argument=>argument.startsWith('--mode=')).map(ar
  // Selected runs may inspect retained cases, but never authorize downstream pair digests.
  // Their copied output lacks generation.sha256 until the complete matrix passes.
  const chosen=requested.length?MODES.filter(([,mode])=>requested.includes(mode)):MODES;
- const receipt={};for(const [key,mode] of chosen)receipt[key]=await run(mode);
+ const receipt={};for(const [key,mode] of chosen){
+  const started=process.hrtime.bigint();console.log('generation mode start: '+mode);
+  receipt[key]=await run(mode);
+  console.log('generation mode passed: '+mode+' elapsed='+Number(process.hrtime.bigint()-started)/1e9+'s');
+ }
  await closeTransport();
  if(requested.length){console.log('packaged generation entry: modes '+chosen.map(([,mode])=>mode).join(',')+' passed');return;}
  for(const kept of emitted)fs.writeFileSync(path.join(kept,'generation.sha256'),bundleDigest);
