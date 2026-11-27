@@ -1048,6 +1048,16 @@ for(const localGroup of localGroups) {
   assert.strictEqual(s().f_section_memo_text,'Changed','the note retains the edited text');
   app.dispatch(must(app.slotBy('TextField','label','Filter','onChange'),'the filter box binds its query'),'Al');
   assert.strictEqual(s().f_section_filter_query,'Al','the filter box publishes its edited query');
+  // The spotlight is highlighted read-only content: the compiled pair renders the accent-toned column
+  // carrying its message under the heading, so the section is not a plain body sentence. The component
+  // names and styles are the ones the specification's style and card-profile rows allow.
+  let highlighted=false;
+  (function scan(node){const props=Object.fromEntries(node.props.map(item=>[item.name,item]));
+    if(node.component.split('.').pop()==='Column'&&props.style!==undefined&&props.style.stringValue==='accent'){
+      for(const child of node.children){const inner=Object.fromEntries(child.props.map(item=>[item.name,item]));
+        if(child.component.split('.').pop()==='Text'&&inner.text!==undefined&&inner.text.stringValue==='Shown'&&inner.style!==undefined&&inner.style.stringValue==='heading')highlighted=true;}}
+    for(const child of node.children)scan(child);})(app.tree());
+  assert.ok(highlighted,'the compiled spotlight section must render its accented heading presentation');
  }
  console.log('catalogue local '+localGroup+' passed');
 }
@@ -1056,8 +1066,8 @@ for(const localGroup of localGroups) {
 if(group==='all'||group==='calendar') {
   const wire=kind=>({kind,fields:[],element:null,maximum:0,minimumNumber:0,maximumNumber:0});
   const app=open('calendar',wired,[
-    {module:'host/calendar',description:'',version:1,functions:[{name:'create',description:'Create the selected event',parameters:[],result:wire('null'),classification:''}]},
-    {module:'host/navigation',description:'',version:1,functions:[{name:'open',description:'Open directions to the selected stop',parameters:[],result:wire('null'),classification:''}]}
+    {module:'host/calendar',description:'',version:1,functions:[{name:'create',description:'Create the selected event',parameters:[],result:wire('null')}]},
+    {module:'host/navigation',description:'',version:1,functions:[{name:'open',description:'Open directions to the selected stop',parameters:[],result:wire('null')}]}
   ]),s=()=>app.state();
   // Nothing is scheduled, taken, added or navigated before an explicit tap: the sections start idle and
   // publish the observed counts of the records they actually hold.

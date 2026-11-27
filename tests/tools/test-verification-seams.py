@@ -260,21 +260,22 @@ SEAMS = [
      'expect': 'the send admission guards dispatch in Session.receive',
      'command': ['python3', 'tests/tools/test-capability-boundary.py']},
     # The classification's one derivation site: the registry states every accepted function's class from
-    # the accepted provider sources - a local registration's class map or a discovered contract's own
-    # disclosure. Deriving it from the local registrations alone is the cycle-2 defect that refused a
-    # discovered read as a mutation, so dropping that call must fail the item that drives the derivation.
+    # the accepted provider disclosures - a local registration's class map or a discovered provider's
+    # published class payload. Deriving it from the local registrations alone is the cycle-2 defect that
+    # refused a discovered read as a mutation, so dropping that call must fail the item that drives the
+    # derivation.
     {'id': 'accepted-classes', 'family': 'mutation-authority', 'path': 'android/src/capabilities/CapabilityRegistry.kt',
-     'old': 'val classes = acceptedClasses(providers.values.map { it.contract to (it.local?.classification() ?: emptyMap()) })',
+     'old': 'val classes = acceptedClasses(providers.values.map { it.contract to it.classes })',
      'new': 'val classes = mutableMapOf<String, String>()',
      'expect': 'the accepted provider sources state the class of every function',
      'command': ['python3', 'tests/tools/test-capability-boundary.py']},
-    # The derivation itself: the class a provider states inside its disclosed contract is what a discovered
-    # endpoint's class is, so ignoring that field leaves every discovered function mutating - the cycle-2
-    # refusal - and the item that drives the derivation with a discovered contract must observe it.
-    {'id': 'accepted-classes-disclosure', 'family': 'mutation-authority', 'path': 'android/src/capabilities/CapabilityCall.kt',
-     'old': 'val value = registered[function.name]?.takeIf { it.isNotEmpty() } ?: function.classification',
-     'new': 'val value = registered[function.name]?.takeIf { it.isNotEmpty() } ?: ""',
-     'expect': "a discovered contract's disclosed class did not reach the accepted classes",
+    # The derivation itself: the class a provider publishes beside its contract is what a discovered
+    # endpoint's class is, so dropping that disclosure leaves every discovered function unclassified - the
+    # cycle-2 refusal - and the item asserts the disclosure carries it before the derivation runs.
+    {'id': 'accepted-classes-disclosure', 'family': 'mutation-authority', 'path': 'android/src/capabilities/CapabilityCodec.kt',
+     'old': 'val classification = classes.keys().asSequence().associateWith { classes.getString(it) }',
+     'new': 'val classification = emptyMap<String, String>()',
+     'expect': 'discovery did not publish the host classification',
      'command': ['python3', 'tests/tools/test-capability-boundary.py']},
     {'id': 'text-admission', 'family': 'text-admission', 'path': 'core/execution.deal',
      'old': 'function reuseWindow(): number { return 3000; }',

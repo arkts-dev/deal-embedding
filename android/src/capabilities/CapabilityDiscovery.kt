@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
 /** Android discovery by protocol action, never by provider package/method name. Call off main. */
 internal class CapabilityDiscovery(private val context: Context, private val trusted: (Int) -> Boolean, private val limits: ExecutionLimits) : AutoCloseable {
     private val log = dev.deal.embedding.EmbeddingLog(context, limits)
-    data class Endpoint(val component: ComponentName, val uid: Int, val contract: CapabilityContract, val remote: ICapabilityService)
+    data class Endpoint(val component: ComponentName, val uid: Int, val contract: CapabilityContract, val classification: Map<String, String>, val remote: ICapabilityService)
     private val connections = mutableMapOf<ComponentName, ServiceConnection>()
     private val endpoints = mutableMapOf<ComponentName, Endpoint>()
     private val main = Handler(Looper.getMainLooper())
@@ -47,12 +47,12 @@ internal class CapabilityDiscovery(private val context: Context, private val tru
             if (!latch.await(maxOf(0,deadline-SystemClock.elapsedRealtime()), TimeUnit.MILLISECONDS) || binder == null) { release(component) }
             else try {
                 val remote = ICapabilityService.Stub.asInterface(binder)
-                val contract = log.stage("contract", target = component.flattenToShortString()) {
+                val disclosure = log.stage("contract", target = component.flattenToShortString()) {
                     val raw = remote.describe()
                     log.event("contract", "received", target = component.flattenToShortString(), detail = raw)
-                    CapabilityContract.parse(raw)
+                    CapabilityContract.disclosure(raw)
                 }
-                val endpoint = Endpoint(component, info.applicationInfo.uid, contract, remote)
+                val endpoint = Endpoint(component, info.applicationInfo.uid, disclosure.contract, disclosure.classification, remote)
                 binder.linkToDeath({ release(component) }, 0)
                 synchronized(this) { if (!closed) endpoints[component] = endpoint }
             } catch (rejected: CapabilityRejected) {

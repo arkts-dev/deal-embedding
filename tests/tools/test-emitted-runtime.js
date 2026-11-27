@@ -167,22 +167,28 @@ const {providerContract,declaration}=require('./fixtures/provider-contract.js');
   assert.deepEqual(texts(tree).filter(entry=>entry.style==='danger'),[]);
 }
 
-// --- catalogue-sections: disclosed facts keep their label/value roles and a highlight renders as text.
+// --- catalogue-sections: disclosed facts keep their label/value roles and the highlight renders as the
+// accented heading presentation the catalogue table's "Highlighted read-only content" row requires.
 {
   const runtime=open('catalogue-sections');
   const source=runtime.source();
   assert(source.includes('ui.MetricGroup() {'),source);
   assert(source.includes('ui.Stat(label: "first", value: "items")'),source);
   assert(source.includes('ui.Stat(label: "second", value: "done")'),source);
-  assert(source.includes('ui.Text(text: "Highlighted message")'),'the highlighted message renders as spec text');
+  assert(/ui\.Column\(style: "accent"\) \{\s*ui\.Text\(text: "Highlighted message", style: "heading"\)\s*\}/.test(source),'the highlighted message renders as spec text');
   const tree=runtime.tree();
-  for (const message of ['Facts','Disclosed','Highlighted message']) {
+  for (const message of ['Facts','Disclosed']) {
     assert.deepEqual(withText(tree,message).length,1,'the emitted section text renders once: '+message);
   }
+  assert.deepEqual(withText(tree,'Highlighted message','heading').length,1,'the highlighted message renders under its heading');
+  assert.deepEqual(withText(tree,'Highlighted message').length,0,'the spotlight is not a plain body sentence');
   let facts=[];
   nodes(tree,'Stat',node=>facts.push({label:props(node).label.stringValue,value:props(node).value.stringValue}));
   assert.deepEqual(facts,[{label:'first',value:'items'},{label:'second',value:'done'}],'each fact keeps its label and value roles');
-  assert.deepEqual(texts(tree).filter(entry=>entry.style!==''),[],'the section texts carry no style');
+  assert.deepEqual(texts(tree).filter(entry=>entry.style!==''),[{text:'Highlighted message',style:'heading'}],'only the spotlight message carries a style');
+  const accents=[];nodes(tree,'Column',node=>{const style=props(node).style;if(style!==undefined&&style.stringValue==='accent')accents.push(node);});
+  assert.equal(accents.length,1,'the spotlight is the one accented container');
+  assert.deepEqual(accents[0].children.map(child=>props(child).text.stringValue),['Highlighted message'],'the accent tone holds the highlighted message');
   // Declaration order is preserved: the metric, then the highlight, then the key fact.
   const order=[];walk(tree,node=>{const last=node.component.split('.').pop();if(last==='Stat')order.push(props(node).label.stringValue);else if(last==='Text'&&props(node).text.stringValue==='Highlighted message')order.push('Highlighted message');});
   assert.deepEqual(order,['first','Highlighted message','second'],JSON.stringify(order));

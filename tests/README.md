@@ -28,8 +28,9 @@ host Session facts at every serialized transition that can send and again before
 and `CapabilityRegistry` publishes the host-configured provider deadline as the window of each disclosed
 function, so a grant, epoch, lifetime or window that moved while the call was in flight decides the reply.
 `python3 tests/tools/test-capability-boundary.py` also proves the host dispatch boundary: a provider
-publishes its per-function read or mutating class inside the version-1 contract, the registry derives the
-class of every accepted function - locally registered or discovered - from its provider source, and a
+publishes its per-function read or mutating class beside the version-1 contract it discloses, never as a
+field of the public record, the registry derives the class of every accepted function - locally registered
+or discovered - from its provider disclosure, and a
 mutating or unclassified function is refused with `DENIED` before a local provider is invoked unless the
 frozen request determines that exact operation or an approved host confirmation names its target and
 validated argument snapshot. A denial is final, a stale approval no longer correlates, and an approval of

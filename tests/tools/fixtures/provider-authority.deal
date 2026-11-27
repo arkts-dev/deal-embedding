@@ -21,7 +21,7 @@ function numberSchema(): embedding.WireType { let fields: embedding.WireField[] 
 function contract(): embedding.CapabilityContract {
   let parameters: embedding.Parameter[] = [{name:"value",type:numberSchema()}];
   let fields: embedding.WireField[] = [];
-  let functions: embedding.CapabilityFunction[] = [{name:"read",description:"Read the current authorized rate",parameters:parameters,result:numberSchema(),classification:"read"}];
+  let functions: embedding.CapabilityFunction[] = [{name:"read",description:"Read the current authorized rate",parameters:parameters,result:numberSchema()}];
   let noFunctions: embedding.CapabilityFunction[] = [];
   return {module:"host/probe",description:"Authorized rate probe",version:1,functions:functions};
 }

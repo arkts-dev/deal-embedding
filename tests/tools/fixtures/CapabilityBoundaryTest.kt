@@ -6,6 +6,7 @@ import dev.deal.embedding.InvocationContext
 import dev.deal.embedding.Parameter
 import dev.deal.embedding.WireField
 import dev.deal.embedding.WireType
+import dev.deal.embedding.disclosure
 import dev.deal.embedding.json
 import dev.deal.embedding.nativeCapabilities
 import dev.deal.embedding.parse
@@ -22,7 +23,7 @@ import org.json.JSONArray
  * permission probe, which disclosure never writes. The registry's own wiring of the live-session flag
  * and its Android session bookkeeping are exercised by the host integration owner, not here; its
  * classification derivation (`acceptedClasses`) is shared and driven below with both provider shapes it
- * accepts, a local registration and a discovered contract.
+ * accepts, a local registration and a discovered provider's disclosure.
  */
 
 private val scalar = WireType("number", maximum = 0, minimumNumber = -1000.0, maximumNumber = 1000.0)
@@ -32,8 +33,7 @@ private fun function(
     parameters: List<Parameter> = emptyList(),
     result: WireType = scalar,
     description: String = "Read fixture value",
-    classification: String = "",
-) = CapabilityFunction(name, description, parameters, result, classification)
+) = CapabilityFunction(name, description, parameters, result)
 
 private fun contract(
     module: String = "host/probe",
@@ -185,7 +185,7 @@ fun main() {
     // Atomic disclosure: a valid-plus-invalid batch replaces no contract, declaration or provider.
     var invocations = 0
     val probe = nativeCapabilities(contract("host/probe"), mapOf("read" to { _: JSONArray -> invocations++; 7 }))
-    val disclosure = CapabilityDisclosure(listOf(probe)) { it.contract }
+    val disclosure = CapabilityDisclosure(listOf(probe), { it.contract }, { it.classification() })
     val acceptedBefore = disclosure.accepted()
     val contractsBefore = disclosure.contracts()
     check(contractsBefore == listOf(probe.contract)) { "Initial disclosure must publish the registered contract" }
@@ -203,9 +203,15 @@ fun main() {
     val changed = nativeCapabilities(CapabilityContract("host/probe", "Changed read", listOf(function(description = "Changed")), 1), mapOf("read" to { _: JSONArray -> invocations++; 10 }))
     refused("changed contract while a Session is live", "Close active sessions before changing existing capability contracts") { disclosure.admit(listOf(changed, extra), live = true) }
     check(disclosure.contracts() == liveContracts && disclosure.accepted() === liveAccepted) { "A live Session keeps its accepted contract" }
+    // The host class of each function is part of the disclosed state a live Session holds. A proposal that
+    // keeps every contract byte and only reclassifies a function is refused while a Session runs, so a live
+    // boundary can never be reclassified from under an admission that already decided with the old class.
+    val reclassified = nativeCapabilities(contract("host/probe"), mapOf("read" to { _: JSONArray -> invocations++; 11 }), mapOf("read" to "read"))
+    refused("a function reclassified while a Session is live", "Close active sessions before changing existing capability contracts") { disclosure.admit(listOf(reclassified, extra), live = true) }
+    check(disclosure.contracts() == liveContracts && disclosure.accepted() === liveAccepted) { "A live Session keeps the classes it accepted" }
 
     // Per-contract violations reject their whole batch through the same admission.
-    val entries = CapabilityDisclosure(listOf(Entry(contract("host/probe")))) { it.contract }
+    val entries = CapabilityDisclosure(listOf(Entry(contract("host/probe"))), { it.contract })
     val entryAccepted = entries.accepted()
     val entryContracts = entries.contracts()
     val invalid = Entry(CapabilityContract("host/invalid", "d".repeat(513), listOf(function()), 1))
@@ -297,24 +303,37 @@ fun main() {
     check(calls.admit("host/probe", "read", "[]", granted = true)?.reason == "Approval names another operation or target") { "another module's approval authorized this module's call" }
     check(dispatched == 2) { "an unclassified function issued a provider call" }
 
-    // Discovery publishes the host's class with the contract, and the consuming boundary reads the
-    // discovered read as a read: the same registration's disclosed text is what a remote app parses, so
-    // the registry derives these classes from the disclosed contract alone, with no local class map.
-    val disclosed = contract(module = "host/discovered", functions = listOf(function(name = "quote", classification = "read"), function(name = "reserve", classification = "mutating"), function(name = "settle")))
-    val discovered = CapabilityContract.parse(nativeCapabilities(disclosed, mapOf("quote" to { _: JSONArray -> dispatched++; 11 }, "reserve" to { _: JSONArray -> dispatched++; 12 }, "settle" to { _: JSONArray -> dispatched++; 13 })).declaration())
-    check(discovered.functions.single { it.name == "quote" }.classification == "read" && discovered.functions.single { it.name == "reserve" }.classification == "mutating") { "discovery did not publish the host classification" }
-    check(acceptedClasses(sources(discovered to emptyMap())) == mapOf("host/discovered/quote" to "read", "host/discovered/reserve" to "mutating", "host/discovered/settle" to "mutating")) { "a discovered contract's disclosed class did not reach the accepted classes" }
+    // Discovery publishes the host's class beside the version-1 contract record, and the consuming
+    // boundary reads the discovered read as a read: the same registration's disclosed payload is what a
+    // remote app parses, so the registry derives these classes from that disclosure alone, with no local
+    // class map. The class is host disclosure, never a field of the public record the specification
+    // declares, so the parsed record carries exactly its declared fields.
+    val disclosed = nativeCapabilities(contract(module = "host/discovered", functions = listOf(function(name = "quote"), function(name = "reserve"), function(name = "settle"))),
+        mapOf("quote" to { _: JSONArray -> dispatched++; 11 }, "reserve" to { _: JSONArray -> dispatched++; 12 }, "settle" to { _: JSONArray -> dispatched++; 13 }),
+        mapOf("quote" to "read", "reserve" to "mutating"))
+    val published = CapabilityContract.disclosure(disclosed.disclosure())
+    val discovered = published.contract
+    check(published.classification == mapOf("quote" to "read", "reserve" to "mutating")) { "discovery did not publish the host classification" }
+    check(discovered.functions.single { it.name == "quote" }.json().keys().asSequence().toSet() == setOf("name", "description", "parameters", "result")) { "the disclosed record must carry exactly the specification's fields" }
+    check(acceptedClasses(sources(discovered to published.classification)) == mapOf("host/discovered/quote" to "read", "host/discovered/reserve" to "mutating", "host/discovered/settle" to "mutating")) { "a discovered contract's disclosed class did not reach the accepted classes" }
     val remote = nativeCapabilities(discovered, mapOf("quote" to { _: JSONArray -> dispatched++; 11 }, "reserve" to { _: JSONArray -> dispatched++; 12 }, "settle" to { _: JSONArray -> dispatched++; 13 }))
-    live = facts(providers = sources(discovered to emptyMap()))
+    live = facts(providers = sources(discovered to published.classification))
     check(calls.classification("host/discovered", "quote") == "read" && calls.admit("host/discovered", "quote", "[]", granted = true) == null) { "a discovered read class was refused" }
     check(calls.invoke(remote, remote.contract.functions.single { it.name == "quote" }, JSONArray(), InvocationContext(null)) == 11 && dispatched == 3) { "a discovered read did not dispatch once" }
     check(calls.admit("host/discovered", "reserve", "[]", granted = true)?.reason == "Mutation requires host confirmation") { "a discovered mutating function was admitted" }
     check(calls.classification("host/discovered", "settle") == "mutating" && calls.admit("host/discovered", "settle", "[]", granted = true)?.reason == "Mutation requires host confirmation") { "a discovered unclassified function was read as a read" }
     check(dispatched == 3) { "a discovered mutation issued a provider call" }
 
-    // A disclosed class is part of the contract boundary: a third word is refused, located.
-    rejected("an unknown function classification", "functions[0].classification", "read or mutating", "write") {
-        CapabilityBoundary.validate(contract(functions = listOf(function(classification = "write"))))
+    // A disclosed class is part of the disclosure boundary: a third word is refused, located, and a
+    // class that names no declared function is refused too.
+    rejected("an unknown function classification", "classification.read", "read or mutating", "write") {
+        CapabilityBoundary.classification(contract(), mapOf("read" to "write"))
+    }
+    rejected("a class that names no declared function", "classification.missing", "must name a declared function") {
+        CapabilityBoundary.classification(contract(), mapOf("missing" to "read"))
+    }
+    refused("a disclosure of an unknown field", "Capability disclosure", "unknown or missing fields") {
+        CapabilityContract.disclosure(org.json.JSONObject().put("contract", contract().json()).toString())
     }
 
     println("capability boundary: every contract bound rejects with a located INVALID_ARGUMENT, atomic disclosure keeps the accepted set and providers, and the send boundary admits only a host-classified read, an exact host confirmation or a frozen-request determination, refusing every stale or unauthorized call before it is invoked")

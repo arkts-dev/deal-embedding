@@ -35,17 +35,27 @@ assert receive.count(admit) == 1, 'the send admission guards dispatch in Session
 assert receive.count(guard) == 1, 'the send admission guards dispatch in Session.receive: ' + guard
 order = [receive.index(admit), receive.index(guard), min(receive.index('pending[id] = item'), receive.index('calls.invoke('))]
 assert order == sorted(order), 'the send admission guards dispatch in Session.receive before it is pending or invoked: ' + str(order)
-# The class of every accepted function is stated once, from each accepted provider's own source: a local
-# registration's class map beside its contract and a discovered contract's disclosed field. Deriving it
-# from the local registrations alone - or not at all - is the cycle-2 defect that refused a discovered
-# read as a mutation, so the derivation and the one call site that publishes it are asserted here. The
-# `accepted-classes` control breaks that call site, and the fixture drives the same function with both
-# provider shapes: a registration, a discovered contract with a read, a mutating and an unclassified
-# function.
+# The class of every accepted function is stated once, from each accepted provider's own disclosure: a
+# local registration's class map beside its contract and a discovered provider's published class payload.
+# Deriving it from the local registrations alone - or not at all - is the cycle-2 defect that refused a
+# discovered read as a mutation, so the derivation and the one call site that publishes it are asserted
+# here. The `accepted-classes` control breaks that call site, and the fixture drives the same function
+# with both provider shapes: a registration, a discovered provider's disclosure with a read, a mutating
+# and an unclassified function.
 facts = registry[registry.index('private fun facts('):registry.index('@Synchronized override fun openSession(')]
-derivation = 'val classes = acceptedClasses(providers.values.map { it.contract to (it.local?.classification() ?: emptyMap()) })'
+derivation = 'val classes = acceptedClasses(providers.values.map { it.contract to it.classes })'
 assert facts.count(derivation) == 1, 'the accepted provider sources state the class of every function: ' + derivation
 assert 'locals' not in facts, 'every accepted function is classified from the accepted providers, not the local registrations: ' + ' '.join(facts.split())
+# Each accepted provider carries the class its own disclosure stated: a local registration's class map or
+# the class a discovered provider published beside its contract. Neither shape can lose it between the
+# disclosure and the facts, so a registry that keeps only the contract record is the defect this asserts.
+registration = 'Provider(it.contract, it, classes = it.classification())'
+discovered = 'Provider(it.contract, endpoint = it, classes = it.classification)'
+assert registry.count(registration) == 2, 'a local registration states its class where it is accepted: ' + registration
+assert registry.count(discovered) == 1, 'a discovered provider states its published class where it is accepted: ' + discovered
+discovery = (root / 'android/src/capabilities/CapabilityDiscovery.kt').read_text()
+assert discovery.count('CapabilityContract.disclosure(raw)') == 1, 'discovery admits the provider disclosure, not a bare contract'
+assert discovery.count('disclosure.classification') == 1, 'the discovered endpoint keeps the class its provider published'
 sources = [
     generated,
     root / 'android/src/ProtocolFailure.kt',

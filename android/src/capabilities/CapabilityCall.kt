@@ -25,21 +25,21 @@ internal class CapabilityFacts(
 internal class Refusal(val code: String, val reason: String)
 
 /**
- * The host's class of one disclosed function: the registration's own statement, else the class its
- * disclosed contract carries. A function that states neither is mutating, because a missing
- * classification must never authorize a write.
+ * The host's class of one disclosed function: the class its provider disclosed beside the contract, in
+ * the registration's own statement or in the payload a discovered provider published. A function that
+ * states neither is mutating, because a missing classification must never authorize a write.
  */
-internal fun hostClass(function: CapabilityFunction, registered: Map<String, String>): String {
-    val value = registered[function.name]?.takeIf { it.isNotEmpty() } ?: function.classification
+internal fun hostClass(function: CapabilityFunction, disclosed: Map<String, String>): String {
+    val value = disclosed[function.name]?.takeIf { it.isNotEmpty() } ?: ""
     return if (value == "read") "read" else "mutating"
 }
 
 /**
  * The classification facts of every accepted provider, keyed `module/function`, derived from each
- * provider's own source: a local registration states its per-function class beside its contract, and a
- * discovered endpoint states the class inside the contract it disclosed. One derivation for both, so a
- * discovered read is read as a read exactly like a locally registered one and a function that states
- * neither stays mutating.
+ * provider's own disclosure: a local registration states its per-function class beside its contract, and
+ * a discovered endpoint states the class in the payload it published beside the contract record. One
+ * derivation for both, so a discovered read is read as a read exactly like a locally registered one and
+ * a function that states neither stays mutating.
  */
 internal fun acceptedClasses(providers: List<Pair<CapabilityContract, Map<String, String>>>): Map<String, String> {
     val classes = mutableMapOf<String, String>()

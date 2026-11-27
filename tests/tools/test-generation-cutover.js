@@ -22,6 +22,11 @@ const sources={};function walk(dir){for(const name of fs.readdirSync(dir)){const
 // Pairs kept for the runtime items. Their recorded digest is written only after every mode passed, so a
 // failed run (including a deliberately broken seam artifact) never records a digest of broken sources.
 const emitted=[];
+// The spotlight kind's issued presentation: the catalogue table's "Highlighted read-only content" row
+// requires the message highlighted, so the emitted section is the accent-toned column carrying its text
+// under the heading - never a plain body sentence. Both nodes are in the frozen card profile. The pair is
+// re-indented when it is assembled, so the pattern admits either spacing.
+const spotlight=message=>new RegExp('ui\\.Column\\(style: "accent"\\) \\{\\s*ui\\.Text\\(text: "'+message+'", style: "heading"\\)\\s*\\}');
 const vocabularyDigest=require('./fixtures/generation-digest.js').digest;
 // The digest of the generation sources the emitters are fed, sampled once with the module snapshot.
 const bundleDigest=vocabularyDigest(assets);
@@ -417,7 +422,7 @@ async function run(mode){
     assert(snapshot.result.candidateId,mode+' must build: '+JSON.stringify(snapshot.result)+' stages '+JSON.stringify(asks.map(r=>r.stage)));
     // A found complete contract fills the need from the issued catalogue: the highlight is emitted
     // and no custom writer is asked for that need.
-    assert(acceptedSource.dealui.includes('ui.Text(text: "Highlighted message")'),acceptedSource.dealui+' RESULT '+JSON.stringify(snapshot.result));
+    assert(spotlight('Highlighted message').test(acceptedSource.dealui),acceptedSource.dealui+' RESULT '+JSON.stringify(snapshot.result));
     assert.equal(asks.filter(r=>r.stage==='custom-section').length,0,'a found lookup still sent the need to the writer');
     assert(!acceptedSource.dealui.includes('highlight: missing'),acceptedSource.dealui);
    } else if(mode==='lookup-deduped'){
@@ -433,13 +438,13 @@ async function run(mode){
     // second keeps its own writer with the located reason instead of a duplicate instance.
     assert.equal(asks.filter(r=>r.stage==='custom-section').length,1,'the duplicate kind did not fall back to a writer: '+JSON.stringify(asks.map(r=>r.stage)));
     assert(snapshot.result.diagnostics.includes('second: Catalogue kind already selected: spotlight'),'the duplicate-kind reason is lost: '+snapshot.result.diagnostics);
-    assert.equal((acceptedSource.dealui.match(/ui.Text\(text: "Highlighted /g)||[]).length,1,'the composition holds two instances of one catalogue kind: '+acceptedSource.dealui);
+    assert.equal((acceptedSource.dealui.match(/ui\.Column\(style: "accent"\)/g)||[]).length,1,'the composition holds two instances of one catalogue kind: '+acceptedSource.dealui);
    } else if(mode==='lookup-duplicate'){
     // The one kind this composition holds is not offered to the lookup, so the reply naming it is an
     // unusable result: the need keeps its own writer and no second instance is emitted.
     const section=asks.filter(r=>r.stage==='custom-section');assert.equal(section.length,1,mode+' writer asks '+JSON.stringify(asks.map(r=>r.stage)));
     assert(section[0].input.includes('missing needs: ["highlight"]'),section[0].input);
-    assert.equal((acceptedSource.dealui.match(/ui.Text\(text: "Highlighted message"/g)||[]).length,0,'a duplicate catalogue kind reached the composition: '+acceptedSource.dealui);
+    assert.equal((acceptedSource.dealui.match(/ui\.Text\(text: "Highlighted message", style: "heading"\)/g)||[]).length,0,'a duplicate catalogue kind reached the composition: '+acceptedSource.dealui);
    } else if(mode==='lookup-undisclosed'){
     // A found contract whose facts and labels are not disclosed by the original request is refused at
     // the shared disclosure predicate: the need keeps its located reason and its own writer, so a
@@ -454,7 +459,7 @@ async function run(mode){
     const section=asks.filter(r=>r.stage==='custom-section');assert.equal(section.length,1,mode+' writer asks '+JSON.stringify(asks.map(r=>r.stage)));
     assert(section[0].input.includes('missing needs: ["highlight"]'),section[0].input);
     assert(snapshot.result.diagnostics.includes('highlight: Lookup refused: No reusable section'),'the refusal reason is lost: '+snapshot.result.diagnostics);
-    assert(!acceptedSource.dealui.includes('ui.Text(text: "Highlighted message")'),'a refused lookup still emitted the contract');
+    assert(!acceptedSource.dealui.includes('ui.Column(style: "accent")'),'a refused lookup still emitted the contract');
    }
   }
   else if(mode==='chat-projection'){
@@ -555,7 +560,7 @@ async function run(mode){
      assert(acceptedSource.dealui.includes('ui.MetricGroup() {'),acceptedSource.dealui);
      assert(acceptedSource.dealui.includes('ui.Stat(label: "first", value: "items")'),acceptedSource.dealui);
      assert(acceptedSource.dealui.includes('ui.Stat(label: "second", value: "done")'),acceptedSource.dealui);
-     assert(acceptedSource.dealui.includes('ui.Text(text: "Highlighted message")'),acceptedSource.dealui);}
+     assert(spotlight('Highlighted message').test(acceptedSource.dealui),acceptedSource.dealui);}
     if(mode==='catalogue-readonly'){assert(asks.some(r=>r.stage==='content'));
      // Every read-only section is emitted against the shipped pack and seeds its disclosed content.
      assert(acceptedSource.dealui.includes('ui.Table(headers: state.f_section_table_headers, columns: 3.0) {'),acceptedSource.dealui);
@@ -574,7 +579,7 @@ async function run(mode){
      // The predicate at its single production call site refuses the whole instance: the authored
      // highlight compiles, the fabricated cell never reaches the source, and the need stays open.
      assert(!acceptedSource.dealui.includes('ui.Table(')&&!acceptedSource.deal.includes('f_section_table_'),acceptedSource.dealui);
-     assert(acceptedSource.dealui.includes('ui.Text(text: "Highlighted message")'),acceptedSource.dealui);
+     assert(spotlight('Highlighted message').test(acceptedSource.dealui),acceptedSource.dealui);
      assert(!acceptedSource.dealui.includes('invented')&&!acceptedSource.deal.includes('invented'),'the fabricated cell never reaches the compiled source');
      assert(asks.some(r=>r.stage.startsWith('custom')),'the undisclosed need stayed open for custom writing');
      // The refused need keeps its located reason in the shipped notice, not a generic coverage gap.
@@ -584,7 +589,7 @@ async function run(mode){
      // under the instance identity instead of a generic coverage gap, and the refused instance seeds no
      // state while the other filled instance still assembles.
      assert(acceptedSource.dealui.includes('table: missing — Catalogue instance table: Catalogue columns match headers'),acceptedSource.dealui);
-     assert(acceptedSource.dealui.includes('ui.Text(text: "Highlighted message")'),'the other filled instance still assembles');
+     assert(spotlight('Highlighted message').test(acceptedSource.dealui),'the other filled instance still assembles');
      assert(asks.some(r=>r.stage==='custom-section'),'the refused need stays open for its own section write');}
     if(mode==='scalar-read'){
      // The scalar-read emitter's Load button carries the current sequence and consumes the number payload.
@@ -693,7 +698,7 @@ async function run(mode){
       assert.equal(checks,1,'the structural rebuild is compiled once: '+checks);
       assert.equal(snapshot.result.attempts,1,'the structural rebuild check is one attempt: '+snapshot.result.attempts);
       assert(acceptedSource.deal.includes('export class AppState'),'the accepted pair is not assembled source');
-      assert(acceptedSource.dealui.includes('ui.Text(text: "Highlighted message")'),'the rebuilt pair is not the selected replacement section: diagnostics='+JSON.stringify(snapshot.result.diagnostics)+' '+acceptedSource.dealui.slice(0,600));
+      assert(spotlight('Highlighted message').test(acceptedSource.dealui),'the rebuilt pair is not the selected replacement section: diagnostics='+JSON.stringify(snapshot.result.diagnostics)+' '+acceptedSource.dealui.slice(0,600));
       assert(!acceptedSource.deal.includes('f_section_facts_values'),'the section the edit replaced survived in the accepted pair');
       assert(!asks.some(r=>r.stage.startsWith('custom')),'an accepted structural edit also wrote a custom section');
      }else if(mode==='structural-check-failed'){
@@ -704,7 +709,7 @@ async function run(mode){
       assert(compiledPairs[0].includes('Highlighted message'),'the first candidate check was not the rebuilt replacement section');
       assert(!compiledPairs[1].includes('Highlighted message'),'the writer checked the replacement the structural edit already refused');
       assert(asks.some(r=>r.stage.startsWith('custom')),'a refused structural check did not fall back to the writer: '+JSON.stringify(asks.map(r=>r.stage)));
-      assert(!acceptedSource.dealui.includes('ui.Text(text: "Highlighted message")'),'a refused structural rebuild was committed');
+      assert(!spotlight('Highlighted message').test(acceptedSource.dealui),'a refused structural rebuild was committed');
      }else{
       // A refused structural choice edits nothing: the replacement section is never filled or compiled,
       // and the missing behavior still reaches the writer that owns it.

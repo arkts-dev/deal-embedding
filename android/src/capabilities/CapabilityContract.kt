@@ -14,22 +14,13 @@ class NativeCapabilities private constructor(contract: CapabilityContract, handl
     private val classification = classification.toMap()
     fun classification(): Map<String, String> = classification
     /**
-     * The contract text this registration discloses, carrying the host's per-function read or mutating
-     * class. Discovery is the only path a separately installed provider's contract reaches the
-     * consuming app, so the class travels with it; a function the registration does not classify is
-     * disclosed as unclassified and the consuming boundary treats it as mutating.
+     * The disclosed payload this registration publishes: the version-1 contract it registers, exactly
+     * the declaration's fields, beside the host's class of each function. Discovery is the only path a
+     * separately installed provider's contract reaches the consuming app, so the class travels with it
+     * as host disclosure rather than as a field of the public record; a function the registration does
+     * not classify is disclosed as unclassified and the consuming boundary treats it as mutating.
      */
-    internal fun disclosed(): org.json.JSONObject {
-        val json = contract.json()
-        val functions = json.getJSONArray("functions")
-        for (index in 0 until functions.length()) {
-            val entry = functions.getJSONObject(index)
-            val stated = classification[entry.getString("name")] ?: ""
-            entry.put("classification", if (stated.isNotEmpty()) stated else entry.optString("classification", ""))
-        }
-        return json
-    }
-    internal fun declaration(): String = disclosed().toString()
+    internal fun disclosure(): String = DisclosedContract(contract, classification).json().toString()
     constructor(contract: CapabilityContract, handlers: Map<String, (JSONArray) -> Any>, classification: Map<String, String> = emptyMap()) : this(contract,handlers.mapValues { (_, handler) -> { args, _ -> handler(args) } },classification,true)
     init { contract.validate(); require(handlers.keys == contract.functions.map { it.name }.toSet()); for ((name, kind) in classification) require(name in handlers.keys && kind in setOf("read", "mutating")) { "Invalid host classification: $name" } }
     internal companion object {

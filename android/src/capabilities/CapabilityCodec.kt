@@ -40,7 +40,7 @@ internal fun WireType.Companion.parse(value: JSONObject, depth: Int = 0): WireTy
     }, value.optJSONObject("element")?.let { parse(it,depth + 1) }, value.requiredInteger("maximum"),value.getDouble("minimumNumber"),value.getDouble("maximumNumber")).also { it.validateSchema() }
 }
 internal fun CapabilityFunction.validateArguments(args: JSONArray) { require(args.length() == parameters.size); parameters.forEachIndexed { i, p -> p.type.validate(args.get(i)) } }
-internal fun CapabilityFunction.json() = JSONObject().put("name",name).put("description",description).put("parameters",JSONArray(parameters.map { JSONObject().put("name",it.name).put("type",it.type.json()) })).put("result",result.json()).put("classification",classification)
+internal fun CapabilityFunction.json() = JSONObject().put("name",name).put("description",description).put("parameters",JSONArray(parameters.map { JSONObject().put("name",it.name).put("type",it.type.json()) })).put("result",result.json())
 /** Registration admits a contract through the one capability boundary validator. */
 internal fun CapabilityContract.validate() = CapabilityBoundary.validate(this)
 internal fun CapabilityContract.json() = JSONObject().put("module",module).put("description",description).put("version",version).put("functions",JSONArray(functions.map { it.json() }))
@@ -49,11 +49,31 @@ internal fun CapabilityContract.Companion.parse(text: String): CapabilityContrac
     val value = JSONObject(text); require(value.keys().asSequence().toSet() == setOf("module","description","version","functions")) { "Capability contract: unknown or missing fields" }
     val functions = value.getJSONArray("functions")
     return CapabilityContract(value.getString("module"),value.getString("description"),(0 until functions.length()).map { i ->
-        val f = functions.getJSONObject(i); require(f.keys().asSequence().toSet() == setOf("name","description","parameters","result") || f.keys().asSequence().toSet() == setOf("name","description","parameters","result","classification")) { "Capability function: unknown or missing fields" }
+        val f = functions.getJSONObject(i); require(f.keys().asSequence().toSet() == setOf("name","description","parameters","result")) { "Capability function: unknown or missing fields" }
         val parameters = f.getJSONArray("parameters")
         CapabilityFunction(f.getString("name"),f.getString("description"),(0 until parameters.length()).map { j ->
             val p = parameters.getJSONObject(j); require(p.keys().asSequence().toSet() == setOf("name","type")) { "Capability parameter: unknown or missing fields" }
             Parameter(p.getString("name"),WireType.parse(p.getJSONObject("type")))
-        },WireType.parse(f.getJSONObject("result")),f.optString("classification",""))
+        },WireType.parse(f.getJSONObject("result")))
     },value.requiredInteger("version")).also { CapabilityBoundary.validateDecoded(it) }
+}
+/**
+ * The disclosed form of one provider: the specification's contract record exactly as the public API
+ * declares it, beside the host's read or mutating class of each function it declares. The class is
+ * host disclosure, not a field of the public record, so a client compiled from the declarations never
+ * sees it and a provider that classifies nothing discloses an empty class per function.
+ */
+internal class DisclosedContract(val contract: CapabilityContract, val classification: Map<String, String>) {
+    fun json(): JSONObject = JSONObject().put("contract", contract.json()).put("classification", JSONObject(classification))
+}
+/** The one admission of a disclosed provider payload: its contract record and the class of each function. */
+internal fun CapabilityContract.Companion.disclosure(text: String): DisclosedContract {
+    CapabilityBoundary.disclosed(text)
+    val value = JSONObject(text)
+    require(value.keys().asSequence().toSet() == setOf("contract", "classification")) { "Capability disclosure: unknown or missing fields" }
+    val contract = parse(value.getJSONObject("contract").toString())
+    val classes = value.getJSONObject("classification")
+    val classification = classes.keys().asSequence().associateWith { classes.getString(it) }
+    CapabilityBoundary.classification(contract, classification)
+    return DisclosedContract(contract, classification)
 }

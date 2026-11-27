@@ -28,6 +28,8 @@ internal object CapabilityBoundary {
     private val MODULE = Regex("host/[a-z][a-z0-9-]{0,63}")
     private val IDENTIFIER = Regex("[A-Za-z][A-Za-z0-9_]{0,63}")
     private val KINDS = setOf("number", "string", "boolean", "null", "record", "array")
+    /** The host's class of one disclosed function; empty is the absence of a statement. */
+    private val CLASSES = setOf("", "read", "mutating")
 
     /** `dependencies/deal` `Lexer.KEYWORDS`; a keyword can never name an exported declaration. */
     private val KEYWORDS = setOf(
@@ -62,6 +64,18 @@ internal object CapabilityBoundary {
     fun validateDecoded(contract: CapabilityContract) = validate(contract, "contract '${contract.module}'", false)
 
     /**
+     * The host's per-function class of one disclosed provider: a class names a function the contract
+     * declares, and states read, mutating or nothing. An undisclosed class is empty and admits no read.
+     */
+    fun classification(contract: CapabilityContract, classes: Map<String, String>) {
+        val subject = "contract '${contract.module}'"
+        for ((name, kind) in classes) {
+            need(contract.functions.any { it.name == name }, subject, "classification.$name", "must name a declared function")
+            need(kind in CLASSES, subject, "classification.$name", "must be empty, read or mutating, got '$kind'")
+        }
+    }
+
+    /**
      * The whole proposed set: every contract plus module uniqueness, before any contract replaces an
      * accepted one.
      */
@@ -85,9 +99,6 @@ internal object CapabilityBoundary {
             need(identifier(function.name), subject, "$path.name", "must match [A-Za-z][A-Za-z0-9_]{0,63}, got '${function.name}'")
             need(declared(function.name), subject, "$path.name", "must name a DEAL declaration, got the keyword '${function.name}'")
             need(function.description.length in 1..DESCRIPTION, subject, "$path.description", "must be 1 to $DESCRIPTION UTF-16 units, got ${function.description.length}")
-            // A disclosed class is the host's own read or mutating statement; an undisclosed class is
-            // empty and admits no read. Any other word would be read as one of the two by accident.
-            need(function.classification in setOf("", "read", "mutating"), subject, "$path.classification", "must be empty, read or mutating, got '${function.classification}'")
             need(function.parameters.size <= PARAMETERS, subject, "$path.parameters", "must number at most $PARAMETERS, got ${function.parameters.size}")
             val parameters = mutableSetOf<String>()
             function.parameters.forEachIndexed { position, parameter ->
@@ -143,7 +154,7 @@ internal object CapabilityBoundary {
  * contract replaces an accepted one, so a rejected disclosure keeps the accepted contracts, the
  * bindings derived from them and every grant epoch exactly as they were, and invokes no provider.
  */
-internal class CapabilityDisclosure<T>(initial: List<T>, private val contract: (T) -> CapabilityContract) {
+internal class CapabilityDisclosure<T>(initial: List<T>, private val contract: (T) -> CapabilityContract, private val classification: (T) -> Map<String, String> = { emptyMap() }) {
     private var accepted: Map<String, T> = index(initial)
 
     fun accepted(): Map<String, T> = accepted
@@ -152,11 +163,13 @@ internal class CapabilityDisclosure<T>(initial: List<T>, private val contract: (
 
     /**
      * Replaces the whole accepted set only when the proposal is inside the boundary; while a Session
-     * is live an already accepted contract stays frozen instead of being substituted.
+     * is live an already accepted contract stays frozen instead of being substituted. The host class of
+     * each function is part of that disclosed state, so a live Session never has its functions
+     * reclassified under it either.
      */
     fun admit(proposed: List<T>, live: Boolean): List<CapabilityContract> {
         val next = index(proposed)
-        require(!live || accepted.all { (module, prior) -> next[module]?.let { contract(it) == contract(prior) } == true }) {
+        require(!live || accepted.all { (module, prior) -> next[module]?.let { contract(it) == contract(prior) && classification(it) == classification(prior) } == true }) {
             "Close active sessions before changing existing capability contracts"
         }
         accepted = next
@@ -165,6 +178,7 @@ internal class CapabilityDisclosure<T>(initial: List<T>, private val contract: (
 
     private fun index(proposed: List<T>): Map<String, T> {
         CapabilityBoundary.validate(proposed.map(contract))
+        proposed.forEach { CapabilityBoundary.classification(contract(it), classification(it)) }
         return proposed.associateBy { contract(it).module }
     }
 }

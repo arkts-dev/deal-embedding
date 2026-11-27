@@ -2,7 +2,7 @@ import * as ui from "./ui/core";
 export class WireField { name: string; type: WireType; optional: boolean; }
 export class WireType { kind: string; fields: WireField[] ; element: WireType | null; maximum: number; minimumNumber: number; maximumNumber: number; }
 export class Parameter { name: string; type: WireType; }
-export class CapabilityFunction { name: string; description: string; parameters: Parameter[] ; result: WireType; classification: string; }
+export class CapabilityFunction { name: string; description: string; parameters: Parameter[] ; result: WireType; }
 export class CapabilityContract { module: string; description: string; version: number; functions: CapabilityFunction[] ; }
 export class Source { deal: string; dealui: string; }
 export class GenerationContext { id: string; }

@@ -10,7 +10,7 @@ const providerContract = {
   module: 'host/probe',
   description: 'Explicit fixture read',
   version: 1,
-  functions: [{name: 'read', description: 'Return fixture value', parameters: [], classification: 'read',
+  functions: [{name: 'read', description: 'Return fixture value', parameters: [],
                result: {kind: 'number', fields: [], element: null, maximum: 0, minimumNumber: -1000, maximumNumber: 1000}}],
 };
 // A disclosed text-generation capability: text produced from an editable prompt and an explicit word
@@ -22,7 +22,7 @@ const textContract = {
   module: 'host/text',
   description: 'Runtime text generation',
   version: 1,
-  functions: [{name: 'generate', description: 'Generate text for a prompt', classification: 'read',
+  functions: [{name: 'generate', description: 'Generate text for a prompt',
                parameters: [
                  {name: 'prompt', type: {kind: 'string', fields: [], element: null, maximum: 2000, minimumNumber: 0, maximumNumber: 0}},
                  {name: 'words', type: {kind: 'number', fields: [], element: null, maximum: 0, minimumNumber: 1, maximumNumber: 300}}],

@@ -210,7 +210,7 @@ export async function edits(): Promise<null> {
   let textSchema: embedding.WireType = {kind:"string",fields:fields,element:null,maximum:8192,minimumNumber:-1.7976931348623157e308,maximumNumber:1.7976931348623157e308};
   let parameters: embedding.Parameter[] = [{name:"description",type:textSchema}];
   let numberSchema: embedding.WireType = {kind:"number",fields:[],element:null,maximum:128,minimumNumber:-1.7976931348623157e308,maximumNumber:1.7976931348623157e308};
-  let functions: embedding.CapabilityFunction[] = [{name:"prepare",description:"Prepare a review, not a purchase",parameters:parameters,result:textSchema,classification:""},{name:"plan",description:"Plan a review",parameters:[{name:"title",type:textSchema},{name:"count",type:numberSchema}],result:textSchema,classification:""}];
+  let functions: embedding.CapabilityFunction[] = [{name:"prepare",description:"Prepare a review, not a purchase",parameters:parameters,result:textSchema},{name:"plan",description:"Plan a review",parameters:[{name:"title",type:textSchema},{name:"count",type:numberSchema}],result:textSchema}];
   let contracts: embedding.CapabilityContract[] = [{module:"host/test",description:"Test review",version:1,functions:functions}];
   let registry: bindings.Registry = bindings.create(contracts);
   let args: Record<string, unknown> = {description:"draft"};

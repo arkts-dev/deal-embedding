@@ -30,14 +30,10 @@ internal interface CapabilityHost {
 /** Discovery and grants are shared; each isolate owns an independent request/reply session. */
 internal class CapabilityRegistry(private val context: Context, private val discovery: CapabilityDiscovery, local: List<NativeCapabilities>, private val limits: ExecutionLimits) : CapabilityHost, AutoCloseable {
     private val log = dev.deal.embedding.EmbeddingLog(context, limits)
-    private data class Provider(val contract: CapabilityContract, val local: NativeCapabilities? = null, val endpoint: CapabilityDiscovery.Endpoint? = null) {
-        /** The disclosed form: a local registration's per-function class travels with its contract, and a
-         * discovered contract already carries the class its provider published. */
-        val disclosed: CapabilityContract get() = local?.let { CapabilityContract.parse(it.declaration()) } ?: contract
-    }
+    private data class Provider(val contract: CapabilityContract, val local: NativeCapabilities? = null, val endpoint: CapabilityDiscovery.Endpoint? = null, val classes: Map<String, String> = emptyMap())
     private val locals = local.toList()
     /** One atomic disclosure: a rejected proposal keeps these providers, their bindings and grants. */
-    private val disclosure = CapabilityDisclosure(locals.map { Provider(it.contract, it) }) { it.contract }
+    private val disclosure = CapabilityDisclosure(locals.map { Provider(it.contract, it, classes = it.classification()) }, { it.contract }, { it.classes })
     private val providers: Map<String, Provider> get() = disclosure.accepted()
     private var permission: ((String) -> String?)? = null
     /** Trusted controller-local permission is authoritative; providers still enforce consent. */
@@ -59,7 +55,8 @@ internal class CapabilityRegistry(private val context: Context, private val disc
     private var closed = false
     fun refresh(): List<CapabilityContract> {
         val discovered = discovery.discover()
-        val proposal = locals.map { Provider(it.contract, it) } + discovered.map { Provider(it.contract, endpoint = it) }
+        val proposal = locals.map { Provider(it.contract, it, classes = it.classification()) } +
+            discovered.map { Provider(it.contract, endpoint = it, classes = it.classification) }
         return synchronized(this) {
             check(!closed) { "Capability registry is closed" }
             // The whole proposal is inside the boundary before any contract, binding or grant changes.
@@ -67,8 +64,8 @@ internal class CapabilityRegistry(private val context: Context, private val disc
             disclosed()
         }
     }
-    /** The accepted contracts as discovery publishes them, each function carrying its host class. */
-    private fun disclosed(): List<CapabilityContract> = providers.values.map { it.disclosed }
+    /** The accepted contracts as discovery publishes them; the host class of each function is native disclosure. */
+    private fun disclosed(): List<CapabilityContract> = providers.values.map { it.contract }
     @Synchronized fun contracts(): List<CapabilityContract> = disclosed()
     /**
      * The host's confirmation of one mutation: an approval covers exactly this target and validated
@@ -88,7 +85,7 @@ internal class CapabilityRegistry(private val context: Context, private val disc
      * the Experience origin and the frozen-request determination. Generation issues no determination,
      * so the published flag is false and a mutation needs the host confirmation. */
     private fun facts(origin: String): CapabilityFacts {
-        val classes = acceptedClasses(providers.values.map { it.contract to (it.local?.classification() ?: emptyMap()) })
+        val classes = acceptedClasses(providers.values.map { it.contract to it.classes })
         val confirmation = mutableMapOf<String, String>()
         for ((key, approval) in confirmations) { confirmation[key] = approval.status(epoch(approval.module)) }
         return CapabilityFacts(classes, confirmation, origin, false, "")
@@ -147,7 +144,7 @@ internal class CapabilityRegistry(private val context: Context, private val disc
          * outside, so only its own result failed.
          */
         private fun lost(id: Int, cause: String, message: String, function: CapabilityFunction, provider: Provider) {
-            fail(id, ProviderFailure.lost(cause, message, hostClass(function, provider.local?.classification() ?: emptyMap()) != "read", limits.failureBounds()))
+            fail(id, ProviderFailure.lost(cause, message, hostClass(function, provider.classes) != "read", limits.failureBounds()))
         }
         private fun success(id: Int, value: Any) { log.event("transport", "completed", operation = "$identity:$id", span = "$identity:$id"); pending.remove(id); replies.add(JSONObject().put("id", id).put("ok", true).put("value", value)) }
         override fun receive(request: JSONObject, now: Long) {

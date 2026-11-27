@@ -369,6 +369,17 @@ fun main(args: Array<String>) {
     rejected(cardTree(0), "ADMISSION_TARGET", "", target = "print")
     rejected(cardTree(0), "ADMISSION_TARGET", "", target = null)
 
+    // The catalogue spotlight's highlighted presentation, exactly as the emitter issues it: the message
+    // inside an accent-toned column with its heading. Every node is in the frozen card profile, so the one
+    // presentation is admitted on a screen, a chat and a card target; the tone and the typography are what
+    // highlight it, so an untoned body sentence would not be this presentation.
+    val spotlight = node("Column", listOf(text("style", "accent")),
+        listOf(node("Text", listOf(text("text", "Shown"), text("style", "heading")))))
+    for (target in listOf("screen", "chat", "card")) accepted(spotlight, target)
+    check(ContainerModes.column("accent").tone == Tone.ACCENT) { "the spotlight's accented column must paint the highlighted tone" }
+    check(StyleFamilies.heading("Text", "heading")) { "the spotlight's message must paint its heading" }
+    check(ContainerModes.column("").tone == Tone.NONE) { "a plain body presentation must stay untoned, so it cannot be the spotlight" }
+
     // Static and framed Surface: only the framed node carries a frame slot.
     check(surface().prop("onFrame") == null)
     fun slotsOf(component: String, props: List<UiProp>): Map<String, UiValue> =

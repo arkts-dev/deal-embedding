@@ -24,7 +24,6 @@ public final class CapabilityApi {
         return switch(owner + "." + field) {
             case "WireField.optional" -> " = false";
             case "WireType.fields", "CapabilityFunction.parameters" -> " = emptyList()";
-            case "CapabilityFunction.classification" -> " = \"\"";
             case "WireType.element" -> " = null";
             case "WireType.maximum" -> " = 128";
             case "WireType.minimumNumber" -> " = -Double.MAX_VALUE";

@@ -181,9 +181,17 @@ assert(metrics.fragment.view.includes('ui.MetricGroup() {ui.Stat(label: "first",
 const facts=instances.key_facts;
 assert(facts.fragment.view.includes('ui.MetricGroup() {ui.Stat(label: "first", value: "items")}'),facts.fragment.view);
 assert(instances.empty_facts.fragment.view.includes('ui.Text(text: "No disclosed facts", style: "muted")'),instances.empty_facts.fragment.view);
-// The spotlight is one highlighted read-only message with no state of its own.
+// The spotlight is one highlighted read-only message with no state of its own: the message is presented
+// in the accent tone under its heading instead of a plain body sentence, and every component the
+// presentation emits is one the frozen card profile lists, so the same section is admitted on a screen,
+// a chat and a card target. The profile is read from the packaged projection generation receives, so the
+// expectation comes from the specification's row rather than from the emitter; only pack conformance
+// reads the inventory that produces that projection.
 assert.deepEqual(instances.spotlight.fragment.fields,[],'the spotlight content is emitted source, not state');
-assert(instances.spotlight.fragment.view.includes('ui.Text(text: "Shown")'),instances.spotlight.fragment.view);
+assert(instances.spotlight.fragment.view.includes('ui.Column(style: "accent") {ui.Text(text: "Shown", style: "heading")}'),instances.spotlight.fragment.view);
+const cardProfile=new Set(JSON.parse(require('fs').readFileSync(require('path').resolve('build/embedding-consumer/assets/embedding/card-profile.json'),'utf8')).components);
+const spotlightComponents=[...instances.spotlight.fragment.view.matchAll(/ui\.([A-Za-z]+)\(/g)].map(match=>match[1]);
+assert(spotlightComponents.length>=2&&spotlightComponents.every(name=>cardProfile.has(name)),'the spotlight presentation leaves the frozen card profile: '+instances.spotlight.fragment.view);
 // --- assembly: the emitted sections compose without a computation and keep declaration order.
 const assembled=results.assembly;
 assert(assembled.deal.includes('f_section_table_headers: string[];'),'the table headers are a typed state field');

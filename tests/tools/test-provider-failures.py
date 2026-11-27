@@ -113,7 +113,7 @@ class ProviderFailureTest(unittest.TestCase):
              'a call that passed its deadline or lost its provider is retired with its outcome decided'),
             ('val message: String = if (cause == "REVOKED") "Capability access revoked" else if (cause == "TIMEOUT") "Capability call timed out" else "Capability unavailable"',
              'each retired call carries the reason the transport decided'),
-            ('hostClass(function, provider.local?.classification() ?: emptyMap()) != "read"',
+            ('hostClass(function, provider.classes) != "read"',
              'the outcome of a lost call is decided by the host classification of that function'),
             ('if (failure.outcome == ProviderFailure.UNKNOWN) "unknown" else "failed"',
              'the transport evidence keeps a definite failure apart from an uncertain mutation'),

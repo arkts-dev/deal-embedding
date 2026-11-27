@@ -33,7 +33,7 @@ abstract class CapabilityService : Service() {
         try { callback.failure(id, failure.code, failure.message) } catch (_: RemoteException) {}
     }
     private val binder = object : ICapabilityService.Stub() {
-        override fun describe(): String { caller(); return capabilities.declaration() }
+        override fun describe(): String { caller(); return capabilities.disclosure() }
         override fun invoke(id: String, name: String, arguments: String, callback: ICapabilityResult) = synchronized(this@CapabilityService) {
             val uid = caller()
             val sequence=id.substringAfter(':',"").toLongOrNull()

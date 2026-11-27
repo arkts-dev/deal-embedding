@@ -38,7 +38,7 @@ async function call(name,args,handler){
 }
 (async()=>{
  const scalar={kind:'number',fields:[],element:null,maximum:128,minimumNumber:-Number.MAX_VALUE,maximumNumber:Number.MAX_VALUE};
- const contract={module:'host/probe',description:'Probe',version:1,functions:[{name:'read',description:'Read on demand',parameters:[],result:scalar,classification:'read'}]};
+ const contract={module:'host/probe',description:'Probe',version:1,functions:[{name:'read',description:'Read on demand',parameters:[],result:scalar}]};
  const catalogue=await call('refresh',[],request=>{assert.equal(request.function,'refresh');return [contract];});
  assert.deepEqual(catalogue,[contract]);
  // Controller policy is production-compiled DEAL, not a JavaScript registry.

@@ -47,7 +47,7 @@ async function step(name) {
 }
 const numberWire = { kind: 'number', fields: [], element: null, maximum: 0, minimumNumber: -1000000, maximumNumber: 1000000 };
 const probeContract = { module: 'host/probe', description: 'Authorized rate probe', version: 1,
-  functions: [{ name: 'read', description: 'Read the current authorized rate', parameters: [{ name: 'value', type: numberWire }], result: numberWire, classification: 'read' }] };
+  functions: [{ name: 'read', description: 'Read the current authorized rate', parameters: [{ name: 'value', type: numberWire }], result: numberWire }] };
 const target = path.join(root, 'build/v08-cutover/provider-authority');
 function compile(pair) {
   fs.rmSync(target, { recursive: true, force: true });

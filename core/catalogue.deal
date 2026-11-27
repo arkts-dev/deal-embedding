@@ -962,7 +962,13 @@ export async function instantiate(entry: Configured, registry: bindings.Registry
     declarations = "export class Change { value: string; }"; updates[0] = {action:"Change",function:"change"}; helpers = "export function change(state: AppState, action: Change): AppState { return {"+name+":action.value}; }";
     body = body+"ui.TextField(label: "+await literal(title,"string")+", value: state."+name+", onChange: action app.Change {value: payload})";
     if (kind === "filter_box") { ports[0] = {name:"query",type:"string",direction:"publish",getter:"query",optional:false}; }
-  } else if (kind === "spotlight") { body = body+"ui.Text(text: "+await literal(parameters.message,"string")+")"; }
+  } else if (kind === "spotlight") {
+    // Highlighted read-only content: the message is presented in the accent tone with its heading, which
+    // the shipped painters already render as an accent-tinted panel. Both nodes are in the frozen card
+    // profile, so the same presentation is admitted on a screen, chat and card target instead of a plain
+    // body Text the reader cannot tell from any other sentence.
+    body = body+"ui.Column(style: \"accent\") {ui.Text(text: "+await literal(parameters.message,"string")+", style: \"heading\")}";
+  }
   else if (kind === "metrics" || kind === "key_facts") {
     let key: string = "values"; if (kind === "key_facts") { key = "items"; }
     let rows: Record<string, unknown>[] = s.records(parameters,key);

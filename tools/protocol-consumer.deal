@@ -90,6 +90,19 @@ export async function close(id:string): Promise<null> {return await embedding.cl
 export async function forget(id:string): Promise<null> {return await embedding.forget({id:id,title:"",origin:"",attempts:0});}
 export function saved():embedding.Experience[] {return embedding.saved();}
 export async function prepareCapabilities(): Promise<number> {let contracts:embedding.CapabilityContract[]=await embedding.refresh();for (let c of contracts){embedding.grant(c.module);embedding.revoke(c.module);embedding.grant(c.module);}return contracts.length;}
+// A normative client compiles against the public declarations: the specification's four-field
+// capability function and its contract are constructed exactly as spec-v0.8 declares them, so a
+// declaration that added a host-disclosure field to the record would fail this build instead of
+// silently requiring every client to state it. The host's read or mutating class is not part of the
+// record; the host publishes it beside the contract it discloses.
+export function capabilityRecord():embedding.CapabilityFunction {
+    let scalar:embedding.WireType={kind:"number",fields:[],element:null,maximum:0,minimumNumber:-1000,maximumNumber:1000};
+    let functions:embedding.CapabilityFunction[]=[{name:"read",description:"Read one disclosed value",parameters:[],result:scalar}];
+    let contract:embedding.CapabilityContract={module:"host/normative",description:"Normative client record",version:1,functions:functions};
+    let published:embedding.CapabilityFunction=contract.functions[0];
+    insist(published.name==="read"&&published.description==="Read one disclosed value"&&published.parameters.length===0&&published.result.kind==="number","Normative capability record");
+    return published;
+}
 export async function observation(): Promise<string> {
     embedding.capture(false);let health:embedding.ObservationHealth=embedding.health();
     let page:embedding.EventPage=await embedding.events("","",1);if(page.cursor!==""){page=await embedding.events("",page.cursor,1);}
