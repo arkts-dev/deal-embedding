@@ -87,6 +87,8 @@ export async function construct(): Promise<string> {
   let calculations: composer.Computation[] = [{instance:"calculation",field:"double",value:"state.value * 2",ready:"state.value >= 0",reason:"\"Value must be nonnegative\"",dependencies:["f_calculation_value"]}];
   calculations[calculations.length] = {instance:instance.id,field:"triple",value:"(state.double as number) * 3",ready:"true",reason:"\"Upstream unavailable\"",dependencies:["f_calculation_double"]};
   let result: composer.Result = await composer.assemble(record,calculations);
+  insist(strings.contains(result.source.deal,"let state: AppState = {f_calculation_value: candidate.f_calculation_value"),"recompute must own a fresh shallow copy before changing derived values");
+  insist(strings.contains(result.source.deal,"state.f_calculation_double = value;") && !strings.contains(result.source.deal,"state = {"),"recompute expanded a full-state copy per derived branch");
   return s.encode(result);
 }
 // The clock part issues a monotone countdown: an authoritative elapsed/running/completed trio, a

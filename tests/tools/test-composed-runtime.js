@@ -39,6 +39,22 @@ assert.strictEqual(numberTextValue(JSON.parse(vm.runInContext('session.snapshot(
 vm.runInContext("session.dispatch(action,'-2')",context);assert.equal(state().f_calculation_value,-2);assert.equal(state().f_calculation_double,null);assert.equal(state().f_calculation_double_ready,false);assert.equal(state().f_calculation_double_reason,'Value must be nonnegative');assert.equal(state().f_calculation_triple,null);assert.equal(state().f_calculation_triple_ready,false);
 assert.strictEqual(numberTextValue(JSON.parse(vm.runInContext('session.snapshot()',context)).tree),undefined,'the guarded NumberText renders nothing while its value is unavailable');
 assert.equal(JSON.parse(vm.runInContext('session.snapshot()',context)).fault,'');
+// Recompute owns a fresh shallow state: no mutation of the caller, no cloning or mutation of
+// borrowed collections, and both availability branches clear stale derived projections.
+vm.runInContext(`{
+ const codec=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f());
+ const before=codec.decode(JSON.parse(session.checkpoint()),entry.bridgeInitialState.$sig.substring(4));
+ const encoded=JSON.stringify(codec.encode(before));
+ const after=compiled.recompute.$f(before);
+ if(after===before)throw Error('Recompute reused the caller state');
+ if(JSON.stringify(codec.encode(before))!==encoded)throw Error('Recompute mutated the caller state');
+ if(after.f_calculation_samples!==before.f_calculation_samples||after.f_calculation_matrix!==before.f_calculation_matrix)throw Error('Recompute changed borrowed collection identities');
+ if(after.f_calculation_double!==null||after.f_calculation_double_ready||after.f_calculation_double_display!==0)throw Error('Unavailable recompute retained derived output');
+ before.f_calculation_value=4;
+ const available=compiled.recompute.$f(before);
+ if(available.f_calculation_double!==8||available.f_calculation_triple!==24||!available.f_calculation_triple_ready)throw Error('Recompute lost topological derived updates');
+ if(before.f_calculation_double!==null||before.f_calculation_double_ready)throw Error('Available recompute mutated unavailable caller');
+}`,context);
 // The compiled persistence roles project the live state; restore rebuilds the typed state and
 // recomputes derived values before the session publishes its tree (see test-persistence.js).
 vm.runInContext(`const codec=createDealUiCheckpoint(rt,checkpointSchema,entry.bridgeSchemaDigest.$f());

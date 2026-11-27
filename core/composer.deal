@@ -1137,7 +1137,10 @@ export async function assembleWith(composition: screens.Composition, computation
     } }
   }
   bumpSource = bumpSource+"  return "+copyExpression(allFields,revisions,"next")+";\n}\n";
-  let recompute: string = "export function recompute(candidate: AppState): AppState {\n  let state: AppState = candidate;\n"; let ordered: string[] = [];
+  // Own one shallow typed copy before recomputing. Mutating this fresh container preserves the
+  // caller's state and borrowed child references, without emitting three full-state copies for
+  // every derived field (quadratic source growth also inflated the selector's exact-source context).
+  let recompute: string = "export function recompute(candidate: AppState): AppState {\n  let state: AppState = "+copyExpression(allFields,{},"candidate")+";\n"; let ordered: string[] = [];
   while (ordered.length < allComputations.length) {
     let progress: boolean = false;
     for (let computation of allComputations) {
@@ -1204,7 +1207,10 @@ export async function assembleWith(composition: screens.Composition, computation
           let finite: string = "true"; if (target.type === "number") { finite = "Number.isFinite(value)"; }
           recompute = recompute+"    if ("+finite+") {\n";
           let available: Record<string, string> = {}; available[target.name] = "value"; available[target.name+"_ready"] = "true"; available[target.name+"_reason"] = "\"\""; if (displayable(target.type)) { available[target.name+"_display"] = "value"; }
-          recompute = recompute+"      state = "+copyExpression(allFields,available,"state")+";\n    } else {\n      state = "+copyExpression(allFields,changes,"state")+";\n    }\n  } else {\n    state = "+copyExpression(allFields,changes,"state")+";\n  }\n";
+          let setAvailable: string = ""; let setUnavailable: string = "";
+          for (let name of Object.keys(available)) { setAvailable += "      state."+name+" = "+(available[name] as string)+";\n"; }
+          for (let name of Object.keys(changes)) { setUnavailable += "      state."+name+" = "+(changes[name] as string)+";\n"; }
+          recompute = recompute+setAvailable+"    } else {\n"+setUnavailable+"    }\n  } else {\n"+setUnavailable+"  }\n";
           ordered[ordered.length] = target.name; progress = true;
         }
       }
